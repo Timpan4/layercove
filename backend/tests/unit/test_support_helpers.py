@@ -715,6 +715,156 @@ class TestCheckUrlReachable:
         assert result is False
 
 
+class TestFetchSlicerHealth:
+    """Tests for the slicer-API health probe that extracts the bundled CLI
+    version. Knowing the version in the support bundle lets the reviewer
+    confirm the user is running the image they think they are — exactly the
+    diagnostic that was missing when issue #1312 surfaced."""
+
+    def _mock_httpx(self, status_code: int, body):
+        """Construct a patched httpx.AsyncClient that returns a fixed response."""
+        mock_client_cls = MagicMock()
+        mock_client = AsyncMock()
+        mock_client_cls.return_value.__aenter__.return_value = mock_client
+        mock_client_cls.return_value.__aexit__ = AsyncMock(return_value=False)
+        mock_response = MagicMock()
+        mock_response.status_code = status_code
+        if isinstance(body, Exception):
+            mock_response.json.side_effect = body
+        else:
+            mock_response.json.return_value = body
+        mock_client.get = AsyncMock(return_value=mock_response)
+        return mock_client_cls, mock_client
+
+    @pytest.mark.asyncio
+    async def test_empty_url_returns_none(self):
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        assert await _fetch_slicer_health("") is None
+        assert await _fetch_slicer_health("   ") is None
+
+    @pytest.mark.asyncio
+    async def test_parses_version_from_orcaslicer_field(self):
+        """The default sidecar wrapper labels both orca and bambu CLIs under
+        ``checks.orcaslicer``. The probe must read whichever non-dataPath child
+        carries a ``version`` field instead of hardcoding the field name."""
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        body = {
+            "status": "healthy",
+            "checks": {
+                "orcaslicer": {"available": True, "version": "2.3.2"},
+                "dataPath": {"accessible": True},
+            },
+        }
+        mock_client_cls, mock_client = self._mock_httpx(200, body)
+        with patch("httpx.AsyncClient", mock_client_cls):
+            result = await _fetch_slicer_health("http://orca:3003")
+
+        assert result == {"reachable": True, "version": "2.3.2"}
+        # And the URL was actually composed as /health.
+        mock_client.get.assert_awaited_once()
+        assert mock_client.get.await_args[0][0] == "http://orca:3003/health"
+
+    @pytest.mark.asyncio
+    async def test_parses_version_when_wrapper_uses_bambustudio_field(self):
+        """Future-proofing: if the wrapper is ever fixed to label the bambu CLI
+        as ``bambustudio``, the probe must still pick up the version. The probe
+        walks every non-dataPath key looking for a ``version`` field rather
+        than hardcoding the slicer name."""
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        body = {
+            "status": "healthy",
+            "checks": {
+                "bambustudio": {"available": True, "version": "02.06.00.51"},
+                "dataPath": {"accessible": True},
+            },
+        }
+        mock_client_cls, _ = self._mock_httpx(200, body)
+        with patch("httpx.AsyncClient", mock_client_cls):
+            result = await _fetch_slicer_health("http://bs:3001")
+
+        assert result == {"reachable": True, "version": "02.06.00.51"}
+
+    @pytest.mark.asyncio
+    async def test_version_unknown_propagates_as_string(self):
+        """The wrapper emits literal ``"unknown"`` when it can't parse the
+        slicer's --help output. We surface that as-is — it's diagnostic on
+        its own (tells the reviewer the regex didn't match)."""
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        body = {
+            "status": "healthy",
+            "checks": {
+                "orcaslicer": {"available": True, "version": "unknown"},
+                "dataPath": {"accessible": True},
+            },
+        }
+        mock_client_cls, _ = self._mock_httpx(200, body)
+        with patch("httpx.AsyncClient", mock_client_cls):
+            result = await _fetch_slicer_health("http://bs:3001")
+
+        assert result == {"reachable": True, "version": "unknown"}
+
+    @pytest.mark.asyncio
+    async def test_non_200_status_is_reachable_but_no_version(self):
+        """If the URL responds with a non-200, the host is up but the endpoint
+        isn't the expected one — surface reachable=True so the reviewer can
+        spot misconfiguration without conflating it with a network failure."""
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        mock_client_cls, _ = self._mock_httpx(404, {})
+        with patch("httpx.AsyncClient", mock_client_cls):
+            result = await _fetch_slicer_health("http://bs:3001")
+
+        assert result == {"reachable": True, "version": None}
+
+    @pytest.mark.asyncio
+    async def test_malformed_json_returns_reachable_no_version(self):
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        mock_client_cls, _ = self._mock_httpx(200, ValueError("not json"))
+        with patch("httpx.AsyncClient", mock_client_cls):
+            result = await _fetch_slicer_health("http://bs:3001")
+
+        assert result == {"reachable": True, "version": None}
+
+    @pytest.mark.asyncio
+    async def test_missing_checks_block_returns_no_version(self):
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        mock_client_cls, _ = self._mock_httpx(200, {"status": "healthy"})
+        with patch("httpx.AsyncClient", mock_client_cls):
+            result = await _fetch_slicer_health("http://bs:3001")
+
+        assert result == {"reachable": True, "version": None}
+
+    @pytest.mark.asyncio
+    async def test_connection_error_returns_unreachable(self):
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        with patch("httpx.AsyncClient") as mock_client_cls:
+            mock_client_cls.return_value.__aenter__.side_effect = ConnectionError("boom")
+
+            result = await _fetch_slicer_health("http://nowhere:9999")
+
+        assert result == {"reachable": False, "version": None}
+
+    @pytest.mark.asyncio
+    async def test_strips_trailing_slash_before_appending_health(self):
+        """Defensive: URLs entered with trailing slashes in Settings should
+        still produce a well-formed /health URL (no double-slash)."""
+        from backend.app.api.routes.support import _fetch_slicer_health
+
+        body = {"status": "healthy", "checks": {"orcaslicer": {"available": True, "version": "2.3.2"}}}
+        mock_client_cls, mock_client = self._mock_httpx(200, body)
+        with patch("httpx.AsyncClient", mock_client_cls):
+            await _fetch_slicer_health("http://bs:3001/")
+
+        assert mock_client.get.await_args[0][0] == "http://bs:3001/health"
+
+
 class TestCollectSlicerApiInfo:
     """Tests for the slicer-API info block (configured URLs + reachability).
 
@@ -744,24 +894,28 @@ class TestCollectSlicerApiInfo:
         session_ctx = self._make_settings_session({"use_slicer_api": "false", "preferred_slicer": "bambu_studio"})
         with (
             patch("backend.app.api.routes.support.async_session", session_ctx),
-            patch("backend.app.api.routes.support._check_url_reachable") as mock_check,
+            patch("backend.app.api.routes.support._fetch_slicer_health") as mock_health,
         ):
             info = await _collect_slicer_api_info()
 
-        mock_check.assert_not_called()
+        mock_health.assert_not_called()
         assert info["enabled"] is False
         assert info["preferred"] == "bambu_studio"
         assert info["bambu_studio_url_set_in_db"] is False
         assert info["orcaslicer_url_set_in_db"] is False
         assert "bambu_studio_reachable" not in info
         assert "orcaslicer_reachable" not in info
+        assert "bambu_studio_version" not in info
+        assert "orcaslicer_version" not in info
 
     @pytest.mark.asyncio
     async def test_enabled_runs_reachability_check_for_both_urls(self):
         from backend.app.api.routes.support import _collect_slicer_api_info
 
-        async def fake_check(url, timeout=2.0):
-            return "orca" in url
+        async def fake_health(url, timeout=2.0):
+            if "orca" in url:
+                return {"reachable": True, "version": "2.3.2"}
+            return {"reachable": False, "version": None}
 
         session_ctx = self._make_settings_session(
             {
@@ -773,7 +927,7 @@ class TestCollectSlicerApiInfo:
         )
         with (
             patch("backend.app.api.routes.support.async_session", session_ctx),
-            patch("backend.app.api.routes.support._check_url_reachable", side_effect=fake_check),
+            patch("backend.app.api.routes.support._fetch_slicer_health", side_effect=fake_health),
         ):
             info = await _collect_slicer_api_info()
 
@@ -784,6 +938,8 @@ class TestCollectSlicerApiInfo:
         assert info["orcaslicer_url_source"] == "db"
         assert info["bambu_studio_reachable"] is False
         assert info["orcaslicer_reachable"] is True
+        assert info["bambu_studio_version"] is None
+        assert info["orcaslicer_version"] == "2.3.2"
 
     @pytest.mark.asyncio
     async def test_env_var_fallback_url_pinged_when_db_setting_empty(self):
@@ -799,16 +955,16 @@ class TestCollectSlicerApiInfo:
 
         seen_urls: list[str] = []
 
-        async def fake_check(url, timeout=2.0):
+        async def fake_health(url, timeout=2.0):
             seen_urls.append(url)
-            return True
+            return {"reachable": True, "version": "02.06.00.51"}
 
         # DB has use_slicer_api=true but NO bambu_studio_api_url row, simulating
         # a user who set the URL via the BAMBU_STUDIO_API_URL env var.
         session_ctx = self._make_settings_session({"use_slicer_api": "true", "preferred_slicer": "bambu_studio"})
         with (
             patch("backend.app.api.routes.support.async_session", session_ctx),
-            patch("backend.app.api.routes.support._check_url_reachable", side_effect=fake_check),
+            patch("backend.app.api.routes.support._fetch_slicer_health", side_effect=fake_health),
             patch("backend.app.api.routes.support.settings") as mock_app_settings,
         ):
             # Pydantic-settings would normally do this for us when reading the
@@ -824,6 +980,7 @@ class TestCollectSlicerApiInfo:
         assert info["bambu_studio_url_set_in_db"] is False
         assert info["bambu_studio_url_source"] == "env_or_default"
         assert info["bambu_studio_reachable"] is True
+        assert info["bambu_studio_version"] == "02.06.00.51"
 
     @pytest.mark.asyncio
     async def test_reachability_uses_unredacted_url(self):
@@ -835,9 +992,9 @@ class TestCollectSlicerApiInfo:
 
         seen_urls: list[str] = []
 
-        async def fake_check(url, timeout=2.0):
+        async def fake_health(url, timeout=2.0):
             seen_urls.append(url)
-            return True
+            return {"reachable": True, "version": "unknown"}
 
         session_ctx = self._make_settings_session(
             {
@@ -848,7 +1005,7 @@ class TestCollectSlicerApiInfo:
         )
         with (
             patch("backend.app.api.routes.support.async_session", session_ctx),
-            patch("backend.app.api.routes.support._check_url_reachable", side_effect=fake_check),
+            patch("backend.app.api.routes.support._fetch_slicer_health", side_effect=fake_health),
         ):
             await _collect_slicer_api_info()
 

@@ -646,6 +646,45 @@ async def _check_url_reachable(url: str, timeout: float = 2.0) -> bool | None:
         return False
 
 
+async def _fetch_slicer_health(url: str, timeout: float = 2.0) -> dict | None:
+    """Fetch ``/health`` from a slicer sidecar and extract the CLI version.
+
+    Returns ``None`` when ``url`` is empty (so the caller can distinguish
+    "not configured" from "unreachable"). On any failure to fetch or parse,
+    returns ``{"reachable": False, "version": None}``. The slicer-API wrapper
+    labels both sidecars' CLI under ``checks.orcaslicer`` regardless of which
+    slicer is actually bundled (cosmetic wrapper bug), so we read the version
+    from whichever non-``dataPath`` child key exists rather than hardcoding
+    one. This lets the bundle reviewer answer "is the user running the image
+    they think they are?" without a separate curl round-trip.
+    """
+    if not url or not url.strip():
+        return None
+    health_url = url.rstrip("/") + "/health"
+    try:
+        import httpx
+
+        async with httpx.AsyncClient(timeout=timeout, verify=False) as client:  # noqa: S501 — local sidecars often use self-signed
+            r = await client.get(health_url, follow_redirects=False)
+            if r.status_code != 200:
+                return {"reachable": True, "version": None}
+            try:
+                data = r.json()
+            except Exception:
+                return {"reachable": True, "version": None}
+            checks = data.get("checks") if isinstance(data, dict) else None
+            if not isinstance(checks, dict):
+                return {"reachable": True, "version": None}
+            for key, value in checks.items():
+                if key == "dataPath":
+                    continue
+                if isinstance(value, dict) and "version" in value:
+                    return {"reachable": True, "version": value.get("version")}
+            return {"reachable": True, "version": None}
+    except Exception:
+        return {"reachable": False, "version": None}
+
+
 async def _collect_slicer_api_info() -> dict:
     """Reachability check for configured slicer-API sidecars.
 
@@ -697,12 +736,14 @@ async def _collect_slicer_api_info() -> dict:
         "orcaslicer_url_source": ("db" if oc_db else ("env_or_default" if oc_url else "unset")),
     }
     if info["enabled"]:
-        bs_reach, oc_reach = await asyncio.gather(
-            _check_url_reachable(bs_url),
-            _check_url_reachable(oc_url),
+        bs_health, oc_health = await asyncio.gather(
+            _fetch_slicer_health(bs_url),
+            _fetch_slicer_health(oc_url),
         )
-        info["bambu_studio_reachable"] = bs_reach
-        info["orcaslicer_reachable"] = oc_reach
+        info["bambu_studio_reachable"] = (bs_health or {}).get("reachable") if bs_health is not None else None
+        info["bambu_studio_version"] = (bs_health or {}).get("version") if bs_health is not None else None
+        info["orcaslicer_reachable"] = (oc_health or {}).get("reachable") if oc_health is not None else None
+        info["orcaslicer_version"] = (oc_health or {}).get("version") if oc_health is not None else None
     return info
 
 
