@@ -300,8 +300,9 @@ class TestUpdateProviderIcon:
         all three cached-bytes columns. Distinct from "field absent" which
         leaves the icon untouched.
         """
-        from backend.app.models.oidc_provider import OIDCProvider
         from sqlalchemy.orm import undefer
+
+        from backend.app.models.oidc_provider import OIDCProvider
 
         pid = await self._create_with_icon(async_client, admin_token, name="ClearViaPutProv")
 
