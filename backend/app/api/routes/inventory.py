@@ -165,12 +165,29 @@ async def apply_spool_to_slot_via_mqtt(
                 lp_result = await db.execute(select(LP).where(LP.id == local_id, LP.preset_type == "filament"))
                 lp = lp_result.scalar_one_or_none()
                 if lp:
-                    mat = (spool.material or lp.filament_type or "").upper().strip()
-                    tray_info_idx = (
-                        _GENERIC_FILAMENT_IDS.get(mat)
-                        or _GENERIC_FILAMENT_IDS.get(mat.split("-")[0].split(" ")[0])
-                        or ""
-                    )
+                    # Local preset's setting JSON carries the printer-recognized
+                    # filament_id (e.g. "P4d64437") — use that directly so the
+                    # slicer can resolve the specific preset. Falls through to
+                    # generic material id only when the JSON doesn't carry one.
+                    lp_filament_id = ""
+                    if lp.setting:
+                        try:
+                            setting_data = json.loads(lp.setting)
+                            raw_fid = setting_data.get("filament_id")
+                            if isinstance(raw_fid, str) and raw_fid:
+                                lp_filament_id = raw_fid
+                        except (json.JSONDecodeError, AttributeError):
+                            pass
+                    if lp_filament_id:
+                        tray_info_idx = lp_filament_id
+                        setting_id = filament_id_to_setting_id(lp_filament_id)
+                    else:
+                        mat = (spool.material or lp.filament_type or "").upper().strip()
+                        tray_info_idx = (
+                            _GENERIC_FILAMENT_IDS.get(mat)
+                            or _GENERIC_FILAMENT_IDS.get(mat.split("-")[0].split(" ")[0])
+                            or ""
+                        )
                     if lp.name:
                         tray_sub_brands = lp.name.split("@")[0].strip()
             except (ValueError, TypeError):
@@ -187,10 +204,32 @@ async def apply_spool_to_slot_via_mqtt(
                     setting_id = filament_id_to_setting_id(fid)
                     break
 
+    # Defend against tray_info_idx values the slicer cannot resolve. Two
+    # shapes leak through and must be discarded so the generic-material
+    # fallback below can rescue the slot:
+    #   1. Literal material names ("PLA", "PETG-CF") that pass through
+    #      normalize_slicer_filament unchanged when the spool's slicer_filament
+    #      is free-text rather than a real preset ID.
+    #   2. PFUS-prefix cloud setting_ids — valid as setting_id but rejected
+    #      by the slicer as tray_info_idx (the printer's calibration table
+    #      indexes by filament_id, and a PFUS isn't one). This normally gets
+    #      realigned to a P-prefix local id via printer_kp lookup, but the
+    #      replay path in main.py.on_ams_change passes current_user=None,
+    #      which skips cloud auth and leaves the raw PFUS in tray_info_idx —
+    #      overwriting the correctly-configured slot from the original assign.
+    # Valid tray_info_idx values: "GF" + letter + digits (Bambu official) or
+    # "P" followed by hex (user/local presets, NOT "PFUS").
+    _known_materials = set(MATERIAL_TEMPS.keys()) | set(_GENERIC_FILAMENT_IDS.keys())
+    if tray_info_idx and (tray_info_idx.upper() in _known_materials or tray_info_idx.startswith("PFUS")):
+        tray_info_idx = ""
+        setting_id = ""
+
     if not tray_info_idx:
         if (
             current_tray_info_idx
             and current_tray_info_idx not in _generic_id_values
+            and not current_tray_info_idx.startswith("PFUS")
+            and current_tray_info_idx.upper() not in _known_materials
             and current_tray_type
             and current_tray_type.upper() == tray_type.upper()
         ):
@@ -204,6 +243,14 @@ async def apply_spool_to_slot_via_mqtt(
             )
             if generic:
                 tray_info_idx = generic
+
+    # Ensure setting_id is always derivable from tray_info_idx. The local-preset
+    # path above sets tray_info_idx to a generic ID (e.g. "GFL99") but leaves
+    # setting_id empty — without this fallback the slicer gets a half-configured
+    # slot (filament id without setting id) and shows empty fields in the slot
+    # detail modal.
+    if tray_info_idx and not setting_id:
+        setting_id = filament_id_to_setting_id(tray_info_idx)
 
     temp_min, temp_max = MATERIAL_TEMPS.get((spool.material or "").upper(), (200, 240))
     if spool.nozzle_temp_min is not None:
@@ -301,48 +348,24 @@ async def apply_spool_to_slot_via_mqtt(
             nozzle_diameter=nozzle_diameter,
         )
     else:
-        # No stored K-profile for this slot — preserve the slot's current live
-        # cali_idx if the printer has one. cali_idx is read from state.raw_data
-        # using the same idiom as the route's `current_tray_info_idx` lookup.
-        # Negative values (e.g. -1) mean "no calibration recorded" and must not
-        # be sent.
-        live_cali_idx: int | None = None
-        if state and getattr(state, "raw_data", None):
-            if ams_id == 255:
-                for vt in state.raw_data.get("vt_tray") or []:
-                    if isinstance(vt, dict) and int(vt.get("id", 254)) == (tray_id + 254):
-                        raw = vt.get("cali_idx")
-                        if isinstance(raw, int):
-                            live_cali_idx = raw
-                        break
-            else:
-                ams_section = state.raw_data.get("ams", {})
-                ams_list = (
-                    ams_section.get("ams", [])
-                    if isinstance(ams_section, dict)
-                    else ams_section
-                    if isinstance(ams_section, list)
-                    else []
-                )
-                tray_dict = _find_tray_in_ams_data(ams_list, ams_id, tray_id)
-                if tray_dict:
-                    raw = tray_dict.get("cali_idx")
-                    if isinstance(raw, int):
-                        live_cali_idx = raw
-        if live_cali_idx is not None and live_cali_idx >= 0:
-            cali_filament_id = spool.slicer_filament or effective_tray_info_idx
-            client.extrusion_cali_sel(
-                ams_id=ams_id,
-                tray_id=tray_id,
-                cali_idx=live_cali_idx,
-                filament_id=cali_filament_id,
-                nozzle_diameter=nozzle_diameter,
-            )
-            logger.info(
-                "No stored K-profile for spool %d — preserved live cali_idx=%d",
-                spool.id,
-                live_cali_idx,
-            )
+        # No stored K-profile for this spool — always reset the slot to Default
+        # K (cali_idx=-1). The live cali_idx on the slot belongs to whatever
+        # filament was there before, so preserving it would apply the wrong
+        # filament's calibration to the new spool. Default K is the firmware's
+        # documented "no specific profile" value (see BambuClient.extrusion_cali_sel
+        # docstring).
+        cali_filament_id = spool.slicer_filament or effective_tray_info_idx
+        client.extrusion_cali_sel(
+            ams_id=ams_id,
+            tray_id=tray_id,
+            cali_idx=-1,
+            filament_id=cali_filament_id,
+            nozzle_diameter=nozzle_diameter,
+        )
+        logger.info(
+            "No stored K-profile for spool %d — reset slot to Default K (cali_idx=-1)",
+            spool.id,
+        )
 
     # Persist slot preset mapping for UI display (preset_name on hover card).
     try:
@@ -1247,30 +1270,40 @@ async def assign_spool(
 
     # 4. Auto-configure AMS slot via MQTT.
     #
-    # Skip the publish entirely when the target slot is empty: Bambu firmware
-    # silently drops ams_filament_setting / extrusion_cali_sel for unloaded
-    # slots (there is no filament context for the cali_idx to attach to). The
-    # SpoolAssignment row is preserved with an empty fingerprint_type, which
-    # acts as the "pending config" marker — when the spool is physically
-    # inserted later, on_ams_change re-fires the full configuration. This is
-    # the SpoolBuddy primary workflow: weigh-then-assign before insertion.
+    # Only suppress the publish when the firmware's *explicit* empty signal
+    # (state ∈ {9, 10}) is set — "no spool" / "spool present but no feed".
+    # Every other state, including state=3 (the default idle on A1 Mini BMCU /
+    # P1S Standard AMS for both loaded and unconfigured slots) and missing
+    # state (older firmwares), is treated as the user's assertion that a
+    # spool is in the slot and we attempt the MQTT push.
     #
-    # Empty-detection: prefer the printer's tray.state when it's reported
-    # (11=loaded, 9=empty, 10=spool present but filament not in feeder).
-    # tray_type alone is wrong post-"Reset slot" — that flow clears tray_type
-    # to "" while leaving filament physically loaded, and the old check
-    # would then mark it as a pending-config SpoolBuddy assignment, skip
-    # MQTT, and the slot would stay unconfigured forever because the
-    # on_ams_change replay only fires on an empty→loaded transition that
-    # never comes (the slot is already loaded). When state is not reported
-    # (older firmware), fall back to the tray_type heuristic.
-    if tray_state is not None:
-        slot_is_empty = tray_state != 11
-    else:
-        slot_is_empty = not (fingerprint_type and fingerprint_type.strip())
+    # The pre-existing "skip when slot looks empty" guard read state=3 +
+    # tray_type="" as "empty" and skipped MQTT. On these firmwares that
+    # combination is the post-"Reset Slot" state with the spool still
+    # physically inserted — there is NO AMS signal that distinguishes it
+    # from a truly-empty slot, so the guard created a deadlock: MQTT never
+    # fired, the AMS never reported any change (because nothing changed
+    # physically), and on_ams_change replay therefore never re-fired the
+    # config either. Reporter (#1322 follow-up by @RosdasHH) verified
+    # empirically that removing the guard makes the slot configure
+    # correctly because Bambu firmware DOES accept the push for a
+    # physically-loaded slot, even when tray_type is "" and state is 3.
+    #
+    # Trade-off for the truly-empty slot case: firmware drops the push
+    # silently (per Bambu's documented behavior), the SpoolAssignment row
+    # still has empty fingerprint_type because nothing in the assign path
+    # updates that column, and on_ams_change at main.py:1031-1054 still
+    # fires the deferred config when a spool eventually appears. So the
+    # SpoolBuddy weigh-then-assign-before-insert workflow continues to
+    # work — just without the optimization of skipping a no-op MQTT call.
+    #
+    # state ∈ {9, 10} stays as an explicit short-circuit so we don't churn
+    # a doomed MQTT push when the firmware has positively confirmed "no
+    # spool" — and to keep the on_ams_change replay path as the single
+    # source of truth for those slots.
+    slot_is_definitely_empty = tray_state == 9 or tray_state == 10
     configured = False
-    pending_config = slot_is_empty
-    if not slot_is_empty:
+    if not slot_is_definitely_empty:
         try:
             configured = await apply_spool_to_slot_via_mqtt(
                 db=db,
@@ -1284,6 +1317,11 @@ async def assign_spool(
             )
         except Exception as e:
             logger.warning("MQTT auto-configure failed for spool %d: %s", spool.id, e)
+    # pending_config is the "config not landed yet" UI marker. True when the
+    # firmware said empty, OR when MQTT couldn't actually publish (printer
+    # offline, no client, transient failure). on_ams_change replay re-fires
+    # the config in either case once the AMS reports a non-empty fingerprint.
+    pending_config = slot_is_definitely_empty or not configured
 
     # Return assignment with spool data
     result = await db.execute(

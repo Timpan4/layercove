@@ -79,6 +79,46 @@ def get_buffered_frame(printer_id: int) -> bytes | None:
     return _last_frames.get(printer_id)
 
 
+def is_stream_active(printer_id: int) -> bool:
+    """Return True iff a fan-out camera stream is currently registered for this printer.
+
+    Snapshot callers (Obico polling, manual /camera/snapshot) MUST NOT open a
+    second concurrent RTSP/chamber-image socket while a viewer is attached:
+    most Bambu firmwares allow only one camera connection, so the competing
+    socket either kicks the live viewer off or gets refused itself, and the
+    resulting reconnect storm tears down the fan-out broadcaster (see #1348).
+
+    Callers should consult this BEFORE trying to open a fresh socket and skip
+    the capture cycle when it returns True — even if try_get_active_buffered_frame
+    returns None (the stream may be running but the first frame hasn't landed
+    in the buffer yet, or the upstream is mid-reconnect).
+    """
+    return any(k.startswith(f"{printer_id}-") for k in _active_streams) or any(
+        k.startswith(f"{printer_id}-") for k in _active_chamber_streams
+    )
+
+
+def try_get_active_buffered_frame(printer_id: int) -> bytes | None:
+    """Return a buffered frame iff a stream is currently running for this printer.
+
+    Snapshot callers (Obico polling, manual /camera/snapshot) tap the fan-out
+    broadcaster's running upstream instead of opening a second concurrent
+    RTSP/chamber-image socket. Critical for printers that allow only one
+    camera connection (e.g. X2D firmware 01.01.00.00; see #1271).
+
+    Returns None when no broadcaster is active for this printer, so callers
+    fall through to their existing fresh-socket path unchanged.
+
+    NB: returning None does NOT mean "safe to open a fresh socket" — it also
+    fires when the stream is registered but no frame has been buffered yet
+    (startup race, mid-reconnect). Callers that must avoid competing sockets
+    should consult is_stream_active() first; see #1348.
+    """
+    if not is_stream_active(printer_id):
+        return None
+    return _last_frames.get(printer_id)
+
+
 async def get_printer_or_404(printer_id: int, db: AsyncSession) -> Printer:
     """Get printer by ID or raise 404."""
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
@@ -812,6 +852,21 @@ async def camera_snapshot(
             },
         )
 
+    # Reuse the fan-out broadcaster's buffered frame when a viewer is already
+    # watching — avoids opening a second concurrent RTSP socket on printers
+    # that allow only one camera connection (e.g. X2D firmware 01.01.00.00;
+    # see #1271). Buffered frame is <1s old while a viewer is connected.
+    buffered = try_get_active_buffered_frame(printer_id)
+    if buffered:
+        return Response(
+            content=buffered,
+            media_type="image/jpeg",
+            headers={
+                "Cache-Control": "no-cache, no-store, must-revalidate",
+                "Content-Disposition": f'inline; filename="snapshot_{printer_id}.jpg"',
+            },
+        )
+
     # Create temporary file for the snapshot (0600 so only the app user can read it)
     fd, tmp_name = tempfile.mkstemp(suffix=".jpg")
     os.close(fd)
@@ -967,7 +1022,7 @@ async def test_external_camera(
 async def check_plate_empty(
     printer_id: int,
     plate_type: str | None = None,
-    use_external: bool = False,
+    use_external: bool | None = None,
     include_debug_image: bool = False,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.CAMERA_VIEW),
@@ -982,7 +1037,11 @@ async def check_plate_empty(
     Args:
         printer_id: Printer ID
         plate_type: Type of build plate (e.g., "High Temp Plate") for calibration lookup
-        use_external: If True, prefer external camera over built-in
+        use_external: If True, prefer external camera over built-in. When omitted
+            (None), defaults to the printer's external_camera_enabled setting —
+            mirroring the runtime auto-check at print start (main.py). Without
+            this default the UI's manual check would always use the built-in
+            camera, mismatching the reference saved during calibration (#1359).
         include_debug_image: If True, return URL to annotated debug image
 
     Returns:
@@ -1002,6 +1061,11 @@ async def check_plate_empty(
 
     # Check printer exists first (before OpenCV check)
     printer = await get_printer_or_404(printer_id, db)
+
+    if use_external is None:
+        use_external = bool(
+            printer.external_camera_enabled and printer.external_camera_url and printer.external_camera_type
+        )
 
     if not is_plate_detection_available():
         raise HTTPException(
@@ -1077,7 +1141,7 @@ async def check_plate_empty(
 async def calibrate_plate_detection(
     printer_id: int,
     label: str | None = None,
-    use_external: bool = False,
+    use_external: bool | None = None,
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.CAMERA_VIEW),
 ):
@@ -1094,7 +1158,10 @@ async def calibrate_plate_detection(
     Args:
         printer_id: Printer ID
         label: Optional label for this reference (e.g., "High Temp Plate", "Wham Bam")
-        use_external: If True, prefer external camera over built-in
+        use_external: If True, prefer external camera over built-in. When omitted
+            (None), defaults to the printer's external_camera_enabled setting so
+            calibration captures from the same source the runtime auto-check
+            uses at print start (#1359).
 
     Returns:
         Dict with:
@@ -1110,6 +1177,11 @@ async def calibrate_plate_detection(
 
     # Check printer exists first (before OpenCV check)
     printer = await get_printer_or_404(printer_id, db)
+
+    if use_external is None:
+        use_external = bool(
+            printer.external_camera_enabled and printer.external_camera_url and printer.external_camera_type
+        )
 
     if not is_plate_detection_available():
         raise HTTPException(

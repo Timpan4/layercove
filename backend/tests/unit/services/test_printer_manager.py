@@ -741,6 +741,60 @@ class TestPrinterStateToDict:
         assert result["ams"][0]["tray"][0]["tag_uid"] is None
         assert result["ams"][0]["tray"][0]["tray_uuid"] is None
 
+    def test_bare_tray_emulates_state_9(self, mock_state):
+        """P1S / A1 Mini physically-empty-slot signal (#1322 follow-up by @RosdasHH):
+        the firmware sends only `{"id": N}` for a truly empty slot. Treat that as
+        the firmware's "no spool" state (state=9) so the inventory assign-spool
+        path can short-circuit the doomed MQTT publish.
+        """
+        mock_state.raw_data = {
+            "ams": [
+                {
+                    "id": 0,
+                    "tray": [
+                        {"id": 0, "state": 11, "tray_type": "PLA"},  # loaded slot
+                        {"id": 1},  # P1S empty-slot signal — only id
+                    ],
+                }
+            ]
+        }
+
+        result = printer_state_to_dict(mock_state)
+        trays = result["ams"][0]["tray"]
+
+        assert trays[0]["state"] == 11, "loaded slot keeps its firmware state"
+        assert trays[1]["state"] == 9, "bare {id} tray must be promoted to state=9"
+
+    def test_populated_payload_with_empty_state_3_is_not_promoted(self, mock_state):
+        """A1 Mini BMCU / P1S Standard AMS post-Reset-Slot case (#1322 root):
+        firmware sends state=3 + tray_type="" but with the FULL field set
+        populated. Must NOT be confused with the bare-tray empty signal —
+        else inventory.py would short-circuit MQTT and we'd reintroduce the
+        deadlock the #1322 fix removed.
+        """
+        mock_state.raw_data = {
+            "ams": [
+                {
+                    "id": 0,
+                    "tray": [
+                        {
+                            "id": 0,
+                            "state": 3,
+                            "tray_type": "",  # cleared
+                            "tray_color": "",
+                            "tag_uid": "0000000000000000",
+                            "remain": 0,
+                        }
+                    ],
+                }
+            ]
+        }
+
+        result = printer_state_to_dict(mock_state)
+        # state stays at 3 — the bare-tray promotion requires the dict to have
+        # ONLY the id key, not just empty/falsy values for the other fields.
+        assert result["ams"][0]["tray"][0]["state"] == 3
+
     def test_zero_tag_uid_becomes_none(self, mock_state):
         """Verify zero tag_uid is converted to None."""
         mock_state.raw_data = {
@@ -1141,6 +1195,48 @@ class TestSupportsChamberTemp:
         assert supports_chamber_temp("N2S") is False
         # A1 Mini
         assert supports_chamber_temp("N1") is False
+
+
+class TestIsBedSlinger:
+    """Tests for is_bed_slinger helper function (#1334)."""
+
+    def test_a1_series_is_bed_slinger(self):
+        """A1 / A1 Mini are open-frame bed-slingers — Z axis is the toolhead."""
+        from backend.app.services.printer_manager import is_bed_slinger
+
+        assert is_bed_slinger("A1") is True
+        assert is_bed_slinger("A1 Mini") is True
+        assert is_bed_slinger("A1MINI") is True
+        assert is_bed_slinger("A1-MINI") is True
+
+    def test_a1_internal_codes_recognised(self):
+        """Internal MQTT/SSDP codes for A1 family must also classify as bed-slinger."""
+        from backend.app.services.printer_manager import is_bed_slinger
+
+        # A1 Mini
+        assert is_bed_slinger("N1") is True
+        # A1
+        assert is_bed_slinger("N2S") is True
+
+    def test_bed_on_z_models_not_bed_slingers(self):
+        """X1 / P1 / H2 / H2C / H2D / H2S / P2S all have the bed on Z."""
+        from backend.app.services.printer_manager import is_bed_slinger
+
+        for model in ("X1", "X1C", "X1E", "P1P", "P1S", "P2S", "H2C", "H2D", "H2DPRO", "H2S"):
+            assert is_bed_slinger(model) is False, f"{model} should NOT be classified as bed-slinger"
+
+    def test_none_model_returns_false(self):
+        from backend.app.services.printer_manager import is_bed_slinger
+
+        assert is_bed_slinger(None) is False
+        assert is_bed_slinger("") is False
+
+    def test_case_insensitive(self):
+        from backend.app.services.printer_manager import is_bed_slinger
+
+        assert is_bed_slinger("a1") is True
+        assert is_bed_slinger("a1 mini") is True
+        assert is_bed_slinger("x1c") is False
 
 
 class TestSupportsDrying:

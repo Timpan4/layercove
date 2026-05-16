@@ -60,6 +60,88 @@ def _check_apikey_permissions(perm_strings: list[str]) -> None:
         )
 
 
+def require_energy_cost_update():
+    """Dependency for ``POST /settings/electricity-price`` (#1356).
+
+    Bypasses the ``_APIKEY_DENIED_PERMISSIONS`` ``SETTINGS_UPDATE`` block for
+    API keys that explicitly opt into ``can_update_energy_cost``. Full
+    ``SETTINGS_UPDATE`` for API keys stays denied — this is a narrowly-scoped
+    door for the Home Assistant dynamic-tariff use case documented in
+    ``wiki/features/energy.md``, not a general settings-write capability.
+
+    Accepts:
+      * Auth disabled  → always allowed (matches other settings routes)
+      * JWT user with ``SETTINGS_UPDATE`` permission
+      * API key with ``can_update_energy_cost = True``
+    """
+
+    async def permission_checker(
+        credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+        x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+    ) -> User | None:
+        async with async_session() as db:
+            if not await is_auth_enabled(db):
+                return None
+
+            credentials_exception = HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Could not validate credentials",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+            # API key path — X-API-Key header or Bearer bb_xxx
+            api_key_value: str | None = None
+            if x_api_key:
+                api_key_value = x_api_key
+            elif credentials is not None and credentials.credentials.startswith("bb_"):
+                api_key_value = credentials.credentials
+
+            if api_key_value is not None:
+                api_key = await _validate_api_key(db, api_key_value)
+                if api_key is None:
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Invalid API key",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
+                if not api_key.can_update_energy_cost:
+                    raise HTTPException(
+                        status_code=status.HTTP_403_FORBIDDEN,
+                        detail="API key does not have 'update_energy_cost' permission",
+                    )
+                return None
+
+            # JWT path
+            if credentials is None:
+                raise credentials_exception
+
+            try:
+                payload = jwt.decode(credentials.credentials, SECRET_KEY, algorithms=[ALGORITHM])
+                username: str = payload.get("sub")
+                if username is None:
+                    raise credentials_exception
+                jti: str | None = payload.get("jti")
+                if not jti or await is_jti_revoked(jti):
+                    raise credentials_exception
+                iat: int | float | None = payload.get("iat")
+            except JWTError:
+                raise credentials_exception
+
+            user = await get_user_by_username(db, username)
+            if user is None or not user.is_active:
+                raise credentials_exception
+            if not _is_token_fresh(iat, user):
+                raise credentials_exception
+            if not user.has_all_permissions(Permission.SETTINGS_UPDATE.value):
+                raise HTTPException(
+                    status_code=status.HTTP_403_FORBIDDEN,
+                    detail=f"Missing required permissions: {Permission.SETTINGS_UPDATE.value}",
+                )
+            return user
+
+    return permission_checker
+
+
 # Password hashing
 # Use pbkdf2_sha256 instead of bcrypt to avoid 72-byte limit and passlib initialization issues
 # pbkdf2_sha256 is a secure password hashing algorithm without bcrypt's limitations

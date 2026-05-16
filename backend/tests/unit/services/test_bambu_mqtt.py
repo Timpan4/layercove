@@ -338,6 +338,9 @@ class TestRealisticMessageFlow:
 
         mqtt_client.on_print_start = on_start
         mqtt_client.on_print_complete = on_complete
+        # Seed a prior state so the first RUNNING push is treated as a real
+        # state transition rather than a Bambuddy-restart catch-up (#1304).
+        mqtt_client._previous_gcode_state = "IDLE"
 
         # 1. Print starts with timelapse
         mqtt_client._process_message(
@@ -869,6 +872,68 @@ class TestAMSDataMerging:
         assert ams_data[0]["tray"][0]["tray_type"] == "", (
             "Without power_on_flag, clearing should proceed (defaults to True)"
         )
+
+    def test_idle_printer_with_power_off_and_nonzero_bits_clears_removed_slot(self, mqtt_client):
+        """Spool removal on an idle X1C must be detected even when power_on_flag=False (#1365).
+
+        On some X1C firmware (e.g. 01.08.02.00 reported by an3k) the AMS keeps
+        publishing push_status with `power_on_flag: False` while the printer
+        sits idle between prints — but `tray_exist_bits` continues to reflect
+        the real slot inventory. The original #765 guard skipped clearing
+        whenever power_on_flag was false, so the bit transition that would
+        mark a slot empty was discarded and the only way to refresh state
+        was a manual reconnect (pushall). The guard now skips clearing only
+        on the exact shutdown pattern (zero bits + power_on_flag=False).
+        """
+        # Initial state: two AMS units, slot 1 of AMS 0 loaded (the one
+        # we'll later remove).
+        initial_ams = {
+            "ams": [
+                {
+                    "id": 0,
+                    "tray": [
+                        {"id": 0, "tray_type": "PLA", "tray_color": "FF0000FF", "remain": 80},
+                        {"id": 1, "tray_type": "PETG", "tray_color": "00FF00FF", "remain": 60},
+                    ],
+                },
+                {
+                    "id": 1,
+                    "tray": [
+                        {"id": 0, "tray_type": "PETG", "tray_color": "DBDDD9FF", "remain": 90},
+                    ],
+                },
+            ],
+            "tray_exist_bits": "13",  # 0b00010011 — AMS0 slots 0+1, AMS1 slot 0
+            "power_on_flag": True,
+        }
+        mqtt_client._handle_ams_data(initial_ams)
+        assert mqtt_client.state.raw_data["ams"][0]["tray"][1]["tray_type"] == "PETG"
+
+        # Spool pulled from AMS 0 slot 1 while the printer is idle.
+        # tray_exist_bits goes from 0x13 -> 0x11, but firmware still reports
+        # power_on_flag=False because the printer is between prints. The real
+        # push_status payloads on the affected X1C still carry the full `ams`
+        # list (matches the bug-report log) — the slot inventory shrinks via
+        # the bitfield rather than via per-tray content updates.
+        removal_ams = {
+            "ams": [
+                {"id": 0, "tray": [{"id": 0}, {"id": 1}]},
+                {"id": 1, "tray": [{"id": 0}]},
+            ],
+            "tray_exist_bits": "11",  # 0b00010001 — slot 1 now empty
+            "power_on_flag": False,
+            "insert_flag": True,
+        }
+        mqtt_client._handle_ams_data(removal_ams)
+
+        ams_data = mqtt_client.state.raw_data["ams"]
+        assert ams_data[0]["tray"][1]["tray_type"] == "", (
+            "Removal must be detected even with power_on_flag=False when bits are non-zero (#1365)"
+        )
+        assert ams_data[0]["tray"][1]["tray_color"] == "", "Removed slot color must be cleared"
+        # Other slots untouched.
+        assert ams_data[0]["tray"][0]["tray_type"] == "PLA", "AMS0 slot 0 preserved"
+        assert ams_data[1]["tray"][0]["tray_type"] == "PETG", "AMS1 slot 0 preserved"
 
 
 class TestAMSTrayStateClearning:
@@ -1603,6 +1668,9 @@ class TestRequestTopicAmsMapping:
 
         mqtt_client.on_print_start = on_start
         mqtt_client._captured_ams_mapping = [0, 4, -1, -1]
+        # Seed a prior state so the first RUNNING push is treated as a real
+        # state transition rather than a Bambuddy-restart catch-up (#1304).
+        mqtt_client._previous_gcode_state = "IDLE"
 
         # Trigger print start
         mqtt_client._process_message(
@@ -1625,6 +1693,9 @@ class TestRequestTopicAmsMapping:
             start_data.update(data)
 
         mqtt_client.on_print_start = on_start
+        # Seed a prior state so the first RUNNING push is treated as a real
+        # state transition rather than a Bambuddy-restart catch-up (#1304).
+        mqtt_client._previous_gcode_state = "IDLE"
 
         mqtt_client._process_message(
             {
@@ -1638,6 +1709,48 @@ class TestRequestTopicAmsMapping:
 
         assert "ams_mapping" in start_data
         assert start_data["ams_mapping"] is None
+
+    def test_first_running_push_after_bambuddy_restart_does_not_fire_print_start(self, mqtt_client):
+        """Regression for #1304: Bambuddy restart mid-print misfired plate check + archive.
+
+        When Bambuddy restarts while a print is already in progress, the freshly
+        constructed BambuMQTTClient has `_previous_gcode_state = None`. The first
+        push_status the printer sends reports `gcode_state: RUNNING`. Before the
+        fix, the (None → RUNNING) transition satisfied is_new_print's guard and
+        fired on_print_start, which then ran plate detection (objects on plate →
+        paused the live print) AND re-archived the file (duplicate archive).
+
+        With the fix in place the on_print_start callback must NOT be called for
+        this catch-up push, but `_was_running` still tracks the print so
+        completion detection works the same way as before.
+        """
+        start_data = {}
+
+        def on_start(data):
+            start_data.update(data)
+
+        mqtt_client.on_print_start = on_start
+        # Explicit: this simulates a fresh Bambuddy process attaching to a
+        # printer that's already in the middle of a print.
+        mqtt_client._previous_gcode_state = None
+        mqtt_client._was_running = False
+
+        mqtt_client._process_message(
+            {
+                "print": {
+                    "gcode_state": "RUNNING",
+                    "gcode_file": "/data/Metadata/big_print.gcode",
+                    "subtask_name": "big_print",
+                }
+            }
+        )
+
+        assert start_data == {}, "on_print_start must not fire on Bambuddy-restart catch-up"
+        # Completion detection still needs to know we're tracking a running job.
+        assert mqtt_client._was_running is True
+        # And the state-update bookkeeping ran so the NEXT push won't keep
+        # treating the first RUNNING as fresh.
+        assert mqtt_client._previous_gcode_state == "RUNNING"
 
     def test_print_complete_callback_includes_ams_mapping(self, mqtt_client):
         """on_print_complete callback data includes captured ams_mapping."""
@@ -4668,3 +4781,141 @@ class TestAmsLoadFilamentEncoding:
         mqtt_client.state.connected = False
         assert mqtt_client.ams_load_filament(0) is False
         mqtt_client._client.publish.assert_not_called()
+
+
+class TestAmsFilamentSettingExternalSpoolEncoding:
+    """Encoding of `ams_filament_setting` / `reset_ams_slot` for the external spool.
+
+    Regression coverage for #1279. The encoding is verified against a captured
+    BambuStudio → X1C exchange (May 2026):
+
+        REQ {"command":"ams_filament_setting","ams_id":255,"tray_id":254,"slot_id":0,...}
+        REP {"result":"success",...}
+
+    The previous code sent `tray_id: 0` for the single-external case, which the
+    P1S in #1279 rejected with `result: "fail"`.
+    """
+
+    @pytest.fixture
+    def mqtt_client(self):
+        from unittest.mock import MagicMock
+
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(
+            ip_address="192.168.1.100",
+            serial_number="TEST123",
+            access_code="12345678",
+        )
+        client._client = MagicMock()
+        client.state.connected = True
+        return client
+
+    def _published(self, mqtt_client):
+        call_args = mqtt_client._client.publish.call_args
+        return json.loads(call_args[0][1])["print"]
+
+    def test_single_external_uses_tray_id_254(self, mqtt_client):
+        """X1C/P1S/A1 (single external slot): ams_id=255, tray_id=254, slot_id=0."""
+        # Simulate a single-external printer: vt_tray is a single-element list.
+        mqtt_client.state.raw_data = {"vt_tray": [{"id": "255"}]}
+
+        assert mqtt_client.ams_set_filament_setting(
+            ams_id=255,
+            tray_id=0,
+            tray_info_idx="GFL99",
+            tray_type="PLA",
+            tray_sub_brands="Generic PLA",
+            tray_color="000000FF",
+            nozzle_temp_min=190,
+            nozzle_temp_max=230,
+        )
+
+        cmd = self._published(mqtt_client)
+        assert cmd["command"] == "ams_filament_setting"
+        assert cmd["ams_id"] == 255
+        assert cmd["tray_id"] == 254, (
+            "Single-external `ams_filament_setting` must send tray_id=254 "
+            "(verified via BambuStudio→X1C capture). Sending tray_id=0 "
+            "is what the P1S in #1279 rejects."
+        )
+        assert cmd["slot_id"] == 0
+
+    def test_single_external_reset_uses_tray_id_254(self, mqtt_client):
+        """reset_ams_slot shares the convention — same encoding."""
+        mqtt_client.state.raw_data = {"vt_tray": [{"id": "255"}]}
+
+        assert mqtt_client.reset_ams_slot(ams_id=255, tray_id=0)
+
+        cmd = self._published(mqtt_client)
+        assert cmd["command"] == "ams_filament_setting"
+        assert cmd["ams_id"] == 255
+        assert cmd["tray_id"] == 254
+        assert cmd["slot_id"] == 0
+        # Reset clears the filament identity
+        assert cmd["tray_info_idx"] == ""
+        assert cmd["tray_type"] == ""
+
+    def test_regular_ams_tray_unchanged(self, mqtt_client):
+        """Regular AMS slots (ams_id <= 3) keep their existing encoding."""
+        mqtt_client.state.raw_data = {"vt_tray": []}
+
+        assert mqtt_client.ams_set_filament_setting(
+            ams_id=0,
+            tray_id=2,
+            tray_info_idx="GFA01",
+            tray_type="PLA",
+            tray_sub_brands="PLA Matte",
+            tray_color="FFFFFFFF",
+            nozzle_temp_min=190,
+            nozzle_temp_max=230,
+        )
+
+        cmd = self._published(mqtt_client)
+        assert cmd["ams_id"] == 0
+        assert cmd["tray_id"] == 2
+        assert cmd["slot_id"] == 2
+
+    def test_ams_ht_unchanged(self, mqtt_client):
+        """AMS-HT (ams_id >= 128) keeps its single-tray-per-unit encoding."""
+        mqtt_client.state.raw_data = {"vt_tray": []}
+
+        assert mqtt_client.ams_set_filament_setting(
+            ams_id=128,
+            tray_id=0,
+            tray_info_idx="GFA01",
+            tray_type="PLA",
+            tray_sub_brands="PLA Matte",
+            tray_color="FFFFFFFF",
+            nozzle_temp_min=190,
+            nozzle_temp_max=230,
+        )
+
+        cmd = self._published(mqtt_client)
+        assert cmd["ams_id"] == 128
+        assert cmd["tray_id"] == 0
+        assert cmd["slot_id"] == 0
+
+    def test_dual_external_left_keeps_legacy_encoding(self, mqtt_client):
+        """H2D dual-external (`vt_tray` length > 1): not in the X1C capture, so
+        left at the legacy `mqtt_tray_id = 0` until verified separately."""
+        mqtt_client.state.raw_data = {"vt_tray": [{"id": "254"}, {"id": "255"}]}
+
+        assert mqtt_client.ams_set_filament_setting(
+            ams_id=255,
+            tray_id=0,  # Ext-L
+            tray_info_idx="GFA01",
+            tray_type="PLA",
+            tray_sub_brands="PLA Matte",
+            tray_color="FFFFFFFF",
+            nozzle_temp_min=190,
+            nozzle_temp_max=230,
+        )
+
+        cmd = self._published(mqtt_client)
+        # Ext-L → mqtt_ams_id = 254
+        assert cmd["ams_id"] == 254
+        # tray_id stays at 0 for dual external; this pins current behavior so
+        # a future capture-driven change shows up in the diff.
+        assert cmd["tray_id"] == 0
+        assert cmd["slot_id"] == 0

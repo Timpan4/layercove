@@ -448,6 +448,30 @@ async def on_print_complete(
                 ams_raw.get("ams", []) if isinstance(ams_raw, dict) else ams_raw if isinstance(ams_raw, list) else []
             )
 
+            # Build set of trays actually involved in this print (#1269).
+            # Without this guard, swapping a spool in an UNUSED slot mid-print
+            # makes that slot's remain% drop to 0, which the fallback below
+            # would otherwise charge to the originally-assigned spool.
+            def _global_to_ams_key(global_tray_id: int) -> tuple[int, int]:
+                if global_tray_id >= 254:
+                    return (255, global_tray_id - 254)
+                if global_tray_id >= 128:
+                    return (global_tray_id, 0)
+                return (global_tray_id // 4, global_tray_id % 4)
+
+            print_used_keys: set[tuple[int, int]] = set()
+            if ams_mapping:
+                for gid in ams_mapping:
+                    if isinstance(gid, int) and gid >= 0:
+                        print_used_keys.add(_global_to_ams_key(gid))
+            for change in getattr(state, "tray_change_log", None) or []:
+                if isinstance(change, (tuple, list)) and len(change) >= 1:
+                    gid = change[0]
+                    if isinstance(gid, int) and gid >= 0:
+                        print_used_keys.add(_global_to_ams_key(gid))
+            if session.tray_now_at_start is not None and session.tray_now_at_start >= 0:
+                print_used_keys.add(_global_to_ams_key(session.tray_now_at_start))
+
             # Collect all trays to check: AMS trays + VT (external) trays
             # Each entry: (ams_id_for_assignment, tray_id_for_assignment, current_remain, label)
             trays_to_check: list[tuple[int, int, int, str]] = []
@@ -478,6 +502,18 @@ async def on_print_complete(
                     continue  # Already tracked via 3MF
 
                 if key not in session.tray_remain_start:
+                    continue
+
+                # Skip trays the print never touched. Only enforce when we have
+                # evidence of which trays the print used; if print_used_keys is
+                # empty (no mapping, no change log, no tray_now_at_start) keep
+                # the legacy behavior of scanning every tray.
+                if print_used_keys and key not in print_used_keys:
+                    logger.info(
+                        "[UsageTracker] %s: not in print mapping/tray_change_log — skipping fallback for printer %d",
+                        tray_label,
+                        printer_id,
+                    )
                     continue
 
                 if not isinstance(current_remain, int) or current_remain < 0 or current_remain > 100:
@@ -570,19 +606,42 @@ async def on_print_complete(
         await db.commit()
 
     # --- Update PrintArchive.cost from THIS print session only ---
+    #
+    # Cover any filament weight that wasn't tracked by an inventory spool with
+    # the global default rate (#1344). Without this, a multi-color print where
+    # only some AMS trays are mapped to inventory spools would record only the
+    # mapped slots' share — e.g. $0.01 for a 110g print when 3 of 4 trays had
+    # no spool record. The initial cost set by archive.py (total grams *
+    # primary cost_per_kg) is fine on its own, but this block overwrites it,
+    # so the overwrite must reconstruct the whole-print cost.
 
     if archive_id and results:
-        from sqlalchemy import select
+        from sqlalchemy import func, select
 
         from backend.app.models.archive import PrintArchive
+        from backend.app.models.print_log import PrintLogEntry
 
         archive_result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
         archive = archive_result.scalar_one_or_none()
         if archive:
             total_cost = sum(r.get("cost", 0) or 0 for r in results)
+            tracked_grams = sum(r.get("weight_used", 0) or 0 for r in results)
+            archive_grams = archive.filament_used_grams or 0
+            untracked_grams = max(0.0, archive_grams - tracked_grams)
+            if untracked_grams > 0 and default_filament_cost > 0:
+                total_cost += (untracked_grams / 1000.0) * default_filament_cost
             if total_cost > 0:
-                archive.cost = round(total_cost, 2)
-                await db.commit()
+                # Only overwrite archive.cost on the first run. Reprint actuals
+                # live in PrintLogEntry; the archive card keeps the first run's
+                # cost so a failed reprint doesn't visually clobber a successful
+                # 100 g/$X print with a 10 g/$X/10 partial (#1378).
+                _existing_runs_result = await db.execute(
+                    select(func.count(PrintLogEntry.id)).where(PrintLogEntry.archive_id == archive_id)
+                )
+                _existing_runs = _existing_runs_result.scalar()
+                if not _existing_runs:
+                    archive.cost = round(total_cost, 2)
+                    await db.commit()
 
     return results
 

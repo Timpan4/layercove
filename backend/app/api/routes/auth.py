@@ -46,6 +46,8 @@ from backend.app.schemas.auth import (
     ForgotPasswordRequest,
     ForgotPasswordResponse,
     GroupBrief,
+    LDAPProvisionRequest,
+    LDAPSearchResultResponse,
     LoginRequest,
     LoginResponse,
     ResetPasswordRequest,
@@ -1185,7 +1187,15 @@ async def _provision_ldap_user(db: AsyncSession, ldap_user, ldap_config) -> User
 
 
 async def _sync_ldap_user(db: AsyncSession, user: User, ldap_user, ldap_config) -> None:
-    """Sync LDAP user attributes (email, groups) on each login."""
+    """Sync LDAP user attributes (email, groups) on each login.
+
+    Group sync only touches BamBuddy groups that LDAP is configured to manage —
+    that is, the values of `group_mapping` plus `default_group`. Any group
+    outside that set is assumed to be a manual admin assignment and is
+    preserved across logins (#1292). Manual assignments to a BamBuddy group
+    that IS LDAP-managed are still overridden by LDAP truth, because revoking
+    access in LDAP must propagate to BamBuddy on next login.
+    """
     import logging
 
     from backend.app.services.ldap_service import resolve_group_mapping
@@ -1199,9 +1209,13 @@ async def _sync_ldap_user(db: AsyncSession, user: User, ldap_user, ldap_config) 
         user.email = ldap_user.email
         changed = True
 
-    # Sync group mappings — always update to match LDAP state (including revocation).
-    # Fall back to the configured default group when the user has no mapped groups,
-    # so authenticated LDAP users are never left permission-less.
+    # Compute the set of BamBuddy groups LDAP is allowed to manage. Anything
+    # outside this set is left alone so manual admin assignments survive logins.
+    ldap_managed_names: set[str] = set(ldap_config.group_mapping.values())
+    if ldap_config.default_group:
+        ldap_managed_names.add(ldap_config.default_group)
+
+    # Resolve what LDAP says the user should currently be in.
     mapped_group_names = resolve_group_mapping(ldap_user.groups, ldap_config.group_mapping)
     if not mapped_group_names and ldap_config.default_group:
         mapped_group_names = [ldap_config.default_group]
@@ -1210,11 +1224,18 @@ async def _sync_ldap_user(db: AsyncSession, user: User, ldap_user, ldap_config) 
             user.username,
             ldap_config.default_group,
         )
+
     if mapped_group_names:
         groups_result = await db.execute(select(Group).where(Group.name.in_(mapped_group_names)))
-        new_groups = list(groups_result.scalars().all())
+        new_ldap_groups = list(groups_result.scalars().all())
     else:
-        new_groups = []
+        new_ldap_groups = []
+
+    # Preserve manual assignments to non-LDAP-managed groups; replace only
+    # the LDAP-managed slice with the resolved set.
+    preserved_manual_groups = [g for g in user.groups if g.name not in ldap_managed_names]
+    new_groups = preserved_manual_groups + new_ldap_groups
+
     current_group_ids = {g.id for g in user.groups}
     new_group_ids = {g.id for g in new_groups}
     if current_group_ids != new_group_ids:
@@ -1280,6 +1301,167 @@ async def get_ldap_status(db: AsyncSession = Depends(get_db)):
         "ldap_enabled": settings.get("ldap_enabled", "false").lower() == "true",
         "ldap_configured": bool(settings.get("ldap_server_url")),
     }
+
+
+# =============================================================================
+# Manual LDAP user provisioning (#1298)
+# =============================================================================
+# Admins can search the directory and provision users directly from the UI
+# without enabling auto-provision on login. The two endpoints below pair with
+# the new "LDAP" tab in the user-create modal.
+
+
+@router.get("/ldap/search", response_model=list[LDAPSearchResultResponse])
+async def search_ldap_directory(
+    q: str,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.USERS_CREATE),
+    db: AsyncSession = Depends(get_db),
+):
+    """Search the LDAP directory for users matching `q`.
+
+    Returns up to 25 candidates. The query is matched (case-insensitively, with
+    wildcards on both sides) against sAMAccountName, uid, mail, displayName,
+    and cn — covering both AD and OpenLDAP layouts. Each result is annotated
+    with `already_provisioned` so the UI can grey out usernames that already
+    exist as BamBuddy users.
+
+    Requires USERS_CREATE permission. Minimum query length is 2 characters.
+    """
+    from sqlalchemy import func as sa_func
+
+    from backend.app.services.ldap_service import parse_ldap_config, search_ldap_users
+
+    query = q.strip()
+    if len(query) < 2:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Query must be at least 2 characters",
+        )
+
+    ldap_settings = await _get_ldap_settings(db)
+    if not ldap_settings:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LDAP is not enabled",
+        )
+
+    config = parse_ldap_config(ldap_settings)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LDAP server URL is not configured",
+        )
+
+    try:
+        results = search_ldap_users(config, query, limit=25)
+    except Exception as e:
+        _logger.exception("LDAP directory search failed")
+        # Admin-only endpoint — surface the underlying reason so the operator
+        # can fix it (auth_middleware already restricted access to USERS_CREATE).
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"LDAP search failed: {type(e).__name__}: {e}",
+        )
+
+    if not results:
+        return []
+
+    # Annotate `already_provisioned` so the SPA can dim/disable rows that map
+    # to an existing local row. Case-insensitive lookup mirrors create_user.
+    usernames_lower = [r.username.lower() for r in results]
+    existing_query = await db.execute(select(User.username).where(sa_func.lower(User.username).in_(usernames_lower)))
+    existing_lower = {str(name).lower() for name in existing_query.scalars().all()}
+
+    return [
+        LDAPSearchResultResponse(
+            username=r.username,
+            email=r.email,
+            display_name=r.display_name,
+            dn=r.dn,
+            already_provisioned=r.username.lower() in existing_lower,
+        )
+        for r in results
+    ]
+
+
+@router.post("/ldap/provision", response_model=UserResponse, status_code=status.HTTP_201_CREATED)
+async def provision_ldap_user(
+    payload: LDAPProvisionRequest,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.USERS_CREATE),
+    db: AsyncSession = Depends(get_db),
+):
+    """Provision a BamBuddy user from an existing LDAP directory entry.
+
+    Re-resolves the username via the service-account bind (rather than trusting
+    the request body) so group mappings and email come from a fresh LDAP read.
+    Applies the same group-mapping / default-group logic as the auto-provision
+    login path (`_provision_ldap_user`), so behavior stays identical regardless
+    of whether the user was created here or on first login.
+
+    Requires USERS_CREATE.
+    """
+    from sqlalchemy import func as sa_func
+
+    from backend.app.services.ldap_service import lookup_ldap_user, parse_ldap_config
+
+    username = payload.username.strip()
+    if not username:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Username is required",
+        )
+
+    ldap_settings = await _get_ldap_settings(db)
+    if not ldap_settings:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LDAP is not enabled",
+        )
+
+    config = parse_ldap_config(ldap_settings)
+    if not config:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="LDAP server URL is not configured",
+        )
+
+    # Look up via service bind. Service-bind failures bubble up as 503; missing
+    # entries surface as 404 to distinguish "directory unreachable" from
+    # "username doesn't exist in the directory" in the UI.
+    try:
+        ldap_user = lookup_ldap_user(config, username)
+    except Exception as e:
+        _logger.exception("LDAP lookup failed during provision")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail=f"LDAP lookup failed: {type(e).__name__}: {e}",
+        )
+
+    if ldap_user is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"User '{username}' not found in LDAP directory",
+        )
+
+    # Reject duplicates — the canonical username from LDAP is what gets stored,
+    # so the conflict check uses that rather than the request payload.
+    existing = await db.execute(select(User).where(sa_func.lower(User.username) == sa_func.lower(ldap_user.username)))
+    existing_user = existing.scalar_one_or_none()
+    if existing_user is not None:
+        if existing_user.auth_source == "ldap":
+            detail = f"LDAP user '{ldap_user.username}' is already provisioned"
+        else:
+            detail = f"A local user with the username '{ldap_user.username}' already exists"
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail=detail)
+
+    new_user = await _provision_ldap_user(db, ldap_user, config)
+
+    # Reload with groups eagerly loaded so _user_to_response can serialize them
+    # without lazy-load warnings (matches create_user / list_users pattern).
+    result = await db.execute(select(User).where(User.id == new_user.id).options(selectinload(User.groups)))
+    new_user = result.scalar_one()
+    _logger.info("Manually provisioned LDAP user %s (id=%d)", new_user.username, new_user.id)
+    return _user_to_response(new_user)
 
 
 # =============================================================================

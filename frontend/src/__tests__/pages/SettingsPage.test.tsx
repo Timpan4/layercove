@@ -718,6 +718,117 @@ describe('SettingsPage', () => {
     });
   });
 
+  describe('API Keys tab — #1356 energy-cost write scope', () => {
+    /**
+     * The narrowly-scoped settings-write toggle. We pin two contracts here:
+     *
+     *   1. The "Energy" badge renders for keys that have can_update_energy_cost=true.
+     *      Without a visible signal, an operator can't tell which key in their
+     *      list is the one their HA automation depends on.
+     *   2. The create form sends can_update_energy_cost=true to the backend
+     *      when the toggle is checked. The whole point of #1356 is that the
+     *      flag must actually be persisted — a UI that drops it silently
+     *      would put us right back where the bug started.
+     */
+    it('renders the Energy badge for keys with can_update_energy_cost=true', async () => {
+      const keys = [
+        {
+          id: 1,
+          name: 'tariff-pusher',
+          key_prefix: 'bk_tariff01',
+          user_id: 7,
+          can_queue: false,
+          can_control_printer: false,
+          can_read_status: true,
+          can_access_cloud: false,
+          can_update_energy_cost: true,
+          printer_ids: null,
+          enabled: true,
+          last_used: null,
+          created_at: '2026-05-15T00:00:00Z',
+          expires_at: null,
+        },
+      ];
+
+      server.use(http.get('/api/v1/api-keys/', () => HttpResponse.json(keys)));
+
+      const user = userEvent.setup();
+      render(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getAllByText('API Keys').length).toBeGreaterThan(0);
+      });
+      const tabButton = screen.getAllByText('API Keys').find((el) => el.tagName === 'BUTTON');
+      await user.click(tabButton!);
+
+      await waitFor(() => {
+        expect(screen.getByText('tariff-pusher')).toBeInTheDocument();
+      });
+
+      const row = screen.getByText('tariff-pusher').closest('.flex.items-center.justify-between');
+      expect(row).not.toBeNull();
+      expect(row!.textContent).toContain('Energy');
+    });
+
+    it('passes can_update_energy_cost through to the create call when the toggle is checked', async () => {
+      let posted: { name?: string; can_update_energy_cost?: boolean } | null = null;
+
+      server.use(
+        http.get('/api/v1/api-keys/', () => HttpResponse.json([])),
+        http.post('/api/v1/api-keys/', async ({ request }) => {
+          posted = (await request.json()) as { name?: string; can_update_energy_cost?: boolean };
+          return HttpResponse.json({
+            id: 99,
+            key: 'bk_returnedkey',
+            name: posted.name,
+            key_prefix: 'bk_returne',
+            user_id: 1,
+            can_queue: true,
+            can_control_printer: false,
+            can_read_status: true,
+            can_access_cloud: false,
+            can_update_energy_cost: posted.can_update_energy_cost ?? false,
+            printer_ids: null,
+            enabled: true,
+            last_used: null,
+            created_at: '2026-05-15T00:00:00Z',
+            expires_at: null,
+          });
+        })
+      );
+
+      const user = userEvent.setup();
+      render(<SettingsPage />);
+
+      await waitFor(() => {
+        expect(screen.getAllByText('API Keys').length).toBeGreaterThan(0);
+      });
+      const tabButton = screen.getAllByText('API Keys').find((el) => el.tagName === 'BUTTON');
+      await user.click(tabButton!);
+
+      const openButton = await screen.findByRole('button', { name: /Create Your First Key/i });
+      await user.click(openButton);
+
+      const energyLabelText = await screen.findByText(/Update electricity price/i);
+      const energyLabel = energyLabelText.closest('label');
+      expect(energyLabel).not.toBeNull();
+      const energyCheckbox = energyLabel!.querySelector('input[type="checkbox"]') as HTMLInputElement;
+      expect(energyCheckbox).not.toBeNull();
+      await user.click(energyCheckbox);
+
+      const submitButtons = screen.getAllByRole('button', { name: /^Create Key$/i });
+      const formSubmit = submitButtons.find(
+        (b) => b.closest('div')?.contains(energyCheckbox) || energyLabel?.parentElement?.parentElement?.contains(b),
+      );
+      await user.click(formSubmit ?? submitButtons[submitButtons.length - 1]);
+
+      await waitFor(() => {
+        expect(posted).not.toBeNull();
+        expect(posted!.can_update_energy_cost).toBe(true);
+      });
+    });
+  });
+
   describe('external camera snapshot URL override (#1177)', () => {
     /**
      * The snapshot URL input only appears for stream camera types where the

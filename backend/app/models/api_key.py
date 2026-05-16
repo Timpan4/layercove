@@ -31,6 +31,11 @@ class APIKey(Base):
     can_control_printer: Mapped[bool] = mapped_column(Boolean, default=False)  # Start/stop/cancel
     can_read_status: Mapped[bool] = mapped_column(Boolean, default=True)  # Query status
     can_access_cloud: Mapped[bool] = mapped_column(Boolean, default=False)  # Read /cloud/* on the owner's behalf
+    # Narrowly-scoped settings write: only POST /settings/electricity-price.
+    # Lets HA/Tibber-style automations push dynamic tariff updates without
+    # granting full SETTINGS_UPDATE (which is denied for API keys because it
+    # could rewrite SMTP/LDAP/MQTT credentials).
+    can_update_energy_cost: Mapped[bool] = mapped_column(Boolean, default=False)
 
     # Optional scope limits
     printer_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # null = all printers

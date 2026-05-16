@@ -106,15 +106,30 @@ def _resolve_global_tray_id(slot_id: int, slot_to_tray: list | None, ams_trays: 
     """Map a 1-based slot_id to a global_tray_id using optional custom mapping.
 
     Custom mapping: slot_to_tray[slot_id - 1] is used when >= 0.
+    A value of -1 in the custom mapping means the slicer routed this slot to
+    the external spool. BambuStudio converts virtual tray IDs (254/255) to -1
+    in the flat ams_mapping array before sending to the printer — see
+    start_print() in bambu_mqtt.py which documents this convention. We mirror
+    it here: when -1 is seen, look up the external spool's actual
+    global_tray_id (254/255) in ams_trays rather than falling through to the
+    position-based default (which would map slot_id=1 to the first AMS tray
+    and credit an unrelated spool — see #1276, regression of #853).
     Position-based default: uses sorted ams_trays keys so external spools (ID 254/255)
     naturally follow standard AMS trays, matching the slicer's slot numbering.
-    A value of -1 in the custom mapping means unmapped (uses position-based default).
     Final fallback: slot_id - 1 (legacy, works for pure AMS without external spools).
     """
     if slot_to_tray and slot_id <= len(slot_to_tray):
         mapped_tray = slot_to_tray[slot_id - 1]
         if mapped_tray >= 0:
             return mapped_tray
+        if mapped_tray == -1 and ams_trays:
+            # -1 means external spool. 254 = VIRTUAL_TRAY_DEPUTY_ID (main on
+            # single-nozzle, left/deputy on H2D dual-nozzle); 255 =
+            # VIRTUAL_TRAY_MAIN_ID. Prefer 254 when both exist since that's
+            # what single-nozzle printers report via tray_now.
+            for ext_id in (254, 255):
+                if ext_id in ams_trays:
+                    return ext_id
     # Position-based default: sort available tray IDs so external spools (254/255)
     # come after standard AMS trays, matching the slicer's slot assignment order.
     if ams_trays:
@@ -166,8 +181,10 @@ async def store_print_data(
 ):
     """Store Spoolman tracking data at print start (persisted to database).
 
-    Only stores data when Spoolman is enabled and AMS weight sync is disabled
-    (i.e., we're using per-usage tracking instead of AMS percentage estimates).
+    Per-print tracking is the primary weight-update path for Spoolman, mirroring
+    how the internal Filament Inventory works. The legacy AMS-remain%-based sync
+    is no longer used as a weight writer (#1119), so this runs whenever Spoolman
+    is enabled regardless of the deprecated `spoolman_disable_weight_sync` flag.
     """
     from backend.app.api.routes.settings import get_setting
     from backend.app.models.active_print_spoolman import ActivePrintSpoolman
@@ -181,13 +198,6 @@ async def store_print_data(
     # Check if Spoolman is enabled
     spoolman_enabled = await get_setting(db, "spoolman_enabled")
     if not spoolman_enabled or spoolman_enabled.lower() != "true":
-        return
-
-    # Only store tracking data if "Disable AMS Weight Sync" is enabled
-    disable_weight_sync_str = await get_setting(db, "spoolman_disable_weight_sync")
-    disable_weight_sync = disable_weight_sync_str and disable_weight_sync_str.lower() == "true"
-    if not disable_weight_sync:
-        logger.debug("[SPOOLMAN] Weight sync enabled, skipping per-usage tracking data storage")
         return
 
     # Get 3MF file path

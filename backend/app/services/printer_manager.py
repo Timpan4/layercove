@@ -98,6 +98,24 @@ def has_stg_cur_idle_bug(model: str | None) -> bool:
     return model_upper in STG_CUR_IDLE_BUG_MODELS
 
 
+def is_bed_slinger(model: str | None) -> bool:
+    """Whether the printer's Z axis controls the *toolhead*, not the bed.
+
+    Bambu's A1 family (A1, A1 Mini; internal codes N1 / N2S) are open-frame
+    bed-slingers: the bed moves on Y, the toolhead moves on X+Z. On every
+    other current model (X1, P1, H2, H2C, H2D, H2S, P2S, ...) the bed moves
+    on Z and the toolhead is fixed in Z.
+
+    G-code direction is opposite on these two families. `G1 Z-10` reduces
+    the nozzle-bed gap on both, but on bed-on-Z machines it does so by
+    moving the BED up, while on bed-slingers it does so by moving the
+    TOOLHEAD down — which is what crashed the nozzle in #1334.
+    """
+    if not model:
+        return False
+    return model.strip().upper() in A1_MODELS
+
+
 # Minimum firmware versions for AMS drying support (confirmed via capture testing)
 # Keys are exact model names (upper-cased). Do NOT use substring matching — it would
 # incorrectly gate X1E (matched by "X1") and H2D Pro (matched by "H2D").
@@ -251,14 +269,16 @@ class PrinterManager:
             )
 
     async def _persist_awaiting_plate_clear(self, printer_id: int, awaiting: bool):
-        from backend.app.core.database import async_session
+        from backend.app.core.database import run_with_retry
+
+        async def _do(db):
+            printer = await db.get(Printer, printer_id)
+            if printer is not None:
+                printer.awaiting_plate_clear = awaiting
+                await db.commit()
 
         try:
-            async with async_session() as db:
-                printer = await db.get(Printer, printer_id)
-                if printer is not None:
-                    printer.awaiting_plate_clear = awaiting
-                    await db.commit()
+            await run_with_retry(_do, label=f"persist awaiting_plate_clear printer={printer_id}")
         except Exception as e:
             logger.warning("Failed to persist awaiting_plate_clear for printer %d: %s", printer_id, e)
 
@@ -750,6 +770,19 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None, mo
                 if k_value is None and cali_idx is not None and cali_idx in kprofile_map:
                     k_value = kprofile_map[cali_idx]
 
+                # P1S / A1 Mini physically-empty-slot signal (#1322 follow-up by
+                # @RosdasHH): for a truly empty slot the firmware sends only
+                # {"id": N} — no state, no tray_type, no anything else. Treat
+                # that as the firmware's "no spool" indicator (state=9) so the
+                # assign-spool path in inventory.py can short-circuit a MQTT
+                # publish the firmware would silently drop anyway. The
+                # post-"Reset Slot" A1 Mini BMCU case sends a populated payload
+                # (state=3, tray_type="") — different shape, doesn't match this
+                # guard, still attempts the MQTT push per the #1322 fix.
+                state_val = tray.get("state")
+                if state_val is None and len(tray) == 1 and "id" in tray:
+                    state_val = 9
+
                 trays.append(
                     {
                         "id": int(tray.get("id", 0)),
@@ -767,7 +800,7 @@ def printer_state_to_dict(state: PrinterState, printer_id: int | None = None, mo
                         "nozzle_temp_max": tray.get("nozzle_temp_max"),
                         "drying_temp": tray.get("drying_temp"),
                         "drying_time": tray.get("drying_time"),
-                        "state": tray.get("state"),
+                        "state": state_val,
                     }
                 )
             # Prefer humidity_raw (actual percentage) over humidity (index 1-5)

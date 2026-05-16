@@ -637,6 +637,26 @@ class SpoolmanClient:
             vendor_match = (not brand) or f_vendor_name == (brand or "").strip().lower()
 
             if material_match and name_match and color_match and vendor_match:
+                # #1319: color_name is not part of the match key, but if the
+                # caller passed a value that differs from what's stored, update
+                # the filament — otherwise the user's edit is silently dropped
+                # and the inventory read falls back to subtype, making it look
+                # like color_name "reverts" to the subtype on every save.
+                # Convention: None = "don't touch"; "" = explicit clear; any
+                # other string = set/update.
+                if color_name is not None:
+                    existing = (f.get("color_name") or "").strip()
+                    requested = color_name.strip()
+                    if requested != existing:
+                        payload_value: str | None = requested if requested else None
+                        try:
+                            await self.patch_filament(f["id"], {"color_name": payload_value})
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to update color_name on filament %s: %s",
+                                f["id"],
+                                e,
+                            )
                 return f["id"]
 
         filament = await self.create_filament(
@@ -1024,34 +1044,50 @@ class SpoolmanClient:
 
     async def _find_or_create_filament(self, tray: AMSTray) -> dict | None:
         """Return a Bambu Lab filament matching the tray's material/color, creating it if absent."""
-        # Get Bambu Lab vendor ID for filtering
         bambu_vendor_id = await self.ensure_bambu_vendor()
         color_hex = tray.tray_color[:6]  # Strip alpha channel
+        material_upper = tray.tray_type.upper()
+        color_upper = color_hex.upper()
 
         # Search internal filaments - only match Bambu Lab vendor
         filaments = await self.get_filaments()
         for filament in filaments:
-            # Only match filaments from Bambu Lab vendor
             fil_vendor_id = filament.get("vendor_id") or filament.get("vendor", {}).get("id")
             if fil_vendor_id != bambu_vendor_id:
                 continue
-
-            # Match by material and color (handle None values)
             fil_material = filament.get("material") or ""
             fil_color = filament.get("color_hex") or ""
-            if fil_material.upper() == tray.tray_type.upper() and fil_color.upper() == color_hex.upper():
+            if fil_material.upper() == material_upper and fil_color.upper() == color_upper:
                 return filament
 
-        # Search external filaments (Bambu library)
+        # Search external filaments (SpoolmanDB) — restrict to Bambu Lab only.
+        # The /api/v1/external/filament endpoint returns the full multi-vendor catalog
+        # with no server-side filter, so without a manufacturer check the first PLA/black
+        # hit is typically 3DJAKE or 3DXTECH, not Bambu Lab.
         external = await self.get_external_filaments()
+        sub_brand = (tray.tray_sub_brands or "").strip().lower()
+        bambu_candidates = []
         for filament in external:
+            manufacturer = (filament.get("manufacturer") or "").strip().lower()
+            ext_id = (filament.get("id") or "").strip().lower()
+            if manufacturer != "bambu lab" and not ext_id.startswith("bambulab_"):
+                continue
             fil_material = filament.get("material") or ""
             fil_color = filament.get("color_hex") or ""
-            if fil_material.upper() == tray.tray_type.upper() and fil_color.upper() == color_hex.upper():
-                # Found in external library - need to create internal copy
-                return await self._create_filament_from_external(filament, tray)
+            if fil_material.upper() == material_upper and fil_color.upper() == color_upper:
+                bambu_candidates.append(filament)
 
-        # Not found - create new Bambu Lab filament
+        if bambu_candidates:
+            # Prefer the entry whose `name` matches the AMS `tray_sub_brands`
+            # (e.g. "PLA Basic", "Support for PLA/PETG Black") so the more specific
+            # variant wins over a generic "Black" entry when both are present.
+            chosen = next(
+                (f for f in bambu_candidates if (f.get("name") or "").strip().lower() == sub_brand),
+                bambu_candidates[0],
+            )
+            return await self._create_filament_from_external(chosen, tray)
+
+        # Not found in either source - create a new Bambu Lab filament from scratch.
         return await self.create_filament(
             name=tray.tray_sub_brands or tray.tray_type,
             vendor_id=bambu_vendor_id,
@@ -1069,6 +1105,7 @@ class SpoolmanClient:
             material=external.get("material", tray.tray_type),
             color_hex=external.get("color_hex", tray.tray_color[:6]),
             weight=external.get("weight", tray.tray_weight),
+            density=external.get("density"),
         )
 
 

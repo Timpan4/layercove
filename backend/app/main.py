@@ -587,6 +587,36 @@ def register_expected_print(
     )
 
 
+def _compute_run_filament_grams(
+    status: str,
+    archive_filament_used_grams: float | None,
+    progress: float | int | None,
+    usage_results: list[dict] | None,
+) -> float | None:
+    """Per-run filament for PrintLogEntry, partial-aware (#1378).
+
+    For ``completed``: returns the archive's slicer estimate (which approximates
+    actual since the print finished). For failed / cancelled / stopped:
+        1. Sum of tracked spool deltas in ``usage_results`` (most accurate
+           when inventory is configured for the print).
+        2. ``estimate * progress%`` (when no inventory delta available).
+        3. ``None`` (no signal at all — e.g. progress=0 and no spool data).
+    """
+    if status == "completed":
+        return archive_filament_used_grams
+
+    tracked_grams = sum(r.get("weight_used") or 0 for r in (usage_results or []))
+    if tracked_grams > 0:
+        return round(tracked_grams, 1)
+
+    if archive_filament_used_grams:
+        scale = max(0.0, min(((progress or 0) / 100.0), 1.0))
+        if scale > 0:
+            return round(archive_filament_used_grams * scale, 1)
+
+    return None
+
+
 def _get_start_ams_mapping(data: dict, archive_id: int | None) -> list[int] | None:
     """Resolve AMS mapping for print start without consuming stored queue/reprint state."""
     stored_ams_mapping = data.get("ams_mapping")
@@ -1018,12 +1048,18 @@ async def on_ams_change(printer_id: int, ams_data: list):
                     # MQTT was deferred). The moment any filament gets inserted
                     # — Bambu RFID, 3rd-party, or even an existing-but-now-
                     # reconfigured spool — fire the deferred configuration.
-                    # The "loaded" signal is `state == 11` (Bambu's "filament fed
-                    # to extruder" code), NOT tray_type — 3rd-party spools without
-                    # readable RFID report state=11 but tray_type="" because the
-                    # AMS sensor reads no filament metadata. Requiring a non-empty
-                    # tray_type would lock out the exact users this feature targets.
-                    if not fp_type.strip() and cur_state == 11 and assignment.spool:
+                    # The "loaded" signal is state == 11 (Bambu's "filament fed to
+                    # extruder" code) OR, on firmwares that don't use the state
+                    # enum meaningfully, a non-empty tray_type when state is
+                    # NOT one of the firmware's explicit empty signals (9, 10).
+                    # state-only was wrong for firmwares that never set 11 — A1
+                    # Mini BMCU 01.07.02.00 and P1S Standard AMS 00.00.06.75 both
+                    # always report state=3 — so the replay never fired for them
+                    # (#1322). The state ∉ {9,10} guard keeps the firmware's
+                    # explicit "empty" signals authoritative over any stale
+                    # tray_type that might survive the relay's auto-clearing.
+                    loaded = cur_state == 11 or (cur_state not in (9, 10) and cur_type.strip())
+                    if not fp_type.strip() and loaded and assignment.spool:
                         try:
                             from backend.app.api.routes.inventory import (
                                 apply_spool_to_slot_via_mqtt,
@@ -1342,9 +1378,10 @@ async def on_ams_change(printer_id: int, ams_data: list):
             if sync_mode and sync_mode != "auto":
                 return  # Only sync on auto mode
 
-            # Check if weight sync is disabled
-            disable_weight_sync_str = await get_setting(db, "spoolman_disable_weight_sync")
-            disable_weight_sync = disable_weight_sync_str and disable_weight_sync_str.lower() == "true"
+            # `spoolman_disable_weight_sync` is deprecated (#1119) — weight is now
+            # always owned by per-print tracking, never by AMS auto-sync. The
+            # setting is still read by the settings UI for backwards compat but
+            # has no effect on the sync path here.
 
             # Get Spoolman URL
             spoolman_url = await get_setting(db, "spoolman_url")
@@ -1450,7 +1487,10 @@ async def on_ams_change(printer_id: int, ams_data: list):
                         result = await client.sync_ams_tray(
                             tray,
                             printer_name,
-                            disable_weight_sync=disable_weight_sync,
+                            # Per-print tracking is the only weight writer (#1119).
+                            # AMS auto-sync still maintains spool metadata / slot
+                            # assignments but no longer touches remaining_weight.
+                            disable_weight_sync=True,
                             cached_spools=cached_spools,
                             inventory_remaining=inv_remaining,
                             spoolman_spool_id_hint=hint,
@@ -1980,6 +2020,24 @@ async def on_print_start(printer_id: int, data: dict):
                 _active_prints[(printer_id, archive.filename)] = archive.id
                 if subtask_name:
                     _active_prints[(printer_id, f"{subtask_name}.3mf")] = archive.id
+
+                # Start timelapse session if external camera is enabled (#1353).
+                # The two new-archive paths below also call start_session, but
+                # queue / VP-dispatched prints land here in the expected-archive
+                # branch and used to skip it entirely — so the timelapse session
+                # never started, no frames were captured, and the post-print
+                # stitch silently returned None.
+                if printer.external_camera_enabled and printer.external_camera_url:
+                    from backend.app.services.layer_timelapse import start_session
+
+                    start_session(
+                        printer_id,
+                        archive.id,
+                        printer.external_camera_url,
+                        printer.external_camera_type or "mjpeg",
+                        snapshot_url=printer.external_camera_snapshot_url,
+                    )
+                    logger.info("Started layer timelapse for printer %s, expected archive %s", printer_id, archive.id)
 
                 # Inject ams_mapping into usage tracker session — the session was created
                 # before expected-print promotion, so it may have ams_mapping=None when
@@ -3517,9 +3575,33 @@ async def on_print_complete(printer_id: int, data: dict):
                 if archive.created_by_id is None and _print_user_id is not None:
                     archive.created_by_id = _print_user_id
                 p_info = printer_manager.get_printer(printer_id)
+                # Per-run actuals — written to PrintLogEntry so stats reflect
+                # what THIS print actually used, not the source archive's
+                # first-run values (#1378). Helper handles the partial-print
+                # math (failed / cancelled / stopped get scaled to progress
+                # or to tracked spool deltas).
+                _run_status = data.get("status", "completed")
+                _run_grams = _compute_run_filament_grams(
+                    _run_status,
+                    archive.filament_used_grams,
+                    data.get("progress"),
+                    usage_results,
+                )
+
+                # Per-run cost — prefer usage_results sum. For partial prints
+                # we deliberately skip the topup-to-estimate logic in
+                # usage_tracker (which assumes the print completed); the raw
+                # tracked-spool sum is closer to what THIS run actually cost.
+                _run_cost: float | None = None
+                if usage_results:
+                    _run_cost = sum(r.get("cost") or 0 for r in usage_results) or None
+                if _run_cost is None and _run_status == "completed":
+                    _run_cost = archive.cost
+
                 await write_log_entry(
                     db,
-                    status=data.get("status", "completed"),
+                    archive_id=archive.id,
+                    status=_run_status,
                     print_name=archive.print_name,
                     printer_name=p_info.name if p_info else None,
                     printer_id=printer_id,
@@ -3527,8 +3609,11 @@ async def on_print_complete(printer_id: int, data: dict):
                     completed_at=archive.completed_at,
                     filament_type=archive.filament_type,
                     filament_color=archive.filament_color,
-                    filament_used_grams=archive.filament_used_grams,
+                    filament_used_grams=_run_grams,
+                    cost=_run_cost,
+                    failure_reason=archive.failure_reason,
                     thumbnail_path=archive.thumbnail_path,
+                    created_by_id=archive.created_by_id,
                     created_by_username=_print_user_info.get("username") if _print_user_info else None,
                 )
                 await db.commit()
@@ -3588,10 +3673,40 @@ async def on_print_complete(printer_id: int, data: dict):
 
                 energy_cost_per_kwh = await get_setting(db, "energy_cost_per_kwh")
                 cost_per_kwh = float(energy_cost_per_kwh) if energy_cost_per_kwh else 0.15
-                archive.energy_kwh = energy_used
-                archive.energy_cost = round(energy_used * cost_per_kwh, 3)
+                energy_cost_value = round(energy_used * cost_per_kwh, 3)
+
+                # First-run-only overwrite of archive.energy_kwh / energy_cost so a
+                # reprint doesn't visually clobber the source archive's energy data
+                # (#1378). Reprint energy lives in the matching PrintLogEntry below.
+                from sqlalchemy import func
+
+                from backend.app.models.print_log import PrintLogEntry
+
+                existing_runs = await db.scalar(
+                    select(func.count(PrintLogEntry.id)).where(PrintLogEntry.archive_id == archive_id)
+                )
+                if (existing_runs or 0) <= 1:
+                    # 0 = legacy archive that pre-dates per-run logging; 1 = the row
+                    # we just wrote for THIS print. Either way it's the first run.
+                    archive.energy_kwh = energy_used
+                    archive.energy_cost = energy_cost_value
+
+                # Backfill the latest PrintLogEntry for this archive with energy
+                # (write_log_entry above ran before this background task completed,
+                # so energy fields are still NULL on that row).
+                latest_run = await db.execute(
+                    select(PrintLogEntry)
+                    .where(PrintLogEntry.archive_id == archive_id)
+                    .order_by(PrintLogEntry.id.desc())
+                    .limit(1)
+                )
+                run_row = latest_run.scalar_one_or_none()
+                if run_row is not None:
+                    run_row.energy_kwh = energy_used
+                    run_row.energy_cost = energy_cost_value
+
                 await db.commit()
-                logger.info("[ENERGY-BG] Saved: %s kWh, cost=%s", energy_used, archive.energy_cost)
+                logger.info("[ENERGY-BG] Saved: %s kWh, cost=%s", energy_used, energy_cost_value)
         except Exception as e:
             logger.warning("[ENERGY-BG] Failed: %s", e)
 

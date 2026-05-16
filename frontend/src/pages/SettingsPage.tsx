@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDateOnly } from '../utils/date';
 import { getCurrencySymbol, SUPPORTED_CURRENCIES } from '../utils/currency';
+import { checkPasswordComplexity } from '../utils/password';
 import type { APIKey, AppSettings, AppSettingsUpdate, SmartPlug, SmartPlugStatus, NotificationProvider, NotificationTemplate, UpdateStatus, GitHubBackupStatus, CloudAuthStatus, UserCreate, UserUpdate, UserResponse, StorageUsageResponse } from '../api/client';
 import { Card, CardContent, CardDensityProvider, CardHeader } from '../components/Card';
 import { SlicerBundlesPanel } from '../components/SlicerBundlesPanel';
@@ -20,6 +21,7 @@ import { NotificationTemplateEditor } from '../components/NotificationTemplateEd
 import { NotificationLogViewer } from '../components/NotificationLogViewer';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { CreateUserAdvancedAuthModal } from '../components/CreateUserAdvancedAuthModal';
+import { LdapUserPicker } from '../components/LdapUserPicker';
 import { SpoolmanSettings } from '../components/SpoolmanSettings';
 import { SpoolCatalogSettings } from '../components/SpoolCatalogSettings';
 import { ColorCatalogSettings } from '../components/ColorCatalogSettings';
@@ -200,6 +202,7 @@ export function SettingsPage() {
     can_control_printer: false,
     can_read_status: true,
     can_access_cloud: false,
+    can_update_energy_cost: false,
   });
   const [createdAPIKey, setCreatedAPIKey] = useState<string | null>(null);
   const [showDeleteAPIKeyConfirm, setShowDeleteAPIKeyConfirm] = useState<number | null>(null);
@@ -218,6 +221,8 @@ export function SettingsPage() {
 
   // User management state
   const [showCreateUserModal, setShowCreateUserModal] = useState(false);
+  // Local / LDAP tab inside the create-user modal (#1298).
+  const [createUserTab, setCreateUserTab] = useState<'local' | 'ldap'>('local');
   const [showEditUserModal, setShowEditUserModal] = useState(false);
   const [editingUserId, setEditingUserId] = useState<number | null>(null);
   const [deleteUserId, setDeleteUserId] = useState<number | null>(null);
@@ -708,8 +713,16 @@ export function SettingsPage() {
         showToast(t('settings.toast.passwordsDoNotMatch'), 'error');
         return;
       }
-      if (userFormData.password.length < 6) {
-        showToast(t('settings.toast.passwordTooShort'), 'error');
+      const complexityIssue = checkPasswordComplexity(userFormData.password);
+      if (complexityIssue) {
+        const issueToKey = {
+          tooShort: 'settings.toast.passwordTooShort',
+          needsUppercase: 'settings.toast.passwordNeedsUppercase',
+          needsLowercase: 'settings.toast.passwordNeedsLowercase',
+          needsDigit: 'settings.toast.passwordNeedsDigit',
+          needsSpecial: 'settings.toast.passwordNeedsSpecial',
+        } as const;
+        showToast(t(issueToKey[complexityIssue]), 'error');
         return;
       }
     }
@@ -729,8 +742,16 @@ export function SettingsPage() {
         showToast(t('settings.toast.passwordsDoNotMatch'), 'error');
         return;
       }
-      if (userFormData.password.length < 6) {
-        showToast(t('settings.toast.passwordTooShort'), 'error');
+      const complexityIssue = checkPasswordComplexity(userFormData.password);
+      if (complexityIssue) {
+        const issueToKey = {
+          tooShort: 'settings.toast.passwordTooShort',
+          needsUppercase: 'settings.toast.passwordNeedsUppercase',
+          needsLowercase: 'settings.toast.passwordNeedsLowercase',
+          needsDigit: 'settings.toast.passwordNeedsDigit',
+          needsSpecial: 'settings.toast.passwordNeedsSpecial',
+        } as const;
+        showToast(t(issueToKey[complexityIssue]), 'error');
         return;
       }
     }
@@ -1230,11 +1251,14 @@ export function SettingsPage() {
 
   return (
     <CardDensityProvider density="dense">
-    <div className="p-4 md:p-6">
+    <div className="p-4 md:p-8">
       <div className="mb-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div className="flex items-baseline gap-3">
-          <h1 className="text-2xl font-bold text-white">{t('settings.title')}</h1>
-          <p className="text-sm text-bambu-gray hidden md:block">{t('settings.configureBambuddy')}</p>
+        <div>
+          <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+            <SettingsIcon className="w-7 h-7 text-bambu-green" />
+            {t('settings.title')}
+          </h1>
+          <p className="text-bambu-gray mt-1">{t('settings.configureBambuddy')}</p>
         </div>
         {/* Cross-tab search */}
         <div className="relative sm:w-72">
@@ -1441,7 +1465,7 @@ export function SettingsPage() {
         >
           <Database className="w-4 h-4" />
           {t('settings.tabs.backup')}
-          <span className={`w-2 h-2 rounded-full ${cloudAuthStatus?.is_authenticated && githubBackupStatus?.configured && githubBackupStatus?.enabled ? 'bg-green-400' : 'bg-gray-500'}`} />
+          <span className={`w-2 h-2 rounded-full ${(cloudAuthStatus?.is_authenticated && githubBackupStatus?.configured && githubBackupStatus?.enabled) || settings?.local_backup_enabled ? 'bg-green-400' : 'bg-gray-500'}`} />
         </button>
       </nav>
       <div className="flex-1 min-w-0">
@@ -3718,6 +3742,18 @@ export function SettingsPage() {
                           <p className="text-xs text-bambu-gray">{t('settings.cloudAccessDescription', 'Read Bambu Cloud presets and filaments on your behalf. Requires you to be signed into Bambu Cloud.')}</p>
                         </div>
                       </label>
+                      <label className="flex items-center gap-3 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          checked={newAPIKeyPermissions.can_update_energy_cost}
+                          onChange={(e) => setNewAPIKeyPermissions(prev => ({ ...prev, can_update_energy_cost: e.target.checked }))}
+                          className="w-4 h-4 text-bambu-green rounded border-bambu-dark-tertiary bg-bambu-dark focus:ring-bambu-green"
+                        />
+                        <div>
+                          <span className="text-white">{t('settings.updateEnergyCost')}</span>
+                          <p className="text-xs text-bambu-gray">{t('settings.updateEnergyCostDescription')}</p>
+                        </div>
+                      </label>
                     </div>
                   </div>
                   <div className="flex items-center gap-2 pt-2">
@@ -3777,6 +3813,9 @@ export function SettingsPage() {
                             )}
                             {key.can_access_cloud && (
                               <span className="px-1.5 py-0.5 bg-purple-500/20 text-purple-400 rounded">{t('settings.cloudBadge', 'Cloud')}</span>
+                            )}
+                            {key.can_update_energy_cost && (
+                              <span className="px-1.5 py-0.5 bg-amber-500/20 text-amber-400 rounded">{t('settings.energyCostBadge')}</span>
                             )}
                             {key.user_id === null && (
                               <span
@@ -5284,6 +5323,66 @@ export function SettingsPage() {
               </div>
             </CardHeader>
             <CardContent>
+              {ldapStatus?.ldap_enabled && (
+                <div
+                  className="mb-4 flex items-center gap-1 p-1 bg-bambu-dark-secondary rounded-lg"
+                  role="tablist"
+                  aria-label={t('users.modal.tabsAriaLabel')}
+                >
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={createUserTab === 'local'}
+                    onClick={() => setCreateUserTab('local')}
+                    className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${
+                      createUserTab === 'local'
+                        ? 'bg-bambu-green/15 text-bambu-green'
+                        : 'text-bambu-gray hover:text-white'
+                    }`}
+                  >
+                    {t('users.modal.localTab')}
+                  </button>
+                  <button
+                    type="button"
+                    role="tab"
+                    aria-selected={createUserTab === 'ldap'}
+                    onClick={() => setCreateUserTab('ldap')}
+                    className={`flex-1 px-3 py-2 text-sm rounded-md transition-colors ${
+                      createUserTab === 'ldap'
+                        ? 'bg-bambu-green/15 text-bambu-green'
+                        : 'text-bambu-gray hover:text-white'
+                    }`}
+                  >
+                    {t('users.modal.ldapTab')}
+                  </button>
+                </div>
+              )}
+
+              {createUserTab === 'ldap' && ldapStatus?.ldap_enabled ? (
+                <>
+                  <LdapUserPicker
+                    onSuccess={(user) => {
+                      setShowCreateUserModal(false);
+                      setCreateUserTab('local');
+                      setUserFormData({ username: '', password: '', email: '', confirmPassword: '', role: 'user', group_ids: [] });
+                      showToast(t('users.toast.ldapProvisioned', { username: user.username }));
+                    }}
+                  />
+                  <div className="mt-6 flex justify-end">
+                    <Button
+                      variant="secondary"
+                      onClick={() => {
+                        setShowCreateUserModal(false);
+                        setCreateUserTab('local');
+                        setUserFormData({ username: '', password: '', email: '', confirmPassword: '', role: 'user', group_ids: [] });
+                      }}
+                    >
+                      {t('common.cancel')}
+                    </Button>
+                  </div>
+                </>
+              ) : (
+              <>
               <div className="space-y-3">
                 <div>
                   <label className="block text-sm font-medium text-white mb-2">{t('settings.username')}</label>
@@ -5305,8 +5404,9 @@ export function SettingsPage() {
                     className="w-full px-4 py-3 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg text-white placeholder-bambu-gray focus:outline-none focus:ring-2 focus:ring-bambu-green/50 focus:border-bambu-green transition-colors"
                     placeholder={t('settings.enterPassword')}
                     autoComplete="new-password"
-                    minLength={6}
+                    minLength={8}
                   />
+                  <p className="text-bambu-gray text-xs mt-1">{t('settings.passwordRequirements')}</p>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
@@ -5365,7 +5465,7 @@ export function SettingsPage() {
                 </Button>
                 <Button
                   onClick={handleCreateUser}
-                  disabled={createUserMutation.isPending || !userFormData.username || !userFormData.password || userFormData.password !== userFormData.confirmPassword || userFormData.password.length < 6}
+                  disabled={createUserMutation.isPending || !userFormData.username || !userFormData.password || userFormData.password !== userFormData.confirmPassword || checkPasswordComplexity(userFormData.password) !== null}
                 >
                   {createUserMutation.isPending ? (
                     <>
@@ -5380,6 +5480,8 @@ export function SettingsPage() {
                   )}
                 </Button>
               </div>
+              </>
+              )}
             </CardContent>
           </Card>
         </div>
@@ -5398,6 +5500,12 @@ export function SettingsPage() {
           onCreate={handleCreateUser}
           isCreating={createUserMutation.isPending}
           isCreateButtonDisabled={createUserMutation.isPending || !userFormData.username || !userFormData.email}
+          ldapEnabled={ldapStatus?.ldap_enabled}
+          onLdapProvisioned={(user) => {
+            setShowCreateUserModal(false);
+            setUserFormData({ username: '', password: '', email: '', confirmPassword: '', role: 'user', group_ids: [] });
+            showToast(t('users.toast.ldapProvisioned', { username: user.username }));
+          }}
         />
       )}
 
@@ -5480,8 +5588,9 @@ export function SettingsPage() {
                         className="w-full px-4 py-3 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg text-white placeholder-bambu-gray focus:outline-none focus:ring-2 focus:ring-bambu-green/50 focus:border-bambu-green transition-colors"
                         placeholder={t('settings.enterNewPassword')}
                         autoComplete="new-password"
-                        minLength={6}
+                        minLength={8}
                       />
+                      <p className="text-bambu-gray text-xs mt-1">{t('settings.passwordRequirements')}</p>
                     </div>
                     {userFormData.password && (
                       <div>
@@ -5576,7 +5685,7 @@ export function SettingsPage() {
                     updateUserMutation.isPending ||
                     !userFormData.username ||
                     (advancedAuthStatus?.advanced_auth_enabled && !userFormData.email) ||
-                    Boolean(!advancedAuthStatus?.advanced_auth_enabled && userFormData.password && (userFormData.password !== userFormData.confirmPassword || userFormData.password.length < 6))
+                    Boolean(!advancedAuthStatus?.advanced_auth_enabled && userFormData.password && (userFormData.password !== userFormData.confirmPassword || checkPasswordComplexity(userFormData.password) !== null))
                   }
                 >
                   {updateUserMutation.isPending ? (

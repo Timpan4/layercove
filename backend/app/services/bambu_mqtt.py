@@ -1714,13 +1714,23 @@ class BambuMQTTClient:
         # Check tray_exist_bits to clear empty slots (Issue #147)
         # New AMS models don't send empty tray data - they just update tray_exist_bits
         # Each bit in tray_exist_bits represents a slot: bit=0 means empty, bit=1 means has spool
-        # Skip when power_on_flag=False: printer shutdown sends all-zero bits which would
-        # wipe all slot data and cause auto-unlink to remove spool assignments (#765)
+        # Skip ONLY the printer-shutdown pattern: all-zero bits paired with
+        # power_on_flag=False (#765). On shutdown that combination would wipe all
+        # slot data and cause auto-unlink to remove spool assignments. Non-zero
+        # bits with power_on_flag=False are valid AMS state from an idle printer
+        # (#1365 — X1C reports power_on_flag=False between prints while the AMS
+        # keeps reporting its actual slot inventory); the update MUST be applied
+        # so spool removal is detected without requiring a manual reconnect.
         tray_exist_bits_str = ams_data.get("tray_exist_bits") if isinstance(ams_data, dict) else None
         power_on = ams_data.get("power_on_flag", True) if isinstance(ams_data, dict) else True
-        if tray_exist_bits_str and power_on:
+        if tray_exist_bits_str:
             try:
                 tray_exist_bits = int(tray_exist_bits_str, 16)
+            except (ValueError, TypeError) as e:
+                logger.debug("[%s] Could not parse tray_exist_bits: %s", self.serial_number, e)
+                tray_exist_bits = None
+
+            if tray_exist_bits is not None and not (tray_exist_bits == 0 and not power_on):
                 for ams_unit in merged_ams:
                     ams_id_raw = ams_unit.get("id")
                     if ams_id_raw is None:
@@ -1752,8 +1762,6 @@ class BambuMQTTClient:
                             tray["tray_uuid"] = "00000000000000000000000000000000"
                             tray["tray_info_idx"] = ""
                             tray["remain"] = 0
-            except (ValueError, TypeError) as e:
-                logger.debug("[%s] Could not parse tray_exist_bits: %s", self.serial_number, e)
 
         self.state.raw_data["ams"] = merged_ams
 
@@ -2779,6 +2787,7 @@ class BambuMQTTClient:
         current_file = self.state.gcode_file or self.state.current_print
         is_new_print = (
             self.state.state == "RUNNING"
+            and self._previous_gcode_state is not None  # #1304: skip on first push after Bambuddy startup
             and self._previous_gcode_state != "RUNNING"
             and current_file
             and not self._was_running  # Prevent duplicates when resuming from PAUSE
@@ -4584,17 +4593,27 @@ class BambuMQTTClient:
             logger.warning("[%s] Cannot set AMS filament setting: not connected", self.serial_number)
             return False
 
-        # Calculate mqtt IDs based on AMS type
+        # Calculate mqtt IDs based on AMS type.
+        # External-spool convention verified against a BambuStudio→X1C packet capture
+        # (issue #1279, May 2026): for `ams_filament_setting` Studio sends the
+        # *global* tray index in `tray_id`, not a local position within the virtual
+        # unit. The printer's response echoes `tray_id: 0` (slot position), which
+        # is what the original code was matching — but the request and response
+        # use different semantics for that field. Sending `tray_id: 0` is what
+        # the P1S in #1279 rejected with `result: "fail"`.
         if ams_id == 255:
             vt_tray = self.state.raw_data.get("vt_tray", []) if self.state.raw_data else []
             if len(vt_tray) > 1:
                 # Dual external slots (H2D): each ext slot is its own virtual AMS unit
-                # (254=ext-L / slot 0, 255=ext-R / slot 1)
+                # (254=ext-L / slot 0, 255=ext-R / slot 1). The dual case is NOT
+                # covered by the X1C capture — left at `mqtt_tray_id = 0` until a
+                # captured Studio→H2D exchange confirms the correct value.
                 mqtt_ams_id = 254 + tray_id
+                mqtt_tray_id = 0
             else:
-                # Single external slot (X1C, P1S, A1): always ams_id=255
+                # Single external slot (X1C, P1S, A1): global tray_id=254.
                 mqtt_ams_id = 255
-            mqtt_tray_id = 0
+                mqtt_tray_id = 254
             slot_id = 0
         elif ams_id <= 3:
             mqtt_ams_id = ams_id
@@ -4649,16 +4668,18 @@ class BambuMQTTClient:
             logger.warning("[%s] Cannot reset AMS slot: not connected", self.serial_number)
             return False
 
-        # Calculate mqtt IDs based on AMS type
+        # Calculate mqtt IDs based on AMS type — same convention as
+        # ams_set_filament_setting above. See its comment for the #1279 capture rationale.
         if ams_id == 255:
             vt_tray = self.state.raw_data.get("vt_tray", []) if self.state.raw_data else []
             if len(vt_tray) > 1:
                 # Dual external slots (H2D): each ext slot is its own virtual AMS unit
                 mqtt_ams_id = 254 + tray_id
+                mqtt_tray_id = 0
             else:
-                # Single external slot (X1C, P1S, A1): always ams_id=255
+                # Single external slot (X1C, P1S, A1): global tray_id=254.
                 mqtt_ams_id = 255
-            mqtt_tray_id = 0
+                mqtt_tray_id = 254
             slot_id = 0
         elif ams_id <= 3:
             mqtt_ams_id = ams_id

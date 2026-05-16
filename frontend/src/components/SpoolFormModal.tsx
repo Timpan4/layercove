@@ -80,7 +80,16 @@ export function SpoolFormModal({
   const [builtinFilaments, setBuiltinFilaments] = useState<BuiltinFilament[]>([]);
 
   // Color catalog
-  const [colorCatalog, setColorCatalog] = useState<{ manufacturer: string; color_name: string; hex_color: string; material: string | null }[]>([]);
+  const [colorCatalog, setColorCatalog] = useState<{
+    manufacturer: string;
+    color_name: string;
+    hex_color: string;
+    material: string | null;
+    // #1340: gradient + effect carried from the catalog entry through to the
+    // color picker so they're applied alongside hex + name on selection.
+    extra_colors?: string | null;
+    effect_type?: string | null;
+  }[]>([]);
 
   // Color state
   const [recentColors, setRecentColors] = useState<ColorPreset[]>([]);
@@ -303,7 +312,11 @@ export function SpoolFormModal({
           material: spool.material || '',
           subtype: spool.subtype || '',
           brand: spool.brand || '',
-          color_name: spool.color_name || '',
+          // #1319: leave color_name blank when the backend reports it was
+          // synthesised from subtype — otherwise the form would round-trip
+          // the synth value to Spoolman on save as if the user had set it,
+          // which is what produced the "color reverts to subtype" symptom.
+          color_name: spool.color_name_is_synthesized ? '' : (spool.color_name || ''),
           rgba: validRgba,
           extra_colors: spool.extra_colors || '',
           effect_type: spool.effect_type || '',
@@ -519,13 +532,27 @@ export function SpoolFormModal({
     },
   });
 
-  // Fetch assignment for this spool (to show Unassign button)
+  // Fetch assignment for this spool (to show Unassign button). In Spoolman mode
+  // the slot assignment lives in the spoolman_slot_assignments table keyed by
+  // spoolman_spool_id, not in the legacy spool_assignments table — #1336 was the
+  // resulting "Unassign button is always disabled" report.
   const { data: assignments } = useQuery({
     queryKey: ['spool-assignments'],
     queryFn: () => api.getAssignments(),
-    enabled: isOpen && isEditing,
+    enabled: isOpen && isEditing && !spoolmanMode,
   });
-  const spoolAssignment = spool ? assignments?.find(a => a.spool_id === spool.id) : undefined;
+  const { data: spoolmanSlotAssignments } = useQuery({
+    queryKey: ['spoolman-slot-assignments-all'],
+    queryFn: () => api.getSpoolmanSlotAssignments(),
+    enabled: isOpen && isEditing && spoolmanMode,
+  });
+  const spoolAssignment = (() => {
+    if (!spool) return undefined;
+    if (spoolmanMode) {
+      return spoolmanSlotAssignments?.find(a => a.spoolman_spool_id === spool.id);
+    }
+    return assignments?.find(a => a.spool_id === spool.id);
+  })();
 
   // Read inventory + settings caches (already populated by InventoryPage) to
   // drive the category autocomplete and low-stock-threshold placeholder. #729
@@ -550,12 +577,22 @@ export function SpoolFormModal({
   const globalLowStockThreshold = settingsForForm?.low_stock_threshold ?? 20;
 
   const unassignMutation = useMutation({
-    mutationFn: () => {
+    mutationFn: async () => {
       if (!spoolAssignment) throw new Error('No assignment');
-      return api.unassignSpool(spoolAssignment.printer_id, spoolAssignment.ams_id, spoolAssignment.tray_id);
+      if (spoolmanMode) {
+        if (!spool) throw new Error('No spool');
+        await api.unassignSpoolmanSlot(spool.id);
+        return;
+      }
+      await api.unassignSpool(spoolAssignment.printer_id, spoolAssignment.ams_id, spoolAssignment.tray_id);
     },
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ['spool-assignments'] });
+      if (spoolmanMode) {
+        await queryClient.invalidateQueries({ queryKey: ['spoolman-slot-assignments-all'] });
+        await queryClient.invalidateQueries({ queryKey: ['spoolman-slot-assignments'] });
+      } else {
+        await queryClient.invalidateQueries({ queryKey: ['spool-assignments'] });
+      }
       showToast(t('inventory.unassignSuccess', 'Spool unassigned'), 'success');
       onClose();
     },

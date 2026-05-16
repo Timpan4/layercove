@@ -1,5 +1,6 @@
 """API routes for File Manager (Library) functionality."""
 
+import asyncio
 import base64
 import binascii
 import contextlib
@@ -27,7 +28,7 @@ from backend.app.core.auth import (
     require_permission_if_auth_enabled,
 )
 from backend.app.core.config import settings as app_settings
-from backend.app.core.database import get_db
+from backend.app.core.database import async_session, get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile, LibraryFolder
@@ -510,6 +511,55 @@ def create_image_thumbnail(file_path: Path, thumbnails_dir: Path, max_size: int 
 
 # Supported image extensions for thumbnails
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
+
+
+async def _backfill_external_stl_thumbnails(folder_ids: list[int]) -> None:
+    """Generate STL thumbnails for an external folder tree in the background.
+
+    Spawned via ``asyncio.create_task`` from ``scan_external_folder`` so the
+    HTTP request can return as soon as the filesystem walk + folder/file rows
+    are committed. Thumbnails for thousands of STL files would otherwise hold
+    the request open for many minutes (each file triggers a ``trimesh.load``
+    + matplotlib render, ~1-5s each) and the FE modal times out before the
+    final ``db.commit()`` runs — causing the original symptom in #1299 where
+    subdirectories never showed up because nothing got committed.
+
+    Opens its own session because the request session is closed by the time
+    this task starts running. Commits per-file so a worker restart mid-run
+    only loses the in-flight file. Caps STL load to a single file at a time
+    to avoid memory pressure on systems with many huge STLs.
+    """
+    if not folder_ids:
+        return
+    thumbnails_dir = get_library_thumbnails_dir()
+    async with async_session() as db:
+        result = await db.execute(
+            LibraryFile.active().where(
+                LibraryFile.folder_id.in_(folder_ids),
+                LibraryFile.file_type == "stl",
+                LibraryFile.thumbnail_path.is_(None),
+            )
+        )
+        stl_files = result.scalars().all()
+        if not stl_files:
+            return
+        logger.info(
+            "Backfilling STL thumbnails: %d file(s) across %d folder(s)",
+            len(stl_files),
+            len(folder_ids),
+        )
+        for stl_file in stl_files:
+            abs_path = to_absolute_path(stl_file.file_path)
+            if not abs_path or not abs_path.exists():
+                continue
+            try:
+                thumb_path = generate_stl_thumbnail(abs_path, thumbnails_dir)
+            except Exception as exc:  # noqa: BLE001 — never let one bad STL kill the rest
+                logger.debug("STL thumbnail backfill skipped %s: %s", abs_path, exc)
+                continue
+            if thumb_path:
+                stl_file.thumbnail_path = to_relative_path(Path(thumb_path))
+                await db.commit()
 
 
 # ============ Folder Endpoints ============
@@ -1249,15 +1299,10 @@ async def scan_external_folder(
                 except Exception as e:
                     logger.debug("Failed to extract metadata from external 3mf %s: %s", filepath, e)
 
-            # Generate thumbnail for STL files
-            if file_type == "stl" and thumbnail_path is None:
-                try:
-                    thumb_dir = get_library_thumbnails_dir()
-                    thumb_result = generate_stl_thumbnail(str(filepath), str(thumb_dir))
-                    if thumb_result:
-                        thumbnail_path = to_relative_path(Path(thumb_result))
-                except Exception as e:
-                    logger.debug("Failed to generate STL thumbnail for external %s: %s", filepath, e)
+            # STL thumbnails are deferred to a background task spawned after
+            # the scan's db.commit() — see _backfill_external_stl_thumbnails.
+            # Doing them inline would block the HTTP request for minutes on a
+            # large NAS mount (#1299).
 
             # Extract gcode thumbnail
             if file_type == "gcode" and thumbnail_path is None:
@@ -1329,6 +1374,19 @@ async def scan_external_folder(
                     await db.delete(sub_folder_obj)
 
     await db.commit()
+
+    # Spawn STL thumbnail backfill in the background — the scan endpoint
+    # returns immediately so the FE modal closes and subdirectories are
+    # visible right away; thumbnails fill in over the following seconds /
+    # minutes as the task processes each STL file. Survives FE refresh —
+    # the task lives in the FastAPI event loop, not the request scope.
+    # folder_cache.values() covers the root + every pre-existing subfolder
+    # + every subfolder created during this scan. all_folder_ids on its own
+    # would miss the newly-created ones (it's snapshotted before the walk).
+    asyncio.create_task(
+        _backfill_external_stl_thumbnails(list(set(folder_cache.values()))),
+        name=f"stl-backfill-folder-{folder_id}",
+    )
 
     return {"status": "success", "added": added, "removed": removed}
 
@@ -2748,6 +2806,29 @@ def _sanitize_project_settings_sentinels(zip_bytes: bytes) -> bytes:
         return zip_bytes
 
 
+def _patch_process_bed_type(process_json: str, bed_type: str) -> str:
+    """Overwrite ``curr_bed_type`` in a process-profile JSON before forwarding
+    to the slicer sidecar.
+
+    The slicer CLI reads the build-plate type from the process profile's
+    ``curr_bed_type`` field. When the user picks a non-default plate in the
+    SliceModal (#1337), we patch the resolved JSON in place rather than
+    asking them to clone the preset just to switch a plate. Returns the
+    original string unchanged when the JSON can't be parsed or isn't a
+    dict — the slicer will then run with whatever the preset originally
+    specified, which is the safe fall-back path.
+    """
+    try:
+        profile = json.loads(process_json)
+    except json.JSONDecodeError:
+        logger.warning("Bed-type override skipped: process profile is not valid JSON")
+        return process_json
+    if not isinstance(profile, dict):
+        return process_json
+    profile["curr_bed_type"] = bed_type
+    return json.dumps(profile)
+
+
 async def _run_slicer_with_fallback(
     db: AsyncSession,
     *,
@@ -2813,6 +2894,17 @@ async def _run_slicer_with_fallback(
         for ref in request.filament_presets:
             assert ref is not None, "schema validator guarantees filament list is non-None"
             filament_jsons.append(await resolve_preset_ref(db, user, ref, "filament"))
+
+        # Bed-type override (#1337): patch curr_bed_type onto the resolved
+        # process JSON so the slicer's StaticPrintConfig pass picks up the
+        # user's pick instead of whatever the process preset defaults to.
+        # Without this, slicing an STL of ABS onto a process preset whose
+        # default is "Cool Plate" fails with "Plate 1: Cool Plate does not
+        # support filament 1" — the reporter's exact scenario. Only applies
+        # to the resolved-preset path; bundle mode would need a sidecar-side
+        # mechanism to patch presets it materialises from disk.
+        if request.bed_type:
+            presets["process"] = _patch_process_bed_type(presets["process"], request.bed_type)
 
     # Slicer routing — pick the sidecar URL by preferred_slicer.
     # The per-install URL setting (Settings UI → Slicer card) wins; an
@@ -2893,6 +2985,7 @@ async def _run_slicer_with_fallback(
                     filament_names=request.bundle.filament_names,
                     plate=request.plate,
                     export_3mf=request.export_3mf,
+                    bed_type=request.bed_type,
                     request_id=progress_request_id,
                     on_progress=progress_callback,
                 )

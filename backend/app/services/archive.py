@@ -827,6 +827,48 @@ class ProjectPageParser:
             return False
 
 
+async def _null_print_log_thumbnail_paths(db: AsyncSession, archive_id: int) -> None:
+    """NULL thumbnail_path on PrintLogEntry rows linked to *archive_id*.
+
+    Called from both soft- and hard-delete paths before the archive's files
+    leave disk. The FK on PrintLogEntry.archive_id is ON DELETE SET NULL so
+    log rows survive the archive — without this clear, their cached
+    thumbnail_path would still point at a deleted file and the print-log
+    view would 404-storm on every render (#1348 follow-up). Lazy-NULL on
+    the GET route self-heals stragglers (e.g. failed prints that never had
+    a thumbnail written), but eager clear here avoids the one-time storm.
+    """
+    from sqlalchemy import update as sa_update
+
+    from backend.app.models.print_log import PrintLogEntry
+
+    await db.execute(sa_update(PrintLogEntry).where(PrintLogEntry.archive_id == archive_id).values(thumbnail_path=None))
+
+
+async def _cancel_pending_queue_items(db: AsyncSession, archive_id: int) -> None:
+    """Cancel pending queue items pointing at *archive_id* (#1348 follow-up).
+
+    Called from ``soft_delete_archive`` only — hard-delete is covered by the
+    ``ON DELETE CASCADE`` on ``print_queue.archive_id``.  A queue item
+    pointing at an archive whose 3MF has been removed from disk can never
+    actually dispatch, so cancelling at delete time both (a) tells the user
+    why the item disappeared from the pending list, and (b) stops the queue
+    page from 404-storming the archive thumbnail / plates / plate-thumbnail
+    endpoints when the row is rendered. Only ``pending`` items are touched;
+    ``printing`` is a rare race the printer-side fail-path catches, and
+    completed / failed / cancelled rows are historical and untouched.
+    """
+    from sqlalchemy import update as sa_update
+
+    from backend.app.models.print_queue import PrintQueueItem
+
+    await db.execute(
+        sa_update(PrintQueueItem)
+        .where(PrintQueueItem.archive_id == archive_id, PrintQueueItem.status == "pending")
+        .values(status="cancelled", waiting_reason="Source archive deleted")
+    )
+
+
 class ArchiveService:
     """Service for archiving print jobs."""
 
@@ -854,9 +896,13 @@ class ArchiveService:
         """
         from sqlalchemy import func
 
+        # Soft-deleted archives don't appear in the listing (#1343), so they
+        # mustn't influence the duplicate-group counts either — otherwise a
+        # group with 1 live + 4 soft-deleted would still be flagged as a
+        # duplicate even though the user only sees one row.
         result = await self.db.execute(
             select(PrintArchive.content_hash)
-            .where(PrintArchive.content_hash.isnot(None))
+            .where(PrintArchive.content_hash.isnot(None), PrintArchive.deleted_at.is_(None))
             .group_by(PrintArchive.content_hash)
             .having(func.count(PrintArchive.id) > 1)
         )
@@ -866,7 +912,11 @@ class ArchiveService:
         # This avoids marking different files with the same name as duplicates
         result = await self.db.execute(
             select(func.lower(PrintArchive.print_name), PrintArchive.content_hash)
-            .where(PrintArchive.print_name.isnot(None), PrintArchive.content_hash.isnot(None))
+            .where(
+                PrintArchive.print_name.isnot(None),
+                PrintArchive.content_hash.isnot(None),
+                PrintArchive.deleted_at.is_(None),
+            )
             .group_by(func.lower(PrintArchive.print_name), PrintArchive.content_hash)
             .having(func.count(PrintArchive.id) > 1)
         )
@@ -895,6 +945,7 @@ class ArchiveService:
                     and_(
                         PrintArchive.content_hash == content_hash,
                         PrintArchive.id != archive_id,
+                        PrintArchive.deleted_at.is_(None),
                     )
                 )
                 .order_by(PrintArchive.created_at.desc())
@@ -914,7 +965,7 @@ class ArchiveService:
         # Prefer strict name+hash matching when hash exists; fallback to name-only for legacy/manual
         # archives that may not have a content_hash.
         if print_name or makerworld_model_id:
-            conditions = [PrintArchive.id != archive_id]
+            conditions = [PrintArchive.id != archive_id, PrintArchive.deleted_at.is_(None)]
 
             name_conditions = []
             if print_name:
@@ -1198,6 +1249,10 @@ class ArchiveService:
         query = (
             select(PrintArchive)
             .options(selectinload(PrintArchive.project), selectinload(PrintArchive.created_by))
+            # Hide soft-deleted rows from the listings (#1343). The stats
+            # endpoint deliberately does NOT add this filter so deleted
+            # archives keep contributing to Quick Stats.
+            .where(PrintArchive.deleted_at.is_(None))
             .order_by(PrintArchive.created_at.desc())
         )
 
@@ -1218,6 +1273,71 @@ class ArchiveService:
         query = query.limit(limit).offset(offset)
         result = await self.db.execute(query)
         return list(result.scalars().all())
+
+    async def soft_delete_archive(self, archive_id: int) -> bool:
+        """Soft-delete an archive (#1343).
+
+        Removes the archive's files from disk (it disappears from the listings
+        and frees the storage) but flips the row's ``deleted_at`` so the stats
+        endpoint keeps counting its filament / energy / time / cost. The user
+        can opt into a hard delete via the "Also remove from statistics"
+        checkbox in the delete dialog — that path calls ``delete_archive``
+        instead and removes the row entirely.
+        """
+        archive = await self.get_archive(archive_id)
+        if not archive:
+            return False
+        if archive.deleted_at is not None:
+            # Already soft-deleted; nothing to do. The files were purged on
+            # the first soft-delete pass so there is nothing left on disk.
+            return True
+
+        dir_to_delete = self._resolve_archive_dir_for_delete(archive)
+
+        await _null_print_log_thumbnail_paths(self.db, archive_id)
+        await _cancel_pending_queue_items(self.db, archive_id)
+        archive.deleted_at = datetime.now(timezone.utc)
+        await self.db.commit()
+
+        if dir_to_delete:
+            shutil.rmtree(dir_to_delete, ignore_errors=True)
+        return True
+
+    def _resolve_archive_dir_for_delete(self, archive: PrintArchive) -> Path | None:
+        """Return the on-disk directory that backs *archive*, after the same
+        two safety checks ``delete_archive`` enforces.
+
+        Extracted so soft-delete and hard-delete share the path-resolution
+        rules. Returns ``None`` when nothing should be removed from disk
+        (no file_path, path outside archive_dir, or path not deep enough).
+        """
+        if not archive.file_path or not archive.file_path.strip():
+            logger.error(
+                f"SECURITY: Refusing to delete files for archive {archive.id} - "
+                f"file_path is empty or invalid: '{archive.file_path}'"
+            )
+            return None
+
+        file_path = settings.base_dir / archive.file_path
+        if not file_path.exists():
+            return None
+
+        archive_dir = file_path.parent
+        try:
+            relative_path = archive_dir.resolve().relative_to(settings.archive_dir.resolve())
+        except ValueError:
+            logger.error(
+                f"SECURITY: Refusing to delete archive {archive.id} - "
+                f"path {archive_dir} is outside archive directory {settings.archive_dir}"
+            )
+            return None
+        if len(relative_path.parts) < 1:
+            logger.error(
+                f"SECURITY: Refusing to delete archive {archive.id} - "
+                f"path {archive_dir} is not deep enough inside archive directory"
+            )
+            return None
+        return archive_dir
 
     async def delete_archive(self, archive_id: int) -> bool:
         """Delete an archive and its files."""
@@ -1265,6 +1385,13 @@ class ArchiveService:
                 f"SECURITY: Refusing to delete files for archive {archive_id} - "
                 f"file_path is empty or invalid: '{archive.file_path}'"
             )
+
+        # NULL stale thumbnail_path on linked PrintLogEntries before the FK
+        # SET-NULL cascade fires. The on-disk file is about to be removed by
+        # the rmtree below, so the path on any surviving log entry (archive_id
+        # gets SET NULL by the FK) would otherwise point at a missing file
+        # and produce 404 storms in the print-log view (#1348-followup).
+        await _null_print_log_thumbnail_paths(self.db, archive_id)
 
         # Delete database record FIRST — if the commit fails (e.g. database locked
         # during concurrent bulk deletes), the files stay on disk and nothing is lost.

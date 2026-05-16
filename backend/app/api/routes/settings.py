@@ -7,10 +7,11 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, File, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
+from pydantic import BaseModel, Field
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.core.auth import RequirePermissionIfAuthEnabled, caller_is_api_key
+from backend.app.core.auth import RequirePermissionIfAuthEnabled, caller_is_api_key, require_energy_cost_update
 from backend.app.core.config import settings as app_settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
@@ -32,6 +33,32 @@ _SENSITIVE_FIELDS_FOR_API_KEY = (
     "virtual_printer_access_code",
     "ldap_bind_password",
 )
+
+
+def _sqlalchemy_type_to_sqlite_type(type_repr: str) -> str:
+    """Map a SQLAlchemy column type's ``str()`` to a SQLite-native column type.
+
+    Used by ``create_backup_zip`` to reconstruct a portable SQLite database
+    file from PostgreSQL data. Falling through to TEXT for binary columns
+    corrupts non-UTF8 bytes — the BLOB branch is the #1333 regression guard
+    for OIDC icon BLOBs.
+
+    Extracted as a pure helper so it can be unit-tested without spinning up
+    the full FastAPI app + backup pipeline.
+    """
+    type_str = type_repr.upper()
+    if "INT" in type_str:
+        return "INTEGER"
+    if "FLOAT" in type_str or "REAL" in type_str or "NUMERIC" in type_str:
+        return "REAL"
+    if "BOOL" in type_str:
+        return "BOOLEAN"
+    if "BLOB" in type_str or "BYTEA" in type_str or "BINARY" in type_str:
+        # OIDC icon BLOB column (#1333) — without this branch the column
+        # was created as TEXT and non-UTF8 bytes were corrupted during the
+        # PG→SQLite-ZIP backup round trip.
+        return "BLOB"
+    return "TEXT"
 
 
 async def get_setting(db: AsyncSession, key: str) -> str | None:
@@ -231,6 +258,40 @@ async def patch_settings(
     return await update_settings(settings_update, db, _)
 
 
+class ElectricityPriceUpdate(BaseModel):
+    """Payload for ``POST /settings/electricity-price`` (#1356).
+
+    Mirrors the field name documented in ``wiki/features/energy.md`` so the
+    Home Assistant ``rest_command`` example needs only a URL change, not a
+    payload change. Plain non-negative float; tariffs can go as low as 0.0 in
+    some markets (e.g. free hours).
+    """
+
+    energy_cost_per_kwh: float = Field(ge=0)
+
+
+@router.post("/electricity-price", response_model=AppSettings)
+async def update_electricity_price(
+    payload: ElectricityPriceUpdate,
+    db: AsyncSession = Depends(get_db),
+    _: User | None = Depends(require_energy_cost_update()),
+    _is_api_key: bool = Depends(caller_is_api_key),
+):
+    """Update the per-kWh electricity cost used by the energy-tracking pipeline.
+
+    This is the only settings field writable via API key, gated by the
+    ``can_update_energy_cost`` toggle on the key. JWT users still need the
+    standard ``SETTINGS_UPDATE`` permission. See #1356 for the rationale —
+    the general ``PATCH /settings`` route remains denied for API keys because
+    it can rewrite SMTP/LDAP/MQTT credentials, which is a much wider surface
+    than the documented dynamic-tariff use case requires.
+    """
+    await set_setting(db, "energy_cost_per_kwh", str(payload.energy_cost_per_kwh))
+    await db.commit()
+    db.expire_all()
+    return await _build_settings_response(db, is_api_key=_is_api_key)
+
+
 @router.post("/reset", response_model=AppSettings)
 async def reset_settings(
     db: AsyncSession = Depends(get_db),
@@ -259,6 +320,44 @@ async def get_default_sidebar_order(
     """
     value = await get_setting(db, "default_sidebar_order")
     return {"default_sidebar_order": value or ""}
+
+
+# Fields exposed via /ui-preferences without SETTINGS_READ. Each entry MUST be
+# non-sensitive (no credentials, no PII, no secret tokens) — granting SETTINGS_READ
+# also grants visibility of SMTP/LDAP/MQTT passwords and similar, so the goal of
+# this endpoint is exactly to NOT require that permission for UI rendering hints.
+# When adding a field here, confirm it doesn't carry anything sensitive.
+_UI_PREFERENCE_FIELDS: tuple[str, ...] = (
+    "require_plate_clear",
+    "check_printer_firmware",
+    "camera_view_mode",
+    "time_format",
+    "date_format",
+    "drying_presets",
+    "ams_humidity_good",
+    "ams_humidity_fair",
+    "ams_temp_good",
+    "ams_temp_fair",
+    "bed_cooled_threshold",
+)
+
+
+@router.get("/ui-preferences")
+async def get_ui_preferences(db: AsyncSession = Depends(get_db)):
+    """Get the curated subset of settings that any page needs to render correctly.
+
+    Intentionally not gated on SETTINGS_READ — every authenticated user (and
+    every page that loads for them) needs these fields, but granting SETTINGS_READ
+    would also grant visibility of secrets (SMTP/LDAP/MQTT credentials, etc.).
+    Same pattern as /default-sidebar-order (#1293).
+
+    Reuses _build_settings_response so the typed values match what /settings
+    returns for fields with the same name — bool/int/float/str types stay in
+    sync without a separate type-coercion path.
+    """
+    full = await _build_settings_response(db, is_api_key=False)
+    dumped = full.model_dump()
+    return {key: dumped[key] for key in _UI_PREFERENCE_FIELDS if key in dumped}
 
 
 @router.get("/check-ffmpeg")
@@ -414,14 +513,7 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
                 cols = []
                 pk_cols = [col.name for col in table.columns if col.primary_key]
                 for col in table.columns:
-                    col_type = "TEXT"  # Default
-                    type_str = str(col.type).upper()
-                    if "INT" in type_str:
-                        col_type = "INTEGER"
-                    elif "FLOAT" in type_str or "REAL" in type_str or "NUMERIC" in type_str:
-                        col_type = "REAL"
-                    elif "BOOL" in type_str:
-                        col_type = "BOOLEAN"
+                    col_type = _sqlalchemy_type_to_sqlite_type(str(col.type))
                     # Only inline PRIMARY KEY for single-column PKs
                     pk = " PRIMARY KEY" if col.primary_key and len(pk_cols) == 1 else ""
                     cols.append(f"{col.name} {col_type}{pk}")

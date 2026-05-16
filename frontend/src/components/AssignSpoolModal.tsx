@@ -312,7 +312,7 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-start sm:items-center justify-center p-4 overflow-y-auto">
+      <div className="fixed inset-0 z-[100] flex items-start sm:items-center justify-center p-4 overflow-y-auto">
         <div
           className="absolute inset-0 bg-black/60 backdrop-blur-sm"
           onClick={onClose}
@@ -581,6 +581,9 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
             message={message}
             confirmText={t('inventory.assignMismatchConfirm')}
             variant="warning"
+            // Sit above the AssignSpoolModal wrapper (z-[100], #1336) —
+            // without this the mismatch dialog is hidden behind its parent.
+            overlayZIndex="z-[110]"
             isLoading={assignMutation.isPending}
             onConfirm={handleConfirmMismatch}
             onCancel={() => {

@@ -564,7 +564,13 @@ async def update_spool(
     material = data.material if data.material is not None else cur_mat
     subtype = data.subtype if data.subtype is not None else cur_subtype
     brand = data.brand if data.brand is not None else (cur_vendor.get("name") or None)
-    color_name = data.color_name if data.color_name is not None else (cur_filament.get("color_name") or None)
+    # color_name uses model_fields_set so explicit null (clear) is distinguishable
+    # from "field omitted" (don't touch). find_or_create_filament's convention:
+    # None = don't touch, "" = explicit clear, "value" = set.
+    if "color_name" in data.model_fields_set:
+        color_name = data.color_name if data.color_name is not None else ""
+    else:
+        color_name = cur_filament.get("color_name") or None
     cur_color = (cur_filament.get("color_hex") or "808080").upper().removeprefix("#")
     rgba = data.rgba if data.rgba is not None else (cur_color + "FF")
     label_weight = data.label_weight if data.label_weight is not None else int(cur_filament.get("weight") or 1000)
@@ -1201,29 +1207,21 @@ async def assign_spoolman_slot(
                     body.tray_id,
                 )
             else:
-                # No stored K-profile: preserve the slot's current live cali_idx
-                from backend.app.api.routes.inventory import _find_tray_in_ams_data
-
-                live_tray = None
-                if state and state.raw_data:
-                    ams_raw = state.raw_data.get("ams", [])
-                    if isinstance(ams_raw, dict):
-                        ams_raw = ams_raw.get("ams", [])
-                    live_tray = _find_tray_in_ams_data(ams_raw, body.ams_id, body.tray_id)
-                live_cali_idx = (live_tray or {}).get("cali_idx")
-                if live_cali_idx is not None and live_cali_idx >= 0:
-                    mqtt_client.extrusion_cali_sel(
-                        ams_id=body.ams_id,
-                        tray_id=body.tray_id,
-                        cali_idx=live_cali_idx,
-                        filament_id=effective_tray_info_idx,
-                        nozzle_diameter=nozzle_diameter,
-                    )
-                    logger.info(
-                        "No stored K-profile for Spoolman spool %d — preserved live cali_idx=%d",
-                        body.spoolman_spool_id,
-                        live_cali_idx,
-                    )
+                # No stored K-profile for this spool — always reset the slot to
+                # Default K (cali_idx=-1). The live cali_idx belongs to whatever
+                # filament was there before, so preserving it would apply the
+                # wrong filament's calibration to the new spool.
+                mqtt_client.extrusion_cali_sel(
+                    ams_id=body.ams_id,
+                    tray_id=body.tray_id,
+                    cali_idx=-1,
+                    filament_id=effective_tray_info_idx,
+                    nozzle_diameter=nozzle_diameter,
+                )
+                logger.info(
+                    "No stored K-profile for Spoolman spool %d — reset slot to Default K (cali_idx=-1)",
+                    body.spoolman_spool_id,
+                )
 
             logger.info(
                 "Auto-configured AMS slot ams=%d tray=%d for Spoolman spool %d on printer %d",

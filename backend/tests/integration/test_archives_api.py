@@ -196,6 +196,215 @@ class TestArchivesAPI:
 
         assert response.status_code == 404
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_soft_delete_preserves_stats_contribution(
+        self, async_client: AsyncClient, archive_factory, printer_factory, db_session
+    ):
+        """#1343: deleting an archive without ``purge_stats`` keeps its
+        contribution in Quick Stats. The row vanishes from listings but the
+        filament / time / cost totals stay intact.
+        """
+        printer = await printer_factory()
+        await archive_factory(
+            printer.id,
+            status="completed",
+            print_time_seconds=3600,
+            filament_used_grams=50.0,
+            cost=1.50,
+        )
+        archive_to_delete = await archive_factory(
+            printer.id,
+            status="completed",
+            print_time_seconds=7200,
+            filament_used_grams=100.0,
+            cost=3.00,
+        )
+
+        # Pre-delete: stats include both archives.
+        pre = (await async_client.get("/api/v1/archives/stats")).json()
+        assert pre["total_prints"] == 2
+        assert pre["total_filament_grams"] == 150.0
+        assert pre["total_cost"] == 4.50
+
+        # Soft delete (default — no purge_stats param).
+        resp = await async_client.delete(f"/api/v1/archives/{archive_to_delete.id}")
+        assert resp.status_code == 200
+        body = resp.json()
+        assert body["purged_from_stats"] is False
+
+        # Listing hides the deleted archive…
+        listing = (await async_client.get("/api/v1/archives/")).json()
+        assert all(a["id"] != archive_to_delete.id for a in listing)
+
+        # …but stats still reflect both prints (the whole point of #1343).
+        post = (await async_client.get("/api/v1/archives/stats")).json()
+        assert post["total_prints"] == 2
+        assert post["total_filament_grams"] == 150.0
+        assert post["total_cost"] == 4.50
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_soft_delete_clears_thumbnail_path_on_linked_log_entries(
+        self, async_client: AsyncClient, archive_factory, printer_factory, db_session
+    ):
+        """#1348 follow-up: soft-deleting an archive removes its files from disk;
+        the cached thumbnail_path on linked PrintLogEntry rows must be NULLed
+        in the same transaction so the print-log view doesn't 404-storm on the
+        now-deleted thumbnail file."""
+        from sqlalchemy import select
+
+        from backend.app.models.print_log import PrintLogEntry
+
+        printer = await printer_factory()
+        archive = await archive_factory(
+            printer.id,
+            status="completed",
+            thumbnail_path="archives/test/test_print/thumbnail.png",
+        )
+        # The factory's auto-PrintLogEntry doesn't copy thumbnail_path; set it
+        # manually to mirror what the production write_log_entry path stores.
+        run_query = await db_session.execute(select(PrintLogEntry).where(PrintLogEntry.archive_id == archive.id))
+        run = run_query.scalar_one()
+        run.thumbnail_path = "archives/test/test_print/thumbnail.png"
+        await db_session.commit()
+        assert run.thumbnail_path is not None
+
+        resp = await async_client.delete(f"/api/v1/archives/{archive.id}")
+        assert resp.status_code == 200
+        assert resp.json()["purged_from_stats"] is False
+
+        await db_session.refresh(run)
+        assert run.thumbnail_path is None, "soft-delete must NULL thumbnail_path on linked log entry"
+        # The log entry itself survives the soft delete (its filament/cost
+        # contribution still needs to flow into stats per #1343).
+        assert run.id is not None
+        assert run.archive_id == archive.id
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_hard_delete_clears_thumbnail_path_before_fk_cascade(
+        self, async_client: AsyncClient, archive_factory, printer_factory, db_session
+    ):
+        """#1348 follow-up: the auto-purge sweeper (and any caller of
+        ArchiveService.delete_archive) hard-deletes the archive row but leaves
+        PrintLogEntry rows alive via ON DELETE SET NULL. The eager
+        thumbnail_path clear must run inside delete_archive so even orphaned
+        log entries don't surface stale paths."""
+        from sqlalchemy import select
+
+        from backend.app.models.print_log import PrintLogEntry
+        from backend.app.services.archive import ArchiveService
+
+        printer = await printer_factory()
+        archive = await archive_factory(
+            printer.id,
+            status="completed",
+            thumbnail_path="archives/test/test_print/thumbnail.png",
+        )
+        run_query = await db_session.execute(select(PrintLogEntry).where(PrintLogEntry.archive_id == archive.id))
+        run = run_query.scalar_one()
+        run.thumbnail_path = "archives/test/test_print/thumbnail.png"
+        await db_session.commit()
+        run_id = run.id
+
+        service = ArchiveService(db_session)
+        assert await service.delete_archive(archive.id) is True
+
+        # Log entry survives the hard-delete (the FK is ON DELETE SET NULL
+        # in production; SQLite test config doesn't enable foreign_keys=ON
+        # by default so archive_id may still be set, but the row itself
+        # remains for audit). The thumbnail_path was cleared eagerly by
+        # _null_print_log_thumbnail_paths before db.delete(archive).
+        refetch = await db_session.execute(select(PrintLogEntry).where(PrintLogEntry.id == run_id))
+        survivor = refetch.scalar_one()
+        assert survivor.thumbnail_path is None, (
+            "delete_archive must NULL thumbnail_path before removing the archive row"
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_print_log_thumbnail_route_lazy_nulls_missing_file(
+        self, async_client: AsyncClient, archive_factory, printer_factory, db_session
+    ):
+        """#1348 follow-up: GET /print-log/{id}/thumbnail self-heals when the
+        thumbnail_path on a log entry points at a missing file (failed print
+        whose thumbnail was never written, or a stale path that escaped the
+        delete-time cleanup)."""
+        from sqlalchemy import select
+
+        from backend.app.models.print_log import PrintLogEntry
+
+        printer = await printer_factory()
+        archive = await archive_factory(printer.id, status="failed")
+        run_query = await db_session.execute(select(PrintLogEntry).where(PrintLogEntry.archive_id == archive.id))
+        run = run_query.scalar_one()
+        # Path points at a file that never existed (failed-print case where
+        # archive.thumbnail_path was set but the extractor never produced one).
+        run.thumbnail_path = "archives/missing/never_written/thumbnail.png"
+        await db_session.commit()
+
+        # Auth is disabled in the integration test config, so the stream-token
+        # guard is bypassed — the route runs the lazy-NULL branch directly.
+        resp = await async_client.get(f"/api/v1/print-log/{run.id}/thumbnail")
+        assert resp.status_code == 404
+
+        await db_session.refresh(run)
+        assert run.thumbnail_path is None, "missing file must self-heal to NULL"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_purge_stats_drops_archive_from_quick_stats(
+        self, async_client: AsyncClient, archive_factory, printer_factory, db_session
+    ):
+        """#1343: deleting with ``?purge_stats=true`` hard-deletes the row,
+        dropping its contribution from Quick Stats (the original behaviour,
+        now opt-in)."""
+        printer = await printer_factory()
+        keep = await archive_factory(printer.id, status="completed", filament_used_grams=50.0)
+        purge = await archive_factory(printer.id, status="completed", filament_used_grams=100.0)
+
+        resp = await async_client.delete(f"/api/v1/archives/{purge.id}?purge_stats=true")
+        assert resp.status_code == 200
+        assert resp.json()["purged_from_stats"] is True
+
+        stats = (await async_client.get("/api/v1/archives/stats")).json()
+        assert stats["total_prints"] == 1
+        assert stats["total_filament_grams"] == 50.0
+
+        # The kept archive is still listed.
+        listing = (await async_client.get("/api/v1/archives/")).json()
+        assert [a["id"] for a in listing] == [keep.id]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_soft_deleted_archive_404_on_detail(
+        self, async_client: AsyncClient, archive_factory, printer_factory, db_session
+    ):
+        """A soft-deleted archive must 404 on GET — a stale bookmark or
+        direct URL should not expose a row the user has already removed."""
+        printer = await printer_factory()
+        archive = await archive_factory(printer.id)
+        await async_client.delete(f"/api/v1/archives/{archive.id}")
+        resp = await async_client.get(f"/api/v1/archives/{archive.id}")
+        assert resp.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_soft_deleted_archive_hidden_from_search(
+        self, async_client: AsyncClient, archive_factory, printer_factory, db_session
+    ):
+        """Search must skip soft-deleted archives. Uses the LIKE fallback by
+        querying a single-character pattern that the SQLite FTS5 rejects, so
+        the test covers the fallback path that the production FTS path also
+        respects."""
+        printer = await printer_factory()
+        archive = await archive_factory(printer.id, print_name="UniqueSoftDeleteCandidate")
+        await async_client.delete(f"/api/v1/archives/{archive.id}")
+        resp = await async_client.get("/api/v1/archives/search?q=UniqueSoftDeleteCandidate")
+        assert resp.status_code == 200
+        assert resp.json() == []
+
     # ========================================================================
     # Statistics endpoints
     # ========================================================================

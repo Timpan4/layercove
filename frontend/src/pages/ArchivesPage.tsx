@@ -54,6 +54,8 @@ import {
   ClipboardList,
   Zap,
   Cog,
+  Archive as ArchiveIcon,
+  History,
 } from 'lucide-react';
 import { api } from '../api/client';
 import { SliceModal } from '../components/SliceModal';
@@ -70,6 +72,7 @@ import { UploadModal } from '../components/UploadModal';
 import { PurgeArchivesModal } from '../components/PurgeArchivesModal';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { EditArchiveModal } from '../components/EditArchiveModal';
+import { PrintLogModal } from '../components/PrintLogModal';
 import { ContextMenu, type ContextMenuItem } from '../components/ContextMenu';
 import { BatchTagModal } from '../components/BatchTagModal';
 import { BatchProjectModal } from '../components/BatchProjectModal';
@@ -180,7 +183,11 @@ function ArchiveCard({
   const [showReprint, setShowReprint] = useState(false);
   const [showSliceModal, setShowSliceModal] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // #1343: when true, the delete also drops the row from Quick Stats. Default
+  // off — soft delete preserves the archive's filament/time/cost contribution.
+  const [deletePurgeStats, setDeletePurgeStats] = useState(false);
   const [showEdit, setShowEdit] = useState(false);
+  const [showPrintLog, setShowPrintLog] = useState(false);
   const [showTimelapse, setShowTimelapse] = useState(false);
   const [showTimelapseSelect, setShowTimelapseSelect] = useState(false);
   const [availableTimelapses, setAvailableTimelapses] = useState<Array<{ name: string; path: string; size: number; mtime: string | null }>>([]);
@@ -339,7 +346,7 @@ function ArchiveCard({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.deleteArchive(archive.id),
+    mutationFn: (purgeStats: boolean) => api.deleteArchive(archive.id, purgeStats),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['archives'] });
       showToast(t('archives.toast.archiveDeleted'));
@@ -578,6 +585,11 @@ function ArchiveCard({
       onClick: () => setShowEdit(true),
       disabled: !canModify('archives', 'update', archive.created_by_id),
       title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+    },
+    {
+      label: t('archives.menu.printLog'),
+      icon: <History className="w-4 h-4" />,
+      onClick: () => setShowPrintLog(true),
     },
     ...(archive.project_id && archive.project_name ? [{
       label: t('archives.menu.goToProject', { name: archive.project_name }),
@@ -969,6 +981,22 @@ function ArchiveCard({
               {archive.project_name}
             </span>
           )}
+          {archive.run_count > 1 && (
+            <button
+              className="text-[10px] px-1.5 py-0.5 rounded font-medium bg-bambu-orange/20 text-bambu-orange hover:bg-bambu-orange/30 transition-colors cursor-pointer"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowPrintLog(true);
+              }}
+              title={t('archives.card.runsBadgeTitle', {
+                count: archive.run_count,
+                successful: archive.successful_run_count,
+                failed: archive.failed_run_count,
+              })}
+            >
+              {t('archives.card.runsBadge', { count: archive.run_count })}
+            </button>
+          )}
         </div>
 
         {/* Stats */}
@@ -1213,6 +1241,15 @@ function ArchiveCard({
         />
       )}
 
+      {/* Print Log Modal — opened from the "N prints" badge or context menu (#1378) */}
+      {showPrintLog && (
+        <PrintLogModal
+          archiveId={archive.id}
+          archiveName={archive.print_name || archive.filename}
+          onClose={() => setShowPrintLog(false)}
+        />
+      )}
+
       {/* Plate picker — shown only for multi-plate archives on 3D Preview click */}
       {platePickerPlates && (
         <PlatePickerModal
@@ -1251,11 +1288,27 @@ function ArchiveCard({
           confirmText={t('archives.modal.deleteButton')}
           variant="danger"
           onConfirm={() => {
-            deleteMutation.mutate();
+            deleteMutation.mutate(deletePurgeStats);
             setShowDeleteConfirm(false);
+            setDeletePurgeStats(false);
           }}
-          onCancel={() => setShowDeleteConfirm(false)}
-        />
+          onCancel={() => {
+            setShowDeleteConfirm(false);
+            setDeletePurgeStats(false);
+          }}
+        >
+          {/* #1343: opt-in checkbox — by default the archive is soft-deleted,
+              so its filament / time / cost contribution stays in Quick Stats. */}
+          <label className="flex items-start gap-2 cursor-pointer text-sm text-bambu-gray">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-red-500"
+              checked={deletePurgeStats}
+              onChange={(e) => setDeletePurgeStats(e.target.checked)}
+            />
+            <span>{t('archives.modal.deletePurgeStats')}</span>
+          </label>
+        </ConfirmModal>
       )}
 
       {/* Delete Source 3MF Confirmation */}
@@ -1505,7 +1558,11 @@ function ArchiveListRow({
   const { showToast } = useToast();
   const { hasPermission, canModify } = useAuth();
   const [showEdit, setShowEdit] = useState(false);
+  const [showPrintLog, setShowPrintLog] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  // #1343: opt-in "Also remove from statistics" checkbox state. Default off
+  // — soft delete keeps the archive's contribution to Quick Stats.
+  const [deletePurgeStats, setDeletePurgeStats] = useState(false);
   const navigate = useNavigate();
   const [showReprint, setShowReprint] = useState(false);
   const [showSliceModal, setShowSliceModal] = useState(false);
@@ -1644,7 +1701,7 @@ function ArchiveListRow({
   });
 
   const deleteMutation = useMutation({
-    mutationFn: () => api.deleteArchive(archive.id),
+    mutationFn: (purgeStats: boolean) => api.deleteArchive(archive.id, purgeStats),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['archives'] });
       showToast(t('archives.toast.archiveDeleted'));
@@ -1881,6 +1938,11 @@ function ArchiveListRow({
       onClick: () => setShowEdit(true),
       disabled: !canModify('archives', 'update', archive.created_by_id),
       title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+    },
+    {
+      label: t('archives.menu.printLog'),
+      icon: <History className="w-4 h-4" />,
+      onClick: () => setShowPrintLog(true),
     },
     ...(archive.project_id && archive.project_name ? [{
       label: t('archives.menu.goToProject', { name: archive.project_name }),
@@ -2165,6 +2227,15 @@ function ArchiveListRow({
         />
       )}
 
+      {/* Print Log Modal — opened from the "N prints" badge or context menu (#1378) */}
+      {showPrintLog && (
+        <PrintLogModal
+          archiveId={archive.id}
+          archiveName={archive.print_name || archive.filename}
+          onClose={() => setShowPrintLog(false)}
+        />
+      )}
+
       {/* Plate picker — shown only for multi-plate archives on 3D Preview click */}
       {platePickerPlates && (
         <PlatePickerModal
@@ -2203,11 +2274,27 @@ function ArchiveListRow({
           confirmText={t('archives.modal.deleteButton')}
           variant="danger"
           onConfirm={() => {
-            deleteMutation.mutate();
+            deleteMutation.mutate(deletePurgeStats);
             setShowDeleteConfirm(false);
+            setDeletePurgeStats(false);
           }}
-          onCancel={() => setShowDeleteConfirm(false)}
-        />
+          onCancel={() => {
+            setShowDeleteConfirm(false);
+            setDeletePurgeStats(false);
+          }}
+        >
+          {/* #1343: opt-in checkbox — by default the archive is soft-deleted,
+              so its filament / time / cost contribution stays in Quick Stats. */}
+          <label className="flex items-start gap-2 cursor-pointer text-sm text-bambu-gray">
+            <input
+              type="checkbox"
+              className="mt-0.5 accent-red-500"
+              checked={deletePurgeStats}
+              onChange={(e) => setDeletePurgeStats(e.target.checked)}
+            />
+            <span>{t('archives.modal.deletePurgeStats')}</span>
+          </label>
+        </ConfirmModal>
       )}
 
       {/* Delete Source 3MF Confirmation */}
@@ -3076,10 +3163,18 @@ export function ArchivesPage() {
 
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 mb-8">
         <div>
-          <div className="flex items-center gap-3">
-            <h1 className="text-2xl font-bold text-white">Archives</h1>
+          <div className="flex items-start gap-3">
+            <div>
+              <h1 className="text-2xl font-bold text-white flex items-center gap-3">
+                <ArchiveIcon className="w-7 h-7 text-bambu-green" />
+                Archives
+              </h1>
+              <p className="text-bambu-gray mt-1">
+                {filteredArchives?.length || 0} of {archives?.length || 0} prints
+              </p>
+            </div>
             <select
-              className="px-3 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray-light text-sm focus:border-bambu-green focus:outline-none"
+              className="mt-0.5 px-3 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray-light text-sm focus:border-bambu-green focus:outline-none"
               value={collection}
               onChange={(e) => setCollection(e.target.value as Collection)}
             >
@@ -3090,9 +3185,6 @@ export function ArchivesPage() {
               ))}
             </select>
           </div>
-          <p className="text-bambu-gray">
-            {filteredArchives?.length || 0} of {archives?.length || 0} prints
-          </p>
         </div>
         <div className="flex items-center gap-2 sm:gap-3 flex-wrap">
           {/* Export dropdown */}
