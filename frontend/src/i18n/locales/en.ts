@@ -3463,6 +3463,7 @@ export default {
     runningToast: 'Slicing {{name}} — {{elapsed}}',
     runningWithProgress: '{{name}} — {{stage}} ({{percent}}%) — {{elapsed}}',
     completedToast: 'Sliced {{name}}',
+    failedTitle: 'Slicing failed',
     failedToast: 'Slicing {{name}} failed: {{detail}}',
     tier: {
       local: 'Imported',

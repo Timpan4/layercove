@@ -3460,6 +3460,7 @@ export default {
     runningToast: '{{name}}をスライス中 – {{elapsed}}',
     runningWithProgress: '{{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}}をスライス済み',
+    failedTitle: 'スライスに失敗しました',
     failedToast: '{{name}}のスライスに失敗: {{detail}}',
     tier: {
       local: 'インポート済み',

@@ -3448,6 +3448,7 @@ export default {
     runningToast: 'Slicing {{name}} – {{elapsed}}',
     runningWithProgress: '{{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}} sezionato',
+    failedTitle: 'Slicing fallito',
     failedToast: 'Slicing di {{name}} fallito: {{detail}}',
     tier: {
       local: 'Importato',

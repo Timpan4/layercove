@@ -2899,6 +2899,34 @@ def _patch_process_bed_type(process_json: str, bed_type: str) -> str:
     return json.dumps(profile)
 
 
+# The sidecar prefixes the slicer CLI's own error_string with this when the
+# slicer ran and rejected the job (model off the bed, incompatible filament
+# temps, range validation) — as opposed to the CLI crashing before it could
+# evaluate the job at all.
+_SLICER_REJECTION_MARKER = "Slicing failed with error from slicer:"
+
+
+def _slicer_rejection_message(error_text: str) -> str | None:
+    """Extract the slicer's own rejection reason from a sidecar error string,
+    or ``None`` when the failure is not a slicer content rejection.
+
+    A content rejection means ``--load-settings`` *was* applied — the slicer
+    got far enough to evaluate the model against the chosen printer and say
+    no. Retrying with the 3MF's embedded settings would then only "succeed"
+    by silently reverting to the source file's original printer, masking the
+    real problem; such failures must reach the user instead.
+    """
+    if _SLICER_REJECTION_MARKER not in error_text:
+        return None
+    reason = error_text.split(_SLICER_REJECTION_MARKER, 1)[1]
+    # Trim the sidecar's trailing exit-code note and any stderr/stdout dump.
+    for cut in (": Slicer process failed", "\nstderr:", "\nstdout:"):
+        idx = reason.find(cut)
+        if idx != -1:
+            reason = reason[:idx]
+    return reason.strip() or None
+
+
 async def _run_slicer_with_fallback(
     db: AsyncSession,
     *,
@@ -3072,10 +3100,19 @@ async def _run_slicer_with_fallback(
                     on_progress=progress_callback,
                 )
         except SlicerApiServerError as exc:
+            rejection = _slicer_rejection_message(str(exc))
+            if rejection:
+                # The slicer ran and rejected the job for a content reason —
+                # the chosen printer/process/filament *were* applied. Falling
+                # back to embedded settings would silently re-slice for the
+                # source 3MF's original printer and hide the real problem
+                # (e.g. re-slicing an H2D model for an X1C: the object is off
+                # the smaller bed). Surface the slicer's reason instead.
+                raise HTTPException(status_code=400, detail=rejection) from exc
             if not is_3mf:
                 raise
             logger.warning(
-                "Slicer CLI rejected --load-settings for %s (%s); retrying with embedded settings",
+                "Slicer CLI failed on the --load-settings path for %s (%s); retrying with embedded settings",
                 model_filename,
                 exc,
             )
@@ -3109,6 +3146,83 @@ async def _run_slicer_with_fallback(
         await service.close()
 
     return result, used_embedded_settings
+
+
+def _canonical_printer_model(raw: str | None) -> str | None:
+    """Normalise a printer-preset name / ``printer_model`` field to a canonical
+    model code. Strips the BambuStudio ``"# "`` user-clone prefix and the
+    ``" 0.4 nozzle"`` variant suffix that preset names carry but bare model
+    names don't — without this, ``"Bambu Lab H2D 0.4 nozzle"`` wouldn't
+    normalise to ``H2D``."""
+    import re
+
+    from backend.app.utils.printer_models import normalize_printer_model
+
+    if not raw:
+        return None
+    cleaned = str(raw).strip()
+    if cleaned.startswith("# "):
+        cleaned = cleaned[2:].strip()
+    cleaned = re.sub(r"\s+0\.\d+\s+nozzle$", "", cleaned, flags=re.IGNORECASE)
+    return normalize_printer_model(cleaned) if cleaned else None
+
+
+async def _resolve_target_printer_model(db: AsyncSession, user: User | None, request: SliceRequest) -> str | None:
+    """Best-effort: the printer model a slice request targets.
+
+    Returns ``None`` when it can't be determined (the nozzle-class guard
+    then simply doesn't fire — fail-open, never blocks a slice spuriously).
+    """
+    from backend.app.services.preset_resolver import resolve_preset_ref
+
+    if request.bundle is not None:
+        return _canonical_printer_model(request.bundle.printer_name)
+    if request.printer_preset is None:
+        return None
+    try:
+        printer_json = await resolve_preset_ref(db, user, request.printer_preset, "printer")
+        data = json.loads(printer_json)
+        if not isinstance(data, dict):
+            return None
+        return _canonical_printer_model(
+            data.get("printer_model") or data.get("printer_settings_id") or data.get("name")
+        )
+    except Exception:
+        return None
+
+
+async def guard_nozzle_class_reslice(
+    db: AsyncSession, user: User | None, request: SliceRequest, source_model: str | None
+) -> None:
+    """Block a re-slice that crosses the single-nozzle <-> dual-nozzle boundary.
+
+    Re-slicing a model laid out for a single-nozzle printer onto a dual-nozzle
+    printer (H2D / H2D Pro), or vice versa, produces a 3MF whose embedded
+    single-nozzle filament/extruder layout BambuStudio's multi-extruder
+    validator rejects — and a crude automatic conversion segfaults the CLI.
+    Fail fast with a clear message instead of a cryptic slicer error.
+
+    No-op when the source isn't a sliced file, the target can't be resolved,
+    or both printers are the same nozzle class.
+    """
+    from backend.app.utils.printer_models import is_dual_nozzle_model
+
+    if not source_model:
+        return
+    target_model = await _resolve_target_printer_model(db, user, request)
+    if not target_model:
+        return
+    if is_dual_nozzle_model(source_model) == is_dual_nozzle_model(target_model):
+        return
+    raise HTTPException(
+        status_code=400,
+        detail=(
+            f"Can't re-slice this file for {target_model}: it was sliced for {source_model}, "
+            f"and re-slicing between a single-nozzle and a dual-nozzle printer (H2D / H2D Pro) "
+            f"isn't supported yet — the embedded filament layout can't be converted "
+            f"automatically. Slice the original model for {target_model} instead."
+        ),
+    )
 
 
 async def slice_and_persist(
@@ -3173,11 +3287,17 @@ async def slice_and_persist(
     # row's display falls back to its ".gcode.3mf" filename instead of the
     # source file's project title, which would make the two indistinguishable.
     metadata: dict = dict(_without_print_name(parsed_metadata) or {})
+    # Some slicer-sidecar builds leave the X-Filament-Used-* response headers
+    # unset, so result.filament_used_g/_mm arrive as 0 even for a real
+    # multi-hour print. Fall back to the totals ThreeMFParser read from the
+    # produced 3MF's own G-code header.
+    filament_g = result.filament_used_g or parsed_metadata.get("filament_used_grams") or 0.0
+    filament_mm = result.filament_used_mm or parsed_metadata.get("filament_used_mm") or 0.0
     metadata.update(
         {
             "print_time_seconds": result.print_time_seconds,
-            "filament_used_g": result.filament_used_g,
-            "filament_used_mm": result.filament_used_mm,
+            "filament_used_g": filament_g,
+            "filament_used_mm": filament_mm,
         }
     )
     if used_embedded_settings:
@@ -3211,8 +3331,8 @@ async def slice_and_persist(
         library_file_id=new_file.id,
         name=new_file.filename,
         print_time_seconds=result.print_time_seconds,
-        filament_used_g=result.filament_used_g,
-        filament_used_mm=result.filament_used_mm,
+        filament_used_g=filament_g,
+        filament_used_mm=filament_mm,
         used_embedded_settings=used_embedded_settings,
     )
 
@@ -3282,12 +3402,17 @@ async def slice_and_persist_as_archive(
 
     metadata = dict(source_archive.extra_data) if source_archive.extra_data else {}
     metadata.update(parsed_metadata)
+    # Fall back to the produced 3MF's G-code-header totals when the sidecar
+    # leaves the X-Filament-Used-* headers unset (result.filament_used_g == 0
+    # even for a real multi-hour print).
+    filament_g = result.filament_used_g or parsed_metadata.get("filament_used_grams") or 0.0
+    filament_mm = result.filament_used_mm or parsed_metadata.get("filament_used_mm") or 0.0
     metadata.update(
         {
             "sliced_from_archive_id": source_archive.id,
             "print_time_seconds": result.print_time_seconds,
-            "filament_used_g": result.filament_used_g,
-            "filament_used_mm": result.filament_used_mm,
+            "filament_used_g": filament_g,
+            "filament_used_mm": filament_mm,
         }
     )
     if used_embedded_settings:
@@ -3313,12 +3438,17 @@ async def slice_and_persist_as_archive(
         # up alongside its sibling in the archives list.
         print_name=(source_archive.print_name or base_name) + " (re-sliced)",
         print_time_seconds=result.print_time_seconds,
-        filament_used_grams=result.filament_used_g or None,
+        filament_used_grams=filament_g or None,
         filament_type=new_filament_type,
         filament_color=new_filament_color,
         layer_height=source_archive.layer_height,
         nozzle_diameter=source_archive.nozzle_diameter,
-        sliced_for_model=source_archive.sliced_for_model,
+        # The re-sliced output is for whatever printer the user just picked,
+        # not the source archive's printer — read the model the slicer baked
+        # into the new 3MF, falling back to the source only if it's absent.
+        # (Copying source_archive.sliced_for_model kept a cross-printer
+        # re-slice, e.g. X1C→H2D, showing the old "X1C sliced" model.)
+        sliced_for_model=parsed_metadata.get("sliced_for_model") or source_archive.sliced_for_model,
         makerworld_url=source_archive.makerworld_url,
         designer=source_archive.designer,
         # Sliced-but-not-printed: keep status default ("completed") so it
@@ -3335,8 +3465,8 @@ async def slice_and_persist_as_archive(
         archive_id=new_archive.id,
         name=new_archive.print_name or out_filename,
         print_time_seconds=result.print_time_seconds,
-        filament_used_g=result.filament_used_g,
-        filament_used_mm=result.filament_used_mm,
+        filament_used_g=filament_g,
+        filament_used_mm=filament_mm,
         used_embedded_settings=used_embedded_settings,
     )
 
@@ -3401,6 +3531,16 @@ async def slice_library_file(
             src_print_name = candidate.strip()
     src_ext = Path(lib_file.filename).suffix.lower() or ".3mf"
     model_filename = f"{src_print_name}{src_ext}" if src_print_name else lib_file.filename
+
+    # Block a cross-nozzle-class re-slice (single-nozzle <-> H2D) up front.
+    # Fires only when the source is itself a sliced file (carries
+    # sliced_for_model); a plain un-sliced model has no source nozzle class.
+    await guard_nozzle_class_reslice(
+        db,
+        cloud_token_user,
+        request,
+        (lib_file.file_metadata or {}).get("sliced_for_model"),
+    )
 
     async def _run(job_id: int):
         async with async_session() as task_db:

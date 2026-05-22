@@ -3287,9 +3287,9 @@ class BambuMQTTClient:
             # model name for the brief window after connect before push data
             # arrives. _is_dual_nozzle only ever flips False→True, so it's safe
             # as the primary signal.
-            is_dual_nozzle = self._is_dual_nozzle or (
-                self.model and self.model.upper().strip() in ("H2D", "H2D PRO", "H2DPRO", "H2C", "X2D")
-            )
+            from backend.app.utils.printer_models import is_dual_nozzle_model
+
+            is_dual_nozzle = self._is_dual_nozzle or is_dual_nozzle_model(self.model)
 
             # Build ams_mapping2 from ams_mapping (detailed format with ams_id/slot_id)
             ams_mapping2 = []
@@ -4117,9 +4117,9 @@ class BambuMQTTClient:
         # Prefer runtime detection from device.extruder.info; fall back to
         # model name. H2S is single-nozzle but shares serial prefix "094" with
         # H2D, so a prefix-only check misclassified it (#1386).
-        is_dual_nozzle = self._is_dual_nozzle or (
-            self.model and self.model.upper().strip() in ("H2D", "H2D PRO", "H2DPRO", "H2C", "X2D")
-        )
+        from backend.app.utils.printer_models import is_dual_nozzle_model
+
+        is_dual_nozzle = self._is_dual_nozzle or is_dual_nozzle_model(self.model)
 
         if is_dual_nozzle:
             # H2D format: uses extruder_id, nozzle_id, nozzle_diameter

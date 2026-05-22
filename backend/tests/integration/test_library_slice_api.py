@@ -22,6 +22,7 @@ import httpx
 import pytest
 from httpx import AsyncClient
 
+from backend.app.api.routes.library import _slicer_rejection_message
 from backend.app.core.config import settings as app_settings
 from backend.app.models.library import LibraryFile
 from backend.app.models.local_preset import LocalPreset
@@ -775,3 +776,309 @@ class TestSliceJobs:
         slice_dispatch._jobs.clear()
         r = await async_client.get("/api/v1/slice-jobs/999999")
         assert r.status_code == 404
+
+
+# ---------------------------------------------------------------------------
+# POST /archives/{id}/slice — re-sliced archive reflects the target printer
+# ---------------------------------------------------------------------------
+
+
+def _make_sliced_3mf(printer_model_id: str) -> bytes:
+    """A minimal sliced-output 3MF that embeds a printer_model_id in
+    slice_info.config, the way a real Bambu Studio / OrcaSlicer export does.
+    ThreeMFParser reads this into metadata['sliced_for_model']."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("3D/3dmodel.model", "<model/>")
+        zf.writestr(
+            "Metadata/slice_info.config",
+            f"<config><plate><metadata key='printer_model_id' value='{printer_model_id}'/></plate></config>",
+        )
+    return buf.getvalue()
+
+
+class TestSliceArchiveResliceModel:
+    """Re-slicing an archive for a different printer must stamp the new
+    archive with the printer it was sliced FOR, not the source's printer."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_reslice_uses_target_model_not_source_model(
+        self, async_client: AsyncClient, db_session, slice_test_setup, printer_factory, archive_factory, monkeypatch
+    ):
+        from backend.app.models.archive import PrintArchive
+
+        tmp_path = slice_test_setup["tmp_path"]
+        # archive_dir is a static path off the real data dir; point it under
+        # base_dir (= tmp_path) so the new archive's file resolves there.
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+
+        # Source archive: a 3MF that was sliced for an X1C.
+        src_dir = tmp_path / "archives" / "src"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        src_3mf = src_dir / "cube.3mf"
+        src_3mf.write_bytes(_make_3mf_with_settings())
+        printer = await printer_factory()
+        source = await archive_factory(
+            printer.id,
+            filename="cube.3mf",
+            file_path=str(src_3mf.relative_to(tmp_path)),
+            sliced_for_model="X1C",
+            with_run=False,
+        )
+        source_id = source.id
+
+        # The slicer returns a 3MF whose embedded printer_model_id is O1D (H2D).
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                status_code=200,
+                content=_make_sliced_3mf("O1D"),
+                headers={
+                    "x-print-time-seconds": "600",
+                    "x-filament-used-g": "5.0",
+                    "x-filament-used-mm": "1600.0",
+                },
+            )
+
+        _install_mock_sidecar(handler)
+
+        resp = await async_client.post(
+            f"/api/v1/archives/{source_id}/slice",
+            json={
+                "printer_preset_id": slice_test_setup["printer_id"],
+                "process_preset_id": slice_test_setup["process_id"],
+                "filament_preset_id": slice_test_setup["filament_id"],
+            },
+        )
+        assert resp.status_code == 202, resp.text
+
+        final = await _wait_for_job(async_client, resp.json()["job_id"])
+        assert final["status"] == "completed", final
+
+        new_id = final["result"]["archive_id"]
+        assert new_id != source_id
+
+        new_archive = await db_session.get(PrintArchive, new_id)
+        # The fix: the re-sliced archive reflects H2D — the printer it was
+        # sliced for — instead of inheriting X1C from the source archive.
+        assert new_archive.sliced_for_model == "H2D"
+
+        # Source archive is untouched.
+        source_reloaded = await db_session.get(PrintArchive, source_id)
+        assert source_reloaded.sliced_for_model == "X1C"
+
+
+# ---------------------------------------------------------------------------
+# Slicer content rejections surface instead of silently falling back
+# ---------------------------------------------------------------------------
+
+
+class TestSlicerRejectionMessage:
+    """_slicer_rejection_message distinguishes a real slicer content rejection
+    (surface it to the user) from a CLI crash (fall back to embedded)."""
+
+    def test_extracts_bed_boundary_reason(self):
+        text = (
+            "Slicer CLI failed (500): Slicing failed with error from slicer: "
+            "Some objects are located over the boundary of the heated bed.: "
+            "Slicer process failed (exit code 204)\nstdout: trace ..."
+        )
+        assert _slicer_rejection_message(text) == "Some objects are located over the boundary of the heated bed."
+
+    def test_extracts_filament_temp_reason(self):
+        text = (
+            "Slicer CLI failed (500): Slicing failed with error from slicer: "
+            "The temperature difference of the filaments used is too large.: "
+            "Slicer process failed (exit code 194)"
+        )
+        assert _slicer_rejection_message(text) == "The temperature difference of the filaments used is too large."
+
+    def test_generic_cli_failure_is_not_a_rejection(self):
+        # The #1201 CLI-crash signature carries no slicer error_string, so it
+        # must still fall through to the embedded-settings fallback.
+        assert _slicer_rejection_message("Slicer CLI failed (500): Failed to slice the model") is None
+
+    def test_empty_or_unrelated_text(self):
+        assert _slicer_rejection_message("") is None
+        assert _slicer_rejection_message("Slicer sidecar unreachable: connection reset") is None
+
+
+class TestSliceSlicerRejection:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_3mf_surfaces_slicer_rejection_instead_of_falling_back(
+        self, async_client: AsyncClient, db_session, slice_test_setup
+    ):
+        """A real slicer content rejection (e.g. re-slicing for a printer with
+        a smaller bed) must surface as a 400 — not silently fall back to the
+        source 3MF's embedded settings, which would re-slice for the original
+        printer and hide the problem."""
+        src_3mf_path = slice_test_setup["tmp_path"] / "library" / "files" / "toobig.3mf"
+        src_3mf_path.write_bytes(_make_3mf_with_settings())
+        threemf = LibraryFile(
+            filename="toobig.3mf",
+            file_path=str(src_3mf_path.relative_to(slice_test_setup["tmp_path"])),
+            file_type="3mf",
+            file_size=src_3mf_path.stat().st_size,
+        )
+        db_session.add(threemf)
+        await db_session.commit()
+        await db_session.refresh(threemf)
+
+        call_count = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            call_count["n"] += 1
+            return httpx.Response(
+                status_code=500,
+                json={
+                    "message": (
+                        "Slicing failed with error from slicer: Some objects are "
+                        "located over the boundary of the heated bed."
+                    ),
+                    "details": "Slicer process failed (exit code 204)",
+                },
+            )
+
+        _install_mock_sidecar(handler)
+        response = await async_client.post(
+            f"/api/v1/library/files/{threemf.id}/slice",
+            json={
+                "printer_preset_id": slice_test_setup["printer_id"],
+                "process_preset_id": slice_test_setup["process_id"],
+                "filament_preset_id": slice_test_setup["filament_id"],
+            },
+        )
+        assert response.status_code == 202
+
+        final = await _wait_for_job(async_client, response.json()["job_id"])
+        assert final["status"] == "failed", final
+        assert final["error_status"] == 400
+        assert "boundary of the heated bed" in (final["error_detail"] or "")
+        # The slicer rejection must NOT trigger the embedded-settings retry.
+        assert call_count["n"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Nozzle-class re-slice guard — single-nozzle <-> dual-nozzle (H2D) is blocked
+# ---------------------------------------------------------------------------
+
+from fastapi import HTTPException  # noqa: E402
+
+from backend.app.api.routes.library import (  # noqa: E402
+    _canonical_printer_model,
+    guard_nozzle_class_reslice,
+)
+
+
+class TestCanonicalPrinterModel:
+    """_canonical_printer_model strips the '# ' clone prefix and the
+    ' 0.4 nozzle' variant suffix so preset names resolve to a model code."""
+
+    def test_strips_nozzle_suffix(self):
+        assert _canonical_printer_model("Bambu Lab H2D 0.4 nozzle") == "H2D"
+
+    def test_strips_clone_prefix_and_suffix(self):
+        assert _canonical_printer_model("# Bambu Lab X1 Carbon 0.4 nozzle") == "X1C"
+
+    def test_bare_model_and_empty(self):
+        assert _canonical_printer_model("Bambu Lab H2D") == "H2D"
+        assert _canonical_printer_model(None) is None
+        assert _canonical_printer_model("") is None
+
+
+class TestNozzleClassGuard:
+    """guard_nozzle_class_reslice blocks a re-slice that crosses the
+    single-nozzle <-> dual-nozzle boundary."""
+
+    @pytest.mark.asyncio
+    async def test_single_to_dual_is_blocked(self, monkeypatch):
+        import backend.app.api.routes.library as lib
+
+        async def _target(_db, _user, _request):
+            return "H2D"
+
+        monkeypatch.setattr(lib, "_resolve_target_printer_model", _target)
+        with pytest.raises(HTTPException) as exc:
+            await guard_nozzle_class_reslice(None, None, None, "X1C")
+        assert exc.value.status_code == 400
+        assert "H2D" in exc.value.detail and "X1C" in exc.value.detail
+
+    @pytest.mark.asyncio
+    async def test_dual_to_single_is_blocked(self, monkeypatch):
+        import backend.app.api.routes.library as lib
+
+        async def _target(_db, _user, _request):
+            return "X1C"
+
+        monkeypatch.setattr(lib, "_resolve_target_printer_model", _target)
+        with pytest.raises(HTTPException):
+            await guard_nozzle_class_reslice(None, None, None, "H2D")
+
+    @pytest.mark.asyncio
+    async def test_same_nozzle_class_is_allowed(self, monkeypatch):
+        import backend.app.api.routes.library as lib
+
+        async def _target(_db, _user, _request):
+            return "P1S"
+
+        monkeypatch.setattr(lib, "_resolve_target_printer_model", _target)
+        # X1C -> P1S: both single-nozzle — no raise.
+        await guard_nozzle_class_reslice(None, None, None, "X1C")
+
+    @pytest.mark.asyncio
+    async def test_no_source_model_is_a_noop(self, monkeypatch):
+        import backend.app.api.routes.library as lib
+
+        async def _target(_db, _user, _request):
+            return "H2D"
+
+        monkeypatch.setattr(lib, "_resolve_target_printer_model", _target)
+        # Un-sliced source (no sliced_for_model) — first-time slice, never blocked.
+        await guard_nozzle_class_reslice(None, None, None, None)
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_archive_reslice_x1c_to_h2d_returns_400(
+        self, async_client: AsyncClient, db_session, slice_test_setup, printer_factory, archive_factory, monkeypatch
+    ):
+        """End to end: re-slicing an X1C archive for an H2D printer preset is
+        rejected synchronously with a 400 — before any job is enqueued."""
+        tmp_path = slice_test_setup["tmp_path"]
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+
+        src_dir = tmp_path / "archives" / "src"
+        src_dir.mkdir(parents=True, exist_ok=True)
+        src_3mf = src_dir / "cube.3mf"
+        src_3mf.write_bytes(_make_3mf_with_settings())
+        printer = await printer_factory()
+        source = await archive_factory(
+            printer.id,
+            filename="cube.3mf",
+            file_path=str(src_3mf.relative_to(tmp_path)),
+            sliced_for_model="X1C",
+            with_run=False,
+        )
+
+        # A printer preset whose resolved JSON is an H2D — dual-nozzle.
+        h2d = LocalPreset(
+            name="# Bambu Lab H2D 0.4 nozzle",
+            preset_type="printer",
+            source="orcaslicer",
+            setting=json.dumps({"name": "Bambu Lab H2D 0.4 nozzle", "printer_model": "Bambu Lab H2D"}),
+        )
+        db_session.add(h2d)
+        await db_session.commit()
+        await db_session.refresh(h2d)
+
+        resp = await async_client.post(
+            f"/api/v1/archives/{source.id}/slice",
+            json={
+                "printer_preset": {"source": "local", "id": str(h2d.id)},
+                "process_preset": {"source": "local", "id": str(slice_test_setup["process_id"])},
+                "filament_presets": [{"source": "local", "id": str(slice_test_setup["filament_id"])}],
+            },
+        )
+        assert resp.status_code == 400, resp.text
+        detail = resp.json()["detail"]
+        assert "H2D" in detail and "X1C" in detail

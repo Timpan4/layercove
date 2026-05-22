@@ -3460,6 +3460,7 @@ export default {
     runningToast: '{{name}} wird gesliced — {{elapsed}}',
     runningWithProgress: '{{name}} – {{stage}} ({{percent}} %) – {{elapsed}}',
     completedToast: '{{name}} wurde gesliced',
+    failedTitle: 'Slicen fehlgeschlagen',
     failedToast: 'Slicen von {{name}} fehlgeschlagen: {{detail}}',
     tier: {
       local: 'Importiert',

@@ -316,6 +316,20 @@ class ThreeMFParser:
             if match:
                 self.metadata["total_layers"] = int(match.group(1))
 
+            # Total filament usage. The slicer writes the print's totals into
+            # the G-code header ("; total filament weight [g] : 126.26"). Only
+            # a fallback — slice_info.config is more authoritative when present
+            # — but it covers sliced outputs whose slice_info lacks per-filament
+            # used_g, and it's the slicer's own figure regardless.
+            if "filament_used_grams" not in self.metadata:
+                match = re.search(r";\s*total\s+filament\s+weight\s*\[g\]\s*:\s*([\d.]+)", header, re.IGNORECASE)
+                if match:
+                    self.metadata["filament_used_grams"] = float(match.group(1))
+            if "filament_used_mm" not in self.metadata:
+                match = re.search(r";\s*total\s+filament\s+length\s*\[mm\]\s*:\s*([\d.]+)", header, re.IGNORECASE)
+                if match:
+                    self.metadata["filament_used_mm"] = float(match.group(1))
+
             # Look for printer_model in gcode header (fallback if not found in slice_info)
             # Format: "; printer_model = Bambu Lab X1 Carbon" or "; printer_model = X1C"
             if "sliced_for_model" not in self.metadata:

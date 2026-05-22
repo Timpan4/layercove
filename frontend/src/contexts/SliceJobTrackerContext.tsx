@@ -17,6 +17,7 @@ import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
 import { api, type SliceJobProgress, type SliceJobState, type SliceJobStatus } from '../api/client';
 import { useToast } from './ToastContext';
+import { AlertModal } from '../components/AlertModal';
 
 interface TrackedJob {
   id: number;
@@ -67,6 +68,10 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
   const { showToast, showPersistentToast, dismissToast } = useToast();
   const queryClient = useQueryClient();
   const [activeJobs, setActiveJobs] = useState<TrackedJob[]>([]);
+  // A failed slice surfaces as an acknowledge-only modal, not a toast: the
+  // slicer's reason (e.g. "objects over the bed boundary") is actionable and
+  // a 3s toast hides it before it can be read.
+  const [sliceError, setSliceError] = useState<{ name: string; detail: string } | null>(null);
 
   // Stable mutable ref so the polling effect can read the current list
   // without re-subscribing every time it changes.
@@ -162,8 +167,10 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
           'success',
         );
       } else if (state.status === 'failed') {
-        const detail = state.error_detail || t('slice.failed');
-        showToast(t('slice.failedToast', 'Slicing {{name}} failed: {{detail}}', { name: prettifyFilename(job.sourceName), detail }), 'error');
+        setSliceError({
+          name: prettifyFilename(job.sourceName),
+          detail: state.error_detail || t('slice.failed'),
+        });
       }
 
       // Refresh whichever list owns the result. Both are cheap to invalidate.
@@ -220,6 +227,14 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
   return (
     <SliceJobTrackerContext.Provider value={{ trackJob, activeJobs }}>
       {children}
+      {sliceError && (
+        <AlertModal
+          title={t('slice.failedTitle')}
+          subtitle={sliceError.name}
+          message={sliceError.detail}
+          onClose={() => setSliceError(null)}
+        />
+      )}
     </SliceJobTrackerContext.Provider>
   );
 }

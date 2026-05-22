@@ -3449,6 +3449,7 @@ export default {
     runningToast: 'Découpage {{name}} – {{elapsed}}',
     runningWithProgress: '{{name}} – {{stage}} ({{percent}} %) – {{elapsed}}',
     completedToast: '{{name}} découpé',
+    failedTitle: 'Échec du découpage',
     failedToast: 'Échec du découpage de {{name}} : {{detail}}',
     tier: {
       local: 'Importé',

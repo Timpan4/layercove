@@ -3448,6 +3448,7 @@ export default {
     runningToast: 'Fatiando {{name}} – {{elapsed}}',
     runningWithProgress: '{{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}} fatiado',
+    failedTitle: 'Falha ao fatiar',
     failedToast: 'Falha ao fatiar {{name}}: {{detail}}',
     tier: {
       local: 'Importado',

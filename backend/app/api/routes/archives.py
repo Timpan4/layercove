@@ -3607,7 +3607,7 @@ async def slice_archive(
     user originally sent to slice) → ``file_path`` (the sliced 3MF/gcode that
     actually printed).
     """
-    from backend.app.api.routes.library import slice_and_persist_as_archive
+    from backend.app.api.routes.library import guard_nozzle_class_reslice, slice_and_persist_as_archive
     from backend.app.core.database import async_session
     from backend.app.services.slice_dispatch import (
         http_exception_to_job_error,
@@ -3653,6 +3653,11 @@ async def slice_archive(
     model_bytes = src_path.read_bytes()
     archive_id_local = archive.id
     user_id = current_user.id if current_user else None
+
+    # Block a cross-nozzle-class re-slice (single-nozzle <-> H2D) up front —
+    # BambuStudio's multi-extruder validator would otherwise reject it with a
+    # cryptic error. No-op for same-class or un-sliced sources.
+    await guard_nozzle_class_reslice(db, current_user, request, archive.sliced_for_model)
 
     async def _run(job_id: int):
         async with async_session() as task_db:

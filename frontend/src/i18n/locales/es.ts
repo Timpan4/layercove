@@ -3463,6 +3463,7 @@ export default {
     runningToast: 'Laminando {{name}} — {{elapsed}}',
     runningWithProgress: '{{name}} — {{stage}} ({{percent}}%) — {{elapsed}}',
     completedToast: '{{name}} laminado',
+    failedTitle: 'Error al laminar',
     failedToast: 'Error al laminar {{name}}: {{detail}}',
     tier: {
       local: 'Importado',

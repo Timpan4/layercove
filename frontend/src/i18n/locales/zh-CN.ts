@@ -3448,6 +3448,7 @@ export default {
     runningToast: '切片 {{name}} — {{elapsed}}',
     runningWithProgress: '{{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '已切片 {{name}}',
+    failedTitle: '切片失败',
     failedToast: '切片 {{name}} 失败：{{detail}}',
     tier: {
       local: '已导入',

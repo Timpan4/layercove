@@ -643,3 +643,47 @@ class TestReprintCostCalculation:
         # After 3 prints (1 original + 2 reprints)
         total_after_3_prints = round(single_print_cost * 3, 2)
         assert total_after_3_prints == 6.0
+
+
+class TestGcodeHeaderFilamentUsage:
+    """ThreeMFParser pulls total filament usage from the produced 3MF's G-code
+    header. Some slicer-sidecar builds leave the X-Filament-Used-* response
+    headers unset, so the slice would otherwise report "0 g" for a real
+    multi-hour print."""
+
+    @staticmethod
+    def _make_3mf(gcode_header: str) -> str:
+        import tempfile
+        import zipfile
+
+        fd, path = tempfile.mkstemp(suffix=".3mf")
+        import os
+
+        os.close(fd)
+        with zipfile.ZipFile(path, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("3D/3dmodel.model", "<model/>")
+            zf.writestr("Metadata/plate_1.gcode", gcode_header + "\nG1 X0 Y0\n")
+        return path
+
+    def test_extracts_filament_weight_and_length_from_header(self):
+        from backend.app.services.archive import ThreeMFParser
+
+        header = (
+            "; HEADER_BLOCK_START\n"
+            "; BambuStudio 02.06.00.51\n"
+            "; total layer number: 503\n"
+            "; total filament length [mm] : 41661.40\n"
+            "; total filament volume [cm^3] : 100207.42\n"
+            "; total filament weight [g] : 126.26\n"
+        )
+        meta = ThreeMFParser(self._make_3mf(header)).parse()
+        assert meta.get("filament_used_grams") == 126.26
+        assert meta.get("filament_used_mm") == 41661.40
+        assert meta.get("total_layers") == 503
+
+    def test_no_filament_keys_when_header_lacks_them(self):
+        from backend.app.services.archive import ThreeMFParser
+
+        meta = ThreeMFParser(self._make_3mf("; total layer number: 10\n")).parse()
+        assert "filament_used_grams" not in meta
+        assert "filament_used_mm" not in meta
