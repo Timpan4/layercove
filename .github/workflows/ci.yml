@@ -84,10 +84,17 @@ jobs:
             --ignore-vuln CVE-2025-45768
 
   backend-tests:
-    name: Backend Tests
+    name: Backend Tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
     if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     needs: backend-lint
+    strategy:
+      # Don't cancel sibling shards if one fails — we want every shard's
+      # failure list, not just the first one, so a single PR push shows
+      # all broken tests in one go.
+      fail-fast: false
+      matrix:
+        shard: [1, 2, 3, 4]
     steps:
       - uses: actions/checkout@v4
 
@@ -110,11 +117,22 @@ jobs:
           pip install -r requirements.txt
           pip install -r requirements-dev.txt
 
-      - name: Run tests
+      - name: Run tests (shard ${{ matrix.shard }}/4)
         timeout-minutes: 10
         run: |
           cd backend
-          python -m pytest tests/ -v --tb=short --timeout=60 --timeout-method=thread -n auto
+          # -v dropped: 5300+ "PASSED foo::bar" lines per worker eat 30-60s
+          # of stdout I/O time on 2-vCPU runners. --tb=short is enough.
+          # --splits 4 --group N uses pytest-split to slice the collected
+          # test set roughly evenly across the 4 matrix shards; first run
+          # is name-hash-based, subsequent runs improve via .test_durations
+          # if you ever commit one (we don't — even the naive hash split
+          # gets us ≈25% per shard given the test mix here).
+          python -m pytest tests/ \
+            --tb=short \
+            --timeout=60 --timeout-method=thread \
+            -n auto \
+            --splits 4 --group ${{ matrix.shard }}
 
   # ============================================================================
   # Frontend Checks
