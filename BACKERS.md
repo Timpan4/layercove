@@ -40,6 +40,7 @@ If you sponsor and your name isn't here within 48h, please write an email to mar
 - [@sentinel-center](https://github.com/sentinel-center)
 - [@brianehlert](https://github.com/brianehlert)
 - [@siiruup](https://github.com/siiruup)
+- [@agntcoopersea](https://github.com/agntcoopersea)
 ---
 
 ## One-time and historical supporters
