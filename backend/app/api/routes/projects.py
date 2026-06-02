@@ -41,6 +41,7 @@ from backend.app.schemas.project import (
     TimelineEvent,
 )
 from backend.app.utils.http import build_content_disposition
+from backend.app.utils.safe_path import safe_join_under
 
 logger = logging.getLogger(__name__)
 
@@ -892,7 +893,7 @@ async def upload_attachment(
 
     # Generate unique filename
     unique_filename = f"{uuid.uuid4().hex}{ext}"
-    file_path = attachments_dir / unique_filename
+    file_path = attachments_dir / unique_filename  # SEC-PATH-OK: unique_filename = uuid.uuid4().hex + ext
 
     # Save file
     try:
@@ -964,7 +965,9 @@ async def download_attachment(
         raise HTTPException(status_code=404, detail="Attachment not found")
 
     # Check file exists
-    file_path = get_project_attachments_dir(project_id) / filename
+    file_path = (
+        get_project_attachments_dir(project_id) / filename
+    )  # SEC-PATH-OK: filename validated above (no /, \\, .., empty) + attachment membership check
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="Attachment file not found")
 
@@ -1004,7 +1007,9 @@ async def delete_attachment(
     project.attachments = attachments if attachments else None
 
     # Delete file
-    file_path = get_project_attachments_dir(project_id) / filename
+    file_path = (
+        get_project_attachments_dir(project_id) / filename
+    )  # SEC-PATH-OK: filename validated above (no /, \\, .., empty) + attachment membership check
     if file_path.exists():
         try:
             os.remove(file_path)
@@ -1066,7 +1071,7 @@ async def upload_project_cover_image(
                 logger.warning("Failed to delete old cover image %s: %s", old_path, e)
 
     unique_filename = f"cover_{uuid.uuid4().hex}{ext}"
-    file_path = attachments_dir / unique_filename
+    file_path = attachments_dir / unique_filename  # SEC-PATH-OK: unique_filename = f"cover_{uuid.uuid4().hex}{ext}"
     try:
         with open(file_path, "wb") as f:
             content = await file.read()
@@ -1827,6 +1832,13 @@ async def import_project_file(
         if not folder_name:
             continue
 
+        # Containment check on the folder name — refuses absolute paths and
+        # ``..`` traversal in ``project.json[linked_folders[*].name]``. The
+        # previous code did ``library_dir / folder_name`` directly, which
+        # collapses to ``Path(folder_name)`` when folder_name is absolute
+        # and lets ``..`` escape after mkdir.
+        folder_path = safe_join_under(library_dir, folder_name)
+
         # Check if folder exists
         existing_result = await db.execute(
             select(LibraryFolder).where(
@@ -1853,7 +1865,6 @@ async def import_project_file(
             await db.flush()
 
             # Create folder on disk
-            folder_path = library_dir / folder_name
             folder_path.mkdir(parents=True, exist_ok=True)
 
         # Import files for this folder from ZIP
@@ -1868,8 +1879,18 @@ async def import_project_file(
             if not relative_path:
                 continue
 
-            # Write file to disk
-            file_disk_path = library_dir / folder_name / relative_path
+            # Containment check on the per-entry relative path. ZIP names
+            # can carry ``..`` segments by spec; without resolve + parent
+            # containment, ``files/<folder>/../../../etc/x`` escapes
+            # ``library_dir`` entirely. ``relative_path`` is split into
+            # parts because ``safe_join_under`` rejects parts that start
+            # with ``/``, and a single combined string would hide an
+            # embedded ``..`` segment behind a forward slash.
+            file_disk_path = safe_join_under(
+                library_dir,
+                folder_name,
+                *Path(relative_path).parts,
+            )
             file_disk_path.parent.mkdir(parents=True, exist_ok=True)
             file_disk_path.write_bytes(file_content)
 

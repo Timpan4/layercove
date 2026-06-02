@@ -63,7 +63,7 @@ from backend.app.schemas.library import (
 )
 from backend.app.schemas.slicer import SliceRequest, SliceResponse
 from backend.app.services.archive import ThreeMFParser
-from backend.app.services.stl_thumbnail import generate_stl_thumbnail
+from backend.app.services.stl_thumbnail import MIN_USABLE_STL_BYTES, generate_stl_thumbnail
 from backend.app.utils.filename import InvalidFilenameError, validate_print_filename
 from backend.app.utils.threemf_tools import (
     extract_embedded_presets_from_3mf,
@@ -219,7 +219,7 @@ def _resolve_upload_destination(target_folder: LibraryFolder | None, filename: s
             )
         # Guard against path-traversal via a pathological filename — join then
         # verify the resolved destination is still inside the external dir.
-        dest = (ext_dir / filename).resolve()
+        dest = (ext_dir / filename).resolve()  # SEC-PATH-OK: resolve + relative_to containment check on next line
         try:
             dest.relative_to(ext_dir.resolve())
         except ValueError:
@@ -302,7 +302,7 @@ def _move_file_bytes(file: LibraryFile, target_folder: LibraryFolder | None) -> 
             raise _MoveSkip("target_inaccessible", f"target path not accessible: {ext_dir}")
         if not os.access(ext_dir, os.W_OK):
             raise _MoveSkip("target_unwritable", f"target path not writable: {ext_dir}")
-        dest = (ext_dir / file.filename).resolve()
+        dest = (ext_dir / file.filename).resolve()  # SEC-PATH-OK: resolve + relative_to containment check on next line
         try:
             dest.relative_to(ext_dir.resolve())
         except ValueError:
@@ -433,7 +433,9 @@ async def save_3mf_bytes_to_library(
     # extension so downstream logic (ThreeMFParser, thumbnail viewer) works.
     ext = os.path.splitext(filename)[1].lower() or ".3mf"
     unique_filename = f"{uuid.uuid4().hex}{ext}"
-    file_path = get_library_files_dir() / unique_filename
+    file_path = (
+        get_library_files_dir() / unique_filename
+    )  # SEC-PATH-OK: unique_filename = uuid.uuid4().hex + ext, generated on the previous line
     with open(file_path, "wb") as fh:
         fh.write(file_bytes)
 
@@ -451,7 +453,7 @@ async def save_3mf_bytes_to_library(
             if thumb_data:
                 thumbs_dir = get_library_thumbnails_dir()
                 thumb_filename = f"{uuid.uuid4().hex}{thumb_ext}"
-                thumb_path = thumbs_dir / thumb_filename
+                thumb_path = thumbs_dir / thumb_filename  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + thumb_ext
                 with open(thumb_path, "wb") as fh:
                     fh.write(thumb_data)
                 thumbnail_path = str(thumb_path)
@@ -554,7 +556,7 @@ def create_image_thumbnail(file_path: Path, thumbnails_dir: Path, max_size: int 
         from PIL import Image
 
         thumb_filename = f"{uuid.uuid4().hex}.png"
-        thumb_path = thumbnails_dir / thumb_filename
+        thumb_path = thumbnails_dir / thumb_filename  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + ".png"
 
         with Image.open(file_path) as img:
             # Convert to RGB if necessary (for PNG with transparency, etc.)
@@ -582,7 +584,9 @@ def create_image_thumbnail(file_path: Path, thumbnails_dir: Path, max_size: int 
             file_size = file_path.stat().st_size
             if file_size < 500000:  # Less than 500KB
                 thumb_filename = f"{uuid.uuid4().hex}{file_path.suffix}"
-                thumb_path = thumbnails_dir / thumb_filename
+                thumb_path = (
+                    thumbnails_dir / thumb_filename
+                )  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + file_path.suffix
                 shutil.copy2(file_path, thumb_path)
                 return str(thumb_path)
         except OSError:
@@ -635,6 +639,14 @@ async def _backfill_external_stl_thumbnails(folder_ids: list[int]) -> None:
         for stl_file in stl_files:
             abs_path = to_absolute_path(stl_file.file_path)
             if not abs_path or not abs_path.exists():
+                continue
+            # Pre-skip files too small to contain even a single triangle.
+            # Bulk-uploaded ZIPs of stub STLs would otherwise trigger one
+            # trimesh.load() call + one debug log line per stub.
+            try:
+                if abs_path.stat().st_size < MIN_USABLE_STL_BYTES:
+                    continue
+            except OSError:
                 continue
             try:
                 thumb_path = generate_stl_thumbnail(abs_path, thumbnails_dir)
@@ -1393,7 +1405,9 @@ async def scan_external_folder(
                             name=part,
                             parent_id=current_parent,
                             is_external=True,
-                            external_path=str(ext_path / current_path),
+                            external_path=str(
+                                ext_path / current_path
+                            ),  # SEC-PATH-OK: current_path built from Path(rel_dir).parts of an os.walk descent under ext_path
                             external_readonly=folder.external_readonly,
                             external_show_hidden=folder.external_show_hidden,
                         )
@@ -1409,7 +1423,9 @@ async def scan_external_folder(
             if not folder.external_show_hidden and filename.startswith("."):
                 continue
 
-            filepath = Path(dirpath) / filename
+            filepath = (
+                Path(dirpath) / filename
+            )  # SEC-PATH-OK: dirpath + filename from os.walk(ext_path); filesystem-discovered, not user input
             ext = filepath.suffix.lower()
 
             # Check for compound extensions like .gcode.3mf
@@ -1459,7 +1475,9 @@ async def scan_external_folder(
                         if thumb_data:
                             thumb_dir = get_library_thumbnails_dir()
                             thumb_filename = f"{uuid.uuid4().hex}{thumbnail_ext}"
-                            thumb_full = thumb_dir / thumb_filename
+                            thumb_full = (
+                                thumb_dir / thumb_filename
+                            )  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + thumbnail_ext
                             thumb_full.write_bytes(thumb_data)
                             thumbnail_path = to_relative_path(thumb_full)
 
@@ -1492,7 +1510,7 @@ async def scan_external_folder(
                 if thumb_data:
                     thumb_dir = get_library_thumbnails_dir()
                     thumb_filename = f"{uuid.uuid4().hex}.png"
-                    thumb_full = thumb_dir / thumb_filename
+                    thumb_full = thumb_dir / thumb_filename  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + ".png"
                     thumb_full.write_bytes(thumb_data)
                     thumbnail_path = to_relative_path(thumb_full)
 
@@ -1737,7 +1755,9 @@ async def upload_file(
                 # Save thumbnail if extracted
                 if thumbnail_data:
                     thumb_filename = f"{uuid.uuid4().hex}{thumbnail_ext}"
-                    thumb_path = thumbnails_dir / thumb_filename
+                    thumb_path = (
+                        thumbnails_dir / thumb_filename
+                    )  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + thumbnail_ext
                     with open(thumb_path, "wb") as f:
                         f.write(thumbnail_data)
                     thumbnail_path = str(thumb_path)
@@ -1766,7 +1786,9 @@ async def upload_file(
                 thumbnail_data = extract_gcode_thumbnail(file_path)
                 if thumbnail_data:
                     thumb_filename = f"{uuid.uuid4().hex}.png"
-                    thumb_path = thumbnails_dir / thumb_filename
+                    thumb_path = (
+                        thumbnails_dir / thumb_filename
+                    )  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + ".png"
                     with open(thumb_path, "wb") as f:
                         f.write(thumbnail_data)
                     thumbnail_path = str(thumb_path)
@@ -1778,9 +1800,16 @@ async def upload_file(
             thumbnail_path = create_image_thumbnail(file_path, thumbnails_dir)
 
         elif ext == ".stl":
-            # Generate STL thumbnail if enabled
+            # Generate STL thumbnail if enabled. Same MIN_USABLE_STL_BYTES
+            # pre-skip as extract_zip_file — stubs / placeholders below this
+            # size can't contain a triangle so trimesh would return an empty
+            # mesh anyway.
             if generate_stl_thumbnails:
-                thumbnail_path = generate_stl_thumbnail(file_path, thumbnails_dir)
+                try:
+                    if file_path.stat().st_size >= MIN_USABLE_STL_BYTES:
+                        thumbnail_path = generate_stl_thumbnail(file_path, thumbnails_dir)
+                except OSError:
+                    pass
 
         # Create database entry (managed files store relative paths for portability;
         # external files store the absolute mount path — same shape as scan produces)
@@ -1970,7 +1999,9 @@ async def extract_zip_file(
 
                     # Generate unique filename for storage
                     unique_filename = f"{uuid.uuid4().hex}{ext}"
-                    file_path = get_library_files_dir() / unique_filename
+                    file_path = (
+                        get_library_files_dir() / unique_filename
+                    )  # SEC-PATH-OK: unique_filename = uuid.uuid4().hex + ext
 
                     # Extract and save file
                     file_content = zf.read(zip_path)
@@ -1995,7 +2026,9 @@ async def extract_zip_file(
 
                             if thumbnail_data:
                                 thumb_filename = f"{uuid.uuid4().hex}{thumbnail_ext}"
-                                thumb_path = thumbnails_dir / thumb_filename
+                                thumb_path = (
+                                    thumbnails_dir / thumb_filename
+                                )  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + thumbnail_ext
                                 with open(thumb_path, "wb") as f:
                                     f.write(thumbnail_data)
                                 thumbnail_path = str(thumb_path)
@@ -2022,7 +2055,9 @@ async def extract_zip_file(
                             thumbnail_data = extract_gcode_thumbnail(file_path)
                             if thumbnail_data:
                                 thumb_filename = f"{uuid.uuid4().hex}.png"
-                                thumb_path = thumbnails_dir / thumb_filename
+                                thumb_path = (
+                                    thumbnails_dir / thumb_filename
+                                )  # SEC-PATH-OK: thumb_filename = uuid.uuid4().hex + ".png"
                                 with open(thumb_path, "wb") as f:
                                     f.write(thumbnail_data)
                                 thumbnail_path = str(thumb_path)
@@ -2033,8 +2068,12 @@ async def extract_zip_file(
                         thumbnail_path = create_image_thumbnail(file_path, thumbnails_dir)
 
                     elif ext == ".stl":
-                        # Generate STL thumbnail if enabled
-                        if generate_stl_thumbnails:
+                        # Generate STL thumbnail if enabled. Pre-skip files
+                        # below MIN_USABLE_STL_BYTES — they can't contain
+                        # even a single triangle, and bulk-uploaded ZIPs of
+                        # stub STLs would otherwise log one debug line per
+                        # file via the empty-mesh branch in trimesh.load.
+                        if generate_stl_thumbnails and len(file_content) >= MIN_USABLE_STL_BYTES:
                             thumbnail_path = generate_stl_thumbnail(file_path, thumbnails_dir)
 
                     # Create database entry (store relative paths for portability)
@@ -3540,7 +3579,7 @@ async def slice_and_persist(
     base_name = model_filename.rsplit(".", 1)[0]
     out_filename = f"{base_name}.gcode.3mf"
     unique_name = f"{uuid.uuid4().hex}.gcode.3mf"
-    out_path = get_library_files_dir() / unique_name
+    out_path = get_library_files_dir() / unique_name  # SEC-PATH-OK: unique_name = uuid.uuid4().hex + ".gcode.3mf"
     out_path.write_bytes(result.content)
 
     # Extract thumbnail from the produced 3MF so the library card shows a
@@ -3657,9 +3696,13 @@ async def slice_and_persist_as_archive(
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
     archive_subdir = f"{timestamp}_{base_name}_sliced"
-    archive_dir = app_settings.archive_dir / printer_folder / archive_subdir
+    archive_dir = (
+        app_settings.archive_dir / printer_folder / archive_subdir
+    )  # SEC-PATH-OK: printer_folder = str(int|None), archive_subdir = f"{timestamp}_{base_name}_sliced" where base_name went through _safe_filename
     archive_dir.mkdir(parents=True, exist_ok=True)
-    out_path = archive_dir / out_filename
+    out_path = (
+        archive_dir / out_filename
+    )  # SEC-PATH-OK: out_filename = f"{base_name}.gcode.3mf" where base_name went through _safe_filename
     out_path.write_bytes(result.content)
 
     # Extract a thumbnail for the new archive card. Priority order:

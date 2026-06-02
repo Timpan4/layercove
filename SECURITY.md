@@ -147,6 +147,28 @@ The failure modes are where the vulnerabilities live. The structural
 backstops above catch *categories* of regression; the negative-path
 tests catch *specific* regressions in the new code.
 
+### 5. Path joins under a trusted parent use the safe-join helper
+
+Anywhere a Bambuddy code path joins a string from outside the function's
+scope (request body, query/path param, `UploadFile.filename`, ZIP
+`namelist()` entry, tarfile member, **printer FTP-listing entry**) under
+a trusted directory, the join must route through
+`backend.app.utils.safe_path.safe_join_under(parent, *parts)`. The helper
+resolves the joined path and asserts it is a descendant of the parent —
+defeating both absolute-path collapse (`Path("/a") / "/b"` → `Path("/b")`)
+and `..` traversal.
+
+Sites that have an inline guard (an explicit resolve + `is_relative_to`,
+a basename-stripping helper like `_safe_filename`, or a pre-validated
+alphanumeric filter) carry a `# SEC-PATH-OK: <reason>` marker on the
+same line. CI walks **both** `backend/app/api/routes/` and
+`backend/app/services/` and fails the build on any
+``<dir-like> / <variable>`` join without either the helper or the
+marker. The services layer is in scope because it receives values from
+the routes verbatim and from external sources Bambuddy has no control
+over (the compromised-printer threat model: a malicious printer can
+serve crafted FTP-listing entries that flow straight into a path join).
+
 ### Where these rules live in the codebase
 
 | Rule | Enforcement | Location |
@@ -156,6 +178,7 @@ tests catch *specific* regressions in the new code.
 | 2. Fail-closed in auth code | `test_no_fail_open_in_auth_modules` | `backend/tests/unit/test_no_fail_open_in_auth.py` |
 | 3. No hardcoded fallback secrets | `test_no_hardcoded_secrets` | `backend/tests/unit/test_no_hardcoded_secrets.py` |
 | 4. Negative-path tests required | Reviewer responsibility (no automated CI gate yet) | PR review |
+| 5. Safe-join under trusted parent | `test_route_path_arithmetic_is_safe_joined_or_marked` | `backend/tests/unit/test_no_unsafe_path_joins.py` |
 
 If you are adding a CI rule, update this table. If you are removing a
 CI rule, you are removing a security backstop and the PR description

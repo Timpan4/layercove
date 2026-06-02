@@ -953,3 +953,122 @@ class TestProjectExportImport:
         response = await async_client.post("/api/v1/projects/import/file", files=files)
         assert response.status_code == 400
         assert "Invalid JSON" in response.json()["detail"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_import_rejects_absolute_path_in_folder_name(self, async_client: AsyncClient, tmp_path):
+        """Absolute paths in `linked_folders[*].name` must not escape library_dir.
+
+        Verbatim shape from the upstream advisory: attacker sets folder name to
+        an absolute path, expecting Python's ``Path("/lib") / "/anywhere"`` to
+        collapse to ``Path("/anywhere")`` and let the next file write land
+        outside the library directory.
+        """
+        import io
+        import json
+        import zipfile
+
+        target_outside = tmp_path / "outside" / "owned"
+        # Build a ZIP whose folder name points outside library_dir entirely.
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "project.json",
+                json.dumps(
+                    {
+                        "name": "innocent",
+                        "linked_folders": [{"name": str(target_outside)}],
+                    }
+                ),
+            )
+            zf.writestr(f"files/{target_outside}/evil.pth", b"import os; os.system('echo pwned > /tmp/owned')\n")
+
+        zip_buffer.seek(0)
+        files = {"file": ("evil.zip", zip_buffer, "application/zip")}
+        response = await async_client.post("/api/v1/projects/import/file", files=files)
+        assert response.status_code == 400, response.text
+        assert not target_outside.exists(), "Attacker payload landed outside library_dir"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_import_rejects_dotdot_in_folder_name(self, async_client: AsyncClient):
+        """`..` segments in folder name must be rejected."""
+        import io
+        import json
+        import zipfile
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "project.json",
+                json.dumps(
+                    {
+                        "name": "innocent",
+                        "linked_folders": [{"name": "../../../etc"}],
+                    }
+                ),
+            )
+            zf.writestr("files/../../../etc/x.txt", b"x")
+
+        zip_buffer.seek(0)
+        files = {"file": ("evil.zip", zip_buffer, "application/zip")}
+        response = await async_client.post("/api/v1/projects/import/file", files=files)
+        assert response.status_code == 400, response.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_import_rejects_dotdot_in_relative_path(self, async_client: AsyncClient):
+        """`..` segments in the per-entry path (Vector B in the advisory) must
+        be rejected even when the folder name itself is fine."""
+        import io
+        import json
+        import zipfile
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "project.json",
+                json.dumps(
+                    {
+                        "name": "innocent",
+                        "linked_folders": [{"name": "ok"}],
+                    }
+                ),
+            )
+            # Folder name is benign, but the file path inside attempts to
+            # escape via ``..``.
+            zf.writestr("files/ok/../../../etc/x.txt", b"x")
+
+        zip_buffer.seek(0)
+        files = {"file": ("evil.zip", zip_buffer, "application/zip")}
+        response = await async_client.post("/api/v1/projects/import/file", files=files)
+        assert response.status_code == 400, response.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_import_legit_nested_zip_still_works(self, async_client: AsyncClient):
+        """A legitimate ZIP with a nested file path inside the folder must
+        continue to import cleanly. Guards against the fix being over-strict."""
+        import io
+        import json
+        import zipfile
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(
+                "project.json",
+                json.dumps(
+                    {
+                        "name": "nested-ok",
+                        "linked_folders": [{"name": "OkFolder"}],
+                    }
+                ),
+            )
+            zf.writestr("files/OkFolder/sub/dir/inside.txt", b"hello")
+
+        zip_buffer.seek(0)
+        files = {"file": ("nested.zip", zip_buffer, "application/zip")}
+        response = await async_client.post("/api/v1/projects/import/file", files=files)
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert data["name"] == "nested-ok"

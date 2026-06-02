@@ -16,6 +16,7 @@ from backend.app.core.config import settings
 from backend.app.models.archive import PrintArchive
 from backend.app.models.filament import Filament
 from backend.app.models.printer import Printer
+from backend.app.utils.safe_path import PathTraversalError, safe_join_under
 
 logger = logging.getLogger(__name__)
 
@@ -1084,7 +1085,9 @@ class ArchiveService:
         archive_name = f"{timestamp}_{display_stem}"
         # Use "unassigned" folder for archives without a printer
         printer_folder = str(printer_id) if printer_id is not None else "unassigned"
-        archive_dir = settings.archive_dir / printer_folder / archive_name
+        archive_dir = (
+            settings.archive_dir / printer_folder / archive_name
+        )  # SEC-PATH-OK: printer_folder = str(int|None) → digits or "unassigned"; archive_name = f"{timestamp}_{display_stem}" where resolve_display_stem strips path components via Path(filename).name
         archive_dir.mkdir(parents=True, exist_ok=True)
 
         # Copy 3MF file with an explicit fsync'd loop (avoids a sendfile
@@ -1448,12 +1451,29 @@ class ArchiveService:
             return False
 
         # Get archive directory
-        file_path = settings.base_dir / archive.file_path
+        file_path = (
+            settings.base_dir / archive.file_path
+        )  # SEC-PATH-OK: archive.file_path is DB-stored, set by archive_print() under settings.archive_dir
         archive_dir = file_path.parent
 
         # Save timelapse - use thread pool to avoid blocking event loop
-        # (timelapse files can be 100MB+, sync write blocks for seconds)
-        timelapse_file = archive_dir / filename
+        # (timelapse files can be 100MB+, sync write blocks for seconds).
+        # `filename` ultimately comes from a printer's FTP listing (compromised-
+        # printer threat model) or a query param on /archives/{id}/timelapse/select;
+        # the safe-join helper rejects ``..`` segments and absolute paths so a
+        # crafted name can't escape the archive directory. Use http=False so a
+        # service-layer reject surfaces as a return False (matching the existing
+        # not-found contract) rather than a 400 raised from inside a background
+        # task.
+        try:
+            timelapse_file = safe_join_under(archive_dir, filename, http=False)
+        except PathTraversalError:
+            logger.warning(
+                "Refusing to attach timelapse with unsafe filename %r to archive %s",
+                filename,
+                archive_id,
+            )
+            return False
         await asyncio.to_thread(timelapse_file.write_bytes, timelapse_data)
 
         # Update archive record

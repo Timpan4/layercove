@@ -573,7 +573,9 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
         for name, src_dir in dirs_to_backup:
             if src_dir.exists() and any(src_dir.iterdir()):
                 try:
-                    shutil.copytree(src_dir, temp_path / name)
+                    shutil.copytree(
+                        src_dir, temp_path / name
+                    )  # SEC-PATH-OK: name iterates the dirs_to_backup tuple of constant strings ("archive", "virtual_printer", ...)
                 except shutil.Error as e:
                     logger.warning("Some files in %s could not be copied: %s", name, e)
                 except PermissionError as e:
@@ -599,7 +601,9 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
 
         # Create ZIP
         if output_path is not None:
-            zip_file = output_path / filename
+            zip_file = (
+                output_path / filename
+            )  # SEC-PATH-OK: filename = f"bambuddy-backup-{datetime.now()...}.zip" generated in create_backup_zip itself
         else:
             fd, tmp = tempfile.mkstemp(suffix=".zip")
             os.close(fd)
@@ -869,7 +873,9 @@ async def restore_backup(
                     # Reject path-traversal payloads: any entry whose resolved
                     # path escapes temp_path would allow writing arbitrary files
                     # on the host (ZipSlip / CVE-2006-5456).
-                    dest = (temp_path / name).resolve()
+                    dest = (
+                        temp_path / name
+                    ).resolve()  # SEC-PATH-OK: is_relative_to containment check below before extractall
                     # is_relative_to (Python 3.9+) covers both relative
                     # path-traversal (../etc/passwd) and absolute-path overrides
                     # (/etc/passwd) — str.startswith was vulnerable to
@@ -1003,7 +1009,9 @@ async def restore_backup(
 
             skipped_dirs = []
             for name, dest_dir in dirs_to_restore:
-                src_dir = temp_path / name
+                src_dir = (
+                    temp_path / name
+                )  # SEC-PATH-OK: name iterates the dirs_to_restore tuple of constant strings ("archive", "virtual_printer", ...)
                 if src_dir.exists():
                     logger.info("Restoring %s directory...", name)
                     try:
