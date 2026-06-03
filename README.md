@@ -720,20 +720,6 @@ What matters more than formal qualifications: fail-closed thinking by default, c
 
 No fixed time commitment. If you're interested — or know someone who fits — email `martin@bambuddy.cool` or DM on Discord.
 
-```bash
-# Development setup
-git clone https://github.com/maziggy/bambuddy.git
-cd bambuddy
-
-# Backend
-python3 -m venv venv && source venv/bin/activate
-pip install -r requirements.txt
-DEBUG=true uvicorn backend.app.main:app --reload
-
-# Frontend (separate terminal)
-cd frontend && npm install && npm run dev
-```
-
 See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
 
 ---
