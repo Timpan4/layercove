@@ -497,6 +497,9 @@ export default {
       serialRequired: '需要序列号',
       unknown: '未知',
       failedToStart: '启动发现失败',
+      customSubnetOption: '自定义子网...',
+      customSubnetLabel: '自定义子网 (CIDR)',
+      customSubnetNote: '如果您的打印机与此服务器位于不同的网络中，请使用自定义子网。FTP (990) 和 MQTT (8883) 端口必须能够跨路由边界访问。',
     },
     // AMS Drying
     drying: {

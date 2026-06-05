@@ -496,6 +496,9 @@ export default {
       serialRequired: 'シリアル番号が必要です',
       unknown: '不明',
       failedToStart: '印刷の開始に失敗しました',
+      customSubnetOption: 'カスタムサブネット...',
+      customSubnetLabel: 'カスタムサブネット (CIDR)',
+      customSubnetNote: 'プリンターがこのサーバーと別のネットワークにある場合は、カスタムサブネットを使用してください。FTP (990) と MQTT (8883) のポートが、ルーティング境界を越えて到達可能である必要があります。',
     },
     // AMS Drying
     drying: {

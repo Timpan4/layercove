@@ -497,6 +497,9 @@ export default {
       serialRequired: 'Serial necessário',
       unknown: 'Desconhecido',
       failedToStart: 'Falha ao iniciar a descoberta',
+      customSubnetOption: 'Sub-rede personalizada...',
+      customSubnetLabel: 'Sub-rede personalizada (CIDR)',
+      customSubnetNote: 'Use uma sub-rede personalizada se sua impressora estiver em uma rede diferente deste servidor. As portas FTP (990) e MQTT (8883) devem estar acessíveis através do limite de roteamento.',
     },
     // AMS Drying
     drying: {

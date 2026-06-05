@@ -497,6 +497,9 @@ export default {
       serialRequired: 'Número de serie obligatorio',
       unknown: 'Desconocido',
       failedToStart: 'Error al iniciar la detección',
+      customSubnetOption: 'Subred personalizada...',
+      customSubnetLabel: 'Subred personalizada (CIDR)',
+      customSubnetNote: 'Usa una subred personalizada si tu impresora está en una red distinta a la de este servidor. Los puertos FTP (990) y MQTT (8883) deben ser accesibles a través del límite de enrutamiento.',
     },
     // AMS Drying
     drying: {

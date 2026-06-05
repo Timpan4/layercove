@@ -497,6 +497,9 @@ export default {
       serialRequired: 'Série requis',
       unknown: 'Inconnu',
       failedToStart: 'Échec du démarrage de la découverte',
+      customSubnetOption: 'Sous-réseau personnalisé...',
+      customSubnetLabel: 'Sous-réseau personnalisé (CIDR)',
+      customSubnetNote: 'Utilisez un sous-réseau personnalisé si votre imprimante se trouve sur un réseau différent de celui de ce serveur. Les ports FTP (990) et MQTT (8883) doivent être accessibles à travers la limite de routage.',
     },
     // AMS Drying
     drying: {

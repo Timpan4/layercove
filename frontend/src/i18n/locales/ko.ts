@@ -460,7 +460,10 @@ export default {
       scanningNetwork: '네트워크 스캔 중...',
       serialRequired: '일련번호 필수',
       unknown: '알 수 없음',
-      failedToStart: '검색 시작 실패'
+      failedToStart: '검색 시작 실패',
+      customSubnetOption: '사용자 지정 서브넷...',
+      customSubnetLabel: '사용자 지정 서브넷 (CIDR)',
+      customSubnetNote: '프린터가 이 서버와 다른 네트워크에 있는 경우 사용자 지정 서브넷을 사용하세요. FTP (990) 및 MQTT (8883) 포트가 라우팅 경계를 통해 접근 가능해야 합니다.',
     },
     drying: {
       start: '건조 시작',

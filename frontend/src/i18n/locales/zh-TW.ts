@@ -497,6 +497,9 @@ export default {
       serialRequired: '需要序列號',
       unknown: '未知',
       failedToStart: '啟動發現失敗',
+      customSubnetOption: '自訂子網路...',
+      customSubnetLabel: '自訂子網路 (CIDR)',
+      customSubnetNote: '如果您的印表機與此伺服器位於不同的網路中，請使用自訂子網路。FTP (990) 和 MQTT (8883) 連接埠必須能夠跨越路由邊界存取。',
     },
     // AMS Drying
     drying: {

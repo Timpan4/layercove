@@ -497,6 +497,9 @@ export default {
       serialRequired: 'Serial required',
       unknown: 'Unknown',
       failedToStart: 'Failed to start discovery',
+      customSubnetOption: 'Custom subnet...',
+      customSubnetLabel: 'Custom subnet (CIDR)',
+      customSubnetNote: 'Use a custom subnet if your printer is on a different network than this server. The FTP (990) and MQTT (8883) ports must be reachable across the routing boundary.',
     },
     // AMS Drying
     drying: {
