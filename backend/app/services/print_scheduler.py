@@ -13,6 +13,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.core.config import settings
 from backend.app.core.database import async_session, run_with_retry
+from backend.app.core.tasks import spawn_background_task
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
 from backend.app.models.print_queue import PrintQueueItem
@@ -2196,14 +2197,15 @@ class PrintScheduler:
             # that would otherwise cause the item to re-dispatch as a reprint
             # of the just-finished job (#1078).
             if pre_state:
-                asyncio.create_task(
+                spawn_background_task(
                     self._watchdog_print_start(
                         item.id,
                         item.printer_id,
                         pre_state,
                         pre_subtask_id,
                         pre_gcode_file,
-                    )
+                    ),
+                    name=f"watchdog-print-start-{item.id}",
                 )
 
             # Get estimated time for notification
