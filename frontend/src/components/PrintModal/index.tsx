@@ -13,6 +13,7 @@ import { buildLoadedFilaments, useFilamentMapping } from '../../hooks/useFilamen
 import { useMultiPrinterFilamentMapping, type PerPrinterConfig } from '../../hooks/useMultiPrinterFilamentMapping';
 import { getColorName } from '../../utils/colors';
 import { getCurrencySymbol } from '../../utils/currency';
+import { getBedTypeInfo } from '../../utils/bedType';
 import { toDateTimeLocalValue, parseUTCDate } from '../../utils/date';
 import { getGlobalTrayId, isPlaceholderDate } from '../../utils/amsHelpers';
 import { FilamentMapping } from './FilamentMapping';
@@ -978,6 +979,26 @@ export function PrintModal({
                 </>
               )}
             </p>
+
+            {/* Build-plate badge for the selected (or sole) plate — surfaced
+                early so the user knows which plate to mount before scheduling
+                (#1281). PlateSelector renders its own per-plate badges for
+                multi-plate files; this badge covers the single-plate case and
+                the multi-plate case where exactly one plate is selected. */}
+            {(() => {
+              if (!plates.length) return null;
+              const target = selectedPlate != null
+                ? plates.find(p => p.index === selectedPlate)
+                : plates[0];
+              const bed = getBedTypeInfo(target?.bed_type);
+              if (!bed) return null;
+              return (
+                <p className="flex items-center gap-1.5 text-xs text-bambu-gray -mt-2" title={bed.label}>
+                  <img src={bed.icon} alt="" className="w-4 h-4 object-contain flex-shrink-0" />
+                  <span className="truncate">{bed.label}</span>
+                </p>
+              );
+            })()}
 
             {/* Plate selection - first so users know filament requirements before selecting printers */}
             <PlateSelector

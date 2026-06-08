@@ -3268,7 +3268,14 @@ async def get_archive_plates(
                 root = ET.fromstring(content)
 
                 for plate_elem in root.findall(".//plate"):
-                    plate_info = {"filaments": [], "prediction": None, "weight": None, "name": None, "objects": []}
+                    plate_info = {
+                        "filaments": [],
+                        "prediction": None,
+                        "weight": None,
+                        "name": None,
+                        "objects": [],
+                        "bed_type": None,
+                    }
 
                     # Get plate index from metadata
                     plate_index = None
@@ -3290,6 +3297,10 @@ async def get_archive_plates(
                                 plate_info["weight"] = float(value)
                             except ValueError:
                                 pass  # Skip non-numeric filament weight
+                        elif key == "curr_bed_type" and value:
+                            # Per-plate bed type so the PrintModal can show the
+                            # right plate alongside each option (#1281).
+                            plate_info["bed_type"] = value.strip()
 
                     # Get filaments used in this plate
                     for filament_elem in plate_elem.findall("filament"):
@@ -3391,6 +3402,7 @@ async def get_archive_plates(
                         "print_time_seconds": meta.get("prediction"),
                         "filament_used_grams": meta.get("weight"),
                         "filaments": meta.get("filaments", []),
+                        "bed_type": meta.get("bed_type"),
                     }
                 )
 

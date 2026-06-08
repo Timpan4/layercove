@@ -57,6 +57,7 @@ import {
 } from 'lucide-react';
 import { api, ApiError } from '../api/client';
 import { type TimeFormat, formatETA, formatDuration, formatRelativeTime, parseUTCDate } from '../utils/date';
+import { getBedTypeInfo } from '../utils/bedType';
 import type { PrintQueueItem, PrintQueueBulkUpdate, Permission } from '../api/client';
 import { Card } from '../components/Card';
 import { Button } from '../components/Button';
@@ -525,6 +526,19 @@ function SortableQueueItem({
                 {formatWeight(item.filament_used_grams)}
               </span>
             )}
+            {(() => {
+              // Build plate badge so the user knows which plate to mount before
+              // walking to the printer (#1281). Hidden when the 3MF doesn't
+              // carry curr_bed_type or the slicer used an unknown label.
+              const bed = getBedTypeInfo(item.bed_type);
+              if (!bed) return null;
+              return (
+                <span className="flex items-center gap-1 sm:gap-1.5" title={bed.label}>
+                  <img src={bed.icon} alt="" className="w-3.5 h-3.5 sm:w-4 sm:h-4 object-contain" />
+                  <span className="truncate max-w-[120px]">{bed.label}</span>
+                </span>
+              );
+            })()}
             {item.created_by_username && (
               <span className="hidden sm:flex items-center gap-1.5" title={t('queue.addedBy', { name: item.created_by_username })}>
                 <User className="w-3.5 h-3.5" />

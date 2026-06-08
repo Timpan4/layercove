@@ -111,6 +111,7 @@ export interface PlateInfo {
   }>;
   print_time_seconds: number | null;
   filament_used_grams: number | null;
+  bed_type?: string | null;  // Build plate type for this plate, e.g. "Textured PEI Plate" (#1281)
 }
 
 /**
