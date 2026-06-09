@@ -1,4 +1,5 @@
 import hashlib
+import html
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.config import settings
+from backend.app.core.tasks import spawn_background_task
 from backend.app.models.archive import PrintArchive
 from backend.app.models.filament import Filament
 from backend.app.models.printer import Printer
@@ -505,9 +507,20 @@ class ThreeMFParser:
             metadata_pattern = r'<metadata\s+name="([^"]+)"[^>]*>([^<]*)</metadata>'
             matches = re.findall(metadata_pattern, content)
 
+            # 3MF metadata values are XML-encoded — `&` becomes `&amp;`, etc.
+            # ProjectPageParser learned this the hard way: BambuStudio sometimes
+            # writes triple-encoded payloads (`&amp;amp;amp;`), so we unescape
+            # in a loop until the string stabilises. Without this, a Title like
+            # "Foo & Bar" lands in the DB as raw "Foo &amp; Bar" and React then
+            # double-escapes it on render to "Foo &amp;amp; Bar" (#1658).
             makerworld_fields = {}
             for name, value in matches:
-                makerworld_fields[name] = value.strip()
+                decoded = value.strip()
+                prev = None
+                while prev != decoded:
+                    prev = decoded
+                    decoded = html.unescape(decoded)
+                makerworld_fields[name] = decoded
 
             # Check for direct MakerWorld URL in content
             url_pattern = r'https?://makerworld\.com/[^\s<>"\']+/models/(\d+)'
@@ -1511,7 +1524,7 @@ class ArchiveService:
 
         # For non-MP4 videos (e.g. AVI from P1S), kick off background conversion
         if not filename.lower().endswith(".mp4"):
-            asyncio.create_task(
+            spawn_background_task(
                 _convert_timelapse_to_mp4(archive_id, timelapse_file),
                 name=f"timelapse-convert-{archive_id}",
             )

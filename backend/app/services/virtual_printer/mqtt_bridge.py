@@ -35,8 +35,10 @@ from __future__ import annotations
 
 import asyncio
 import copy
+import ipaddress
 import json
 import logging
+import socket
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -88,6 +90,38 @@ def _ip_to_uint32_le(ip_str: str) -> int:
     if len(parts) != 4 or any(p < 0 or p > 255 for p in parts):
         raise ValueError(f"invalid IPv4: {ip_str!r}")
     return parts[0] | (parts[1] << 8) | (parts[2] << 16) | (parts[3] << 24)
+
+
+def _resolve_target_to_ipv4(target: str) -> str | None:
+    """Return a dotted-quad IPv4 for `target`, resolving hostnames if needed.
+
+    The printer client may be configured by IPv4 *or* by hostname/FQDN
+    (e.g. `p1s.fritz.box`) — the latter is common on home LANs with a
+    DNS-providing router. The downstream `net.info[].ip` field is a
+    32-bit little-endian integer though, so a hostname can't round-trip
+    through it; we have to pick *one* concrete IPv4 to write in.
+
+    Returns None if `target` is empty, not parseable as IPv4, and DNS
+    resolution fails — caller logs that as the not-armed reason and
+    re-tries on the next refresh tick (DHCP/DNS churn picks itself up).
+    """
+    if not target:
+        return None
+    try:
+        return str(ipaddress.IPv4Address(target))
+    except (ValueError, ipaddress.AddressValueError):
+        pass
+    try:
+        # AF_INET filters to IPv4 only; the rewrite field is uint32 LE,
+        # there's no IPv6 representation that fits.
+        infos = socket.getaddrinfo(target, None, family=socket.AF_INET)
+    except OSError:
+        return None
+    for info in infos:
+        sockaddr = info[4]
+        if sockaddr and isinstance(sockaddr[0], str):
+            return sockaddr[0]
+    return None
 
 
 def _resolve_host_interface_for_target(target_ip: str) -> str | None:
@@ -244,6 +278,14 @@ class MQTTBridge:
         self._target_serial: str | None = None
         self._target_ip_uint32_le: int | None = None
         self._vp_ip_uint32_le: int | None = None
+        # Last reason `_refresh_ip_encoding` early-returned without arming.
+        # Used to throttle the "NOT armed" diagnostic log to one line per
+        # state change — refresh runs every 30s, so without throttling an
+        # idle-but-unarmed bridge would emit one line per tick forever. Set
+        # to None once arming succeeds so the next failure re-logs. #1429
+        # follow-up: makes silent early-returns visible without grepping the
+        # source.
+        self._not_armed_reason: str | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
         self._refresh_task: asyncio.Task | None = None
         self._stopping = False
@@ -389,12 +431,33 @@ class MQTTBridge:
         arms on a default-config flat-LAN install and `net.info[].ip` leaks
         the real printer IP — slicer follows it on Send (#1429 residual).
         """
+
+        def _log_not_armed(reason: str) -> None:
+            # Throttle: only log when the reason changes, otherwise an idle
+            # unarmed bridge would emit one INFO line every refresh tick
+            # (~30s) forever. Cleared on arm so a regression re-logs.
+            if reason != self._not_armed_reason:
+                logger.info("[%s] MQTT bridge IP encoding NOT armed: %s", self.vp_name, reason)
+                self._not_armed_reason = reason
+
         client = self._target_client
         if client is None:
+            _log_not_armed("target_client is None (bridge not bound to a printer)")
             return
 
-        target_ip = getattr(client, "ip_address", None)
+        configured_target = getattr(client, "ip_address", None)
+        if not configured_target:
+            _log_not_armed("printer client has no ip_address yet")
+            return
+
+        # Printers configured by hostname/FQDN (e.g. `p1s.fritz.box`) need to
+        # be resolved to an IPv4 before encoding: net.info[*].ip is uint32 LE
+        # and can't carry a hostname (#1429 follow-up).
+        target_ip = _resolve_target_to_ipv4(configured_target)
         if not target_ip:
+            _log_not_armed(
+                f"could not resolve printer host {configured_target!r} to IPv4 (invalid address and DNS lookup failed)"
+            )
             return
 
         vp_ip = getattr(self._mqtt_server, "bind_address", None)
@@ -402,6 +465,10 @@ class MQTTBridge:
         if not vp_ip or vp_ip in ("0.0.0.0", ""):  # nosec B104
             resolved = _resolve_host_interface_for_target(target_ip)
             if not resolved:
+                _log_not_armed(
+                    f"no host interface shares a subnet with printer IP {target_ip} "
+                    "(and VP bind_address is 0.0.0.0/empty)"
+                )
                 return
             vp_ip = resolved
             vp_ip_source = "auto-resolved"
@@ -409,7 +476,8 @@ class MQTTBridge:
         try:
             new_target_le = _ip_to_uint32_le(target_ip)
             new_vp_le = _ip_to_uint32_le(vp_ip)
-        except ValueError:
+        except ValueError as e:
+            _log_not_armed(f"invalid IPv4 (target={target_ip!r}, vp={vp_ip!r}): {e}")
             return
 
         if new_target_le == self._target_ip_uint32_le and new_vp_le == self._vp_ip_uint32_le:
@@ -420,11 +488,14 @@ class MQTTBridge:
         was_armed = self._target_ip_uint32_le is not None and self._vp_ip_uint32_le is not None
         self._target_ip_uint32_le = new_target_le
         self._vp_ip_uint32_le = new_vp_le
+        # Clear the dedup so a future failure re-emits the diagnostic line.
+        self._not_armed_reason = None
+        target_display = target_ip if target_ip == configured_target else f"{configured_target}→{target_ip}"
         logger.info(
             "[%s] MQTT bridge IP encoding %s: target=%s vp=%s (%s)",
             self.vp_name,
             "updated" if was_armed else "armed",
-            target_ip,
+            target_display,
             vp_ip,
             vp_ip_source,
         )

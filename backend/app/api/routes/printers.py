@@ -12,6 +12,7 @@ from backend.app.core.auth import RequireCameraStreamTokenIfAuthEnabled, Require
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
+from backend.app.core.tasks import spawn_background_task
 from backend.app.models.ams_label import AmsLabel
 from backend.app.models.printer import Printer
 from backend.app.models.slot_preset import SlotPresetMapping
@@ -803,12 +804,25 @@ async def diagnose_printer(
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
     db: AsyncSession = Depends(get_db),
 ):
-    """Run connection diagnostics for an existing saved printer."""
+    """Run connection diagnostics for an existing saved printer.
+
+    On-demand run from the UI: wait up to PUBLISH_WAIT_DEFAULT seconds for the
+    printer to publish a status report so a fresh reconnect (counter reset to
+    0) isn't reported as `printer_publishing: fail` prematurely. The support
+    package code path calls run_connection_diagnostic without the wait so
+    bundling stays fast.
+    """
+    from backend.app.services.printer_diagnostic import PUBLISH_WAIT_DEFAULT
+
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
-    return await run_connection_diagnostic(printer.ip_address, printer=printer)
+    return await run_connection_diagnostic(
+        printer.ip_address,
+        printer=printer,
+        wait_for_publish_seconds=PUBLISH_WAIT_DEFAULT,
+    )
 
 
 # Cache for cover images (printer_id -> {(subtask_name, view_key) -> image_bytes}).
@@ -3107,7 +3121,10 @@ async def refresh_ams_slot(
         raise HTTPException(400, message)
 
     # Apply PA profile after delay (RFID re-read takes a few seconds)
-    asyncio.create_task(_apply_pa_after_refresh(printer_id, ams_id, slot_id))
+    spawn_background_task(
+        _apply_pa_after_refresh(printer_id, ams_id, slot_id),
+        name=f"apply-pa-after-refresh-{printer_id}-{ams_id}-{slot_id}",
+    )
 
     return {"success": True, "message": message}
 
