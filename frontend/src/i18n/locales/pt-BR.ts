@@ -3960,6 +3960,7 @@ export default {
     empty: 'Vazio',
     emptySlot: 'Slot vazio',
     slotEmpty: 'Vazio',
+    slotUnconfigured: '?',
     emptySlotReset: 'Nenhum carretel atribuído',
     unknown: 'Desconhecido',
     humidity: 'Umidade',

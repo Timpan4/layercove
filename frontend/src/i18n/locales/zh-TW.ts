@@ -3960,6 +3960,7 @@ export default {
     empty: '空',
     emptySlot: '空槽位',
     slotEmpty: '空',
+    slotUnconfigured: '?',
     emptySlotReset: '未指派線材',
     unknown: '未知',
     humidity: '濕度',

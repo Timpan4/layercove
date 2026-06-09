@@ -3949,6 +3949,7 @@ export default {
     empty: 'Boş',
     emptySlot: 'Boş yuva',
     slotEmpty: 'Boş',
+    slotUnconfigured: '?',
     emptySlotReset: 'Atanmış filament yok',
     unknown: 'Bilinmiyor',
     humidity: 'Nem',

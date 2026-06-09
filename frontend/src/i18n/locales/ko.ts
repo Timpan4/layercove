@@ -3764,6 +3764,7 @@ export default {
     used: '사용됨',
     remainingUnit: '남음',
     slotEmpty: '비어 있음',
+    slotUnconfigured: '?',
     emptySlotReset: '필라멘트가 할당되지 않음'
   },
   printModal: {

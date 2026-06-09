@@ -3980,6 +3980,7 @@ export default {
     empty: 'Vacía',
     emptySlot: 'Ranura vacía',
     slotEmpty: 'Vacía',
+    slotUnconfigured: '?',
     emptySlotReset: 'No hay filamento asignado',
     unknown: 'Desconocido',
     humidity: 'Humedad',

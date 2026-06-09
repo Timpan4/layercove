@@ -3972,6 +3972,7 @@ export default {
     empty: '<空>',
     emptySlot: '空のスロット',
     slotEmpty: '空',
+    slotUnconfigured: '?',
     emptySlotReset: 'スプール未割当',
     unknown: '不明',
     humidity: '湿度',
