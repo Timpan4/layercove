@@ -159,9 +159,15 @@ def install_requirements(python_dir: Path) -> None:
 
 
 def build_frontend() -> Path:
-    """Run ``npm ci && npm run build`` and return the dist path."""
+    """Run ``npm ci && npm run build`` and return the build output path.
+
+    Vite is configured with ``outDir: '../static'`` (see
+    ``frontend/vite.config.ts``), so the bundle lands at ``<repo>/static/``
+    — NOT ``frontend/dist/``. The path matches the runtime expectation in
+    ``backend/app/core/config.py`` (``static_dir = _app_dir / "static"``).
+    """
     frontend = REPO_ROOT / "frontend"
-    dist = frontend / "dist"
+    dist = REPO_ROOT / "static"
     log("running npm ci in frontend/")
     npm = shutil.which("npm")
     if not npm:
@@ -198,9 +204,28 @@ def stage_backend(frontend_dist: Path) -> None:
         ),
     )
 
-    # Frontend bundle — FastAPI's StaticFiles mounts from app/static
+    # Frontend bundle — FastAPI's StaticFiles mounts from app/static.
+    # Strip macOS metadata files (.DS_Store, ._.*) that the dev box leaks
+    # in; they'd just bloat the installer and never be served anyway.
     log("staging frontend bundle")
-    shutil.copytree(frontend_dist, app / "static")
+    shutil.copytree(
+        frontend_dist,
+        app / "static",
+        ignore=shutil.ignore_patterns(".DS_Store", "._*"),
+    )
+
+    # gcode_viewer/ is a vendored 3D-preview iframe served via explicit
+    # routes in main.py (looked up via static_dir.parent / "gcode_viewer").
+    # In the staged layout STAGING/app/static/'s sibling is STAGING/app/,
+    # so place the directory next to static/ to match runtime resolution.
+    gcode_viewer_src = REPO_ROOT / "gcode_viewer"
+    if gcode_viewer_src.exists():
+        log("staging gcode_viewer/")
+        shutil.copytree(
+            gcode_viewer_src,
+            app / "gcode_viewer",
+            ignore=shutil.ignore_patterns(".DS_Store", "._*"),
+        )
 
 
 def stage_nssm() -> None:
