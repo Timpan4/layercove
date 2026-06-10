@@ -42,8 +42,8 @@ PRINTER_MODEL_ID_MAP = {
     # A1 series
     "A11": "A1",
     "A12": "A1 Mini",
-    "N1": "A1",
-    "N2S": "A1 Mini",
+    "N1": "A1 Mini",
+    "N2S": "A1",
     "A04": "A1 Mini",
     # H2 series (Office/H series)
     "O1D": "H2D",
@@ -96,8 +96,8 @@ LINEAR_RAIL_MODELS = frozenset(
         "H2C",
         "H2S",
         # Internal codes
-        "N1",  # A1
-        "N2S",  # A1 Mini
+        "N1",  # A1 Mini
+        "N2S",  # A1
         "A04",  # A1 Mini (alternate)
         "A11",  # A1
         "A12",  # A1 Mini

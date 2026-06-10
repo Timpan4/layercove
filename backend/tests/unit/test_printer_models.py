@@ -107,6 +107,22 @@ class TestX2DModel:
         assert "N6" in STEEL_ROD_MODELS
 
 
+class TestA1SeriesModelIds:
+    """Regression guard for the A1-family internal-code → display-name map.
+
+    The serial-prefix and firmware-API key tables across the codebase agree
+    that N2S is the A1 (serial prefix 039) and N1 is the A1 Mini (serial
+    prefix 030). PRINTER_MODEL_ID_MAP had these swapped, which silently
+    misclassified A1 as A1 Mini in any path that resolved by internal code.
+    """
+
+    def test_n2s_is_a1(self):
+        assert normalize_printer_model_id("N2S") == "A1"
+
+    def test_n1_is_a1_mini(self):
+        assert normalize_printer_model_id("N1") == "A1 Mini"
+
+
 class TestDualNozzleModel:
     """is_dual_nozzle_model — the single source of truth for nozzle class,
     consumed by start_print, the K-profile routes, and the re-slice guard."""
