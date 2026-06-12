@@ -470,6 +470,100 @@ class TestPushStatusCache:
         await bridge.stop()
 
     @pytest.mark.asyncio
+    async def test_partial_vt_tray_update_overlays_onto_cached_full_dict(self):
+        """Regression for #1622 round 5 (reported by @shaddowlink): right after
+        the slicer picks a filament for the external spool (vt_tray, ams_id=255),
+        Bambu firmware pushes a partial vt_tray carrying just the changed
+        fields — typically ``{tray_info_idx, tray_color}`` — and omits the
+        ~18 other keys (tray_type, state, k, n, cali_idx, nozzle_temp_min/max,
+        tray_uuid, xcam_info, ...) the slicer needs to render the slot.
+        Before this fix the per-field accumulate replaced the cached vt_tray
+        wholesale (it only carried over prev keys NOT present in new), so the
+        next 1 Hz cached-as-base push handed the slicer a stripped vt_tray and
+        BambuStudio rendered the external slot as "invalid" until a reload
+        triggered a fresh pushall. AMS slots didn't suffer because
+        `_merge_ams_dict` already deep-merged them. The fix overlays incoming
+        keys onto the previous dict for every top-level dict-shaped field
+        (excluding ams, which keeps its own deep merge).
+        """
+        server = _make_server()
+        bridge = _make_bridge(server)
+        await bridge.start()
+
+        # 1. Pushall response with the full ~20-field vt_tray dict a real
+        # P1S sends to bootstrap the slot.
+        full_push = json.dumps(
+            {
+                "print": {
+                    "command": "push_status",
+                    "vt_tray": {
+                        "id": "254",
+                        "tray_info_idx": "Pea5f68f",
+                        "tray_type": "PLA",
+                        "tray_sub_brands": "",
+                        "tray_color": "F72323FF",
+                        "tray_weight": "0",
+                        "tray_diameter": "0.00",
+                        "tray_temp": "0",
+                        "tray_time": "0",
+                        "bed_temp_type": "0",
+                        "bed_temp": "0",
+                        "nozzle_temp_max": "240",
+                        "nozzle_temp_min": "190",
+                        "xcam_info": "000000000000000000000000",
+                        "tray_uuid": "00000000000000000000000000000000",
+                        "ctype": 0,
+                        "remain": -1,
+                        "k": 0.01999999955296,
+                        "n": 1,
+                        "cali_idx": -1,
+                        "state": 3,
+                    },
+                }
+            }
+        ).encode()
+        bridge._on_printer_raw(f"device/{H2D_SERIAL}/report", full_push)
+        await asyncio.sleep(0.01)
+
+        # 2. Incremental push carrying just the two fields the slicer's pick
+        # changed — exactly the shape the P1S firmware sends after an
+        # ams_filament_setting ack. This is what shaddowlink's wire dump
+        # captured for the failing case.
+        incremental_push = json.dumps(
+            {
+                "print": {
+                    "command": "push_status",
+                    "vt_tray": {
+                        "tray_info_idx": "Pea5f68f",
+                        "tray_color": "76D9F4FF",
+                    },
+                }
+            }
+        ).encode()
+        bridge._on_printer_raw(f"device/{H2D_SERIAL}/report", incremental_push)
+        await asyncio.sleep(0.01)
+
+        cached = bridge.get_latest_print_state()
+        vt = cached["vt_tray"]
+        # Incoming fields applied.
+        assert vt["tray_info_idx"] == "Pea5f68f"
+        assert vt["tray_color"] == "76D9F4FF"
+        # All other fields preserved from the prior pushall — without these
+        # the slicer rendered the slot as invalid.
+        assert vt["tray_type"] == "PLA"
+        assert vt["state"] == 3
+        assert vt["remain"] == -1
+        assert vt["k"] == 0.01999999955296
+        assert vt["n"] == 1
+        assert vt["cali_idx"] == -1
+        assert vt["nozzle_temp_min"] == "190"
+        assert vt["nozzle_temp_max"] == "240"
+        assert vt["tray_uuid"] == "00000000000000000000000000000000"
+        assert vt["id"] == "254"
+
+        await bridge.stop()
+
+    @pytest.mark.asyncio
     async def test_partial_ams_status_update_preserves_unit_list(self):
         """#1387: Bambu firmware also sends `ams` updates where the key is
         present but the inner `ams` array is missing — e.g. just

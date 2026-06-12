@@ -608,6 +608,29 @@ class MQTTBridge:
                 # internally in `_handle_ams_data`.
                 if isinstance(new_state.get("ams"), dict) and isinstance(prev.get("ams"), dict):
                     new_state["ams"] = _merge_ams_dict(prev["ams"], new_state["ams"])
+                # Same per-field accumulate rule applied one level deeper for
+                # other top-level dict-shaped fields. Firmware sends partial
+                # `vt_tray` (external spool) updates right after a slicer
+                # `ams_filament_setting` pick — typically just `{tray_info_idx,
+                # tray_color}`, dropping the ~18 other fields (`tray_type`,
+                # `state`, `remain`, `k`, `n`, `cali_idx`, `nozzle_temp_min/max`,
+                # `tray_uuid`, `xcam_info`, ...) the slicer needs to render the
+                # slot. Without overlay the next 1 Hz cached-as-base push
+                # delivered the stripped dict and the slicer rendered the
+                # external slot as "invalid" until a reload triggered a fresh
+                # pushall (#1622 round 5, reported by @shaddowlink). AMS slots
+                # didn't suffer because `_merge_ams_dict` deep-merges per tray.
+                # Same shape covers `device`, `online`, `upgrade_state`, `ipcam`,
+                # `upload`, `net`, ... against future firmware partials too.
+                # `ams` is excluded — already deep-merged above.
+                for key, new_value in list(new_state.items()):
+                    if key == "ams":
+                        continue
+                    prev_value = prev.get(key)
+                    if isinstance(prev_value, dict) and isinstance(new_value, dict):
+                        merged = dict(prev_value)
+                        merged.update(new_value)
+                        new_state[key] = merged
             self._latest_print_state = new_state
             dump_wire(self.vp_name, "in", new_state)
             return
