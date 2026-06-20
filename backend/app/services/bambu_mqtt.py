@@ -31,6 +31,23 @@ logger = logging.getLogger(__name__)
 _AMS_MODULE_PREFIXES = ("ams/", "n3f/", "n3s/")
 
 
+def parse_ams_filament_backup_from_cfg(cfg_raw: object) -> bool | None:
+    """Extract AMS Filament Backup state from a Bambu push_status ``print.cfg`` value.
+
+    OrcaSlicer reads bit 18 of the hex string via
+    ``get_flag_bits(cfg, 18)`` (DeviceManager.cpp:4961). Old-protocol families
+    (A1 / A1 Mini) omit ``cfg`` entirely; this returns ``None`` for any input
+    that doesn't yield a clean integer so downstream consumers preserve today's
+    behaviour rather than treating "absent" as "OFF".
+    """
+    if not isinstance(cfg_raw, str) or not cfg_raw:
+        return None
+    try:
+        return bool((int(cfg_raw, 16) >> 18) & 1)
+    except ValueError:
+        return None
+
+
 def apply_tray_exist_bits(
     units: list,
     tray_exist_bits_str: str | int | None,
@@ -330,6 +347,11 @@ class PrinterState:
     # Developer LAN mode: parsed from MQTT "fun" field bit 0x20000000
     # True = dev mode ON (no encryption), False = dev mode OFF (encryption required), None = unknown
     developer_mode: bool | None = None
+    # AMS Filament Backup: bit 18 of top-level print.cfg hex on new-protocol Bambu
+    # printers (H/X/P/H2 families). True=ON, False=OFF, None=unknown (e.g. A1 family
+    # which uses the old protocol path; field not yet found). Consumers must treat
+    # None as "no opinion" — preserving today's behaviour, NOT as "disabled".
+    ams_filament_backup: bool | None = None
 
 
 # Stage name mapping from BambuStudio DeviceManager.cpp
@@ -1017,6 +1039,33 @@ class BambuMQTTClient:
                     f"[{self.serial_number}] Received gcode_state: {print_data.get('gcode_state')}, "
                     f"gcode_file: {print_data.get('gcode_file')}, subtask_name: {print_data.get('subtask_name')}"
                 )
+
+            # AMS Filament Backup state lives in bit 18 of top-level print.cfg on
+            # new-protocol printers. Verified against OrcaSlicer's
+            # DeviceManager.cpp:4961 SetAutoRefillEnabled(get_flag_bits(cfg, 18))
+            # and live H2D ON/OFF capture 2026-06-20.
+            #
+            # Hold-timer guard: when the user just toggled via the badge, the
+            # next 1-2 push_status frames may still carry the printer's OLD cfg
+            # for ~3 s before the firmware reflects the change. Without this
+            # gate the UI would flicker ON→OFF→ON. Same pattern xcam uses.
+            new_backup = parse_ams_filament_backup_from_cfg(print_data.get("cfg"))
+            if new_backup is not None and new_backup != self.state.ams_filament_backup:
+                hold_start = self._xcam_hold_start.get("print_option_auto_switch_filament")
+                if hold_start is not None and (time.time() - hold_start) <= self._xcam_hold_time:
+                    logger.debug(
+                        "[%s] AMS Filament Backup push ignored (hold active for %.1fs)",
+                        self.serial_number,
+                        time.time() - hold_start,
+                    )
+                else:
+                    logger.info(
+                        "[%s] AMS Filament Backup: %s",
+                        self.serial_number,
+                        "ON" if new_backup else "OFF",
+                    )
+                    self.state.ams_filament_backup = new_backup
+                    self._xcam_hold_start.pop("print_option_auto_switch_filament", None)
 
             # Detect dual-nozzle BEFORE processing AMS data (tray_now disambiguation needs it)
             # device.extruder.info with >= 2 entries only exists on dual-nozzle printers (H2D, H2D Pro)
@@ -3822,8 +3871,18 @@ class BambuMQTTClient:
         # Update local state immediately
         if option_name == "auto_recovery":
             self.state.print_options.auto_recovery_step_loss = enabled
+        elif option_name == "auto_switch_filament":
+            self.state.ams_filament_backup = enabled
 
         return True
+
+    def set_ams_filament_backup(self, enabled: bool) -> bool:
+        """Toggle AMS Filament Backup (a.k.a. auto-switch / auto-refill).
+
+        Mirrors BambuStudio's "AMS Filament Backup" checkbox. Verified payload
+        shape from H2D capture 2026-06-20.
+        """
+        return self._set_print_option("auto_switch_filament", enabled)
 
     def start_calibration(
         self,

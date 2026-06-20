@@ -516,6 +516,13 @@ export default {
       stoppingDrying: 'Deteniendo el secado...',
       rotateTray: 'Girar la bobina durante el secado',
     },
+    amsBackup: {
+      titleOn: 'AMS Filament Backup está ACTIVADO. Haz clic para desactivar.',
+      titleOff: 'AMS Filament Backup está DESACTIVADO. Haz clic para activar.',
+      titleUnknown: 'Estado de AMS Filament Backup no disponible en esta impresora.',
+      toastEnabled: 'AMS Filament Backup activado',
+      toastDisabled: 'AMS Filament Backup desactivado',
+    },
     // Filaments section
     filaments: 'Filamentos',
     // Camera
@@ -1721,6 +1728,7 @@ export default {
     disableFilamentWarningsDesc: 'No mostrar advertencias sobre filamento insuficiente al imprimir o encolar',
     preferLowestFilament: 'Preferir el filamento con menos restante',
     preferLowestFilamentDesc: 'Cuando varias bobinas coincidan, usar la que tenga menos filamento restante',
+    preferLowestFilamentBackupNote: 'Solo surte efecto cuando AMS Filament Backup está activado en la impresora — de lo contrario, la impresora no puede cambiar a una segunda bobina cuando la elegida se acabe.',
     trackingModeBuiltIn: 'Inventario integrado',
     trackingModeBuiltInDesc: 'Incluye coincidencia automática por RFID y seguimiento del uso',
     trackingModeSpoolmanDesc: 'Servidor externo de gestión de filamento',

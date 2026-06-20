@@ -5793,3 +5793,59 @@ class TestPrintRunningObservedCallback:
             "raw_data",
             "ams_mapping",
         }
+
+
+class TestAmsFilamentBackupHoldTimer:
+    """Regression: stale push_status arriving within the hold window after a
+    toggle command MUST NOT flip ams_filament_backup back to the printer's
+    old cfg. Same race-guard pattern xcam uses for spaghetti / first-layer
+    detector settings.
+    """
+
+    @pytest.fixture
+    def mqtt_client(self):
+        from unittest.mock import MagicMock
+
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(
+            ip_address="192.168.1.100",
+            serial_number="TEST123",
+            access_code="12345678",
+        )
+        # Pretend we're connected so _set_print_option actually publishes.
+        client.state.connected = True
+        client._client = MagicMock()
+        return client
+
+    def test_cfg_push_with_old_value_is_ignored_during_hold(self, mqtt_client):
+        # User toggled ON via badge → command sent → state optimistically set.
+        mqtt_client.set_ams_filament_backup(True)
+        assert mqtt_client.state.ams_filament_backup is True
+
+        # Within the 3 s hold window, a stale push_status arrives still showing
+        # the printer's old cfg (bit 18 cleared). The parser must NOT flip our
+        # optimistic state back to OFF — otherwise the badge flickers ON→OFF→ON.
+        mqtt_client._process_message({"print": {"cfg": "C0340BC219"}})  # bit18=0
+        assert mqtt_client.state.ams_filament_backup is True
+
+    def test_cfg_push_after_hold_expires_overrides_state(self, mqtt_client):
+        # After the hold window, the printer's real cfg becomes authoritative
+        # so a genuine slicer-side or display toggle that we did NOT initiate
+        # propagates correctly.
+        mqtt_client.set_ams_filament_backup(True)
+        mqtt_client._xcam_hold_start["print_option_auto_switch_filament"] = time.time() - 10.0
+
+        mqtt_client._process_message({"print": {"cfg": "C0340BC219"}})  # bit18=0
+        assert mqtt_client.state.ams_filament_backup is False
+
+    def test_cfg_push_with_matching_value_during_hold_is_a_noop(self, mqtt_client):
+        # Same-value push during hold doesn't trigger the change branch at all
+        # (no state mutation, no log spam, hold timer stays armed).
+        mqtt_client.set_ams_filament_backup(True)
+        before_hold = mqtt_client._xcam_hold_start["print_option_auto_switch_filament"]
+
+        mqtt_client._process_message({"print": {"cfg": "C0340FC219"}})  # bit18=1
+        assert mqtt_client.state.ams_filament_backup is True
+        # Hold timer still armed — sub-second push didn't reset it.
+        assert mqtt_client._xcam_hold_start["print_option_auto_switch_filament"] == before_hold

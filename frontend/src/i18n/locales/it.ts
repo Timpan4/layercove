@@ -516,6 +516,13 @@ export default {
       stoppingDrying: 'Arresto essiccazione...',
       rotateTray: 'Ruota la bobina durante l\'essiccazione',
     },
+    amsBackup: {
+      titleOn: 'AMS Filament Backup è ATTIVO. Clicca per disabilitare.',
+      titleOff: 'AMS Filament Backup è DISATTIVATO. Clicca per abilitare.',
+      titleUnknown: 'Stato di AMS Filament Backup non disponibile su questa stampante.',
+      toastEnabled: 'AMS Filament Backup abilitato',
+      toastDisabled: 'AMS Filament Backup disabilitato',
+    },
     // Filaments section
     filaments: 'Filamenti',
     // Camera
@@ -1674,6 +1681,7 @@ export default {
     disableFilamentWarningsDesc: 'Non mostrare avvisi per filamento insufficiente durante la stampa o l\'accodamento',
     preferLowestFilament: 'Preferisci il filamento con meno residuo',
     preferLowestFilamentDesc: 'Quando più bobine corrispondono, usa quella con meno filamento rimanente',
+    preferLowestFilamentBackupNote: 'Ha effetto solo se AMS Filament Backup è abilitato sulla stampante — altrimenti la stampante non può passare a una seconda bobina quando quella scelta finisce.',
     trackingModeBuiltIn: 'Inventario integrato',
     trackingModeBuiltInDesc: 'Riconoscimento RFID automatico e tracciamento dell\'uso inclusi',
     trackingModeSpoolmanDesc: 'Server esterno per la gestione del filamento',

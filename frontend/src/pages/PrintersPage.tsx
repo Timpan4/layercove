@@ -70,6 +70,7 @@ import {
   Info,
   Cable,
   Flame,
+  Repeat,
   Snowflake,
   Gauge,
   DoorOpen,
@@ -688,6 +689,53 @@ function HeaterThermometer({ className, color, isHeating }: HeaterThermometerPro
       <path d="M6 0.5C4.6 0.5 3.5 1.6 3.5 3V12.1C2.6 12.8 2 13.9 2 15C2 17.2 3.8 19 6 19C8.2 19 10 17.2 10 15C10 13.9 9.4 12.8 8.5 12.1V3C8.5 1.6 7.4 0.5 6 0.5Z" stroke={fillColor} strokeWidth="1" fill="none"/>
       <circle cx="6" cy="15" r="2.5" stroke={fillColor} strokeWidth="1" fill="none"/>
     </svg>
+  );
+}
+
+// AMS Filament Backup tri-state indicator + toggle.
+// state=true  → ON, click to disable
+// state=false → OFF, click to enable
+// state=null  → unknown/unsupported (e.g. A1 family), no click action
+interface AmsBackupBadgeProps {
+  state: boolean | null;
+  canToggle: boolean;
+  pending: boolean;
+  onToggle: (next: boolean) => void;
+}
+
+function AmsBackupBadge({ state, canToggle, pending, onToggle }: AmsBackupBadgeProps) {
+  const { t } = useTranslation();
+  const known = state !== null;
+  const clickable = canToggle && known && !pending;
+
+  let className = 'flex items-center justify-center w-[18px] h-[18px] rounded text-[10px] transition-colors ';
+  let title: string;
+  if (state === true) {
+    className += clickable
+      ? 'bg-blue-500/20 text-blue-400 hover:bg-blue-500/30 cursor-pointer'
+      : 'bg-blue-500/20 text-blue-400 cursor-default';
+    title = t('printers.amsBackup.titleOn');
+  } else if (state === false) {
+    className += clickable
+      ? 'bg-bambu-dark text-bambu-gray hover:text-white hover:bg-bambu-dark/80 cursor-pointer'
+      : 'bg-bambu-dark text-bambu-gray cursor-default';
+    title = t('printers.amsBackup.titleOff');
+  } else {
+    className += 'bg-bambu-dark text-bambu-gray/50 cursor-default';
+    title = t('printers.amsBackup.titleUnknown');
+  }
+
+  return (
+    <button
+      type="button"
+      disabled={!clickable}
+      onClick={() => clickable && onToggle(!state)}
+      className={className}
+      title={title}
+      aria-label={title}
+    >
+      {known ? <Repeat className="w-3 h-3" /> : <span>?</span>}
+    </button>
   );
 }
 
@@ -2153,6 +2201,21 @@ function PrinterCard({
     mutationFn: (amsId: number) => api.stopDrying(printer.id, amsId),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+    },
+    onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
+  });
+
+  // AMS Filament Backup toggle (auto-switch to a backup spool when one runs out).
+  // Invalidate BOTH printer-status cache keys — the codebase has two conventions
+  // ('printerStatus' camelCase + 'printer-status' kebab-case used by PrintModal /
+  // useMultiPrinterFilamentMapping). Hitting only one would leave PrintModal
+  // showing the old backup state until the user reopens it.
+  const setAmsBackupMutation = useMutation({
+    mutationFn: (enabled: boolean) => api.setAmsFilamentBackup(printer.id, enabled),
+    onSuccess: (_data, enabled) => {
+      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: ['printer-status', printer.id] });
+      showToast(t(enabled ? 'printers.amsBackup.toastEnabled' : 'printers.amsBackup.toastDisabled'), 'success');
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -4176,6 +4239,12 @@ function PrinterCard({
                     <span className="text-[10px] uppercase tracking-wider text-bambu-gray font-medium">
                       {t('printers.filaments')}
                     </span>
+                    <AmsBackupBadge
+                      state={status.ams_filament_backup}
+                      canToggle={hasPermission('printers:control')}
+                      pending={setAmsBackupMutation.isPending}
+                      onToggle={(next) => setAmsBackupMutation.mutate(next)}
+                    />
                     <div className="flex-1 h-[2px] bg-bambu-dark-tertiary" />
                   </div>
 

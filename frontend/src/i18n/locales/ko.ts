@@ -479,6 +479,13 @@ export default {
       stoppingDrying: '건조 정지 중...',
       rotateTray: '건조 중 스풀 회전'
     },
+    amsBackup: {
+      titleOn: 'AMS 필라멘트 백업이 켜져 있습니다. 비활성화하려면 클릭하세요.',
+      titleOff: 'AMS 필라멘트 백업이 꺼져 있습니다. 활성화하려면 클릭하세요.',
+      titleUnknown: '이 프린터에서는 AMS 필라멘트 백업 상태를 확인할 수 없습니다.',
+      toastEnabled: 'AMS 필라멘트 백업이 활성화되었습니다',
+      toastDisabled: 'AMS 필라멘트 백업이 비활성화되었습니다'
+    },
     filaments: '필라멘트',
     openCameraOverlay: '카메라 오버레이 열기',
     openCameraWindow: '새 창에서 카메라 열기',
@@ -1625,6 +1632,7 @@ export default {
     disableFilamentWarningsDesc: '인쇄 또는 대기열 추가 시 필라멘트 부족 경고 표시 안 함',
     preferLowestFilament: '남은 필라멘트가 가장 적은 것 우선',
     preferLowestFilamentDesc: '여러 스풀이 일치할 때 남은 필라멘트가 가장 적은 것 사용',
+    preferLowestFilamentBackupNote: '프린터에서 AMS 필라멘트 백업이 활성화된 경우에만 적용됩니다. 그렇지 않으면 선택한 스풀이 다 떨어졌을 때 두 번째 스풀로 전환할 수 없습니다.',
     trackingModeBuiltIn: '내장 인벤토리',
     trackingModeBuiltInDesc: 'RFID 자동 매칭 및 사용량 추적 포함',
     trackingModeSpoolmanDesc: '외부 필라멘트 관리 서버',

@@ -516,6 +516,14 @@ export default {
       stoppingDrying: 'Stopping drying...',
       rotateTray: 'Rotate spool during drying',
     },
+    // AMS Filament Backup status badge (printer-wide auto-switch to another spool)
+    amsBackup: {
+      titleOn: 'AMS Filament Backup is ON. Click to disable.',
+      titleOff: 'AMS Filament Backup is OFF. Click to enable.',
+      titleUnknown: 'AMS Filament Backup status unavailable on this printer.',
+      toastEnabled: 'AMS Filament Backup enabled',
+      toastDisabled: 'AMS Filament Backup disabled',
+    },
     // Filaments section
     filaments: 'Filaments',
     // Camera
@@ -1728,6 +1736,7 @@ export default {
     disableFilamentWarningsDesc: 'Don\'t show warnings about insufficient filament when printing or queueing',
     preferLowestFilament: 'Prefer lowest remaining filament',
     preferLowestFilamentDesc: 'When multiple spools match, use the one with the least filament remaining',
+    preferLowestFilamentBackupNote: 'Only takes effect when AMS Filament Backup is enabled on the printer — otherwise the printer cannot switch to a second spool when the picked one runs out.',
     trackingModeBuiltIn: 'Built-in Inventory',
     trackingModeBuiltInDesc: 'RFID auto-matching and usage tracking included',
     trackingModeSpoolmanDesc: 'External filament management server',

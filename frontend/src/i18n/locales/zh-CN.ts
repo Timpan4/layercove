@@ -516,6 +516,13 @@ export default {
       stoppingDrying: '正在停止干燥...',
       rotateTray: '干燥时旋转料盘',
     },
+    amsBackup: {
+      titleOn: 'AMS 备用料盘已开启。点击以禁用。',
+      titleOff: 'AMS 备用料盘已关闭。点击以启用。',
+      titleUnknown: '本打印机不支持读取 AMS 备用料盘状态。',
+      toastEnabled: 'AMS 备用料盘已启用',
+      toastDisabled: 'AMS 备用料盘已禁用',
+    },
     // Filaments section
     filaments: '耗材',
     // Camera
@@ -1719,6 +1726,7 @@ export default {
     disableFilamentWarningsDesc: '在打印或加入队列时不显示耗材不足警告',
     preferLowestFilament: '优先使用剩余最少的耗材',
     preferLowestFilamentDesc: '当多个料盘匹配时，使用剩余耗材最少的那个',
+    preferLowestFilamentBackupNote: '仅当打印机端启用了 AMS 备用料盘时才生效——否则当选中的料盘耗尽时，打印机无法切换到备用料盘。',
     trackingModeBuiltIn: '内置库存',
     trackingModeBuiltInDesc: '包含 RFID 自动匹配和用量追踪',
     trackingModeSpoolmanDesc: '外部耗材管理服务器',

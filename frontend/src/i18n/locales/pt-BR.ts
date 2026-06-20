@@ -516,6 +516,13 @@ export default {
       stoppingDrying: 'Parando secagem...',
       rotateTray: 'Girar o carretel durante a secagem',
     },
+    amsBackup: {
+      titleOn: 'AMS Filament Backup está LIGADO. Clique para desativar.',
+      titleOff: 'AMS Filament Backup está DESLIGADO. Clique para ativar.',
+      titleUnknown: 'Estado do AMS Filament Backup indisponível nesta impressora.',
+      toastEnabled: 'AMS Filament Backup ativado',
+      toastDisabled: 'AMS Filament Backup desativado',
+    },
     // Filaments section
     filaments: 'Filamentos',
     // Camera
@@ -1674,6 +1681,7 @@ export default {
     disableFilamentWarningsDesc: 'Não mostrar avisos sobre filamento insuficiente ao imprimir ou adicionar à fila',
     preferLowestFilament: 'Preferir filamento com menor resto',
     preferLowestFilamentDesc: 'Quando vários carretéis correspondem, usar o com menos filamento restante',
+    preferLowestFilamentBackupNote: 'Só tem efeito quando o AMS Filament Backup está habilitado na impressora — caso contrário, a impressora não pode trocar para um segundo carretel quando o escolhido acabar.',
     trackingModeBuiltIn: 'Inventário Interno',
     trackingModeBuiltInDesc: 'Correspondência automática de RFID e rastreamento de uso incluídos',
     trackingModeSpoolmanDesc: 'Servidor de gerenciamento de filamento externo',

@@ -516,6 +516,13 @@ export default {
       stoppingDrying: 'Trocknung wird gestoppt...',
       rotateTray: 'Spule während der Trocknung drehen',
     },
+    amsBackup: {
+      titleOn: 'AMS Filament Backup ist EIN. Zum Deaktivieren klicken.',
+      titleOff: 'AMS Filament Backup ist AUS. Zum Aktivieren klicken.',
+      titleUnknown: 'AMS-Filament-Backup-Status auf diesem Drucker nicht verfügbar.',
+      toastEnabled: 'AMS Filament Backup aktiviert',
+      toastDisabled: 'AMS Filament Backup deaktiviert',
+    },
     // Filaments section
     filaments: 'Filamente',
     // Camera
@@ -1718,6 +1725,7 @@ export default {
     disableFilamentWarningsDesc: 'Keine Warnungen über unzureichendes Filament beim Drucken oder Einreihen anzeigen',
     preferLowestFilament: 'Niedrigsten Filamentrest bevorzugen',
     preferLowestFilamentDesc: 'Bei mehreren passenden Spulen die mit dem geringsten Restfilament verwenden',
+    preferLowestFilamentBackupNote: 'Wirkt nur, wenn AMS Filament Backup am Drucker aktiviert ist — sonst kann der Drucker beim Aufbrauchen der ersten Spule nicht auf eine zweite Spule wechseln.',
     trackingModeBuiltIn: 'Integriertes Inventar',
     trackingModeBuiltInDesc: 'RFID-Erkennung und Verbrauchserfassung inklusive',
     trackingModeSpoolmanDesc: 'Externer Filament-Management-Server',

@@ -860,6 +860,15 @@ class PrintScheduler:
         # Check if user prefers lowest remaining filament when multiple spools match
         prefer_lowest = await self._get_bool_setting(db, "prefer_lowest_filament")
 
+        # Gate prefer_lowest on the printer's AMS Filament Backup state (#1766).
+        # Without backup, the printer will not switch to a second spool when the
+        # picked one runs out — so sorting toward the lowest leaves the print
+        # at risk of running dry mid-job. None (unknown / A1 family) preserves
+        # today's behaviour intentionally.
+        if prefer_lowest and status.ams_filament_backup is False:
+            logger.info("[prefer-lowest] skipped (AMS Backup OFF on printer %s)", printer_id)
+            prefer_lowest = False
+
         # When the preference is on, surface Bambuddy's inventory-side
         # remaining for each slot that's bound to a tracked spool, so the
         # sort beats the MQTT-only blind spot (#1508). Skip the lookup

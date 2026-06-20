@@ -515,6 +515,13 @@ export default {
       stoppingDrying: '乾燥を停止しています...',
       rotateTray: '乾燥中にスプールを回転',
     },
+    amsBackup: {
+      titleOn: 'AMSフィラメントバックアップはONです。クリックして無効化します。',
+      titleOff: 'AMSフィラメントバックアップはOFFです。クリックして有効化します。',
+      titleUnknown: 'このプリンタではAMSフィラメントバックアップ状態を確認できません。',
+      toastEnabled: 'AMSフィラメントバックアップを有効化しました',
+      toastDisabled: 'AMSフィラメントバックアップを無効化しました',
+    },
     // Filaments section
     filaments: 'フィラメント',
     // Camera
@@ -1717,6 +1724,7 @@ export default {
     disableFilamentWarningsDesc: '印刷またはキュー追加時にフィラメント不足の警告を表示しない',
     preferLowestFilament: '残量が少ないフィラメントを優先',
     preferLowestFilamentDesc: '複数のスプールが一致する場合、残量が最も少ないものを使用します',
+    preferLowestFilamentBackupNote: 'プリンタ側でAMSフィラメントバックアップが有効な場合のみ動作します。無効の場合、選択したスプールが切れても予備スプールに切り替えできません。',
     trackingModeBuiltIn: '内蔵インベントリ',
     trackingModeBuiltInDesc: 'RFID自動検出と使用量追跡を含む',
     trackingModeSpoolmanDesc: '外部フィラメント管理サーバー',

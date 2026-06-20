@@ -502,6 +502,9 @@ export interface PrinterStatus {
   firmware_version: string | null;   // Firmware version from MQTT
   // Developer LAN mode: true = enabled, false = disabled, null = unknown
   developer_mode: boolean | null;
+  // AMS Filament Backup ("auto-switch" to a backup spool when one runs out).
+  // true = ON, false = OFF, null = unknown / unsupported (A1 family).
+  ams_filament_backup: boolean | null;
   // Queue: printer is awaiting user ack that the build plate was cleared after a
   // finished/failed print. Persisted across restarts (#961).
   awaiting_plate_clear: boolean;
@@ -3630,6 +3633,22 @@ export const api = {
     request<{ status: string; ams_id: number }>(
       `/printers/${printerId}/drying/stop?ams_id=${amsId}`,
       { method: 'POST' }
+    ),
+
+  // AMS Filament Backup (auto-switch to a backup spool when one runs out)
+  setAmsFilamentBackup: (printerId: number, enabled: boolean) =>
+    request<{ success: boolean; ams_filament_backup: boolean }>(
+      `/printers/${printerId}/ams-backup?enabled=${enabled}`,
+      { method: 'POST' }
+    ),
+
+  // Per-globalTrayId remaining grams for this printer's inventory-bound slots
+  // (#1766). Drives the client-side "Prefer Lowest Remaining Filament" sort
+  // when computing the AMS mapping; mirrors backend `_build_inventory_remain_overrides`
+  // so internal and Spoolman modes both work uniformly.
+  getInventoryRemain: (printerId: number) =>
+    request<{ inventory_remain_g: Record<string, number> }>(
+      `/printers/${printerId}/inventory-remain`,
     ),
 
   // Skip Objects

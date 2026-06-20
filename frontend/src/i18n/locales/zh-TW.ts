@@ -516,6 +516,13 @@ export default {
       stoppingDrying: '正在停止乾燥...',
       rotateTray: '乾燥時旋轉料盤',
     },
+    amsBackup: {
+      titleOn: 'AMS 備用料盤已開啟。點擊以停用。',
+      titleOff: 'AMS 備用料盤已關閉。點擊以啟用。',
+      titleUnknown: '本印表機不支援讀取 AMS 備用料盤狀態。',
+      toastEnabled: 'AMS 備用料盤已啟用',
+      toastDisabled: 'AMS 備用料盤已停用',
+    },
     // Filaments section
     filaments: '耗材',
     // Camera
@@ -1719,6 +1726,7 @@ export default {
     disableFilamentWarningsDesc: '在列印或加入佇列時不顯示耗材不足警告',
     preferLowestFilament: '優先使用剩餘最少的耗材',
     preferLowestFilamentDesc: '當多個料盤匹配時，使用剩餘耗材最少的那個',
+    preferLowestFilamentBackupNote: '僅當印表機端啟用了 AMS 備用料盤時才生效——否則當選中的料盤耗盡時，印表機無法切換到備用料盤。',
     trackingModeBuiltIn: '內建庫存',
     trackingModeBuiltInDesc: '包含 RFID 自動匹配和用量追蹤',
     trackingModeSpoolmanDesc: '外部耗材管理伺服器',

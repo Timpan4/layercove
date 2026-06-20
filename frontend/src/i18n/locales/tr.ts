@@ -516,6 +516,13 @@ export default {
       stoppingDrying: 'Kurutma durduruluyor...',
       rotateTray: 'Kurutma sırasında makarayı döndür',
     },
+    amsBackup: {
+      titleOn: 'AMS Filament Backup AÇIK. Devre dışı bırakmak için tıklayın.',
+      titleOff: 'AMS Filament Backup KAPALI. Etkinleştirmek için tıklayın.',
+      titleUnknown: 'Bu yazıcıda AMS Filament Backup durumu kullanılamıyor.',
+      toastEnabled: 'AMS Filament Backup etkinleştirildi',
+      toastDisabled: 'AMS Filament Backup devre dışı bırakıldı',
+    },
     // Filamentler bölümü
     filaments: 'Filamentler',
     // Kamera
@@ -1721,6 +1728,7 @@ export default {
     disableFilamentWarningsDesc: 'Yazdırırken veya kuyruğa eklerken yetersiz filamentle ilgili uyarıları gösterme',
     preferLowestFilament: 'En az kalan filamenti tercih et',
     preferLowestFilamentDesc: 'Birden fazla makara eşleştiğinde, kalan filamenti en az olanı kullan',
+    preferLowestFilamentBackupNote: 'Yalnızca yazıcıda AMS Filament Backup etkinleştirildiğinde uygulanır — aksi takdirde seçilen makara bittiğinde yazıcı ikinci bir makaraya geçemez.',
     trackingModeBuiltIn: 'Yerleşik Envanter',
     trackingModeBuiltInDesc: 'RFID otomatik eşleştirme ve kullanım takibi dahil',
     trackingModeSpoolmanDesc: 'Harici filament yönetim sunucusu',

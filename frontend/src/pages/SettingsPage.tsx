@@ -4657,6 +4657,9 @@ export function SettingsPage() {
                     <p className="text-sm text-bambu-gray">
                       {t('settings.preferLowestFilamentDesc')}
                     </p>
+                    <p className="text-xs text-bambu-gray/70 mt-1">
+                      {t('settings.preferLowestFilamentBackupNote')}
+                    </p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
