@@ -3340,6 +3340,10 @@ export default {
     folderSortByActivity: '最終更新順',
     dragToResizeTooltip: 'ドラッグしてリサイズ、ダブルクリックでリセット',
     searchFiles: 'ファイルを検索...',
+    searchSubfoldersHint: 'サブフォルダーを含む',
+    readme: {
+      truncated: '切り詰め',
+    },
     allTypes: 'すべての種類',
     prints: '印刷回数',
     ascending: '昇順',

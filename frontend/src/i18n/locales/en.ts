@@ -3355,6 +3355,10 @@ export default {
     folderSortByActivity: 'By recent activity',
     dragToResizeTooltip: 'Drag to resize, double-click to reset',
     searchFiles: 'Search files...',
+    searchSubfoldersHint: 'Including subfolders',
+    readme: {
+      truncated: 'Truncated',
+    },
     allTypes: 'All types',
     prints: 'Prints',
     ascending: 'Ascending',

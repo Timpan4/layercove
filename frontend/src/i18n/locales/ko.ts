@@ -3153,6 +3153,10 @@ export default {
     folderSortByActivity: '최근 활동순',
     dragToResizeTooltip: '드래그하여 크기 조정, 더블클릭하여 초기화',
     searchFiles: '파일 검색...',
+    searchSubfoldersHint: '하위 폴더 포함',
+    readme: {
+      truncated: '잘림',
+    },
     allTypes: '모든 유형',
     prints: '인쇄물',
     ascending: '오름차순',

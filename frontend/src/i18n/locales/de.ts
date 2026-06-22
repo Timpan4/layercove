@@ -3340,6 +3340,10 @@ export default {
     folderSortByActivity: 'Nach letzter Aktivität',
     dragToResizeTooltip: 'Ziehen zum Ändern der Größe, Doppelklick zum Zurücksetzen',
     searchFiles: 'Dateien suchen...',
+    searchSubfoldersHint: 'Inklusive Unterordner',
+    readme: {
+      truncated: 'Gekürzt',
+    },
     allTypes: 'Alle Typen',
     prints: 'Drucke',
     ascending: 'Aufsteigend',

@@ -3329,6 +3329,10 @@ export default {
     folderSortByActivity: 'Par activité récente',
     dragToResizeTooltip: 'Glisser pour redimensionner, double-clic reset',
     searchFiles: 'Chercher fichiers...',
+    searchSubfoldersHint: 'Sous-dossiers inclus',
+    readme: {
+      truncated: 'Tronqué',
+    },
     allTypes: 'Tous types',
     prints: 'Impressions',
     ascending: 'Croissant',

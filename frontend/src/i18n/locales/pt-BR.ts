@@ -3328,6 +3328,10 @@ export default {
     folderSortByActivity: 'Por atividade recente',
     dragToResizeTooltip: 'Arraste para redimensionar, clique duas vezes para redefinir',
     searchFiles: 'Pesquisar arquivos...',
+    searchSubfoldersHint: 'Incluindo subpastas',
+    readme: {
+      truncated: 'Truncado',
+    },
     allTypes: 'Todos os tipos',
     prints: 'Impressões',
     ascending: 'Crescente',

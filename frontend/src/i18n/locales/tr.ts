@@ -3335,6 +3335,10 @@ export default {
     folderSortByActivity: 'Son etkinliğe göre',
     dragToResizeTooltip: 'Yeniden boyutlandırmak için sürükleyin, sıfırlamak için çift tıklayın',
     searchFiles: 'Dosyalarda ara...',
+    searchSubfoldersHint: 'Alt klasörler dahil',
+    readme: {
+      truncated: 'Kısaltıldı',
+    },
     allTypes: 'Tüm türler',
     prints: 'Baskılar',
     ascending: 'Artan',

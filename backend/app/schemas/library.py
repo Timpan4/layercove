@@ -63,6 +63,19 @@ class FolderResponse(BaseModel):
         from_attributes = True
 
 
+class FolderReadmeResponse(BaseModel):
+    """Markdown sidebar payload for a folder (#1268).
+
+    ``filename`` is the on-disk name (so the UI can show "README.md") and
+    ``content`` is the raw markdown — the FE renders it. ``truncated`` is
+    True when the source file was clipped at the size cap.
+    """
+
+    filename: str
+    content: str
+    truncated: bool
+
+
 class FolderTreeItem(BaseModel):
     """Schema for folder tree item (includes children)."""
 

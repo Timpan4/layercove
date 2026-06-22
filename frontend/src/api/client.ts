@@ -5787,6 +5787,7 @@ export const api = {
     includeRoot = true,
     projectId?: number,
     scope?: 'internal' | 'external',
+    recursive = false,
   ) => {
     const params = new URLSearchParams();
     if (folderId !== undefined && folderId !== null) {
@@ -5798,8 +5799,16 @@ export const api = {
     params.set('include_root', String(includeRoot));
     if (scope === 'internal') params.set('internal_only', 'true');
     else if (scope === 'external') params.set('external_only', 'true');
+    // recursive=true expands the folder_id filter to include every descendant
+    // folder (#1268). Only meaningful when folder_id is set; ignored server-side
+    // otherwise. Off by default so non-search callers keep folder-scoped behavior.
+    if (recursive) params.set('recursive', 'true');
     return request<LibraryFileListItem[]>(`/library/files?${params}`);
   },
+  getLibraryFolderReadme: (folderId: number) =>
+    request<{ filename: string; content: string; truncated: boolean }>(
+      `/library/folders/${folderId}/readme`,
+    ),
   getLibraryFile: (id: number) => request<LibraryFile>(`/library/files/${id}`),
   uploadLibraryFile: async (
     file: File,

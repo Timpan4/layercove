@@ -3328,6 +3328,10 @@ export default {
     folderSortByActivity: '按最近活动',
     dragToResizeTooltip: '拖动调整大小，双击重置',
     searchFiles: '搜索文件...',
+    searchSubfoldersHint: '包含子文件夹',
+    readme: {
+      truncated: '已截断',
+    },
     allTypes: '所有类型',
     prints: '打印',
     ascending: '升序',

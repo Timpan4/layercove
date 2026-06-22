@@ -3343,6 +3343,10 @@ export default {
     folderSortByActivity: 'Por actividad reciente',
     dragToResizeTooltip: 'Arrastre para redimensionar, doble clic para restablecer',
     searchFiles: 'Buscar archivos...',
+    searchSubfoldersHint: 'Incluyendo subcarpetas',
+    readme: {
+      truncated: 'Truncado',
+    },
     allTypes: 'Todos los tipos',
     prints: 'Impresiones',
     ascending: 'Ascendente',

@@ -59,6 +59,7 @@ import { PrintModal } from '../components/PrintModal';
 import { ModelViewerModal } from '../components/ModelViewerModal';
 import { SliceModal } from '../components/SliceModal';
 import { FileUploadModal } from '../components/FileUploadModal';
+import { FolderReadmePanel } from '../components/FolderReadmePanel';
 import { PurgeOldFilesModal } from '../components/PurgeOldFilesModal';
 import { useToast } from '../contexts/ToastContext';
 import { useIsMobile } from '../hooks/useIsMobile';
@@ -1124,8 +1125,15 @@ export function FileManagerPage() {
     staleTime: 30_000,
   });
 
+  // #1268: when a folder is selected and the user has typed a search query,
+  // ask the server to expand the result to every descendant folder so the
+  // client-side filter can match files in subfolders too. Without this the
+  // listing is just the immediate children and "robot.3mf" two levels deep
+  // is invisible from the parent. Only kicks in for folder-scoped views —
+  // root and the internal/external pseudo-nodes already return the union.
+  const searchExpandsSubfolders = selectedFolderId !== null && searchQuery.trim().length > 0;
   const { data: files, isLoading: filesLoading } = useQuery({
-    queryKey: ['library-files', selectedFolderId, topLevelView],
+    queryKey: ['library-files', selectedFolderId, topLevelView, searchExpandsSubfolders],
     // When a specific folder is selected we list its contents directly; when
     // no folder is selected the topLevelView pseudo-node decides whether the
     // server scopes the result to internal-managed-storage files or to the
@@ -1137,6 +1145,7 @@ export function FileManagerPage() {
         false,
         undefined,
         selectedFolderId === null ? topLevelView : undefined,
+        searchExpandsSubfolders,
       ),
   });
 
@@ -1858,6 +1867,9 @@ export function FileManagerPage() {
 
         {/* Files area */}
         <div className="flex-1 flex flex-col min-w-0 min-h-0">
+          {/* Markdown description panel (#1268) — auto-hides if the folder
+              has no README/description.md so non-users pay no UI cost. */}
+          {selectedFolderId !== null && <FolderReadmePanel folderId={selectedFolderId} />}
           {/* External folder info bar */}
           {selectedFolder?.is_external && (
             <div className="flex items-center gap-3 mb-4 p-3 bg-purple-500/10 border border-purple-500/30 rounded-lg">
@@ -1905,6 +1917,14 @@ export function FileManagerPage() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-9 pr-3 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
                 />
+                {searchExpandsSubfolders && (
+                  <span
+                    className="absolute -bottom-4 left-0 text-[10px] text-bambu-gray whitespace-nowrap"
+                    title={t('fileManager.searchSubfoldersHint')}
+                  >
+                    {t('fileManager.searchSubfoldersHint')}
+                  </span>
+                )}
               </div>
 
               {/* Type filter */}

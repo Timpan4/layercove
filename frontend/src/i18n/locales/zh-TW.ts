@@ -3328,6 +3328,10 @@ export default {
     folderSortByActivity: '依最近活動',
     dragToResizeTooltip: '拖曳調整大小，雙擊重設',
     searchFiles: '搜尋檔案...',
+    searchSubfoldersHint: '包含子資料夾',
+    readme: {
+      truncated: '已截斷',
+    },
     allTypes: '所有類型',
     prints: '列印',
     ascending: '升序',
