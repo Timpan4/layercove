@@ -672,8 +672,8 @@ function SortableQueueItem({
                 variant="ghost"
                 size="sm"
                 onClick={onStop}
-                disabled={!hasPermission('printers:control')}
-                title={!hasPermission('printers:control') ? t('queue.permissions.noStopPrint') : t('queue.actions.stopPrint')}
+                disabled={!canModify('queue', 'update', item.created_by_id)}
+                title={!canModify('queue', 'update', item.created_by_id) ? t('queue.permissions.noStopPrint') : t('queue.actions.stopPrint')}
                 className="text-red-400 hover:text-red-300 hover:bg-red-500/10 p-1.5 sm:p-2"
               >
                 <StopCircle className="w-4 h-4" />
@@ -686,8 +686,8 @@ function SortableQueueItem({
                     variant="ghost"
                     size="sm"
                     onClick={onStart}
-                    disabled={!hasPermission('printers:control')}
-                    title={!hasPermission('printers:control') ? t('queue.permissions.noStartPrint') : t('queue.actions.startPrint')}
+                    disabled={!canModify('queue', 'update', item.created_by_id)}
+                    title={!canModify('queue', 'update', item.created_by_id) ? t('queue.permissions.noStartPrint') : t('queue.actions.startPrint')}
                     className="text-bambu-green hover:text-bambu-green-light hover:bg-bambu-green/10 p-1.5 sm:p-2"
                   >
                     <Play className="w-4 h-4" />
@@ -2396,7 +2396,7 @@ export function QueuePage() {
       {/* Re-queue Modal */}
       {requeueItem && (
         <PrintModal
-          mode="add-to-queue"
+          mode="create"
           archiveId={requeueItem.archive_id ?? undefined}
           libraryFileId={requeueItem.library_file_id ?? undefined}
           archiveName={requeueItem.archive_name || requeueItem.library_file_name || `File #${requeueItem.archive_id || requeueItem.library_file_id}`}

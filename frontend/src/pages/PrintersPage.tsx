@@ -5300,13 +5300,15 @@ function PrinterCard({
                               const emptyKind = getEmptySlotKind(extTray);
                               const extSlotContent = (
                                 <div className={`w-full bg-bambu-dark-secondary rounded-lg p-1 text-center ${isEmpty ? 'opacity-50' : ''} ${isExtActive ? 'ring-2 ring-bambu-green ring-offset-1 ring-offset-bambu-dark' : ''}`}>
-                                  {/* Filament color circle with 1-based slot number centered inside */}
+                                  {/* Color circle: L/R inside on dual-nozzle external (replaces
+                                      the separate Ext-L/Ext-R caption that made the row taller than
+                                      regular AMS slots), 1-based slot number on single-nozzle. */}
                                   <FilamentSlotCircle
                                     trayColor={extTray.tray_color}
                                     trayType={extTray.tray_type}
                                     isEmpty={isEmpty}
                                     emptyKind={emptyKind}
-                                    slotNumber={slotTrayId + 1}
+                                    slotNumber={isDualNozzle ? (extTrayId === 254 ? 'L' : 'R') : slotTrayId + 1}
                                   />
                                   <div className={`text-[9px] font-bold truncate ${isEmpty ? 'text-white/40' : 'text-white'}`}>
                                     {extTray.tray_type || t('ams.slotEmpty')}
@@ -5322,7 +5324,6 @@ function PrinterCard({
                                       />
                                     )}
                                   </div>
-                                  {extLabel && <div className="text-[7px] text-white/40 mt-0.5 truncate">{extLabel}</div>}
                                 </div>
                               );
 
@@ -5484,7 +5485,7 @@ function PrinterCard({
         {viewMode === 'expanded' && (
           <div className="mt-auto">
         {smartPlug && (
-          <div className="pt-4">
+          <div className="pt-3">
             <div className="flex items-center gap-2 mb-2">
               <span className="text-[10px] uppercase tracking-wider text-bambu-gray font-medium">
                 {t('printers.power', 'Power')}
@@ -5629,8 +5630,14 @@ function PrinterCard({
                   <Button
                     size="sm"
                     onClick={() => setShowUploadForPrint(true)}
-                    disabled={!hasPermission('printers:control')}
-                    title={!hasPermission('printers:control') ? t('printers.permission.noControl') : t('common.print')}
+                    disabled={!hasPermission('library:upload') || !hasPermission('queue:create')}
+                    title={
+                      !hasPermission('library:upload')
+                        ? t('fileManager.noPermissionUpload')
+                        : !hasPermission('queue:create')
+                          ? t('fileManager.noPermissionAddToQueue')
+                          : t('common.print')
+                    }
                     className={`${footerActionButtonClass} !bg-bambu-green hover:!bg-bambu-green/80 !text-white`}
                   >
                     <PrinterIcon className="w-4 h-4" />
@@ -5683,7 +5690,7 @@ function PrinterCard({
       {/* Print Modal (after upload) */}
       {printAfterUpload && (
         <PrintModal
-          mode="reprint"
+          mode="create"
           libraryFileId={printAfterUpload.id}
           archiveName={printAfterUpload.filename}
           initialSelectedPrinterIds={[printer.id]}
@@ -7621,6 +7628,14 @@ export function PrintersPage() {
     const saved = parseInt(localStorage.getItem('camWallSnapshotSec') || '', 10);
     return Number.isFinite(saved) && saved > 0 ? saved : 8;
   });
+  // 'off' hides the printer-state overlay; 'compact' shows only a state chip;
+  // 'full' adds progress, layer, and time-left on printing/paused tiles.
+  // Defaulting to 'full' because the cards already show this info — users who
+  // pick cam-wall view still want to glance the same details without flipping.
+  const [camWallStatusMode, setCamWallStatusMode] = useState<'off' | 'compact' | 'full'>(() => {
+    const saved = localStorage.getItem('camWallStatusMode');
+    return saved === 'off' || saved === 'compact' || saved === 'full' ? saved : 'full';
+  });
   // Derive viewMode from cardSize: S=compact, M/L/XL=expanded
   const viewMode: ViewMode = cardSize === 1 ? 'compact' : 'expanded';
   const [compactDrilldownPrinterId, setCompactDrilldownPrinterId] = useState<number | null>(null);
@@ -8612,6 +8627,7 @@ export function PrintersPage() {
               window.open(`/camera/${id}`, `camera-${id}`, features);
             }
           }}
+          statusMode={camWallStatusMode}
           onChangeMaxLive={(next) => {
             setCamWallMaxLive(next);
             localStorage.setItem('camWallMaxLive', String(next));
@@ -8619,6 +8635,10 @@ export function PrintersPage() {
           onChangeSnapshotIntervalSec={(next) => {
             setCamWallSnapshotSec(next);
             localStorage.setItem('camWallSnapshotSec', String(next));
+          }}
+          onChangeStatusMode={(next) => {
+            setCamWallStatusMode(next);
+            localStorage.setItem('camWallStatusMode', next);
           }}
         />
       ) : groupedPrinters ? (

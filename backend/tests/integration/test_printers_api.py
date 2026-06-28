@@ -1729,6 +1729,103 @@ class TestClearHMSErrorsAPI:
             assert "failed" in response.json()["detail"].lower()
 
 
+class TestExecuteHMSActionAPI:
+    """Integration tests for the /hms/execute-action endpoint (#1743).
+
+    Mirrors TestClearHMSErrorsAPI's shape — the two routes share the same
+    permission gate, the same DB-lookup + client-existence flow, and the
+    same dispatch-then-return-success pattern. The body-validation cases
+    add coverage that the bare clear endpoint doesn't need.
+    """
+
+    _VALID_BODY = {
+        "print_error": "03008070",
+        "action": "OK_BUTTON",
+        "job_id": None,
+    }
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_execute_hms_action_not_found(self, async_client: AsyncClient):
+        """404 for a printer id that doesn't exist."""
+        response = await async_client.post("/api/v1/printers/99999/hms/execute-action", json=self._VALID_BODY)
+        assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_execute_hms_action_not_connected(self, async_client: AsyncClient, printer_factory):
+        """400 when the printer record exists but the MQTT client is offline."""
+        printer = await printer_factory(name="Disconnected Printer")
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = None
+
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/hms/execute-action", json=self._VALID_BODY
+            )
+
+            assert response.status_code == 400
+            assert "not connected" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_execute_hms_action_success(self, async_client: AsyncClient, printer_factory):
+        """200 happy path — dispatcher returns True, body forwarded verbatim."""
+        printer = await printer_factory(name="Test Printer")
+
+        mock_client = MagicMock()
+        mock_client.execute_hms_action.return_value = True
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            body = {"print_error": "07008029", "action": "FILAMENT_EXTRUDED", "job_id": "task-7"}
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/hms/execute-action", json=body)
+
+            assert response.status_code == 200
+            result = response.json()
+            assert result["success"] is True
+            assert "executed" in result["message"].lower()
+            # Body args reach the client method in (print_error, action, job_id) order.
+            mock_client.execute_hms_action.assert_called_once_with("07008029", "FILAMENT_EXTRUDED", "task-7")
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_execute_hms_action_dispatcher_failure(self, async_client: AsyncClient, printer_factory):
+        """400 when the dispatcher returns False (unknown action, mid-flight disconnect)."""
+        printer = await printer_factory(name="Test Printer")
+
+        mock_client = MagicMock()
+        mock_client.execute_hms_action.return_value = False
+
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+
+            response = await async_client.post(
+                f"/api/v1/printers/{printer.id}/hms/execute-action", json=self._VALID_BODY
+            )
+
+            assert response.status_code == 400
+            assert "failed" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_execute_hms_action_rejects_malformed_print_error(self, async_client: AsyncClient, printer_factory):
+        """422 when print_error fails the ^[0-9A-Fa-f]{8}$ pattern — stray
+        input can't reach the dispatcher's match statement."""
+        printer = await printer_factory(name="Test Printer")
+
+        bad_bodies = [
+            {"print_error": "0300_8070", "action": "OK_BUTTON"},  # underscore
+            {"print_error": "0300807", "action": "OK_BUTTON"},  # 7 chars
+            {"print_error": "030080700", "action": "OK_BUTTON"},  # 9 chars
+            {"print_error": "0300GGGG", "action": "OK_BUTTON"},  # non-hex
+        ]
+        for body in bad_bodies:
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/hms/execute-action", json=body)
+            assert response.status_code == 422, body
+
+
 def _build_h2d_state(*, ams_id: int = 0, tray_id: int = 2, cali_idx: int = 5):
     """Build a MagicMock PrinterState for an H2D printer with a single BL spool tray.
 

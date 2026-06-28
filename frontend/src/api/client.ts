@@ -333,6 +333,14 @@ export interface HMSError {
   attr: number;  // Attribute value for constructing wiki URL
   module: number;
   severity: number;  // 1=fatal, 2=serious, 3=common, 4=info
+  actions?: string[];  // List of user-facing action keys (e.g. "CHECK_FILAMENT")
+  job_id?: string;  // Optional job ID for actions that require it (e.g. "CHECK_ASSISTANT")
+}
+
+export interface HMSActionBody {
+  print_error: string;  // HMS error code (e.g. "05000070")
+  action: string;  // "HMS action to execute (e.g. 'resume_after_error')"
+  job_id: string | null;  // Optional job ID for context (if applicable)
 }
 
 export interface AMSTray {
@@ -1958,6 +1966,7 @@ export interface PrintQueueItem {
   been_jumped?: boolean;
   // Auto-print G-code injection
   gcode_injection?: boolean;
+  cleanup_library_after_dispatch?: boolean;
 }
 
 export interface PrintBatch {
@@ -1988,6 +1997,8 @@ export interface PrintQueueItemCreate {
   require_previous_success?: boolean;
   auto_off_after?: boolean;
   manual_start?: boolean;  // Requires manual trigger to start (staged)
+  insert_at_top?: boolean;  // Insert ahead of other pending items in the same queue scope
+  insert_position?: number | null;  // 1-indexed insertion position for priority queueing
   // PrintModal "Print Anyway" on the deficit warning — persisted so the
   // scheduler doesn't immediately re-flag this item (#1698-followup).
   skip_filament_check?: boolean;
@@ -2009,6 +2020,8 @@ export interface PrintQueueItemCreate {
   batch_id?: number | null;
   // Project to associate the resulting archive with
   project_id?: number;
+  // Delete transient uploaded library file after scheduler creates the archive
+  cleanup_library_after_dispatch?: boolean;
 }
 
 export interface PrintBatchCreate {
@@ -2474,15 +2487,6 @@ export interface NotificationTestRequest {
 export interface NotificationTestResponse {
   success: boolean;
   message: string;
-}
-
-export interface BackgroundDispatchResponse {
-  status: 'dispatched' | string;
-  printer_id: number;
-  archive_id?: number | null;
-  filename: string;
-  dispatch_job_id: number;
-  dispatch_position: number;
 }
 
 // Provider-specific config types for reference
@@ -3707,6 +3711,11 @@ export const api = {
   // HMS Errors
   clearHMSErrors: (printerId: number) =>
     request<{ success: boolean; message: string }>(`/printers/${printerId}/hms/clear`, { method: 'POST' }),
+  executeHMSAction: (printerId: number, data: HMSActionBody) =>
+    request<{ success: boolean; message: string }>(`/printers/${printerId}/hms/execute-action`, {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
 
   // AMS Control
   refreshAmsSlot: (printerId: number, amsId: number, slotId: number) =>
@@ -4381,30 +4390,6 @@ export const api = {
       }>;
     }>(`/archives/${archiveId}/filament-requirements${qs.toString() ? `?${qs}` : ''}`);
   },
-  reprintArchive: (
-    archiveId: number,
-    printerId: number,
-    options?: {
-      plate_id?: number;
-      plate_name?: string;
-      ams_mapping?: number[];
-      timelapse?: boolean;
-      bed_levelling?: boolean;
-      flow_cali?: boolean;
-      vibration_cali?: boolean;
-      layer_inspect?: boolean;
-      use_ams?: boolean;
-      nozzle_offset_cali?: boolean;
-    }
-  ) =>
-    request<BackgroundDispatchResponse>(
-      `/archives/${archiveId}/reprint?printer_id=${printerId}`,
-      {
-        method: 'POST',
-        headers: options ? { 'Content-Type': 'application/json' } : undefined,
-        body: options ? JSON.stringify(options) : undefined,
-      }
-    ),
   uploadArchive: async (file: File, printerId?: number): Promise<Archive> => {
     const formData = new FormData();
     formData.append('file', file);
@@ -6069,41 +6054,6 @@ export const api = {
     request<AddToQueueResponse>('/library/files/add-to-queue', {
       method: 'POST',
       body: JSON.stringify({ file_ids: fileIds }),
-    }),
-  printLibraryFile: (
-    fileId: number,
-    printerId: number,
-    options?: {
-      plate_id?: number;
-      plate_name?: string;
-      ams_mapping?: number[];
-      bed_levelling?: boolean;
-      flow_cali?: boolean;
-      vibration_cali?: boolean;
-      layer_inspect?: boolean;
-      timelapse?: boolean;
-      use_ams?: boolean;
-      nozzle_offset_cali?: boolean;
-      project_id?: number;
-      cleanup_library_after_dispatch?: boolean;
-    }
-  ) =>
-    request<BackgroundDispatchResponse>(
-      `/library/files/${fileId}/print?printer_id=${printerId}`,
-      {
-        method: 'POST',
-        body: options ? JSON.stringify(options) : undefined,
-      }
-    ),
-  cancelBackgroundDispatchJob: (jobId: number) =>
-    request<{
-      status: 'cancelled' | 'cancelling';
-      job_id: number;
-      source_name: string;
-      printer_id: number;
-      printer_name: string;
-    }>(`/background-dispatch/${jobId}`, {
-      method: 'DELETE',
     }),
   getLibraryFilePlates: (fileId: number) =>
     request<LibraryFilePlatesResponse>(`/library/files/${fileId}/plates`),

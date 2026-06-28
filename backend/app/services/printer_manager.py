@@ -1137,7 +1137,14 @@ def printer_state_to_dict(
         "total_layers": state.total_layers,
         "temperatures": temperatures,
         "hms_errors": [
-            {"code": e.code, "attr": e.attr, "module": e.module, "severity": e.severity}
+            {
+                "code": e.code,
+                "attr": e.attr,
+                "module": e.module,
+                "severity": e.severity,
+                "actions": e.actions,
+                "job_id": e.job_id,
+            }
             for e in (state.hms_errors or [])
         ],
         # AMS data for filament colors
