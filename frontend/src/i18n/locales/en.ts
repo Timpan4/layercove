@@ -235,6 +235,23 @@ export default {
     },
     // Maintenance
     maintenanceUpToDate: 'All maintenance up to date - Click to view',
+    // Maintenance Mode (#1476) — operator-flipped "out of service" state.
+    // Distinct from the scheduled-maintenance dashboard above; this one
+    // wraps the backend is_active flag and stops MQTT + queue dispatch.
+    maintenance: {
+      title: 'In Maintenance',
+      subtitle: 'This printer is paused — not connected, not eligible for the queue, not sending notifications.',
+      pillLabel: 'Maintenance',
+      exitButton: 'Exit maintenance',
+      menuEnter: 'Enter maintenance mode',
+      menuExit: 'Exit maintenance mode',
+      toastEntered: '{{name}} is now in maintenance mode',
+      toastExited: '{{name}} is back online',
+      confirmMidPrintTitle: 'Enter maintenance mode mid-print?',
+      confirmMidPrintMessage: '{{name}} is currently printing. Entering maintenance mode will disconnect MQTT and stop progress tracking and completion notifications for this job. Continue?',
+      editFieldLabel: 'Maintenance mode',
+      editFieldHelp: 'When on, this printer is paused from MQTT, queue dispatch and notifications — useful for repair, parallel Bambuddy installs, or temporary suspension.',
+    },
     // Chamber light
     chamberLightOn: 'Turn on chamber light',
     chamberLightOff: 'Turn off chamber light',

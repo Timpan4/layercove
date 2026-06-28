@@ -235,6 +235,20 @@ export default {
     },
     // Maintenance
     maintenanceUpToDate: 'Maintenance à jour - Cliquez pour voir',
+    maintenance: {
+      title: 'En maintenance',
+      subtitle: "Cette imprimante est en pause — non connectée, non éligible à la file d'attente, sans notifications.",
+      pillLabel: 'Maintenance',
+      exitButton: 'Quitter la maintenance',
+      menuEnter: 'Activer le mode maintenance',
+      menuExit: 'Quitter le mode maintenance',
+      toastEntered: '{{name}} est maintenant en mode maintenance',
+      toastExited: '{{name}} est de nouveau en ligne',
+      confirmMidPrintTitle: 'Passer en mode maintenance pendant une impression ?',
+      confirmMidPrintMessage: "{{name}} est en cours d'impression. Le mode maintenance déconnectera MQTT et arrêtera le suivi de progression ainsi que les notifications de fin pour ce travail. Continuer ?",
+      editFieldLabel: 'Mode maintenance',
+      editFieldHelp: "Quand activé, cette imprimante est mise en pause de MQTT, de la file d'attente et des notifications — utile pour les réparations, les installations Bambuddy parallèles ou une suspension temporaire.",
+    },
     // Chamber light
     chamberLightOn: 'Allumer la lumière de la chambre',
     chamberLightOff: 'Éteindre la lumière de la chambre',

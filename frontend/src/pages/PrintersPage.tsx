@@ -2507,6 +2507,38 @@ function PrinterCard({
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToUpdateSetting'), 'error'),
   });
 
+  // Maintenance mode toggle (#1476). Wraps the `is_active` backend field that
+  // already gates MQTT connection, queue dispatch, scheduler eligibility,
+  // metrics, and the print picker — so flipping this flag puts the printer
+  // out of service across every consumer in one place. Used from the
+  // overflow menu and EditPrinterModal.
+  const maintenanceMutation = useMutation({
+    mutationFn: (isActive: boolean) => api.updatePrinter(printer.id, { is_active: isActive }),
+    onSuccess: (_data, isActive) => {
+      queryClient.invalidateQueries({ queryKey: ['printers'] });
+      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      showToast(
+        isActive
+          ? t('printers.maintenance.toastExited', { name: printer.name })
+          : t('printers.maintenance.toastEntered', { name: printer.name }),
+        'success',
+      );
+    },
+    onError: (error: Error) => showToast(error.message || t('printers.toast.failedToUpdateSetting'), 'error'),
+  });
+
+  // Confirm before entering maintenance on a printing printer (entering mode
+  // disconnects MQTT, which stops progress tracking + completion notifications
+  // for the in-flight job).
+  const [confirmMaintenanceEnter, setConfirmMaintenanceEnter] = useState(false);
+  const handleEnterMaintenance = () => {
+    if (status?.state === 'RUNNING' || status?.state === 'PAUSE') {
+      setConfirmMaintenanceEnter(true);
+    } else {
+      maintenanceMutation.mutate(false);
+    }
+  };
+
   // Query for printable objects (for skip functionality)
   // Fetch when printing with 2+ objects OR when modal is open
   const isPrintingWithObjects = (status?.state === 'RUNNING' || status?.state === 'PAUSE') && (status?.printable_objects_count ?? 0) >= 2;
@@ -2996,6 +3028,30 @@ function PrinterCard({
             <Info className="w-4 h-4" />
             {t('printers.printerInformation')}
           </button>
+          {/* Maintenance Mode toggle (#1476) — leverages backend is_active flag */}
+          <button
+            className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
+              hasPermission('printers:update')
+                ? 'hover:bg-bambu-dark-tertiary'
+                : 'opacity-50 cursor-not-allowed'
+            }`}
+            disabled={maintenanceMutation.isPending || !hasPermission('printers:update')}
+            onClick={() => {
+              if (!hasPermission('printers:update')) return;
+              setShowMenu(false);
+              if (printer.is_active !== false) {
+                handleEnterMaintenance();
+              } else {
+                maintenanceMutation.mutate(true);
+              }
+            }}
+            title={!hasPermission('printers:update') ? t('printers.permission.noEdit') : undefined}
+          >
+            <Wrench className="w-4 h-4" />
+            {printer.is_active !== false
+              ? t('printers.maintenance.menuEnter')
+              : t('printers.maintenance.menuExit')}
+          </button>
           <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
             onClick={() => {
@@ -3193,23 +3249,38 @@ function PrinterCard({
           {viewMode === 'expanded' && (
             <div className="mt-2">
               <div className="flex flex-wrap items-center gap-2">
-              {/* Connection status badge */}
-              <span
-                className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs ${
-                  status?.connected
-                    ? 'bg-status-ok/20 text-status-ok'
-                    : 'bg-status-error/20 text-status-error'
-                }`}
-              >
-                {status?.connected ? (
-                  <Link className="w-3 h-3" />
-                ) : (
-                  <Unlink className="w-3 h-3" />
-                )}
-                {status?.connected ? t('printers.connection.connected') : t('printers.connection.offline')}
-              </span>
-              {/* Run connection diagnostic — offered when the printer is offline */}
-              {!status?.connected && (
+              {/* Connection status badge (or Maintenance pill when out of service).
+                  Defensive: only swap when is_active is EXPLICITLY false. An
+                  undefined / missing field defaults to "active" so the regular
+                  pill renders — matches the backend default and prevents test
+                  fixtures (or stale clients) from accidentally tripping the
+                  maintenance UI. */}
+              {printer.is_active === false ? (
+                <span
+                  className="flex items-center gap-1.5 px-2 py-1 rounded-full text-xs bg-amber-500/20 text-amber-400"
+                  title={t('printers.maintenance.subtitle')}
+                >
+                  <Wrench className="w-3 h-3" />
+                  {t('printers.maintenance.pillLabel')}
+                </span>
+              ) : (
+                <span
+                  className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-xs ${
+                    status?.connected
+                      ? 'bg-status-ok/20 text-status-ok'
+                      : 'bg-status-error/20 text-status-error'
+                  }`}
+                >
+                  {status?.connected ? (
+                    <Link className="w-3 h-3" />
+                  ) : (
+                    <Unlink className="w-3 h-3" />
+                  )}
+                  {status?.connected ? t('printers.connection.connected') : t('printers.connection.offline')}
+                </span>
+              )}
+              {/* Run connection diagnostic — offered when the printer is offline, NOT in maintenance */}
+              {printer.is_active !== false && !status?.connected && (
                 <button
                   onClick={() => setShowDiagnostic(true)}
                   className="flex items-center gap-1 px-2 py-1 rounded-full text-xs cursor-pointer bg-bambu-dark-tertiary text-bambu-gray hover:text-white transition-colors"
@@ -3407,8 +3478,53 @@ function PrinterCard({
           </div>
         )}
 
-        {/* Status */}
-        {status?.connected && (
+        {/* Status — see the equivalent defensive `=== false` check on the
+            header pill above for why this is not `!printer.is_active`. */}
+        {printer.is_active === false ? (
+          // Maintenance mode (#1476) — replaces the cover/progress container
+          // so the card keeps the same height. Renders for both compact and
+          // expanded view modes so the printer stays visible but plainly
+          // out-of-service.
+          <>
+            {viewMode === 'compact' ? (
+              <div className="mt-2 flex items-center gap-2 px-2 py-1.5 rounded-full bg-amber-500/15 border border-amber-500/30">
+                <Wrench className="w-3 h-3 text-amber-400 shrink-0" />
+                <span className="text-[11px] text-amber-400 font-medium truncate">
+                  {t('printers.maintenance.pillLabel')}
+                </span>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center gap-2 mb-2">
+                  <span className="text-[10px] uppercase tracking-wider text-bambu-gray font-medium">
+                    {t('printers.status.title', 'Status')}
+                  </span>
+                  <div className="flex-1 h-[2px] bg-bambu-dark-tertiary" />
+                </div>
+                <div className="p-3 bg-amber-500/10 border border-amber-500/30 rounded-[10px] flex items-center gap-3">
+                  <Wrench className="w-6 h-6 text-amber-400 shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm text-amber-400 font-medium">
+                      {t('printers.maintenance.title')}
+                    </p>
+                    <p className="text-xs text-bambu-gray mt-0.5">
+                      {t('printers.maintenance.subtitle')}
+                    </p>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={maintenanceMutation.isPending || !hasPermission('printers:update')}
+                    onClick={() => maintenanceMutation.mutate(true)}
+                    title={!hasPermission('printers:update') ? t('printers.permission.noEdit') : undefined}
+                  >
+                    {t('printers.maintenance.exitButton')}
+                  </Button>
+                </div>
+              </>
+            )}
+          </>
+        ) : status?.connected && (
           <>
             {/* Compact: Simple status bar */}
             {viewMode === 'compact' ? (
@@ -5852,6 +5968,24 @@ function PrinterCard({
         />
       )}
 
+      {/* Maintenance Mode mid-print confirmation (#1476) — entering maintenance
+          disconnects MQTT, which stops progress tracking + completion
+          notifications for the in-flight job. Idle / FINISH / FAILED states
+          skip this dialog and toggle directly. */}
+      {confirmMaintenanceEnter && (
+        <ConfirmModal
+          title={t('printers.maintenance.confirmMidPrintTitle')}
+          message={t('printers.maintenance.confirmMidPrintMessage', { name: printer.name })}
+          confirmText={t('printers.maintenance.menuEnter')}
+          variant="danger"
+          onConfirm={() => {
+            maintenanceMutation.mutate(false);
+            setConfirmMaintenanceEnter(false);
+          }}
+          onCancel={() => setConfirmMaintenanceEnter(false)}
+        />
+      )}
+
       {/* Power Off Confirmation */}
       {showPowerOffConfirm && smartPlug && (
         <ConfirmModal
@@ -7038,6 +7172,7 @@ function EditPrinterModal({
     model: printer.model || '',
     location: printer.location || '',
     auto_archive: printer.auto_archive,
+    is_active: printer.is_active,
   });
 
   // Setup-time pre-flight — same warn-on-save as the Add-Printer dialog, so an
@@ -7071,6 +7206,7 @@ function EditPrinterModal({
       model: form.model || undefined,
       location: form.location || undefined,
       auto_archive: form.auto_archive,
+      is_active: form.is_active,
     };
     // Only include access_code if it was changed
     if (form.access_code) {
@@ -7210,6 +7346,27 @@ function EditPrinterModal({
               <label htmlFor="edit_auto_archive" className="text-sm text-bambu-gray">
                 {t('printers.modal.autoArchiveLabel')}
               </label>
+            </div>
+            {/* Maintenance Mode toggle (#1476) — checkbox is the inverse of
+                is_active because the user-facing concept is "is this printer
+                in maintenance" not "is it active". */}
+            <div>
+              <div className="flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  id="edit_maintenance_mode"
+                  checked={!form.is_active}
+                  onChange={(e) => setForm({ ...form, is_active: !e.target.checked })}
+                  className="rounded border-bambu-dark-tertiary bg-bambu-dark text-amber-400 focus:ring-amber-400"
+                />
+                <label htmlFor="edit_maintenance_mode" className="text-sm text-bambu-gray flex items-center gap-1.5">
+                  <Wrench className="w-3.5 h-3.5 text-amber-400" />
+                  {t('printers.maintenance.editFieldLabel')}
+                </label>
+              </div>
+              <p className="text-xs text-bambu-gray/70 mt-1 ml-6">
+                {t('printers.maintenance.editFieldHelp')}
+              </p>
             </div>
             {saveWarning ? (
               <div className="rounded-lg bg-amber-500/10 border border-amber-500/30 p-3 space-y-3">

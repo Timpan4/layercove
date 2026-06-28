@@ -235,6 +235,20 @@ export default {
     },
     // Maintenance
     maintenanceUpToDate: 'Todo el mantenimiento al día - Haga clic para ver',
+    maintenance: {
+      title: 'En mantenimiento',
+      subtitle: 'Esta impresora está en pausa — sin conexión, no elegible para la cola y sin enviar notificaciones.',
+      pillLabel: 'Mantenimiento',
+      exitButton: 'Salir de mantenimiento',
+      menuEnter: 'Entrar en modo mantenimiento',
+      menuExit: 'Salir del modo mantenimiento',
+      toastEntered: '{{name}} ahora está en modo mantenimiento',
+      toastExited: '{{name}} vuelve a estar en línea',
+      confirmMidPrintTitle: '¿Entrar en modo mantenimiento durante una impresión?',
+      confirmMidPrintMessage: '{{name}} está imprimiendo actualmente. Entrar en modo mantenimiento desconectará MQTT y detendrá el seguimiento del progreso y las notificaciones de finalización para este trabajo. ¿Continuar?',
+      editFieldLabel: 'Modo mantenimiento',
+      editFieldHelp: 'Cuando está activado, esta impresora se pausa de MQTT, despacho de cola y notificaciones — útil para reparaciones, instalaciones paralelas de Bambuddy o suspensión temporal.',
+    },
     // Chamber light
     chamberLightOn: 'Encender luz de la cámara',
     chamberLightOff: 'Apagar luz de la cámara',

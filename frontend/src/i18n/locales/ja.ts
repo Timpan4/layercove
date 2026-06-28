@@ -234,6 +234,20 @@ export default {
     },
     // Maintenance
     maintenanceUpToDate: 'すべてのメンテナンスが最新です',
+    maintenance: {
+      title: 'メンテナンス中',
+      subtitle: 'このプリンターは一時停止中です — 未接続、キュー対象外、通知も送信されません。',
+      pillLabel: 'メンテナンス',
+      exitButton: 'メンテナンスを終了',
+      menuEnter: 'メンテナンスモードに入る',
+      menuExit: 'メンテナンスモードを終了',
+      toastEntered: '{{name}} はメンテナンスモードになりました',
+      toastExited: '{{name}} がオンラインに戻りました',
+      confirmMidPrintTitle: '印刷中にメンテナンスモードに入りますか？',
+      confirmMidPrintMessage: '{{name}} は現在印刷中です。メンテナンスモードに入るとMQTTが切断され、このジョブの進行状況の追跡と完了通知が停止します。続行しますか？',
+      editFieldLabel: 'メンテナンスモード',
+      editFieldHelp: '有効にすると、このプリンターはMQTT、キューディスパッチ、通知から一時停止されます — 修理、並列のBambuddyインストール、または一時的な停止に役立ちます。',
+    },
     // Chamber light
     chamberLightOn: 'チャンバーライトをオンにしました',
     chamberLightOff: 'チャンバーライトをオフにしました',

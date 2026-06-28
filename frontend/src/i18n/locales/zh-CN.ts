@@ -235,6 +235,20 @@ export default {
     },
     // Maintenance
     maintenanceUpToDate: '所有维护均已完成 - 点击查看',
+    maintenance: {
+      title: '维护中',
+      subtitle: '此打印机已暂停 — 未连接、不参与队列调度、不发送通知。',
+      pillLabel: '维护',
+      exitButton: '退出维护',
+      menuEnter: '进入维护模式',
+      menuExit: '退出维护模式',
+      toastEntered: '{{name}} 已进入维护模式',
+      toastExited: '{{name}} 已恢复在线',
+      confirmMidPrintTitle: '在打印过程中进入维护模式？',
+      confirmMidPrintMessage: '{{name}} 当前正在打印。进入维护模式将断开 MQTT 连接，并停止此任务的进度跟踪和完成通知。是否继续？',
+      editFieldLabel: '维护模式',
+      editFieldHelp: '启用后，此打印机将从 MQTT、队列调度和通知中暂停 — 适用于维修、并行 Bambuddy 安装或临时停用。',
+    },
     // Chamber light
     chamberLightOn: '打开腔室灯',
     chamberLightOff: '关闭腔室灯',

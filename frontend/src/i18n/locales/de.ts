@@ -235,6 +235,20 @@ export default {
     },
     // Maintenance
     maintenanceUpToDate: 'Alle Wartungen aktuell - Klicken zum Anzeigen',
+    maintenance: {
+      title: 'In Wartung',
+      subtitle: 'Dieser Drucker ist pausiert — keine Verbindung, nicht für die Warteschlange verfügbar, keine Benachrichtigungen.',
+      pillLabel: 'Wartung',
+      exitButton: 'Wartung beenden',
+      menuEnter: 'In den Wartungsmodus wechseln',
+      menuExit: 'Wartungsmodus beenden',
+      toastEntered: '{{name}} ist jetzt im Wartungsmodus',
+      toastExited: '{{name}} ist wieder online',
+      confirmMidPrintTitle: 'Wartungsmodus während des Drucks aktivieren?',
+      confirmMidPrintMessage: '{{name}} druckt gerade. Der Wartungsmodus trennt die MQTT-Verbindung und beendet das Fortschritts-Tracking sowie Abschlussbenachrichtigungen für diesen Auftrag. Fortfahren?',
+      editFieldLabel: 'Wartungsmodus',
+      editFieldHelp: 'Wenn aktiviert, ist dieser Drucker von MQTT, Warteschlangenversand und Benachrichtigungen pausiert — nützlich für Reparaturen, parallele Bambuddy-Installationen oder temporäre Außerbetriebnahme.',
+    },
     // Chamber light
     chamberLightOn: 'Kammerbeleuchtung einschalten',
     chamberLightOff: 'Kammerbeleuchtung ausschalten',

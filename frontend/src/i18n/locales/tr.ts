@@ -235,6 +235,20 @@ export default {
     },
     // Bakım
     maintenanceUpToDate: 'Tüm bakım güncel - Görüntülemek için tıklayın',
+    maintenance: {
+      title: 'Bakımda',
+      subtitle: 'Bu yazıcı duraklatıldı — bağlı değil, kuyruğa uygun değil, bildirim göndermiyor.',
+      pillLabel: 'Bakım',
+      exitButton: 'Bakımdan çık',
+      menuEnter: 'Bakım moduna gir',
+      menuExit: 'Bakım modundan çık',
+      toastEntered: '{{name}} artık bakım modunda',
+      toastExited: '{{name}} tekrar çevrimiçi',
+      confirmMidPrintTitle: 'Yazdırma sırasında bakım moduna geçilsin mi?',
+      confirmMidPrintMessage: '{{name}} şu anda yazdırıyor. Bakım moduna geçmek MQTT bağlantısını kesecek ve bu iş için ilerleme takibi ile tamamlanma bildirimlerini durduracak. Devam edilsin mi?',
+      editFieldLabel: 'Bakım modu',
+      editFieldHelp: 'Etkinleştirildiğinde, bu yazıcı MQTT, kuyruk gönderimi ve bildirimlerden duraklatılır — tamir, paralel Bambuddy kurulumları veya geçici askıya alma için kullanışlıdır.',
+    },
     // Hazne ışığı
     chamberLightOn: 'Hazne ışığını aç',
     chamberLightOff: 'Hazne ışığını kapat',
