@@ -573,6 +573,49 @@ class VirtualPrinterInstance:
                 )
                 timelapse = _slicer_or("timelapse", _bool_setting(await get_setting(db, "default_timelapse"), False))
 
+                # H2C dual-nozzle-rack slicer-pick preservation (#1780).
+                # BambuStudio's project_file MQTT command for rack-swap models
+                # (O1C2 today) carries:
+                #   `nozzle_mapping` — per-filament array of physical nozzle
+                #     position IDs (`list[int]`).
+                #   `nozzles_info`   — per-extruder rack metadata
+                #     (`list[dict]`, fields: id / type / flowSize / diameter).
+                # Forward both verbatim onto the queue item so the dispatcher
+                # can replay them in its own project_file command. Without
+                # this the H2C firmware falls back to "last matching nozzle"
+                # auto-pick and ignores the user's Bambu Studio choice. Every
+                # other model has these absent from slicer_opts, so the
+                # capture is a transparent no-op there.
+                nozzle_mapping_json: str | None = None
+                nozzles_info_json: str | None = None
+                if slicer_opts is not None:
+                    for src_key in ("nozzle_mapping", "nozzles_info"):
+                        raw = slicer_opts.get(src_key)
+                        if raw is None:
+                            continue
+                        # BambuStudio's NetworkAgent should embed these as
+                        # parsed JSON in the project_file body (matching the
+                        # ams_mapping / ams_mapping2 shape Bambuddy already
+                        # consumes as list[int] / list[dict]). Accept a
+                        # JSON-encoded string defensively in case any path
+                        # arrives stringified.
+                        if isinstance(raw, str):
+                            try:
+                                raw = json.loads(raw)
+                            except json.JSONDecodeError:
+                                logger.warning(
+                                    "[VP %s] Slicer %s is unparseable JSON, dropping: %r",
+                                    self.name,
+                                    src_key,
+                                    raw,
+                                )
+                                continue
+                        encoded = json.dumps(raw)
+                        if src_key == "nozzle_mapping":
+                            nozzle_mapping_json = encoded
+                        else:
+                            nozzles_info_json = encoded
+
                 service = ArchiveService(db)
                 archive = await service.archive_print(
                     printer_id=None,
@@ -675,6 +718,12 @@ class VirtualPrinterInstance:
                             # gcode_snippets are configured for the target model, so it's
                             # effectively "inject when enabled AND snippets exist".
                             gcode_injection=self.gcode_injection,
+                            # H2C rack-swap slicer pick (#1780). Captured above;
+                            # stamped on every plate so a multi-plate Send All keeps
+                            # the same nozzle pick across plates rather than only the
+                            # first one (mirrors the #1697 / #1188 per-plate loop fix).
+                            nozzle_mapping=nozzle_mapping_json,
+                            nozzles_info=nozzles_info_json,
                         )
                         db.add(queue_item)
                         await db.flush()  # populate queue_item.id before logging

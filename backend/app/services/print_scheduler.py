@@ -2253,7 +2253,11 @@ class PrintScheduler:
         # FINISH-state fallback — no need to force a video.
         effective_timelapse = bool(item.timelapse)
 
-        # Start the print with AMS mapping, plate_id and print options
+        # Start the print with AMS mapping, plate_id and print options.
+        # nozzle_mapping / nozzles_info ride through verbatim — JSON strings
+        # captured from Bambu Studio's project_file on VP intake (#1780); the
+        # MQTT layer parses + injects them only for dual-nozzle models so a
+        # null on every other model is a transparent pass-through.
         started = printer_manager.start_print(
             item.printer_id,
             remote_filename,
@@ -2266,6 +2270,8 @@ class PrintScheduler:
             timelapse=effective_timelapse,
             use_ams=item.use_ams,
             nozzle_offset_cali=item.nozzle_offset_cali,
+            nozzle_mapping=item.nozzle_mapping,
+            nozzles_info=item.nozzles_info,
         )
 
         if started:

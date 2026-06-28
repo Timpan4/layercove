@@ -1579,6 +1579,221 @@ class TestVirtualPrinterInstance:
         # auto_dispatch=False on the VP → every item is manual_start.
         assert all(q.manual_start for q in added_items)
 
+    @pytest.mark.asyncio
+    async def test_add_to_print_queue_captures_nozzle_mapping_and_nozzles_info(self, tmp_path):
+        """#1780: BambuStudio's project_file for H2C rack-swap (O1C2) sends
+        per-filament physical nozzle position IDs in `nozzle_mapping` and
+        per-extruder rack metadata in `nozzles_info`. VP intake must store
+        both as JSON strings on the queue item so the dispatcher can replay
+        them. Without this the H2C firmware falls back to "last matching
+        nozzle" auto-pick and ignores the user's slicer choice.
+        """
+        import json as _json
+
+        from backend.app.services.virtual_printer.manager import VirtualPrinterInstance
+
+        added_items = []
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock(side_effect=added_items.append)
+        mock_db.commit = AsyncMock()
+        mock_session_factory = MagicMock()
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_session_factory.return_value = mock_session_ctx
+
+        inst = VirtualPrinterInstance(
+            vp_id=42,
+            name="H2CRack",
+            mode="queue",
+            model="O1C2",
+            access_code="12345678",
+            serial_suffix="391800042",
+            base_dir=tmp_path,
+            session_factory=mock_session_factory,
+        )
+
+        file_path = tmp_path / "test.3mf"
+        file_path.write_bytes(b"fake3mf")
+
+        # Pre-populate as if BS's project_file arrived. Wire shape matches
+        # BambuStudio's PrintJob params: nozzle_mapping = array of per-
+        # filament physical nozzle position IDs, nozzles_info = array of
+        # per-extruder rack-side metadata.
+        await inst.on_print_command(
+            file_path.name,
+            {
+                "command": "project_file",
+                "nozzle_mapping": [16, 0, 19],
+                "nozzles_info": [
+                    {"id": 1, "type": None, "flowSize": "High Flow", "diameter": 0.4},
+                    {"id": 2, "type": None, "flowSize": "Standard", "diameter": 0.4},
+                ],
+            },
+        )
+
+        mock_archive = MagicMock()
+        mock_archive.id = 1
+        mock_archive.print_name = "test"
+
+        with (
+            patch(
+                "backend.app.api.routes.settings.get_setting",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "backend.app.services.archive.ArchiveService.archive_print",
+                new_callable=AsyncMock,
+                return_value=mock_archive,
+            ),
+        ):
+            await inst._add_to_print_queue(file_path, "192.168.1.100")
+
+        assert len(added_items) == 1
+        item = added_items[0]
+        assert item.nozzle_mapping is not None
+        assert _json.loads(item.nozzle_mapping) == [16, 0, 19]
+        assert item.nozzles_info is not None
+        parsed_info = _json.loads(item.nozzles_info)
+        assert parsed_info[0]["flowSize"] == "High Flow"
+        assert parsed_info[1]["flowSize"] == "Standard"
+
+    @pytest.mark.asyncio
+    async def test_add_to_print_queue_no_nozzle_fields_when_slicer_omits(self, tmp_path):
+        """#1780: every model other than O1C2 sends no nozzle_mapping /
+        nozzles_info — the queue item must carry NULL on both, not an empty
+        list. NULL is what the dispatch layer keys off of to skip the
+        injection entirely on non-rack-swap printers.
+        """
+        from backend.app.services.virtual_printer.manager import VirtualPrinterInstance
+
+        added_items = []
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock(side_effect=added_items.append)
+        mock_db.commit = AsyncMock()
+        mock_session_factory = MagicMock()
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_session_factory.return_value = mock_session_ctx
+
+        inst = VirtualPrinterInstance(
+            vp_id=43,
+            name="NotH2C",
+            mode="queue",
+            model="C11",
+            access_code="12345678",
+            serial_suffix="391800043",
+            base_dir=tmp_path,
+            session_factory=mock_session_factory,
+        )
+
+        file_path = tmp_path / "test.3mf"
+        file_path.write_bytes(b"fake3mf")
+
+        # X1C-style slicer command — no nozzle fields.
+        await inst.on_print_command(
+            file_path.name,
+            {"command": "project_file", "timelapse": False, "bed_leveling": True},
+        )
+
+        mock_archive = MagicMock()
+        mock_archive.id = 1
+        mock_archive.print_name = "test"
+
+        with (
+            patch(
+                "backend.app.api.routes.settings.get_setting",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "backend.app.services.archive.ArchiveService.archive_print",
+                new_callable=AsyncMock,
+                return_value=mock_archive,
+            ),
+        ):
+            await inst._add_to_print_queue(file_path, "192.168.1.100")
+
+        assert len(added_items) == 1
+        item = added_items[0]
+        assert item.nozzle_mapping is None
+        assert item.nozzles_info is None
+
+    @pytest.mark.asyncio
+    async def test_add_to_print_queue_nozzle_pick_replicated_across_plates(self, tmp_path, monkeypatch):
+        """#1780 × #1697/#1188: a multi-plate Send All from BS must stamp the
+        same nozzle_mapping / nozzles_info on every plate's queue item, not
+        only the first. Mirrors the per-plate stamping for gcode_injection,
+        filament_overrides, etc.
+        """
+        import json as _json
+
+        from backend.app.services.virtual_printer.manager import VirtualPrinterInstance
+
+        added_items = []
+        mock_db = AsyncMock()
+        mock_db.add = MagicMock(side_effect=added_items.append)
+        mock_db.flush = AsyncMock()
+        mock_db.commit = AsyncMock()
+        mock_db.execute = AsyncMock()
+        mock_db.execute.return_value.scalar.return_value = None
+        mock_session_factory = MagicMock()
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_db)
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_session_factory.return_value = mock_session_ctx
+
+        inst = VirtualPrinterInstance(
+            vp_id=44,
+            name="H2CMultiPlate",
+            mode="queue",
+            model="O1C2",
+            access_code="12345678",
+            serial_suffix="391800044",
+            base_dir=tmp_path,
+            session_factory=mock_session_factory,
+        )
+
+        file_path = tmp_path / "test.3mf"
+        file_path.write_bytes(b"fake3mf")
+
+        # Force 3 plates so the queue loop runs three times.
+        monkeypatch.setattr(inst, "_extract_plate_ids", lambda _p: [1, 2, 3])
+
+        await inst.on_print_command(
+            file_path.name,
+            {
+                "command": "project_file",
+                "nozzle_mapping": [16, 0],
+                "nozzles_info": [{"id": 1, "flowSize": "High Flow", "diameter": 0.4}],
+            },
+        )
+
+        mock_archive = MagicMock()
+        mock_archive.id = 1
+        mock_archive.print_name = "test"
+
+        with (
+            patch(
+                "backend.app.api.routes.settings.get_setting",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+            patch(
+                "backend.app.services.archive.ArchiveService.archive_print",
+                new_callable=AsyncMock,
+                return_value=mock_archive,
+            ),
+        ):
+            await inst._add_to_print_queue(file_path, "192.168.1.100")
+
+        assert len(added_items) == 3
+        for item in added_items:
+            assert _json.loads(item.nozzle_mapping) == [16, 0]
+            assert _json.loads(item.nozzles_info)[0]["flowSize"] == "High Flow"
+
 
 class TestVirtualPrinterManager:
     """Tests for VirtualPrinterManager orchestrator."""

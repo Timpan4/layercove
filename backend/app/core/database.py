@@ -967,6 +967,15 @@ async def run_migrations(conn):
     else:
         await _safe_execute(conn, "ALTER TABLE virtual_printers ADD COLUMN gcode_injection BOOLEAN DEFAULT FALSE")
 
+    # Migration: nozzle_mapping + nozzles_info on print_queue for H2C rack-swap
+    # slicer-pick preservation (#1780). Opaque JSON-string columns carrying
+    # BambuStudio's per-filament physical nozzle position IDs and the
+    # per-extruder rack metadata, forwarded straight from the VP intake to
+    # the dispatcher's project_file MQTT command. NULL on every other model.
+    # Nullable TEXT — no Postgres / SQLite divergence here.
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN nozzle_mapping TEXT")
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN nozzles_info TEXT")
+
     # Migration: Add target_parts_count column to projects for tracking total parts needed
     await _safe_execute(conn, "ALTER TABLE projects ADD COLUMN target_parts_count INTEGER")
 
