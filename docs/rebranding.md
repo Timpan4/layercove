@@ -70,4 +70,3 @@ reuse existing volumes and data directories.
 
 Name, package, domain, and trademark availability require separate legal and
 registry verification; this document makes no uniqueness claim.
-
