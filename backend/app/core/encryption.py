@@ -2,8 +2,10 @@
 
 The encryption key is resolved on first use in this priority order:
 
-1. ``MFA_ENCRYPTION_KEY`` environment variable (must be a URL-safe base64
-   string that decodes to exactly 32 bytes — the Fernet key format).
+1. ``LAYERCOVE_SECRET_ENCRYPTION_KEY`` environment variable, with
+   ``MFA_ENCRYPTION_KEY`` as its legacy alias. When both are set, both must
+   be valid and byte-identical. A bad preferred key or conflicting aliases
+   fail closed; a bad MFA-only key keeps the legacy file fallback.
 2. ``DATA_DIR/.mfa_encryption_key`` file (read if present and valid). A
    corrupted or unreadable file falls back to plaintext (step 4) without
    overwriting — to protect previously encrypted rows.
@@ -49,6 +51,8 @@ _InternalSource = Literal[
 _key_source: _PublicSource | None = None
 
 _KEY_FILE_NAME = ".mfa_encryption_key"
+_PREFERRED_ENV_KEY = "LAYERCOVE_SECRET_ENCRYPTION_KEY"
+_LEGACY_ENV_KEY = "MFA_ENCRYPTION_KEY"
 
 
 def _validate_fernet_key(key: str) -> bool:
@@ -66,11 +70,37 @@ def _load_or_generate_key() -> tuple[str | None, _InternalSource]:
 
     from backend.app.core.paths import resolve_data_dir
 
-    # 1. Environment variable
-    env_key = os.environ.get("MFA_ENCRYPTION_KEY")
-    if env_key:
-        if _validate_fernet_key(env_key):
-            return env_key, "env"
+    # 1. Environment variables. The preferred LayerCove name and legacy MFA
+    # alias must agree when both are configured, so deployments cannot silently
+    # select a key based on environment ordering.
+    preferred_env_key = os.environ.get(_PREFERRED_ENV_KEY)
+    mfa_env_key = os.environ.get(_LEGACY_ENV_KEY)
+    if preferred_env_key is not None and mfa_env_key is not None:
+        if (
+            _validate_fernet_key(preferred_env_key)
+            and _validate_fernet_key(mfa_env_key)
+            and base64.urlsafe_b64decode(preferred_env_key.encode()) == base64.urlsafe_b64decode(mfa_env_key.encode())
+        ):
+            return preferred_env_key, "env"
+        logger.error(
+            "%s and %s must both be valid, byte-identical Fernet keys. Refusing key-file fallback.",
+            _PREFERRED_ENV_KEY,
+            _LEGACY_ENV_KEY,
+        )
+        return None, "none"
+
+    if preferred_env_key is not None:
+        if _validate_fernet_key(preferred_env_key):
+            return preferred_env_key, "env"
+        logger.error(
+            "%s is set but is not a valid Fernet key (must decode to exactly 32 bytes). Refusing key-file fallback.",
+            _PREFERRED_ENV_KEY,
+        )
+        return None, "none"
+
+    if mfa_env_key is not None:
+        if _validate_fernet_key(mfa_env_key):
+            return mfa_env_key, "env"
         logger.error(
             "MFA_ENCRYPTION_KEY is set but is not a valid Fernet key "
             "(must decode to exactly 32 bytes). Falling back to file-based key."
@@ -236,3 +266,27 @@ def mfa_decrypt(value: str) -> str:
             "Key rotation is not currently supported — restore the previous key "
             "or have users re-enroll."
         ) from exc
+
+
+def encrypt_application_secret(plaintext: str) -> str:
+    """Encrypt an application credential without plaintext fallback."""
+    f = _get_fernet()
+    if f is None:
+        raise RuntimeError("Application secret encryption key is unavailable.")
+    return _FERNET_PREFIX + f.encrypt(plaintext.encode()).decode()
+
+
+def decrypt_application_secret(value: str) -> str:
+    """Decrypt an application credential stored by ``encrypt_application_secret``."""
+    f = _get_fernet()
+    if f is None:
+        raise RuntimeError("Application secret encryption key is unavailable.")
+    if not value.startswith(_FERNET_PREFIX):
+        raise RuntimeError("Application secret is not encrypted.")
+
+    from cryptography.fernet import InvalidToken
+
+    try:
+        return f.decrypt(value[len(_FERNET_PREFIX) :].encode()).decode()
+    except InvalidToken as exc:
+        raise RuntimeError("Application secret cannot be decrypted with the configured key.") from exc

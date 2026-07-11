@@ -1,15 +1,74 @@
 from datetime import datetime
+from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from backend.app.services.printer_types import PrinterCapabilities, PrinterProvider, capabilities_for_provider
+
+
+def _normalize_provider_url(value: str, *, websocket: bool) -> str:
+    parsed = urlsplit(value.strip())
+    allowed_schemes = {"ws", "wss"} if websocket else {"http", "https"}
+    if parsed.scheme.lower() not in allowed_schemes or not parsed.hostname:
+        raise ValueError(f"URL must use {'WS(S)' if websocket else 'HTTP(S)'} and include a host")
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("URL must not contain credentials")
+    if parsed.query or parsed.fragment:
+        raise ValueError("URL must not contain query parameters or fragments")
+    if not websocket and parsed.path not in ("", "/"):
+        raise ValueError("base_url must be an origin without a path")
+
+    host = parsed.hostname.lower()
+    if ":" in host:
+        host = f"[{host}]"
+    netloc = f"{host}:{parsed.port}" if parsed.port is not None else host
+    path = parsed.path.rstrip("/") if websocket else ""
+    return urlunsplit((parsed.scheme.lower(), netloc, path, "", ""))
+
+
+class MoonrakerPrinterConfigInput(BaseModel):
+    base_url: str
+    websocket_url_override: str | None = None
+    api_key: str | None = Field(default=None, min_length=1)
+    authorization: str | None = Field(default=None, min_length=1)
+    tls_verify: bool = True
+
+    @field_validator("base_url")
+    @classmethod
+    def _normalize_base_url(cls, value: str) -> str:
+        return _normalize_provider_url(value, websocket=False)
+
+    @field_validator("websocket_url_override")
+    @classmethod
+    def _normalize_websocket_url(cls, value: str | None) -> str | None:
+        return _normalize_provider_url(value, websocket=True) if value is not None else None
+
+    @model_validator(mode="after")
+    def _one_auth_value(self):
+        if self.api_key is not None and self.authorization is not None:
+            raise ValueError("api_key and authorization are mutually exclusive")
+        return self
+
+
+class MoonrakerPrinterConfigResponse(BaseModel):
+    base_url: str
+    websocket_url_override: str | None = None
+    tls_verify: bool = True
+    api_key_configured: bool = False
+    authorization_configured: bool = False
+
+    class Config:
+        from_attributes = True
 
 
 class PrinterBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
-    serial_number: str = Field(..., min_length=1, max_length=50)
+    provider: PrinterProvider = PrinterProvider.BAMBU
+    serial_number: str | None = Field(default=None, min_length=1, max_length=50)
 
     @field_validator("serial_number")
     @classmethod
-    def _normalize_serial_number(cls, v: str) -> str:
+    def _normalize_serial_number(cls, v: str | None) -> str | None:
         """Uppercase and trim the serial number.
 
         Bambu serial numbers are uppercase alphanumeric, and the MQTT report
@@ -19,13 +78,15 @@ class PrinterBase(BaseModel):
         the correctly-cased topic, so every status field stays unknown (#1465).
         Normalising on input makes the subscribed topic always match.
         """
+        if v is None:
+            return None
         normalized = v.strip().upper()
         if not normalized:
             raise ValueError("serial_number must not be blank")
         return normalized
 
-    ip_address: str = Field(
-        ...,
+    ip_address: str | None = Field(
+        default=None,
         max_length=253,
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
@@ -43,7 +104,25 @@ class PrinterCreate(PrinterBase):
     # access_code lives on the input shapes only — never on the default
     # PrinterResponse. Direct exposure on PRINTERS_READ would let a Viewer
     # connect to the printer's MQTT and bypass Bambuddy's RBAC.
-    access_code: str = Field(..., min_length=1, max_length=20)
+    access_code: str | None = Field(default=None, min_length=1, max_length=20)
+    moonraker_config: MoonrakerPrinterConfigInput | None = None
+
+    @model_validator(mode="after")
+    def _validate_provider_config(self):
+        if self.provider is PrinterProvider.BAMBU:
+            missing = [
+                field for field in ("serial_number", "ip_address", "access_code") if getattr(self, field) is None
+            ]
+            if missing:
+                raise ValueError(f"Bambu printer requires {', '.join(missing)}")
+            if self.moonraker_config is not None:
+                raise ValueError("Bambu printer must not include moonraker_config")
+        else:
+            if any(value is not None for value in (self.serial_number, self.ip_address, self.access_code)):
+                raise ValueError("Moonraker printer must not include Bambu connection fields")
+            if self.moonraker_config is None:
+                raise ValueError("Moonraker printer requires moonraker_config")
+        return self
 
 
 class PlateDetectionROI(BaseModel):
@@ -62,7 +141,7 @@ class PrinterUpdate(BaseModel):
         max_length=253,
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
-    access_code: str | None = None
+    access_code: str | None = Field(default=None, min_length=1, max_length=20)
     model: str | None = None
     location: str | None = None
     is_active: bool | None = None
@@ -75,6 +154,7 @@ class PrinterUpdate(BaseModel):
     camera_rotation: int | None = None  # 0, 90, 180, 270 degrees
     plate_detection_enabled: bool | None = None
     plate_detection_roi: PlateDetectionROI | None = None
+    moonraker_config: MoonrakerPrinterConfigInput | None = None
 
 
 class PrinterResponse(PrinterBase):
@@ -91,6 +171,8 @@ class PrinterResponse(PrinterBase):
     plate_detection_roi: PlateDetectionROI | None = None
     created_at: datetime
     updated_at: datetime
+    capabilities: PrinterCapabilities = Field(default_factory=lambda: capabilities_for_provider(PrinterProvider.BAMBU))
+    moonraker_config: MoonrakerPrinterConfigResponse | None = None
 
     class Config:
         from_attributes = True
@@ -101,6 +183,7 @@ class PrinterResponse(PrinterBase):
         data = {
             "id": printer.id,
             "name": printer.name,
+            "provider": printer.provider,
             "serial_number": printer.serial_number,
             "ip_address": printer.ip_address,
             "model": printer.model,
@@ -117,6 +200,15 @@ class PrinterResponse(PrinterBase):
             "plate_detection_enabled": printer.plate_detection_enabled,
             "created_at": printer.created_at,
             "updated_at": printer.updated_at,
+            "capabilities": capabilities_for_provider(
+                PrinterProvider(printer.provider),
+                camera_configured=bool(printer.external_camera_enabled),
+            ),
+            "moonraker_config": (
+                MoonrakerPrinterConfigResponse.model_validate(printer.moonraker_config)
+                if printer.provider == PrinterProvider.MOONRAKER and printer.moonraker_config is not None
+                else None
+            ),
         }
         # Build ROI object if any ROI field is set
         if any(

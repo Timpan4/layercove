@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
@@ -18,6 +19,7 @@ from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.core.tasks import spawn_background_task
 from backend.app.models.ams_label import AmsLabel
+from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.models.printer import Printer
 from backend.app.models.slot_preset import SlotPresetMapping
 from backend.app.models.user import User
@@ -58,6 +60,7 @@ from backend.app.services.printer_manager import (
     supports_drying,
     supports_drying_while_printing,
 )
+from backend.app.services.printer_types import PrinterProvider
 from backend.app.utils.http import build_content_disposition
 
 logger = logging.getLogger(__name__)
@@ -93,9 +96,10 @@ async def _caller_can_view_printer_secrets(user: User | None, db: AsyncSession) 
 
 def _serialize_printer(printer: Printer, *, include_secret: bool):
     """Build the response shape that matches the caller's authority."""
-    if include_secret:
-        return PrinterResponseWithSecret.model_validate(printer)
-    return PrinterResponse.model_validate(printer)
+    response = PrinterResponse.from_orm_with_roi(printer)
+    if include_secret and printer.provider == PrinterProvider.BAMBU:
+        return PrinterResponseWithSecret(**response.model_dump(), access_code=printer.access_code)
+    return response
 
 
 @router.get("/")
@@ -109,7 +113,7 @@ async def list_printers(
     to see it (Admin / Operator JWT, or auth-disabled mode). Viewers and
     API keys never receive it.
     """
-    result = await db.execute(select(Printer).order_by(Printer.name))
+    result = await db.execute(select(Printer).options(selectinload(Printer.moonraker_config)).order_by(Printer.name))
     printers = list(result.scalars().all())
     include_secret = await _caller_can_view_printer_secrets(user, db)
     return [_serialize_printer(p, include_secret=include_secret) for p in printers]
@@ -129,41 +133,53 @@ async def create_printer(
     were turning into support tickets that all traced back to a mistyped
     access code.
     """
-    # Check if serial number already exists
-    result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
-    if result.scalar_one_or_none():
-        raise HTTPException(400, "Printer with this serial number already exists")
+    if printer_data.provider is PrinterProvider.BAMBU:
+        result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
+        if result.scalar_one_or_none():
+            raise HTTPException(400, "Printer with this serial number already exists")
 
-    test_result = await printer_manager.test_connection(
-        ip_address=printer_data.ip_address,
-        serial_number=printer_data.serial_number,
-        access_code=printer_data.access_code,
-    )
-    if not test_result.get("success"):
-        # The frontend renders the user-facing message via i18n on `code`;
-        # `message` is an English fallback for non-UI clients (curl / scripts).
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "code": "printer_connection_failed",
-                "message": (
-                    "Could not connect to the printer. Verify IP address, serial number, "
-                    "and access code, and confirm LAN-only mode is enabled. "
-                    "The printer was not added."
-                ),
-            },
+        test_result = await printer_manager.test_connection(
+            ip_address=printer_data.ip_address,
+            serial_number=printer_data.serial_number,
+            access_code=printer_data.access_code,
         )
+        if not test_result.get("success"):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "printer_connection_failed",
+                    "message": (
+                        "Could not connect to the printer. Verify IP address, serial number, "
+                        "and access code, and confirm LAN-only mode is enabled. "
+                        "The printer was not added."
+                    ),
+                },
+            )
 
-    printer = Printer(**printer_data.model_dump())
+    printer_values = printer_data.model_dump(exclude={"moonraker_config"})
+    printer_values["provider"] = printer_data.provider.value
+    printer = Printer(**printer_values)
+    if printer_data.moonraker_config is not None:
+        config_input = printer_data.moonraker_config
+        config = MoonrakerPrinterConfig(
+            base_url=config_input.base_url,
+            websocket_url_override=config_input.websocket_url_override,
+            tls_verify=config_input.tls_verify,
+        )
+        config.api_key = config_input.api_key
+        config.authorization = config_input.authorization
+        printer.moonraker_config = config
     db.add(printer)
     await db.commit()
     await db.refresh(printer)
+    if printer.provider == PrinterProvider.MOONRAKER:
+        await db.refresh(printer, attribute_names=["moonraker_config"])
 
     # Connect to the printer
-    if printer.is_active:
+    if printer.is_active and printer.provider == PrinterProvider.BAMBU:
         await printer_manager.connect_printer(printer)
 
-    return printer
+    return _serialize_printer(printer, include_secret=False)
 
 
 @router.get("/usb-cameras")
@@ -324,7 +340,9 @@ async def get_printer(
     (Admin / Operator JWT, or auth-disabled mode). Viewers and API keys
     never receive it.
     """
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
@@ -340,12 +358,42 @@ async def update_printer(
     db: AsyncSession = Depends(get_db),
 ):
     """Update a printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")
 
     update_data = printer_data.model_dump(exclude_unset=True)
+
+    bambu_connection_fields = {"ip_address", "access_code"}
+    supplied_bambu_fields = bambu_connection_fields.intersection(update_data)
+    if printer.provider == PrinterProvider.MOONRAKER and supplied_bambu_fields:
+        raise HTTPException(400, "Moonraker printer must not include Bambu connection fields")
+    if printer.provider == PrinterProvider.BAMBU and any(update_data[field] is None for field in supplied_bambu_fields):
+        raise HTTPException(400, "Bambu connection fields must not be cleared")
+
+    moonraker_data = update_data.pop("moonraker_config", None)
+    if moonraker_data is not None:
+        if printer.provider != PrinterProvider.MOONRAKER:
+            raise HTTPException(400, "Bambu printer must not include moonraker_config")
+        config = printer.moonraker_config
+        if config is None:
+            config = MoonrakerPrinterConfig(printer=printer)
+        config.base_url = moonraker_data["base_url"]
+        if "websocket_url_override" in moonraker_data:
+            config.websocket_url_override = moonraker_data["websocket_url_override"]
+        if "tls_verify" in moonraker_data:
+            config.tls_verify = moonraker_data["tls_verify"]
+        if "api_key" in moonraker_data:
+            config.api_key = moonraker_data["api_key"]
+            if moonraker_data["api_key"] is not None:
+                config.authorization = None
+        if "authorization" in moonraker_data:
+            config.authorization = moonraker_data["authorization"]
+            if moonraker_data["authorization"] is not None:
+                config.api_key = None
 
     # Handle nested ROI object - flatten to individual columns
     if "plate_detection_roi" in update_data:
@@ -367,14 +415,18 @@ async def update_printer(
 
     await db.commit()
     await db.refresh(printer)
+    if printer.provider == PrinterProvider.MOONRAKER:
+        await db.refresh(printer, attribute_names=["moonraker_config"])
 
     # Reconnect if connection settings changed
-    if any(k in update_data for k in ["ip_address", "access_code", "is_active"]):
+    if printer.provider == PrinterProvider.BAMBU and any(
+        k in update_data for k in ["ip_address", "access_code", "is_active"]
+    ):
         printer_manager.disconnect_printer(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
 
-    return printer
+    return _serialize_printer(printer, include_secret=False)
 
 
 @router.delete("/{printer_id}")
@@ -2416,8 +2468,6 @@ async def configure_ams_slot(
     # `_apply_pa_after_refresh` cycle had no stored profile to re-assert.
     if cali_idx >= 0:
         try:
-            from sqlalchemy.orm import selectinload
-
             from backend.app.models.spool_assignment import SpoolAssignment
             from backend.app.models.spool_k_profile import SpoolKProfile
             from backend.app.models.spoolman_k_profile import SpoolmanKProfile
