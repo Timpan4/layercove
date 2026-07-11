@@ -16,6 +16,9 @@ logger = logging.getLogger(__name__)
 def _set_sqlite_pragmas(dbapi_conn, connection_record):
     """Set SQLite pragmas on each new connection for concurrency and performance."""
     cursor = dbapi_conn.cursor()
+    # Provider migration rebuilds the printers table. Enforcing foreign keys
+    # during its DROP would cascade-delete queue and archive rows.
+    cursor.execute("PRAGMA foreign_keys = OFF")
     # WAL mode allows concurrent readers + one writer (vs default DELETE mode which locks entirely)
     cursor.execute("PRAGMA journal_mode = WAL")
     # Wait up to 15 seconds when the database is locked instead of failing immediately
@@ -451,6 +454,10 @@ async def _migrate_printer_provider_storage(conn) -> None:
             "to be disabled for the startup transaction; refusing to risk cascading legacy rows."
         )
 
+    # Python's SQLite driver may not start a database transaction for DDL in
+    # legacy transaction mode. A savepoint works both with and without an
+    # existing transaction and makes the CREATE/DROP/RENAME swap rollback-safe.
+    await conn.exec_driver_sql("SAVEPOINT printer_provider_migration")
     create_sql = (
         await conn.execute(text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'printers'"))
     ).scalar_one()
@@ -490,6 +497,7 @@ async def _migrate_printer_provider_storage(conn) -> None:
     await conn.execute(text("ALTER TABLE printers_provider_new RENAME TO printers"))
     for statement in index_sql:
         await conn.execute(text(statement))
+    await conn.exec_driver_sql("RELEASE SAVEPOINT printer_provider_migration")
 
 
 async def _api_keys_column_exists(conn, column_name: str) -> bool:

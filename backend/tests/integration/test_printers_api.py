@@ -112,7 +112,7 @@ class TestPrintersAPI:
             "authorization_configured": False,
         }
         assert "top-secret" not in response.text
-        assert result["capabilities"]["emergency_stop"] is True
+        assert result["capabilities"]["emergency_stop"] is False
         _mock_printer_test_connection.assert_not_awaited()
 
         from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig

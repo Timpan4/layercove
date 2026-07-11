@@ -3,7 +3,7 @@ from __future__ import annotations
 from unittest.mock import AsyncMock
 
 import pytest
-from sqlalchemy import text
+from sqlalchemy import event, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import create_async_engine
 
@@ -114,5 +114,42 @@ async def test_sqlite_migration_fails_before_cascading_rows_when_foreign_keys_ar
             await database._migrate_printer_provider_storage(conn)
 
         assert (await conn.execute(text("SELECT COUNT(*) FROM child"))).scalar_one() == 1
+
+    await engine.dispose()
+
+
+async def test_sqlite_interrupted_swap_rolls_back_to_authoritative_table():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE printers (id INTEGER PRIMARY KEY, serial_number TEXT NOT NULL, "
+                "ip_address TEXT NOT NULL, access_code TEXT NOT NULL)"
+            )
+        )
+        await conn.execute(
+            text(
+                "INSERT INTO printers (id, serial_number, ip_address, access_code) "
+                "VALUES (1, 'SERIAL', '192.0.2.1', '12345678')"
+            )
+        )
+
+    def interrupt_swap(_conn, _cursor, statement, _parameters, _context, _executemany):
+        if "ALTER TABLE printers_provider_new RENAME TO printers" in statement:
+            raise RuntimeError("interrupted swap")
+
+    event.listen(engine.sync_engine, "before_cursor_execute", interrupt_swap)
+    with pytest.raises(RuntimeError, match="interrupted swap"):
+        async with engine.begin() as conn:
+            await database._migrate_printer_provider_storage(conn)
+    event.remove(engine.sync_engine, "before_cursor_execute", interrupt_swap)
+
+    async with engine.connect() as conn:
+        assert (await conn.execute(text("SELECT serial_number FROM printers"))).scalar_one() == "SERIAL"
+        tables = {
+            row[0]
+            for row in await conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))
+        }
+        assert "printers_provider_new" not in tables
 
     await engine.dispose()

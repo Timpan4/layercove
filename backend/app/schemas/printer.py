@@ -1,4 +1,5 @@
 from datetime import datetime
+from ipaddress import ip_address
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -17,6 +18,15 @@ def _normalize_provider_url(value: str, *, websocket: bool) -> str:
         raise ValueError("URL must not contain query parameters or fragments")
     if not websocket and parsed.path not in ("", "/"):
         raise ValueError("base_url must be an origin without a path")
+
+    try:
+        address = ip_address(parsed.hostname)
+    except ValueError:
+        pass
+    else:
+        address = getattr(address, "ipv4_mapped", None) or address
+        if address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified:
+            raise ValueError("URL host is not allowed")
 
     host = parsed.hostname.lower()
     if ":" in host:

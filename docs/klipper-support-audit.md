@@ -162,8 +162,10 @@ Klipper or Bambu feature up front.
 | `object_cancellation` | object list and skip-object action |
 
 Issue 4 only publishes this contract. Later provider-adapter and UI issues move
-the listed consumers behind it. Capabilities describe provider support, not live
-readiness; connection and normalized state gate whether an action can run now.
+the listed consumers behind it. Published capabilities describe behavior that
+LayerCove currently implements; connection and normalized state additionally
+gate whether an action can run now. Moonraker control capabilities remain false
+until its adapter and command paths land.
 
 Use a normalized snapshot with `connected`, normalized `state`, message,
 filename, progress, elapsed/remaining seconds, layers, common temperatures,

@@ -75,6 +75,12 @@ def test_moonraker_create_rejects_bambu_fields_and_multiple_auth_values():
         )
 
 
+def test_moonraker_base_url_allows_private_lan_address():
+    config = MoonrakerPrinterConfigInput(base_url="http://192.168.1.20:7125")
+
+    assert config.base_url == "http://192.168.1.20:7125"
+
+
 @pytest.mark.parametrize(
     "url",
     [
@@ -82,6 +88,10 @@ def test_moonraker_create_rejects_bambu_fields_and_multiple_auth_values():
         "http://user:password@klipper.local",
         "http://klipper.local/path",
         "http://klipper.local?token=secret",
+        "http://127.0.0.1:7125",
+        "http://169.254.169.254:7125",
+        "http://224.0.0.1:7125",
+        "http://0.0.0.0:7125",
     ],
 )
 def test_moonraker_base_url_rejects_non_origin_or_embedded_credentials(url):
@@ -122,11 +132,12 @@ def test_normalized_state_and_capabilities_are_exact_mvp_contract():
         "firmware_information",
         "object_cancellation",
     }
-    assert moonraker["upload_gcode"] is True
+    assert moonraker["upload_gcode"] is False
     assert moonraker["upload_3mf"] is False
-    assert moonraker["emergency_stop"] is True
+    assert moonraker["emergency_stop"] is False
     assert moonraker["ams"] is False
     assert moonraker["plate_selection"] is False
+    assert not any(moonraker.values())
 
 
 def test_normalized_snapshot_keeps_provider_detail_internal_to_backend_contract():

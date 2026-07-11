@@ -140,8 +140,10 @@ only while the authoritative `printers` table still exists. Transaction rollback
 restores the original table if startup stops after the swap begins. Operators
 restore the database backup if either row-count verification or transaction
 rollback fails; the migration does not guess which partial table is authoritative.
-If foreign-key enforcement was enabled outside LayerCove's SQLite connection
-setup, startup stops before the rebuild instead of risking `ON DELETE` cascades.
+LayerCove's SQLite connection setup explicitly disables foreign-key enforcement
+before startup migrations. The migration also refuses direct invocation on a
+connection where enforcement remains enabled rather than risking `ON DELETE`
+cascades.
 
 Existing identifiers remain unchanged: table and column names, printer IDs,
 Bambu serial numbers, archive foreign keys, API paths, data directories, and
@@ -312,8 +314,9 @@ G-code execution endpoint, or Moonraker proxy is introduced.
 Configured Moonraker targets may be private/LAN addresses because that is the
 product purpose. Link-local metadata, multicast, unspecified, and loopback
 targets are blocked unless an explicit narrowly scoped local-development mode
-is active. Redirects are disabled. Hostname resolution is validated before
-connect and the connected peer must match the approved resolution set; request-
+is active. Issue 4 rejects those categories when supplied as literal IPs.
+Issue 6's connection layer disables redirects, validates hostname resolution
+before connect, and requires the connected peer to match the approved resolution set; request-
 time browser URL overrides are forbidden. The same policy applies to HTTP,
 WebSocket, camera snapshots fetched by LayerCove, and connection tests.
 
