@@ -90,6 +90,7 @@ class TestPrintersAPI:
         data = {
             "name": "Klipper Printer",
             "provider": "moonraker",
+            "external_camera_enabled": True,
             "moonraker_config": {
                 "base_url": "HTTPS://KLIPPER.LOCAL:7125/",
                 "api_key": "top-secret",
@@ -113,6 +114,7 @@ class TestPrintersAPI:
         }
         assert "top-secret" not in response.text
         assert result["capabilities"]["emergency_stop"] is False
+        assert result["capabilities"]["camera"] is False
         _mock_printer_test_connection.assert_not_awaited()
 
         from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig

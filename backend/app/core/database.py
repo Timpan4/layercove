@@ -469,8 +469,8 @@ async def _migrate_printer_provider_storage(conn) -> None:
     ]
 
     rebuilt_sql = re.sub(
-        r"(?i)^(\s*[\"`]?(?:serial_number|ip_address|access_code)[\"`]?\s+[^,\n]+?)\s+NOT NULL",
-        r"\1",
+        r"(?i)(^|,)(\s*[\"`]?(?:serial_number|ip_address|access_code)[\"`]?\s+[^,\n]+?)\s+NOT NULL",
+        r"\1\2",
         create_sql,
         flags=re.MULTILINE,
     )

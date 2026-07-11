@@ -1,5 +1,6 @@
 from datetime import datetime
 from ipaddress import ip_address
+from socket import inet_aton
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -22,8 +23,11 @@ def _normalize_provider_url(value: str, *, websocket: bool) -> str:
     try:
         address = ip_address(parsed.hostname)
     except ValueError:
-        pass
-    else:
+        try:
+            address = ip_address(inet_aton(parsed.hostname))
+        except OSError:
+            address = None
+    if address is not None:
         address = getattr(address, "ipv4_mapped", None) or address
         if address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified:
             raise ValueError("URL host is not allowed")
@@ -212,7 +216,11 @@ class PrinterResponse(PrinterBase):
             "updated_at": printer.updated_at,
             "capabilities": capabilities_for_provider(
                 PrinterProvider(printer.provider),
-                camera_configured=bool(printer.external_camera_enabled),
+                camera_configured=bool(
+                    printer.external_camera_enabled
+                    and printer.external_camera_url
+                    and printer.external_camera_type
+                ),
             ),
             "moonraker_config": (
                 MoonrakerPrinterConfigResponse.model_validate(printer.moonraker_config)

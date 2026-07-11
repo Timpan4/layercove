@@ -92,6 +92,9 @@ def test_moonraker_base_url_allows_private_lan_address():
         "http://169.254.169.254:7125",
         "http://224.0.0.1:7125",
         "http://0.0.0.0:7125",
+        "http://2130706433:7125",
+        "http://0x7f000001:7125",
+        "http://127.1:7125",
     ],
 )
 def test_moonraker_base_url_rejects_non_origin_or_embedded_credentials(url):

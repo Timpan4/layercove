@@ -91,6 +91,27 @@ async def test_postgres_migration_relaxes_bambu_columns_and_backfills_provider(m
     assert "ALTER COLUMN access_code DROP NOT NULL" in sql
 
 
+async def test_sqlite_migration_relaxes_columns_from_single_line_ddl():
+    engine = create_async_engine("sqlite+aiosqlite:///:memory:")
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "CREATE TABLE printers (id INTEGER PRIMARY KEY, name TEXT NOT NULL, "
+                "serial_number TEXT NOT NULL, ip_address TEXT NOT NULL, access_code TEXT NOT NULL)"
+            )
+        )
+
+        await database._migrate_printer_provider_storage(conn)
+
+        columns = {item[1]: item for item in await conn.execute(text("PRAGMA table_info(printers)"))}
+        assert columns["serial_number"][3] == 0
+        assert columns["ip_address"][3] == 0
+        assert columns["access_code"][3] == 0
+        await conn.execute(text("INSERT INTO printers (id, name, provider) VALUES (1, 'Voron', 'moonraker')"))
+
+    await engine.dispose()
+
+
 async def test_sqlite_migration_fails_before_cascading_rows_when_foreign_keys_are_enabled():
     engine = create_async_engine("sqlite+aiosqlite:///:memory:")
     async with engine.connect() as conn:
