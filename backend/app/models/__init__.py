@@ -13,6 +13,7 @@ from backend.app.models.local_preset import LocalPreset
 from backend.app.models.location import Location
 from backend.app.models.long_lived_token import LongLivedToken
 from backend.app.models.maintenance import MaintenanceHistory, MaintenanceType, PrinterMaintenance
+from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.models.notification import NotificationLog
 from backend.app.models.notification_template import NotificationTemplate
 from backend.app.models.oidc_provider import OIDCProvider, UserOIDCLink
@@ -41,6 +42,7 @@ from backend.app.models.user_totp import UserTOTP
 
 __all__ = [
     "Printer",
+    "MoonrakerPrinterConfig",
     "PrintArchive",
     "Filament",
     "Settings",

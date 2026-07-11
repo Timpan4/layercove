@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import re
 
 from sqlalchemy import event
 from sqlalchemy.exc import IntegrityError, OperationalError, ProgrammingError
@@ -184,6 +185,7 @@ async def init_db():
         location,
         long_lived_token,
         maintenance,
+        moonraker_printer_config,
         notification,
         notification_template,
         oidc_provider,
@@ -407,6 +409,87 @@ async def _safe_execute(conn, sql):
         ):
             logger.error("Migration statement failed: %s | SQL: %.200s", exc, sql)
             raise
+
+
+async def _migrate_printer_provider_storage(conn) -> None:
+    """Add provider storage while preserving every legacy printer row."""
+    from sqlalchemy import text
+
+    if not is_sqlite():
+        await conn.execute(
+            text(
+                "ALTER TABLE printers ADD COLUMN IF NOT EXISTS provider VARCHAR(20) DEFAULT 'bambu' "
+                "CHECK (provider IN ('bambu', 'moonraker'))"
+            )
+        )
+        await conn.execute(text("UPDATE printers SET provider = 'bambu' WHERE provider IS NULL"))
+        await conn.execute(text("ALTER TABLE printers ALTER COLUMN provider SET DEFAULT 'bambu'"))
+        await conn.execute(text("ALTER TABLE printers ALTER COLUMN provider SET NOT NULL"))
+        for column in ("serial_number", "ip_address", "access_code"):
+            await conn.execute(text(f"ALTER TABLE printers ALTER COLUMN {column} DROP NOT NULL"))
+        return
+
+    columns = list(await conn.execute(text("PRAGMA table_info(printers)")))
+    if not columns:
+        return
+    if not any(row[1] == "provider" for row in columns):
+        await conn.execute(
+            text(
+                "ALTER TABLE printers ADD COLUMN provider VARCHAR(20) NOT NULL DEFAULT 'bambu' "
+                "CHECK (provider IN ('bambu', 'moonraker'))"
+            )
+        )
+        columns = list(await conn.execute(text("PRAGMA table_info(printers)")))
+
+    legacy_required = {"serial_number", "ip_address", "access_code"}
+    if not any(row[1] in legacy_required and row[3] for row in columns):
+        return
+
+    if (await conn.execute(text("PRAGMA foreign_keys"))).scalar_one():
+        raise RuntimeError(
+            "Printer provider migration requires SQLite foreign-key enforcement "
+            "to be disabled for the startup transaction; refusing to risk cascading legacy rows."
+        )
+
+    create_sql = (
+        await conn.execute(text("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'printers'"))
+    ).scalar_one()
+    index_sql = [
+        row[0]
+        for row in await conn.execute(
+            text("SELECT sql FROM sqlite_master WHERE type = 'index' AND tbl_name = 'printers' AND sql IS NOT NULL")
+        )
+    ]
+
+    rebuilt_sql = re.sub(
+        r"(?i)^(\s*[\"`]?(?:serial_number|ip_address|access_code)[\"`]?\s+[^,\n]+?)\s+NOT NULL",
+        r"\1",
+        create_sql,
+        flags=re.MULTILINE,
+    )
+    rebuilt_sql = re.sub(
+        r"(?i)^CREATE\s+TABLE\s+[\"`]?printers[\"`]?",
+        "CREATE TABLE printers_provider_new",
+        rebuilt_sql,
+        count=1,
+    )
+    if rebuilt_sql == create_sql:
+        raise RuntimeError("Could not rebuild legacy printers table for provider storage")
+
+    # A prior interrupted migration can leave the temporary table behind while
+    # the authoritative printers table is still intact. It is safe to discard.
+    await conn.execute(text("DROP TABLE IF EXISTS printers_provider_new"))
+    await conn.execute(text(rebuilt_sql))
+    column_names = ", ".join(f'"{row[1]}"' for row in columns)
+    await conn.execute(text(f"INSERT INTO printers_provider_new ({column_names}) SELECT {column_names} FROM printers"))
+    old_count = (await conn.execute(text("SELECT COUNT(*) FROM printers"))).scalar_one()
+    new_count = (await conn.execute(text("SELECT COUNT(*) FROM printers_provider_new"))).scalar_one()
+    if old_count != new_count:
+        raise RuntimeError("Printer provider migration row-count verification failed")
+    await conn.execute(text("DROP TABLE printers"))
+    await conn.execute(text("ALTER TABLE printers_provider_new RENAME TO printers"))
+    for statement in index_sql:
+        await conn.execute(text(statement))
 
 
 async def _api_keys_column_exists(conn, column_name: str) -> bool:
@@ -669,6 +752,8 @@ async def run_migrations(conn):
     swallowed.
     """
     from sqlalchemy import text
+
+    await _migrate_printer_provider_storage(conn)
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show
