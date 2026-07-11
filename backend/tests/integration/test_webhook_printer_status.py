@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from httpx import AsyncClient
 
+from backend.app.services.printer_backend import BackendError
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
     PrinterProvider,
@@ -268,3 +269,72 @@ class TestWebhookCancelPrint:
 
         assert resp.status_code == 200
         stop.assert_awaited_once_with(printer_row.id)
+
+
+class TestWebhookCommandFailures:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("endpoint", "state"),
+        [
+            ("stop", NormalizedPrinterState.PRINTING),
+            ("cancel", NormalizedPrinterState.PAUSED),
+        ],
+    )
+    async def test_false_command_result_returns_safe_502(
+        self, async_client, api_key_data, printer_row, endpoint, state
+    ):
+        snapshot = _snapshot(connected=True, state=state)
+        with (
+            patch("backend.app.api.routes.webhook.printer_manager.get_snapshot", return_value=snapshot),
+            patch(
+                "backend.app.api.routes.webhook.printer_manager.stop_print_async",
+                new=AsyncMock(return_value=False),
+            ),
+        ):
+            resp = await async_client.post(
+                f"/api/v1/webhook/printer/{printer_row.id}/{endpoint}",
+                headers={"X-API-Key": api_key_data},
+            )
+
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == f"Printer rejected {endpoint} command"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_backend_error_uses_safe_message(self, async_client, api_key_data, printer_row):
+        snapshot = _snapshot(connected=True, state=NormalizedPrinterState.PRINTING)
+        with (
+            patch("backend.app.api.routes.webhook.printer_manager.get_snapshot", return_value=snapshot),
+            patch(
+                "backend.app.api.routes.webhook.printer_manager.stop_print_async",
+                new=AsyncMock(side_effect=BackendError("Provider safely refused command")),
+            ),
+        ):
+            resp = await async_client.post(
+                f"/api/v1/webhook/printer/{printer_row.id}/stop",
+                headers={"X-API-Key": api_key_data},
+            )
+
+        assert resp.status_code == 502
+        assert resp.json()["detail"] == "Provider safely refused command"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_unexpected_error_does_not_leak_message(self, async_client, api_key_data, printer_row):
+        snapshot = _snapshot(connected=True, state=NormalizedPrinterState.PAUSED)
+        with (
+            patch("backend.app.api.routes.webhook.printer_manager.get_snapshot", return_value=snapshot),
+            patch(
+                "backend.app.api.routes.webhook.printer_manager.stop_print_async",
+                new=AsyncMock(side_effect=RuntimeError("secret transport detail")),
+            ),
+        ):
+            resp = await async_client.post(
+                f"/api/v1/webhook/printer/{printer_row.id}/cancel",
+                headers={"X-API-Key": api_key_data},
+            )
+
+        assert resp.status_code == 500
+        assert resp.json()["detail"] == "Failed to cancel print"
+        assert "secret transport detail" not in resp.text

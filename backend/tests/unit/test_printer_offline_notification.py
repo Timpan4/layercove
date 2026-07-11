@@ -191,6 +191,33 @@ class TestOfflineEdgeDetection:
         assert "raw_data" not in payload
 
     @pytest.mark.asyncio
+    async def test_normalized_snapshot_preserves_offline_notification_edge(self):
+        ws_mgr, _, _ = self._patch_handler_deps()
+        connected = PrinterSnapshot(
+            provider=PrinterProvider.MOONRAKER,
+            connected=True,
+            state=NormalizedPrinterState.IDLE,
+        )
+        offline = PrinterSnapshot(
+            provider=PrinterProvider.MOONRAKER,
+            connected=False,
+            state=NormalizedPrinterState.OFFLINE,
+        )
+        main_module._printer_last_connected.pop(78, None)
+        main_module._last_status_broadcast.pop(78, None)
+
+        with (
+            patch("backend.app.main.ws_manager", ws_mgr),
+            patch("backend.app.main._maybe_notify_printer_offline", new=AsyncMock()),
+        ):
+            await main_module.on_printer_status_change(78, connected)
+            await main_module.on_printer_status_change(78, offline)
+
+        task = main_module._printer_offline_notify_tasks.pop(78)
+        assert main_module._printer_last_connected[78] is False
+        task.cancel()
+
+    @pytest.mark.asyncio
     async def test_first_call_connected_does_not_schedule(self):
         ws_mgr, relay, pm = self._patch_handler_deps()
         with (

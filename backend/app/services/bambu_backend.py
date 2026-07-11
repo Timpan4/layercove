@@ -63,7 +63,7 @@ class BambuBackend:
             on_layer_change=lambda layer: emit(ProviderEvent("layer_changed", layer)),
             on_bed_temp_update=lambda temp: emit(ProviderEvent("bed_temperature_changed", temp)),
             on_drying_complete=lambda ams_id: emit(ProviderEvent("drying_completed", ams_id)),
-            on_print_running_observed=lambda data: emit(ProviderEvent("print_running_observed", data)),
+            on_print_running_observed=self._on_print_running_observed,
             on_finish_photo_moment=lambda data: emit(ProviderEvent("finish_photo_moment", data)),
         )
 
@@ -108,6 +108,15 @@ class BambuBackend:
                 data=data,
             )
         )
+
+    def _on_print_running_observed(self, data: dict) -> None:
+        """Seed active identity for restart recovery without inventing a start."""
+        if self._active_correlation_id is None:
+            provider_job_id = self._provider_job_id(data)
+            self._active_provider_job_id = provider_job_id
+            self._active_correlation_id = f"bambu:{provider_job_id}" if provider_job_id else str(uuid4())
+            self._active_filename = self._job_filename(data)
+        self._emit(ProviderEvent("print_running_observed", data))
 
     def _on_print_terminal(self, data: dict) -> None:
         status = str(data.get("status") or "completed").lower()

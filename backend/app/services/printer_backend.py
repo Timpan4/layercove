@@ -11,6 +11,10 @@ from backend.app.services.printer_types import PrinterCapabilities, PrinterProvi
 class BackendError(Exception):
     """Expected provider failure with a message safe for logs and API callers."""
 
+    @property
+    def safe_message(self) -> str:
+        return str(self)
+
 
 class UnsupportedPrinterProviderError(BackendError):
     def __init__(self, provider: object):

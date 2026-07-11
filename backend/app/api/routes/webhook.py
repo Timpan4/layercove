@@ -11,6 +11,7 @@ from backend.app.models.api_key import APIKey
 from backend.app.models.archive import PrintArchive
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
+from backend.app.services.printer_backend import BackendError
 from backend.app.services.printer_manager import printer_manager
 from backend.app.services.printer_types import NormalizedPrinterState
 
@@ -204,10 +205,15 @@ async def webhook_stop_print(
         raise HTTPException(status_code=409, detail="No print in progress")
 
     try:
-        await printer_manager.stop_print_async(printer_id)
-    except Exception as e:
-        logger.error("Failed to stop print: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        success = await printer_manager.stop_print_async(printer_id)
+    except BackendError as exc:
+        logger.warning("Printer rejected stop command: %s", exc)
+        raise HTTPException(status_code=502, detail=exc.safe_message)
+    except Exception:
+        logger.exception("Unexpected failure stopping printer %s", printer_id)
+        raise HTTPException(status_code=500, detail="Failed to stop print")
+    if not success:
+        raise HTTPException(status_code=502, detail="Printer rejected stop command")
 
     return {"message": "Print stopped"}
 
@@ -232,10 +238,15 @@ async def webhook_cancel_print(
         raise HTTPException(status_code=409, detail="No print to cancel")
 
     try:
-        await printer_manager.stop_print_async(printer_id)
-    except Exception as e:
-        logger.error("Failed to cancel print: %s", e)
-        raise HTTPException(status_code=500, detail=str(e))
+        success = await printer_manager.stop_print_async(printer_id)
+    except BackendError as exc:
+        logger.warning("Printer rejected cancel command: %s", exc)
+        raise HTTPException(status_code=502, detail=exc.safe_message)
+    except Exception:
+        logger.exception("Unexpected failure cancelling printer %s", printer_id)
+        raise HTTPException(status_code=500, detail="Failed to cancel print")
+    if not success:
+        raise HTTPException(status_code=502, detail="Printer rejected cancel command")
 
     return {"message": "Print cancelled"}
 

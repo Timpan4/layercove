@@ -142,13 +142,51 @@ async def test_manager_forwards_events_fifo_and_drops_events_after_disconnect():
     await asyncio.sleep(0)
     await manager._event_queues[7].join()
     assert observed[-1] == (7, "offline")
+    assert manager.get_snapshot(7).state is NormalizedPrinterState.OFFLINE
+    assert manager.get_all_snapshots()[7].state is NormalizedPrinterState.OFFLINE
+    assert manager.is_connected(7) is False
+
+    backend.emit(StatusChanged(backend.snapshot()))
+    await asyncio.sleep(0)
+    await manager._event_queues[7].join()
+    assert manager.get_snapshot(7).state is NormalizedPrinterState.IDLE
+    assert manager.is_connected(7) is True
 
     backend.disconnect_event = lifecycle("started", "during disconnect", "job-2")
     await manager.disconnect_printer_async(7)
     backend.emit(lifecycle("started", "too late", "job-3"))
     await asyncio.sleep(0)
 
-    assert observed == [(7, "idle"), (7, "cube"), (7, "failed"), (7, "offline"), (7, "during disconnect")]
+    assert observed == [
+        (7, "idle"),
+        (7, "cube"),
+        (7, "failed"),
+        (7, "offline"),
+        (7, "idle"),
+        (7, "during disconnect"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_queued_connected_status_cannot_override_later_forced_offline_status():
+    backend = FakeBackend()
+    registry = PrinterBackendRegistry()
+
+    def make_backend(printer, emit):
+        backend.emit = emit
+        return backend
+
+    registry.register(PrinterProvider.BAMBU, make_backend)
+    manager = PrinterManager(registry=registry)
+    printer = SimpleNamespace(id=8, provider="bambu", name="Test", serial_number="S", model="X1C")
+    await manager.connect_printer(printer)
+
+    backend.emit(StatusChanged(backend.snapshot()))
+    manager.mark_printer_offline(8)
+    await manager._event_queues[8].join()
+
+    assert manager.get_snapshot(8).state is NormalizedPrinterState.OFFLINE
+    assert manager.is_connected(8) is False
 
 
 @pytest.mark.asyncio

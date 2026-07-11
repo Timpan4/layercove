@@ -4,7 +4,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from backend.app.services.bambu_backend import BambuBackend
-from backend.app.services.printer_backend import JobLifecycle, StatusChanged
+from backend.app.services.printer_backend import JobLifecycle, ProviderEvent, StatusChanged
 from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider
 
 
@@ -91,3 +91,28 @@ def test_bambu_backend_classifies_aborted_terminal_as_cancelled():
     assert events[3].kind == "completed"
     assert events[3].correlation_id == events[2].correlation_id
     assert events[3].reason is None
+
+
+def test_running_observed_seeds_terminal_correlation_without_synthetic_start():
+    client = MagicMock()
+    client.state.subtask_id = "bootstrap-7"
+    client.state.current_print = "active.3mf"
+    events = []
+    factory = MagicMock(return_value=client)
+    BambuBackend(
+        SimpleNamespace(ip_address="192.168.1.2", serial_number="SERIAL", access_code="code", model="X1C"),
+        client_factory=factory,
+        emit=events.append,
+    )
+
+    observed = {"filename": "active.3mf"}
+    factory.call_args.kwargs["on_print_running_observed"](observed)
+    factory.call_args.kwargs["on_print_complete"]({"status": "failed", "filename": "active.3mf"})
+
+    assert isinstance(events[0], ProviderEvent)
+    assert events[0].kind == "print_running_observed"
+    assert events[0].data is observed
+    assert not any(isinstance(event, JobLifecycle) and event.kind == "started" for event in events)
+    assert events[1].correlation_id == "bambu:bootstrap-7"
+    assert events[1].provider_job_id == "bootstrap-7"
+    assert events[1].filename == "active.3mf"

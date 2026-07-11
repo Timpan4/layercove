@@ -1070,6 +1070,20 @@ async def _maybe_notify_printer_offline(printer_id: int) -> None:
 async def on_printer_status_change(printer_id: int, state: PrinterState | PrinterSnapshot):
     """Handle printer status changes - broadcast via WebSocket."""
     if isinstance(state, PrinterSnapshot):
+        prev_connected = _printer_last_connected.get(printer_id)
+        _printer_last_connected[printer_id] = state.connected
+        if prev_connected is True and not state.connected:
+            existing = _printer_offline_notify_tasks.get(printer_id)
+            if existing is None or existing.done():
+                _printer_offline_notify_tasks[printer_id] = asyncio.create_task(
+                    _maybe_notify_printer_offline(printer_id),
+                    name=f"printer-offline-notify-{printer_id}",
+                )
+        elif state.connected:
+            pending = _printer_offline_notify_tasks.pop(printer_id, None)
+            if pending is not None and not pending.done():
+                pending.cancel()
+
         status_key = (
             state.connected,
             state.state,

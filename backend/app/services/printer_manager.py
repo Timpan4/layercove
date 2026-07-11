@@ -336,6 +336,7 @@ class PrinterManager:
         self._backend_sinks: dict[int, Callable[[BackendEvent], None]] = {}
         self._accepting_events: set[int] = set()
         self._seen_lifecycle_events: set[tuple[int, str, str]] = set()
+        self._forced_offline: set[int] = set()
         # Track who started the current print (Issue #206)
         self._current_print_user: dict[int, dict] = {}  # {printer_id: {"user_id": int, "username": str}}
         # Track printers awaiting plate-clear acknowledgment after a finished/failed print.
@@ -547,6 +548,7 @@ class PrinterManager:
             await self.disconnect_printer_async(printer.id)
 
         printer_id = printer.id
+        self._forced_offline.discard(printer_id)
         loop = asyncio.get_running_loop()
         self._loop = loop
         queue: asyncio.Queue[BackendEvent | None] = asyncio.Queue()
@@ -627,6 +629,10 @@ class PrinterManager:
 
     async def _forward_backend_event(self, printer_id: int, event: BackendEvent) -> None:
         if isinstance(event, StatusChanged):
+            if event.snapshot.connected:
+                self._forced_offline.discard(printer_id)
+            else:
+                self._forced_offline.add(printer_id)
             await self._call_backend_callback(
                 self._on_status_change,
                 printer_id,
@@ -732,7 +738,10 @@ class PrinterManager:
         """Get provider-neutral status without exposing provider payloads."""
         backend = self._backends.get(printer_id)
         if backend is not None:
-            return backend.snapshot()
+            snapshot = backend.snapshot()
+            if printer_id in self._forced_offline:
+                return replace(snapshot, connected=False, state=NormalizedPrinterState.OFFLINE)
+            return snapshot
         return None
 
     # Gcode states in which a job is loaded / in progress and cutting power
@@ -790,10 +799,16 @@ class PrinterManager:
 
     def get_all_snapshots(self) -> dict[int, PrinterSnapshot]:
         """Get provider-neutral status for every registered backend."""
-        return {printer_id: backend.snapshot() for printer_id, backend in self._backends.items()}
+        return {
+            printer_id: snapshot
+            for printer_id in self._backends
+            if (snapshot := self.get_snapshot(printer_id)) is not None
+        }
 
     def is_connected(self, printer_id: int) -> bool:
         """Check if a printer is connected (checks for stale connections)."""
+        if printer_id in self._forced_offline:
+            return False
         backend = self._backends.get(printer_id)
         if backend is not None:
             return backend.snapshot().connected
@@ -830,6 +845,7 @@ class PrinterManager:
         if backend is None or sink is None:
             return
         snapshot = backend.snapshot()
+        self._forced_offline.add(printer_id)
         logger.info("Marking printer %s as offline (smart plug power off)", printer_id)
         if isinstance(backend, BambuBackend):
             backend.mark_offline()
