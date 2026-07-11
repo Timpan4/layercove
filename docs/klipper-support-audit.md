@@ -204,3 +204,5 @@ Bambu code.
 Do not start Moonraker UI or broad branding edits until the foundation ADR and
 Bambu regression baseline are accepted.
 
+Architecture and security review, followed by repository-owner approval,
+accepted this foundation on 2026-07-11.
