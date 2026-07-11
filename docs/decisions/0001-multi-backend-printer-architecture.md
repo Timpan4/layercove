@@ -131,7 +131,22 @@ legacy `NOT NULL` constraints while preserving rows, indexes, relationships,
 and foreign-key targets. PostgreSQL uses `ALTER COLUMN ... DROP NOT NULL`.
 Migration tests cover representative Bambu data, foreign-key relationships,
 rerun/startup idempotency, and recovery from an interrupted SQLite rebuild.
-The migration never renames tables or drops existing Bambu values.
+The migration never changes the final table name or drops existing Bambu values.
+
+Migration recovery is automatic. SQLite creates `printers_provider_new`, checks
+that its row count matches `printers`, then swaps tables in the startup
+transaction and recreates explicit indexes. A stale temporary table is removed
+only while the authoritative `printers` table still exists. Transaction rollback
+restores the original table if startup stops after the swap begins. Operators
+restore the database backup if either row-count verification or transaction
+rollback fails; the migration does not guess which partial table is authoritative.
+If foreign-key enforcement was enabled outside LayerCove's SQLite connection
+setup, startup stops before the rebuild instead of risking `ON DELETE` cascades.
+
+Existing identifiers remain unchanged: table and column names, printer IDs,
+Bambu serial numbers, archive foreign keys, API paths, data directories, and
+environment names. `MFA_ENCRYPTION_KEY` and `.mfa_encryption_key` remain aliases
+for compatibility; the LayerCove environment name is preferred for new setups.
 
 ### Secrets
 

@@ -140,6 +140,31 @@ Introduce only capabilities used by the MVP UI/application:
 Add more flags only with a current consumer. Do not model every potential
 Klipper or Bambu feature up front.
 
+### Capability consumers
+
+| Capability | Current consumer to gate |
+| --- | --- |
+| `upload_gcode` | scheduler and direct file upload |
+| `upload_3mf` | scheduler, library print action, and print modal |
+| `start_print` | scheduler, queue dispatch, and print modal |
+| `pause` | printer card and printer detail controls |
+| `resume` | printer card and printer detail controls |
+| `cancel` | printer card, printer detail, and queue controls |
+| `emergency_stop` | dedicated confirmed printer-detail action |
+| `camera` | camera routes, printer card, and printer detail |
+| `bed_temperature` | status API and temperature panels |
+| `extruder_temperature` | status API and temperature panels |
+| `chamber_temperature` | status API and chamber panel |
+| `ams` | scheduler mapping, inventory, print modal, and printer detail |
+| `plate_selection` | scheduler, queue options, and print modal |
+| `speed_control` | printer card and printer detail controls |
+| `firmware_information` | firmware routes and printer detail panel |
+| `object_cancellation` | object list and skip-object action |
+
+Issue 4 only publishes this contract. Later provider-adapter and UI issues move
+the listed consumers behind it. Capabilities describe provider support, not live
+readiness; connection and normalized state gate whether an action can run now.
+
 Use a normalized snapshot with `connected`, normalized `state`, message,
 filename, progress, elapsed/remaining seconds, layers, common temperatures,
 and opaque provider detail. Preserve `PrinterState` and current response fields
@@ -203,6 +228,5 @@ Bambu code.
 
 Do not start Moonraker UI or broad branding edits until the foundation ADR and
 Bambu regression baseline are accepted.
-
 Architecture and security review, followed by repository-owner approval,
 accepted this foundation on 2026-07-11.
