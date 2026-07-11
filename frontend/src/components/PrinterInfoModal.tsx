@@ -62,6 +62,8 @@ function CopyButton({ value }: { value: string }) {
 
 export function PrinterInfoModal({ printer, status, totalPrintHours, onClose }: PrinterInfoModalProps) {
   const { t } = useTranslation();
+  const ipAddress = printer.ip_address ?? t('common.unknown');
+  const serialNumber = printer.serial_number ?? t('common.unknown');
 
   useEffect(() => {
     const handleKey = (e: KeyboardEvent) => {
@@ -114,8 +116,8 @@ export function PrinterInfoModal({ printer, status, totalPrintHours, onClose }: 
     label: t('printers.ipAddress'),
     value: (
       <span className="flex items-center">
-        <span className="font-mono">{printer.ip_address}</span>
-        <CopyButton value={printer.ip_address} />
+        <span className="font-mono">{ipAddress}</span>
+        {printer.ip_address && <CopyButton value={printer.ip_address} />}
       </span>
     ),
   });
@@ -125,8 +127,8 @@ export function PrinterInfoModal({ printer, status, totalPrintHours, onClose }: 
     label: t('printers.serialNumber'),
     value: (
       <span className="flex items-center">
-        <span className="font-mono truncate">{printer.serial_number}</span>
-        <CopyButton value={printer.serial_number} />
+        <span className="font-mono truncate">{serialNumber}</span>
+        {printer.serial_number && <CopyButton value={printer.serial_number} />}
       </span>
     ),
   });

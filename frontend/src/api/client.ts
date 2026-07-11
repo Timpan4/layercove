@@ -306,8 +306,9 @@ export interface LongLivedCameraToken {
 export interface Printer {
   id: number;
   name: string;
-  serial_number: string;
-  ip_address: string;
+  provider: 'bambu' | 'moonraker';
+  serial_number: string | null;
+  ip_address: string | null;
   // Optional because the backend only returns access_code when the caller has
   // PRINTERS_UPDATE — Admin / Operator JWTs or auth-disabled mode. Viewers and
   // API keys receive a Printer without this field.
@@ -326,6 +327,43 @@ export interface Printer {
   plate_detection_roi?: PlateDetectionROI;  // ROI for plate detection
   created_at: string;
   updated_at: string;
+  capabilities: PrinterCapabilities;
+  moonraker_config: MoonrakerPrinterConfigResponse | null;
+}
+
+export interface PrinterCapabilities {
+  upload_gcode: boolean;
+  upload_3mf: boolean;
+  start_print: boolean;
+  pause: boolean;
+  resume: boolean;
+  cancel: boolean;
+  emergency_stop: boolean;
+  camera: boolean;
+  bed_temperature: boolean;
+  extruder_temperature: boolean;
+  chamber_temperature: boolean;
+  ams: boolean;
+  plate_selection: boolean;
+  speed_control: boolean;
+  firmware_information: boolean;
+  object_cancellation: boolean;
+}
+
+export interface MoonrakerPrinterConfigInput {
+  base_url: string;
+  websocket_url_override?: string | null;
+  api_key?: string | null;
+  authorization?: string | null;
+  tls_verify?: boolean;
+}
+
+export interface MoonrakerPrinterConfigResponse {
+  base_url: string;
+  websocket_url_override: string | null;
+  tls_verify: boolean;
+  api_key_configured: boolean;
+  authorization_configured: boolean;
 }
 
 export interface HMSError {
@@ -531,9 +569,11 @@ export interface PrinterStatus {
 
 export interface PrinterCreate {
   name: string;
-  serial_number: string;
-  ip_address: string;
-  access_code: string;
+  provider?: 'bambu' | 'moonraker';
+  serial_number?: string;
+  ip_address?: string;
+  access_code?: string;
+  moonraker_config?: MoonrakerPrinterConfigInput;
   model?: string;
   location?: string;
   auto_archive?: boolean;

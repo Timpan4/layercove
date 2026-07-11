@@ -84,6 +84,127 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_create_moonraker_printer_redacts_credentials(
+        self, async_client: AsyncClient, db_session, _mock_printer_test_connection
+    ):
+        data = {
+            "name": "Klipper Printer",
+            "provider": "moonraker",
+            "external_camera_enabled": True,
+            "moonraker_config": {
+                "base_url": "HTTPS://KLIPPER.LOCAL:7125/",
+                "api_key": "top-secret",
+                "tls_verify": False,
+            },
+        }
+
+        response = await async_client.post("/api/v1/printers/", json=data)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["provider"] == "moonraker"
+        assert result["serial_number"] is None
+        assert result["ip_address"] is None
+        assert result["moonraker_config"] == {
+            "base_url": "https://klipper.local:7125",
+            "websocket_url_override": None,
+            "tls_verify": False,
+            "api_key_configured": True,
+            "authorization_configured": False,
+        }
+        assert "top-secret" not in response.text
+        assert result["capabilities"]["emergency_stop"] is False
+        assert result["capabilities"]["camera"] is False
+        _mock_printer_test_connection.assert_not_awaited()
+
+        from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+
+        config = (await db_session.execute(select(MoonrakerPrinterConfig))).scalar_one()
+        assert config.api_key_ciphertext.startswith("fernet:")
+        assert "top-secret" not in config.api_key_ciphertext
+
+        listed = await async_client.get("/api/v1/printers/")
+        listed_moonraker = next(item for item in listed.json() if item["id"] == result["id"])
+        assert "access_code" not in listed_moonraker
+        assert "top-secret" not in listed.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_update_moonraker_config_keeps_credentials_redacted(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Klipper Printer",
+                "provider": "moonraker",
+                "moonraker_config": {
+                    "base_url": "http://klipper.local:7125",
+                    "api_key": "old-secret",
+                },
+            },
+        )
+
+        base_url_only = await async_client.patch(
+            f"/api/v1/printers/{created.json()['id']}",
+            json={"moonraker_config": {"base_url": "http://moved-klipper.local:7125"}},
+        )
+        assert base_url_only.status_code == 200
+        assert base_url_only.json()["moonraker_config"]["api_key_configured"] is True
+
+        response = await async_client.patch(
+            f"/api/v1/printers/{created.json()['id']}",
+            json={
+                "moonraker_config": {
+                    "base_url": "https://new-klipper.local",
+                    "authorization": "Bearer new-secret",
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["moonraker_config"]["base_url"] == "https://new-klipper.local"
+        assert result["moonraker_config"]["api_key_configured"] is False
+        assert result["moonraker_config"]["authorization_configured"] is True
+        assert "secret" not in response.text
+
+        deleted = await async_client.delete(f"/api/v1/printers/{created.json()['id']}")
+        assert deleted.status_code == 200
+        assert (await async_client.get(f"/api/v1/printers/{created.json()['id']}")).status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_update_rejects_fields_from_the_other_provider(self, async_client: AsyncClient):
+        bambu = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Bambu",
+                "serial_number": "00M09A333333333",
+                "ip_address": "192.168.1.33",
+                "access_code": "12345678",
+            },
+        )
+        moonraker = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Klipper",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125"},
+            },
+        )
+
+        clear_bambu_secret = await async_client.patch(
+            f"/api/v1/printers/{bambu.json()['id']}", json={"access_code": None}
+        )
+        add_bambu_field_to_moonraker = await async_client.patch(
+            f"/api/v1/printers/{moonraker.json()['id']}",
+            json={"ip_address": "192.168.1.44"},
+        )
+
+        assert clear_bambu_secret.status_code == 400
+        assert add_bambu_field_to_moonraker.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_create_printer_with_hostname(self, async_client: AsyncClient):
         """Verify printer can be created with a hostname instead of IP address."""
         data = {

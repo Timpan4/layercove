@@ -4586,7 +4586,7 @@ function PrinterCard({
                                 const slotPreset = slotPresets?.[globalTrayId];
 
                                 // Fill level fallback chain: Spoolman → Inventory → AMS remain
-                                const trayTag = (tray?.tray_uuid || tray?.tag_uid || getFallbackSpoolTag(printer.serial_number, ams.id, slotIdx))?.toUpperCase();
+                                const trayTag = (tray?.tray_uuid || tray?.tag_uid || (printer.serial_number && getFallbackSpoolTag(printer.serial_number, ams.id, slotIdx)))?.toUpperCase();
                                 const linkedSpool = trayTag ? linkedSpools?.[trayTag] : undefined;
                                 const spoolmanFill = getSpoolmanFillLevel(linkedSpool);
                                 // Slot-assigned-only spool fill (no tag link required)
@@ -4721,7 +4721,8 @@ function PrinterCard({
                                           // suppressed for Spoolman; the maintainer screenshot shows the badge
                                           // still appearing on slots with a local Devil Design PLA assigned.
                                           onLinkSpool: (spoolmanEnabled && !slotAssignmentForFill && !inventoryAssignment) ? () => {
-                                            const linkTag = (filamentData.trayUuid || filamentData.tagUid || getFallbackSpoolTag(printer.serial_number, ams.id, slotIdx)).toUpperCase();
+                                            const linkTag = (filamentData.trayUuid || filamentData.tagUid || (printer.serial_number && getFallbackSpoolTag(printer.serial_number, ams.id, slotIdx)))?.toUpperCase();
+                                            if (!linkTag) return;
                                             setLinkSpoolModal({
                                               tagUid: filamentData.tagUid || linkTag,
                                               trayUuid: filamentData.trayUuid || '',
@@ -4868,7 +4869,7 @@ function PrinterCard({
                       const htSlotId = tray?.id ?? 0;
 
                         // Fill level fallback chain: Spoolman → Inventory → AMS remain
-                        const htTrayTag = (tray?.tray_uuid || tray?.tag_uid || getFallbackSpoolTag(printer.serial_number, ams.id, htSlotId))?.toUpperCase();
+                        const htTrayTag = (tray?.tray_uuid || tray?.tag_uid || (printer.serial_number && getFallbackSpoolTag(printer.serial_number, ams.id, htSlotId)))?.toUpperCase();
                         const htLinkedSpool = htTrayTag ? linkedSpools?.[htTrayTag] : undefined;
                         const htSpoolmanFill = getSpoolmanFillLevel(htLinkedSpool);
                         const htInventoryAssignment = onGetAssignment?.(printer.id, ams.id, htSlotId);
@@ -5076,7 +5077,8 @@ function PrinterCard({
                                       syncMode: spoolmanSyncMode,
                                       // Suppress Link button when slot is occupied by ANY assignment (Phase 13 P13-6d)
                                       onLinkSpool: (spoolmanEnabled && !htSlotAssignmentForFill && !htInventoryAssignment) ? () => {
-                                        const linkTag = (filamentData.trayUuid || filamentData.tagUid || getFallbackSpoolTag(printer.serial_number, ams.id, htSlotId)).toUpperCase();
+                                        const linkTag = (filamentData.trayUuid || filamentData.tagUid || (printer.serial_number && getFallbackSpoolTag(printer.serial_number, ams.id, htSlotId)))?.toUpperCase();
+                                        if (!linkTag) return;
                                         setLinkSpoolModal({
                                           tagUid: filamentData.tagUid || linkTag,
                                           trayUuid: filamentData.trayUuid || '',
@@ -5254,7 +5256,7 @@ function PrinterCard({
                               const extCloudInfo = extTray.tray_info_idx ? filamentInfo?.[extTray.tray_info_idx] : null;
                               const extSlotPreset = slotPresets?.[255 * 4 + slotTrayId];
 
-                              const extTrayTag = (extTray.tray_uuid || extTray.tag_uid || getFallbackSpoolTag(printer.serial_number, 255, slotTrayId))?.toUpperCase();
+                              const extTrayTag = (extTray.tray_uuid || extTray.tag_uid || (printer.serial_number && getFallbackSpoolTag(printer.serial_number, 255, slotTrayId)))?.toUpperCase();
                               const extLinkedSpool = extTrayTag ? linkedSpools?.[extTrayTag] : undefined;
                               const extSpoolmanFill = getSpoolmanFillLevel(extLinkedSpool);
                               const extInventoryAssignment = onGetAssignment?.(printer.id, 255, slotTrayId);
@@ -5348,7 +5350,8 @@ function PrinterCard({
                                         syncMode: spoolmanSyncMode,
                                         // Suppress Link button when slot is occupied by ANY assignment (Phase 13 P13-6d)
                                         onLinkSpool: (spoolmanEnabled && !extSlotAssignmentForFill && !extInventoryAssignment) ? () => {
-                                          const linkTag = (extFilamentData.trayUuid || extFilamentData.tagUid || getFallbackSpoolTag(printer.serial_number, 255, slotTrayId)).toUpperCase();
+                                          const linkTag = (extFilamentData.trayUuid || extFilamentData.tagUid || (printer.serial_number && getFallbackSpoolTag(printer.serial_number, 255, slotTrayId)))?.toUpperCase();
+                                          if (!linkTag) return;
                                           setLinkSpoolModal({
                                             tagUid: extFilamentData.tagUid || linkTag,
                                             trayUuid: extFilamentData.trayUuid || '',
@@ -6540,8 +6543,8 @@ export function AddPrinterModal({
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
-        ip_address: form.ip_address.trim(),
-        serial_number: form.serial_number.trim() || undefined,
+        ip_address: form.ip_address?.trim() ?? '',
+        serial_number: form.serial_number?.trim() || undefined,
         access_code: form.access_code || undefined,
       });
       if (result.checks.some((c) => c.status === 'fail')) {
@@ -6829,7 +6832,7 @@ export function AddPrinterModal({
                 required
                 pattern="(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)"
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.ip_address}
+                value={form.ip_address ?? ''}
                 onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
                 placeholder="192.168.1.100 or printer.local"
               />
@@ -6840,7 +6843,7 @@ export function AddPrinterModal({
                 type="text"
                 required
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.serial_number}
+                value={form.serial_number ?? ''}
                 onChange={(e) => setForm({ ...form, serial_number: e.target.value })}
                 placeholder="01P00A000000000"
               />
@@ -6918,7 +6921,7 @@ export function AddPrinterModal({
             <button
               type="button"
               onClick={() => setShowDiagnostic(true)}
-              disabled={!form.ip_address.trim()}
+              disabled={!form.ip_address?.trim()}
               className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-bambu-gray hover:text-white disabled:opacity-40 disabled:cursor-not-allowed border border-bambu-dark-tertiary rounded-lg transition-colors"
             >
               <Stethoscope className="w-4 h-4" />
@@ -6962,8 +6965,8 @@ export function AddPrinterModal({
     {showDiagnostic && (
       <ConnectionDiagnosticModal
         connection={{
-          ip_address: form.ip_address.trim(),
-          serial_number: form.serial_number.trim() || undefined,
+          ip_address: form.ip_address?.trim() ?? '',
+          serial_number: form.serial_number?.trim() || undefined,
           access_code: form.access_code || undefined,
         }}
         printerName={form.name || null}
@@ -7301,7 +7304,7 @@ function EditPrinterModal({
   const doSave = () => {
     const data: Partial<PrinterCreate> = {
       name: form.name,
-      ip_address: form.ip_address,
+      ip_address: form.ip_address ?? undefined,
       model: form.model || undefined,
       location: form.location || undefined,
       auto_archive: form.auto_archive,
@@ -7319,8 +7322,8 @@ function EditPrinterModal({
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
-        ip_address: form.ip_address.trim(),
-        serial_number: printer.serial_number,
+        ip_address: form.ip_address?.trim() ?? '',
+        serial_number: printer.serial_number ?? undefined,
         access_code: form.access_code || undefined,
       });
       if (result.checks.some((c) => c.status === 'fail')) {
@@ -7362,7 +7365,7 @@ function EditPrinterModal({
                 required
                 pattern="(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)"
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
-                value={form.ip_address}
+                value={form.ip_address ?? ''}
                 onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
                 placeholder="192.168.1.100 or printer.local"
               />
@@ -7373,7 +7376,7 @@ function EditPrinterModal({
                 type="text"
                 disabled
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray cursor-not-allowed"
-                value={printer.serial_number}
+                value={printer.serial_number ?? '—'}
               />
               <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
             </div>
@@ -8802,7 +8805,7 @@ export function PrintersPage() {
         <AddPrinterModal
           onClose={() => setShowAddModal(false)}
           onAdd={(data) => addMutation.mutate(data)}
-          existingSerials={printers?.map(p => p.serial_number) || []}
+          existingSerials={printers?.flatMap(p => p.serial_number ? [p.serial_number] : []) || []}
         />
       )}
 

@@ -131,7 +131,24 @@ legacy `NOT NULL` constraints while preserving rows, indexes, relationships,
 and foreign-key targets. PostgreSQL uses `ALTER COLUMN ... DROP NOT NULL`.
 Migration tests cover representative Bambu data, foreign-key relationships,
 rerun/startup idempotency, and recovery from an interrupted SQLite rebuild.
-The migration never renames tables or drops existing Bambu values.
+The migration never changes the final table name or drops existing Bambu values.
+
+Migration recovery is automatic. SQLite creates `printers_provider_new`, checks
+that its row count matches `printers`, then swaps tables in the startup
+transaction and recreates explicit indexes. A stale temporary table is removed
+only while the authoritative `printers` table still exists. Transaction rollback
+restores the original table if startup stops after the swap begins. Operators
+restore the database backup if either row-count verification or transaction
+rollback fails; the migration does not guess which partial table is authoritative.
+LayerCove's SQLite connection setup explicitly disables foreign-key enforcement
+before startup migrations. The migration also refuses direct invocation on a
+connection where enforcement remains enabled rather than risking `ON DELETE`
+cascades.
+
+Existing identifiers remain unchanged: table and column names, printer IDs,
+Bambu serial numbers, archive foreign keys, API paths, data directories, and
+environment names. `MFA_ENCRYPTION_KEY` and `.mfa_encryption_key` remain aliases
+for compatibility; the LayerCove environment name is preferred for new setups.
 
 ### Secrets
 
@@ -297,8 +314,9 @@ G-code execution endpoint, or Moonraker proxy is introduced.
 Configured Moonraker targets may be private/LAN addresses because that is the
 product purpose. Link-local metadata, multicast, unspecified, and loopback
 targets are blocked unless an explicit narrowly scoped local-development mode
-is active. Redirects are disabled. Hostname resolution is validated before
-connect and the connected peer must match the approved resolution set; request-
+is active. Issue 4 rejects those categories when supplied as literal IPs.
+Issue 6's connection layer disables redirects, validates hostname resolution
+before connect, and requires the connected peer to match the approved resolution set; request-
 time browser URL overrides are forbidden. The same policy applies to HTTP,
 WebSocket, camera snapshots fetched by LayerCove, and connection tests.
 
