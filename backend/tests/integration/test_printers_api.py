@@ -497,6 +497,7 @@ class TestPrintersAPI:
         from unittest.mock import MagicMock, patch
 
         from backend.app.services.bambu_mqtt import FilaSwitchState, PrinterState
+        from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
         printer = await printer_factory()
 
@@ -512,7 +513,10 @@ class TestPrintersAPI:
         )
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_status = MagicMock(return_value=state)
+            mock_pm.get_snapshot = MagicMock(
+                return_value=PrinterSnapshot(PrinterProvider.BAMBU, True, NormalizedPrinterState.IDLE)
+            )
+            mock_pm.get_bambu_state = MagicMock(return_value=state)
             mock_pm.is_awaiting_plate_clear = MagicMock(return_value=False)
 
             response = await async_client.get(f"/api/v1/printers/{printer.id}/status")
@@ -669,6 +673,7 @@ class TestPrintersAPI:
         from unittest.mock import MagicMock, patch
 
         from backend.app.services.bambu_mqtt import PrinterState
+        from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
         printer = await printer_factory()
 
@@ -678,7 +683,10 @@ class TestPrintersAPI:
         # default fila_switch — installed = False
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_status = MagicMock(return_value=state)
+            mock_pm.get_snapshot = MagicMock(
+                return_value=PrinterSnapshot(PrinterProvider.BAMBU, True, NormalizedPrinterState.IDLE)
+            )
+            mock_pm.get_bambu_state = MagicMock(return_value=state)
             mock_pm.is_awaiting_plate_clear = MagicMock(return_value=False)
 
             response = await async_client.get(f"/api/v1/printers/{printer.id}/status")
@@ -752,7 +760,7 @@ class TestPrinterDataIntegrity:
         printer = await printer_factory(name="Disconnected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.request_status_update.return_value = False
+            mock_pm.get_bambu_client.return_value = None
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/refresh-status")
 
@@ -766,13 +774,32 @@ class TestPrinterDataIntegrity:
         printer = await printer_factory(name="Connected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.request_status_update.return_value = True
+            client = MagicMock()
+            client.request_status_update.return_value = True
+            mock_pm.get_bambu_client.return_value = client
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/refresh-status")
 
             assert response.status_code == 200
             assert response.json()["status"] == "refresh_requested"
-            mock_pm.request_status_update.assert_called_once_with(printer.id)
+            client.request_status_update.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_refresh_status_rejects_non_bambu_provider(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Klipper Printer",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125"},
+            },
+        )
+
+        response = await async_client.post(f"/api/v1/printers/{created.json()['id']}/refresh-status")
+
+        assert response.status_code == 400
+        assert "only supported for Bambu" in response.json()["detail"]
 
     # ========================================================================
     # Current print user endpoint (Issue #206)
@@ -837,7 +864,7 @@ class TestPrintControlAPI:
         printer = await printer_factory(name="Disconnected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = None
+            mock_pm.is_connected.return_value = False
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/stop")
 
@@ -850,17 +877,15 @@ class TestPrintControlAPI:
         """Verify successful stop print request."""
         printer = await printer_factory(name="Printing Printer")
 
-        mock_client = MagicMock()
-        mock_client.stop_print.return_value = True
-
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = mock_client
+            mock_pm.is_connected.return_value = True
+            mock_pm.stop_print_async = AsyncMock(return_value=True)
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/stop")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_client.stop_print.assert_called_once()
+            mock_pm.stop_print_async.assert_awaited_once_with(printer.id)
 
     # ========================================================================
     # Pause print endpoint
@@ -880,7 +905,7 @@ class TestPrintControlAPI:
         printer = await printer_factory(name="Disconnected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = None
+            mock_pm.is_connected.return_value = False
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/pause")
 
@@ -893,17 +918,15 @@ class TestPrintControlAPI:
         """Verify successful pause print request."""
         printer = await printer_factory(name="Printing Printer")
 
-        mock_client = MagicMock()
-        mock_client.pause_print.return_value = True
-
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = mock_client
+            mock_pm.is_connected.return_value = True
+            mock_pm.pause_print_async = AsyncMock(return_value=True)
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/pause")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_client.pause_print.assert_called_once()
+            mock_pm.pause_print_async.assert_awaited_once_with(printer.id)
 
     # ========================================================================
     # Resume print endpoint
@@ -923,7 +946,7 @@ class TestPrintControlAPI:
         printer = await printer_factory(name="Disconnected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = None
+            mock_pm.is_connected.return_value = False
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/resume")
 
@@ -936,17 +959,15 @@ class TestPrintControlAPI:
         """Verify successful resume print request."""
         printer = await printer_factory(name="Paused Printer")
 
-        mock_client = MagicMock()
-        mock_client.resume_print.return_value = True
-
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = mock_client
+            mock_pm.is_connected.return_value = True
+            mock_pm.resume_print_async = AsyncMock(return_value=True)
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/resume")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_client.resume_print.assert_called_once()
+            mock_pm.resume_print_async.assert_awaited_once_with(printer.id)
 
 
 class TestAMSRefreshAPI:

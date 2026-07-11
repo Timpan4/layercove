@@ -105,8 +105,10 @@ from backend.app.services.printer_manager import (
     init_printer_connections,
     parse_plate_id,
     printer_manager,
+    printer_snapshot_to_dict,
     printer_state_to_dict,
 )
+from backend.app.services.printer_types import PrinterSnapshot
 from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.services.spool_assignment_notifications import (
     notify_missing_spool_assignments_on_print_start,
@@ -1065,8 +1067,38 @@ async def _maybe_notify_printer_offline(printer_id: int) -> None:
         _printer_offline_notify_tasks.pop(printer_id, None)
 
 
-async def on_printer_status_change(printer_id: int, state: PrinterState):
+async def on_printer_status_change(printer_id: int, state: PrinterState | PrinterSnapshot):
     """Handle printer status changes - broadcast via WebSocket."""
+    if isinstance(state, PrinterSnapshot):
+        prev_connected = _printer_last_connected.get(printer_id)
+        _printer_last_connected[printer_id] = state.connected
+        if prev_connected is True and not state.connected:
+            existing = _printer_offline_notify_tasks.get(printer_id)
+            if existing is None or existing.done():
+                _printer_offline_notify_tasks[printer_id] = asyncio.create_task(
+                    _maybe_notify_printer_offline(printer_id),
+                    name=f"printer-offline-notify-{printer_id}",
+                )
+        elif state.connected:
+            pending = _printer_offline_notify_tasks.pop(printer_id, None)
+            if pending is not None and not pending.done():
+                pending.cancel()
+
+        status_key = (
+            state.connected,
+            state.state,
+            state.filename,
+            state.progress,
+            state.remaining_seconds,
+            state.current_layer,
+            state.total_layers,
+            tuple(sorted(state.temperatures.items())),
+        )
+        if _last_status_broadcast.get(printer_id) == status_key:
+            return
+        _last_status_broadcast[printer_id] = status_key
+        await ws_manager.send_printer_status(printer_id, printer_snapshot_to_dict(state, printer_id))
+        return
     # Connected-edge reconciliation (#1542 follow-up). When the printer
     # transitions disconnected → connected — which covers both Bambuddy
     # startup (no prior connection) and a mid-session MQTT reconnect — fire
@@ -2379,9 +2411,7 @@ async def on_print_start(printer_id: int, data: dict):
                         f"[PLATE CHECK] Objects detected on plate for printer {printer_id}! "
                         f"Confidence: {plate_result.confidence:.0%}, Diff: {plate_result.difference_percent:.1f}%"
                     )
-                    client = printer_manager.get_client(printer_id)
-                    if client:
-                        client.pause_print()
+                    if await printer_manager.pause_print_async(printer_id):
                         logger.info("[PLATE CHECK] Print paused for printer %s", printer_id)
 
                     # Send notification about plate not empty
@@ -6281,7 +6311,7 @@ async def lifespan(app: FastAPI):
         logging.warning("Failed to shut down camera broadcasters: %s", e)
     stop_expected_prints_cleanup()
     stop_auth_cleanup()
-    printer_manager.disconnect_all()
+    await printer_manager.disconnect_all_async()
     await close_spoolman_client()
 
     # Stop all virtual printer services

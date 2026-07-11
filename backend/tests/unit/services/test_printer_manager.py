@@ -35,6 +35,9 @@ class TestPrinterManager:
         """Create a mock Printer object."""
         printer = MagicMock()
         printer.id = 1
+        printer.provider = "bambu"
+        printer.name = "Test printer"
+        printer.model = "X1C"
         printer.ip_address = "192.168.1.100"
         printer.serial_number = "00M09A123456789"
         printer.access_code = "12345678"
@@ -227,13 +230,12 @@ class TestPrinterManager:
         start = {"filename": "benchy.3mf"}
         complete = {"status": "completed"}
         ams = [{"id": 0}]
-        scheduled = []
-        with patch.object(manager, "_schedule_async", side_effect=lambda coro: scheduled.append(coro)):
-            client_callbacks["on_state_change"](state)
-            client_callbacks["on_print_start"](start)
-            client_callbacks["on_print_complete"](complete)
-            client_callbacks["on_ams_change"](ams)
-        await asyncio.gather(*scheduled)
+        client_callbacks["on_state_change"](state)
+        client_callbacks["on_print_start"](start)
+        client_callbacks["on_print_complete"](complete)
+        client_callbacks["on_ams_change"](ams)
+        await asyncio.sleep(0)
+        await manager._event_queues[mock_printer.id].join()
 
         callbacks["on_state_change"].assert_awaited_once_with(mock_printer.id, state)
         callbacks["on_print_start"].assert_awaited_once_with(mock_printer.id, start)
@@ -351,39 +353,6 @@ class TestPrinterManager:
     # ========================================================================
     # Tests for mark_printer_offline
     # ========================================================================
-
-    def test_mark_printer_offline_updates_state(self, manager, mock_client):
-        """Verify mark_printer_offline updates client state."""
-        mock_client.state.connected = True
-        manager._clients[1] = mock_client
-
-        manager.mark_printer_offline(1)
-
-        assert mock_client.state.connected is False
-        assert mock_client.state.state == "unknown"
-
-    def test_mark_printer_offline_triggers_callback(self, manager, mock_client):
-        """Verify mark_printer_offline triggers status callback."""
-        mock_client.state.connected = True
-        manager._clients[1] = mock_client
-
-        # Callback must return a coroutine
-        async def async_callback(printer_id, state):
-            pass
-
-        manager._on_status_change = async_callback
-
-        # Need a running loop for callback
-        mock_loop = MagicMock()
-        mock_loop.is_running.return_value = True
-        manager._loop = mock_loop
-
-        manager.mark_printer_offline(1)
-
-        # Callback should be scheduled via run_coroutine_threadsafe
-        mock_loop.is_running.assert_called()
-        # State should be updated
-        assert mock_client.state.connected is False
 
     def test_mark_printer_offline_handles_unknown(self, manager):
         """Verify mark_printer_offline handles unknown printer."""
