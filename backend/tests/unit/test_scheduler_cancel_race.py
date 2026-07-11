@@ -43,7 +43,7 @@ async def queue_factory(tmp_path):
     session_maker = async_sessionmaker(engine, expire_on_commit=False)
     case_counter = 0
 
-    async def make_case(*, status="pending"):
+    async def make_case(*, status="pending", **print_options):
         nonlocal case_counter
         case_counter += 1
 
@@ -79,17 +79,21 @@ async def queue_factory(tmp_path):
             db.add(archive)
             await db.flush()
 
+            options = {
+                "bed_levelling": True,
+                "flow_cali": False,
+                "vibration_cali": True,
+                "layer_inspect": False,
+                "timelapse": False,
+                "use_ams": True,
+                "nozzle_offset_cali": True,
+            }
+            options.update(print_options)
             item = PrintQueueItem(
                 printer_id=printer.id,
                 archive_id=archive.id,
                 status=status,
-                bed_levelling=True,
-                flow_cali=False,
-                vibration_cali=True,
-                layer_inspect=False,
-                timelapse=False,
-                use_ams=True,
-                nozzle_offset_cali=True,
+                **options,
             )
             db.add(item)
             await db.commit()
@@ -226,7 +230,18 @@ async def test_happy_path_still_dispatches(queue_factory):
     Regression guard so the CAS doesn't accidentally block normal dispatch
     on a row that was always pending.
     """
-    ctx = await queue_factory()
+    ctx = await queue_factory(
+        plate_id=4,
+        ams_mapping="[3, 2, 1, 0]",
+        bed_levelling=False,
+        flow_cali=True,
+        vibration_cali=False,
+        layer_inspect=True,
+        timelapse=True,
+        use_ams=False,
+        nozzle_offset_cali=False,
+        nozzle_mapping='{"left": 1, "right": 0}',
+    )
 
     await _dispatch(ctx)
 
@@ -239,14 +254,14 @@ async def test_happy_path_still_dispatches(queue_factory):
     assert args[0] == ctx.printer_id
     assert args[1].endswith(".3mf")
     assert kwargs == {
-        "plate_id": 1,
-        "ams_mapping": None,
-        "bed_levelling": True,
-        "flow_cali": False,
-        "vibration_cali": True,
-        "layer_inspect": False,
-        "timelapse": False,
-        "use_ams": True,
-        "nozzle_offset_cali": True,
-        "nozzle_mapping": None,
+        "plate_id": 4,
+        "ams_mapping": [3, 2, 1, 0],
+        "bed_levelling": False,
+        "flow_cali": True,
+        "vibration_cali": False,
+        "layer_inspect": True,
+        "timelapse": True,
+        "use_ams": False,
+        "nozzle_offset_cali": False,
+        "nozzle_mapping": '{"left": 1, "right": 0}',
     }
