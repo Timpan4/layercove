@@ -497,6 +497,7 @@ class TestPrintersAPI:
         from unittest.mock import MagicMock, patch
 
         from backend.app.services.bambu_mqtt import FilaSwitchState, PrinterState
+        from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
         printer = await printer_factory()
 
@@ -512,7 +513,10 @@ class TestPrintersAPI:
         )
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_status = MagicMock(return_value=state)
+            mock_pm.get_snapshot = MagicMock(
+                return_value=PrinterSnapshot(PrinterProvider.BAMBU, True, NormalizedPrinterState.IDLE)
+            )
+            mock_pm.get_bambu_state = MagicMock(return_value=state)
             mock_pm.is_awaiting_plate_clear = MagicMock(return_value=False)
 
             response = await async_client.get(f"/api/v1/printers/{printer.id}/status")
@@ -669,6 +673,7 @@ class TestPrintersAPI:
         from unittest.mock import MagicMock, patch
 
         from backend.app.services.bambu_mqtt import PrinterState
+        from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
         printer = await printer_factory()
 
@@ -678,7 +683,10 @@ class TestPrintersAPI:
         # default fila_switch — installed = False
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_status = MagicMock(return_value=state)
+            mock_pm.get_snapshot = MagicMock(
+                return_value=PrinterSnapshot(PrinterProvider.BAMBU, True, NormalizedPrinterState.IDLE)
+            )
+            mock_pm.get_bambu_state = MagicMock(return_value=state)
             mock_pm.is_awaiting_plate_clear = MagicMock(return_value=False)
 
             response = await async_client.get(f"/api/v1/printers/{printer.id}/status")
@@ -852,13 +860,13 @@ class TestPrintControlAPI:
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
             mock_pm.is_connected.return_value = True
-            mock_pm.stop_print.return_value = True
+            mock_pm.stop_print_async = AsyncMock(return_value=True)
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/stop")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_pm.stop_print.assert_called_once_with(printer.id)
+            mock_pm.stop_print_async.assert_awaited_once_with(printer.id)
 
     # ========================================================================
     # Pause print endpoint
@@ -893,13 +901,13 @@ class TestPrintControlAPI:
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
             mock_pm.is_connected.return_value = True
-            mock_pm.pause_print.return_value = True
+            mock_pm.pause_print_async = AsyncMock(return_value=True)
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/pause")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_pm.pause_print.assert_called_once_with(printer.id)
+            mock_pm.pause_print_async.assert_awaited_once_with(printer.id)
 
     # ========================================================================
     # Resume print endpoint
@@ -934,13 +942,13 @@ class TestPrintControlAPI:
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
             mock_pm.is_connected.return_value = True
-            mock_pm.resume_print.return_value = True
+            mock_pm.resume_print_async = AsyncMock(return_value=True)
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/resume")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_pm.resume_print.assert_called_once_with(printer.id)
+            mock_pm.resume_print_async.assert_awaited_once_with(printer.id)
 
 
 class TestAMSRefreshAPI:

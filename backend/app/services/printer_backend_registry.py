@@ -7,6 +7,7 @@ from backend.app.services.printer_backend import PrinterBackend, UnsupportedPrin
 from backend.app.services.printer_types import PrinterProvider
 
 BackendFactory = Callable[..., PrinterBackend]
+_MISSING = object()
 
 
 class PrinterBackendRegistry:
@@ -17,12 +18,14 @@ class PrinterBackendRegistry:
         self._factories[provider] = factory
 
     def create(self, printer: Any, **kwargs: Any) -> PrinterBackend:
-        provider = getattr(printer, "provider", PrinterProvider.BAMBU)
-        if not isinstance(provider, (str, PrinterProvider)):
+        provider = getattr(printer, "provider", _MISSING)
+        if provider is _MISSING:
             provider = PrinterProvider.BAMBU
+        elif not isinstance(provider, (str, PrinterProvider)):
+            raise UnsupportedPrinterProviderError(provider)
         try:
             provider = PrinterProvider(provider)
-        except ValueError as exc:
+        except (TypeError, ValueError) as exc:
             raise UnsupportedPrinterProviderError(provider) from exc
 
         factory = self._factories.get(provider)

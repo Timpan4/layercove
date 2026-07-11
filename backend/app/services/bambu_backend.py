@@ -1,10 +1,17 @@
 """Bambu implementation of the printer backend boundary."""
 
+import asyncio
 from collections.abc import Callable
 from typing import Any
 
 from backend.app.services.bambu_mqtt import BambuMQTTClient, PrinterState
-from backend.app.services.printer_backend import BackendError
+from backend.app.services.printer_backend import (
+    BackendError,
+    BackendEventSink,
+    JobLifecycle,
+    ProviderEvent,
+    StatusChanged,
+)
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
     PrinterCapabilities,
@@ -32,16 +39,8 @@ class BambuBackend:
         self,
         printer: Any,
         *,
+        emit: BackendEventSink,
         client_factory: Callable[..., BambuMQTTClient] | None = None,
-        on_state_change: Callable[[PrinterState], None] | None = None,
-        on_print_start: Callable[[dict], None] | None = None,
-        on_print_complete: Callable[[dict], None] | None = None,
-        on_ams_change: Callable[[list], None] | None = None,
-        on_layer_change: Callable[[int], None] | None = None,
-        on_bed_temp_update: Callable[[float], None] | None = None,
-        on_drying_complete: Callable[[int], None] | None = None,
-        on_print_running_observed: Callable[[dict], None] | None = None,
-        on_finish_photo_moment: Callable[[dict], None] | None = None,
     ):
         if not all((printer.ip_address, printer.serial_number, printer.access_code)):
             raise BackendError("Bambu printer configuration is incomplete")
@@ -51,33 +50,35 @@ class BambuBackend:
             serial_number=printer.serial_number,
             access_code=printer.access_code,
             model=printer.model,
-            on_state_change=on_state_change,
-            on_print_start=on_print_start,
-            on_print_complete=on_print_complete,
-            on_ams_change=on_ams_change,
-            on_layer_change=on_layer_change,
-            on_bed_temp_update=on_bed_temp_update,
-            on_drying_complete=on_drying_complete,
-            on_print_running_observed=on_print_running_observed,
-            on_finish_photo_moment=on_finish_photo_moment,
+            on_state_change=lambda state: emit(StatusChanged(self._snapshot_from_state(state), state)),
+            on_print_start=lambda data: emit(JobLifecycle("started", data)),
+            on_print_complete=lambda data: emit(JobLifecycle("completed", data)),
+            on_ams_change=lambda data: emit(ProviderEvent("ams_changed", data)),
+            on_layer_change=lambda layer: emit(ProviderEvent("layer_changed", layer)),
+            on_bed_temp_update=lambda temp: emit(ProviderEvent("bed_temperature_changed", temp)),
+            on_drying_complete=lambda ams_id: emit(ProviderEvent("drying_completed", ams_id)),
+            on_print_running_observed=lambda data: emit(ProviderEvent("print_running_observed", data)),
+            on_finish_photo_moment=lambda data: emit(ProviderEvent("finish_photo_moment", data)),
         )
 
     @property
     def capabilities(self) -> PrinterCapabilities:
         return capabilities_for_provider(self.provider)
 
-    def connect(self) -> None:
+    async def connect(self) -> None:
         self.client.connect()
 
-    def disconnect(self, timeout: float = 0) -> None:
-        self.client.disconnect(timeout=timeout)
+    async def disconnect(self, timeout: float = 0) -> None:
+        await asyncio.to_thread(self.client.disconnect, timeout=timeout)
 
     def legacy_state(self) -> PrinterState:
         self.client.check_staleness()
         return self.client.state
 
     def snapshot(self) -> PrinterSnapshot:
-        state = self.legacy_state()
+        return self._snapshot_from_state(self.legacy_state())
+
+    def _snapshot_from_state(self, state: PrinterState) -> PrinterSnapshot:
         normalized = _BAMBU_STATES.get(state.state, NormalizedPrinterState.UNKNOWN)
         if not state.connected:
             normalized = NormalizedPrinterState.OFFLINE
@@ -93,14 +94,14 @@ class BambuBackend:
             temperatures=dict(state.temperatures),
         )
 
-    def start_print(self, filename: str, plate_id: int = 1, **options: object) -> bool:
+    async def start_print(self, filename: str, plate_id: int = 1, **options: object) -> bool:
         return self.client.start_print(filename, plate_id, **options)
 
-    def pause(self) -> bool:
+    async def pause(self) -> bool:
         return self.client.pause_print()
 
-    def resume(self) -> bool:
+    async def resume(self) -> bool:
         return self.client.resume_print()
 
-    def cancel(self) -> bool:
+    async def cancel(self) -> bool:
         return self.client.stop_print()

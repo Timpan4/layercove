@@ -25,7 +25,8 @@ from backend.app.core.auth import is_auth_enabled, verify_websocket_token
 from backend.app.core.database import async_session
 from backend.app.core.websocket import ws_manager
 from backend.app.models.user import User
-from backend.app.services.printer_manager import printer_manager, printer_state_to_dict
+from backend.app.services.printer_manager import printer_manager, printer_status_to_dict
+from backend.app.services.printer_types import PrinterProvider
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -106,13 +107,18 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
 
     try:
         # Send initial status of all printers.
-        statuses = printer_manager.get_all_statuses()
-        for printer_id, state in statuses.items():
+        snapshots = printer_manager.get_all_snapshots()
+        for printer_id, snapshot in snapshots.items():
+            state = (
+                printer_manager.get_bambu_state(printer_id) if snapshot.provider is PrinterProvider.BAMBU else snapshot
+            )
+            if state is None:
+                continue
             await websocket.send_json(
                 {
                     "type": "printer_status",
                     "printer_id": printer_id,
-                    "data": printer_state_to_dict(
+                    "data": printer_status_to_dict(
                         state,
                         printer_id,
                         printer_manager.get_model(printer_id),
@@ -121,7 +127,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
                 }
             )
 
-        logger.info("Sent initial status for %s printers", len(statuses))
+        logger.info("Sent initial status for %s printers", len(snapshots))
 
         # Keep connection alive and handle incoming messages.
         while True:
@@ -135,13 +141,20 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
             elif data.get("type") == "get_status":
                 printer_id = data.get("printer_id")
                 if printer_id:
-                    state = printer_manager.get_status(printer_id)
+                    snapshot = printer_manager.get_snapshot(printer_id)
+                    state = None
+                    if snapshot is not None:
+                        state = (
+                            printer_manager.get_bambu_state(printer_id)
+                            if snapshot.provider is PrinterProvider.BAMBU
+                            else snapshot
+                        )
                     if state:
                         await websocket.send_json(
                             {
                                 "type": "printer_status",
                                 "printer_id": printer_id,
-                                "data": printer_state_to_dict(
+                                "data": printer_status_to_dict(
                                     state,
                                     printer_id,
                                     printer_manager.get_model(printer_id),

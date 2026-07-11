@@ -206,7 +206,7 @@ async def webhook_stop_print(
         raise HTTPException(status_code=409, detail="No print in progress")
 
     try:
-        await printer_manager.stop_print(printer_id)
+        await printer_manager.stop_print_async(printer_id)
     except Exception as e:
         logger.error("Failed to stop print: %s", e)
         raise HTTPException(status_code=500, detail=str(e))

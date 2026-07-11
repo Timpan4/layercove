@@ -422,7 +422,7 @@ async def update_printer(
     if printer.provider == PrinterProvider.BAMBU and any(
         k in update_data for k in ["ip_address", "access_code", "is_active"]
     ):
-        printer_manager.disconnect_printer(printer_id)
+        await printer_manager.disconnect_printer_async(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
 
@@ -454,7 +454,7 @@ async def delete_printer(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    printer_manager.disconnect_printer(printer_id)
+    await printer_manager.disconnect_printer_async(printer_id)
 
     if delete_archives:
         # Delete all archives for this printer
@@ -499,13 +499,31 @@ async def get_printer_status(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    state = printer_manager.get_status(printer_id)
-    if not state:
+    snapshot = printer_manager.get_snapshot(printer_id)
+    if snapshot is None:
         return PrinterStatus(
             id=printer_id,
             name=printer.name,
             connected=False,
         )
+
+    if snapshot.provider is not PrinterProvider.BAMBU:
+        return PrinterStatus(
+            id=printer_id,
+            name=printer.name,
+            connected=snapshot.connected,
+            state=snapshot.state.value,
+            current_print=snapshot.filename,
+            progress=snapshot.progress,
+            remaining_time=snapshot.remaining_seconds,
+            layer_num=snapshot.current_layer,
+            total_layers=snapshot.total_layers,
+            temperatures=dict(snapshot.temperatures),
+        )
+
+    state = printer_manager.get_bambu_state(printer_id)
+    if state is None:
+        return PrinterStatus(id=printer_id, name=printer.name, connected=False)
 
     # Determine cover URL if there's an active print (including paused)
     cover_url = None
@@ -915,7 +933,7 @@ async def disconnect_printer(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    printer_manager.disconnect_printer(printer_id)
+    await printer_manager.disconnect_printer_async(printer_id)
     return {"connected": False}
 
 
@@ -2834,7 +2852,7 @@ async def stop_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = printer_manager.stop_print(printer_id)
+    success = await printer_manager.stop_print_async(printer_id)
     if not success:
         raise HTTPException(500, "Failed to stop print")
 
@@ -2903,7 +2921,7 @@ async def pause_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = printer_manager.pause_print(printer_id)
+    success = await printer_manager.pause_print_async(printer_id)
     if not success:
         raise HTTPException(500, "Failed to pause print")
 
@@ -2925,7 +2943,7 @@ async def resume_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = printer_manager.resume_print(printer_id)
+    success = await printer_manager.resume_print_async(printer_id)
     if not success:
         raise HTTPException(500, "Failed to resume print")
 
