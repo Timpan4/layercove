@@ -6,6 +6,9 @@
 
 **Reviewed by:** `/root/review_adr` independent architecture-review subagent
 
+**Owner approval:** Repository owner authorized review fixes and merge after
+architecture and security review on 2026-07-11
+
 **Accepted:** 2026-07-11
 
 **Tracking:** [LayerCove epic #1](https://github.com/Timpan4/layercove/issues/1),
