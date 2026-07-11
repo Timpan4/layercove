@@ -2379,9 +2379,7 @@ async def on_print_start(printer_id: int, data: dict):
                         f"[PLATE CHECK] Objects detected on plate for printer {printer_id}! "
                         f"Confidence: {plate_result.confidence:.0%}, Diff: {plate_result.difference_percent:.1f}%"
                     )
-                    client = printer_manager.get_client(printer_id)
-                    if client:
-                        client.pause_print()
+                    if printer_manager.pause_print(printer_id):
                         logger.info("[PLATE CHECK] Print paused for printer %s", printer_id)
 
                     # Send notification about plate not empty

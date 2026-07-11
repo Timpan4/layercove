@@ -8,7 +8,11 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.printer import Printer
+from backend.app.services.bambu_backend import BambuBackend
 from backend.app.services.bambu_mqtt import BambuMQTTClient, MQTTLogEntry, PrinterState, get_stage_name
+from backend.app.services.printer_backend import BackendError, PrinterBackend
+from backend.app.services.printer_backend_registry import PrinterBackendRegistry
+from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -293,8 +297,19 @@ class PrinterInfo:
 class PrinterManager:
     """Manager for multiple printer connections."""
 
-    def __init__(self):
+    def __init__(self, registry: PrinterBackendRegistry | None = None):
         self._clients: dict[int, BambuMQTTClient] = {}
+        self._backends: dict[int, PrinterBackend] = {}
+        self._registry = registry or PrinterBackendRegistry()
+        if registry is None:
+            self._registry.register(
+                PrinterProvider.BAMBU,
+                lambda printer, **callbacks: BambuBackend(
+                    printer,
+                    client_factory=BambuMQTTClient,
+                    **callbacks,
+                ),
+            )
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
         self._on_print_start: Callable[[int, dict], None] | None = None
@@ -514,7 +529,7 @@ class PrinterManager:
 
     async def connect_printer(self, printer: Printer) -> bool:
         """Connect to a printer."""
-        if printer.id in self._clients:
+        if printer.id in self._backends or printer.id in self._clients:
             self.disconnect_printer(printer.id)
 
         printer_id = printer.id
@@ -555,34 +570,41 @@ class PrinterManager:
             if self._on_drying_complete:
                 self._schedule_async(self._on_drying_complete(printer_id, ams_id))
 
-        client = BambuMQTTClient(
-            ip_address=printer.ip_address,
-            serial_number=printer.serial_number,
-            access_code=printer.access_code,
-            model=printer.model,
-            on_state_change=on_state_change,
-            on_print_start=on_print_start,
-            on_print_complete=on_print_complete,
-            on_ams_change=on_ams_change,
-            on_layer_change=on_layer_change,
-            on_bed_temp_update=on_bed_temp_update,
-            on_drying_complete=on_drying_complete,
-            on_print_running_observed=on_print_running_observed,
-            on_finish_photo_moment=on_finish_photo_moment,
-        )
+        try:
+            backend = self._registry.create(
+                printer,
+                on_state_change=on_state_change,
+                on_print_start=on_print_start,
+                on_print_complete=on_print_complete,
+                on_ams_change=on_ams_change,
+                on_layer_change=on_layer_change,
+                on_bed_temp_update=on_bed_temp_update,
+                on_drying_complete=on_drying_complete,
+                on_print_running_observed=on_print_running_observed,
+                on_finish_photo_moment=on_finish_photo_moment,
+            )
+        except BackendError as exc:
+            logger.error("Cannot connect printer %s: %s", printer_id, exc)
+            return False
 
-        client.connect()
-        self._clients[printer_id] = client
+        backend.connect()
+        self._backends[printer_id] = backend
+        if isinstance(backend, BambuBackend):
+            self._clients[printer_id] = backend.client
         self._models[printer_id] = printer.model  # Cache model for feature detection
         self._printer_info[printer_id] = PrinterInfo(printer.name, printer.serial_number)
 
         # Wait a moment for connection
         await asyncio.sleep(1)
-        return client.state.connected
+        return backend.snapshot().connected
 
     def disconnect_printer(self, printer_id: int, timeout: float = 0):
         """Disconnect from a printer."""
-        if printer_id in self._clients:
+        backend = self._backends.pop(printer_id, None)
+        if backend is not None:
+            backend.disconnect(timeout=timeout)
+            self._clients.pop(printer_id, None)
+        elif printer_id in self._clients:
             self._clients[printer_id].disconnect(timeout=timeout)
             del self._clients[printer_id]
         self._models.pop(printer_id, None)  # Clean up model cache
@@ -590,11 +612,16 @@ class PrinterManager:
 
     def disconnect_all(self, timeout: float = 0):
         """Disconnect from all printers."""
-        for printer_id in list(self._clients.keys()):
+        for printer_id in list(self._backends.keys() | self._clients.keys()):
             self.disconnect_printer(printer_id, timeout=timeout)
 
-    def get_status(self, printer_id: int) -> PrinterState | None:
+    def get_status(self, printer_id: int) -> PrinterState | PrinterSnapshot | None:
         """Get the current status of a printer (checks for stale connections)."""
+        backend = self._backends.get(printer_id)
+        if backend is not None:
+            if isinstance(backend, BambuBackend):
+                return backend.legacy_state()
+            return backend.snapshot()
         if printer_id in self._clients:
             client = self._clients[printer_id]
             # Check staleness and update connected state if needed
@@ -618,6 +645,12 @@ class PrinterManager:
         state = self.get_status(printer_id)
         if not state or not state.connected:
             return False
+        if isinstance(state, PrinterSnapshot):
+            return state.state in {
+                NormalizedPrinterState.PRINTING,
+                NormalizedPrinterState.PAUSED,
+                NormalizedPrinterState.PREPARING,
+            }
         return state.state in self.ACTIVE_PRINT_STATES
 
     def get_model(self, printer_id: int) -> str | None:
@@ -636,10 +669,14 @@ class PrinterManager:
         client = self._clients.get(printer_id)
         return client._drying_targets if client else None
 
-    def get_all_statuses(self) -> dict[int, PrinterState]:
+    def get_all_statuses(self) -> dict[int, PrinterState | PrinterSnapshot]:
         """Get status of all connected printers (checks for stale connections)."""
         result = {}
+        for printer_id, backend in self._backends.items():
+            result[printer_id] = backend.legacy_state() if isinstance(backend, BambuBackend) else backend.snapshot()
         for printer_id, client in self._clients.items():
+            if printer_id in self._backends:
+                continue
             # Check staleness and update connected state if needed
             client.check_staleness()
             result[printer_id] = client.state
@@ -647,6 +684,9 @@ class PrinterManager:
 
     def is_connected(self, printer_id: int) -> bool:
         """Check if a printer is connected (checks for stale connections)."""
+        backend = self._backends.get(printer_id)
+        if backend is not None:
+            return backend.snapshot().connected
         if printer_id in self._clients:
             client = self._clients[printer_id]
             # Check staleness and update connected state if needed
@@ -654,8 +694,12 @@ class PrinterManager:
         return False
 
     def get_client(self, printer_id: int) -> BambuMQTTClient | None:
-        """Get the MQTT client for a printer."""
+        """Get Bambu-only MQTT client for legacy provider-specific consumers."""
         return self._clients.get(printer_id)
+
+    def get_backend(self, printer_id: int) -> PrinterBackend | None:
+        """Get a provider backend for generic application behavior."""
+        return self._backends.get(printer_id)
 
     def mark_printer_offline(self, printer_id: int):
         """Mark a printer as offline and trigger status callback.
@@ -708,6 +752,21 @@ class PrinterManager:
             caller.lineno,
             caller.name,
         )
+        backend = self._backends.get(printer_id)
+        if backend is not None:
+            return backend.start_print(
+                filename,
+                plate_id,
+                ams_mapping=ams_mapping,
+                timelapse=timelapse,
+                bed_levelling=bed_levelling,
+                flow_cali=flow_cali,
+                vibration_cali=vibration_cali,
+                layer_inspect=layer_inspect,
+                use_ams=use_ams,
+                nozzle_offset_cali=nozzle_offset_cali,
+                nozzle_mapping=nozzle_mapping,
+            )
         if printer_id in self._clients:
             return self._clients[printer_id].start_print(
                 filename,
@@ -726,9 +785,28 @@ class PrinterManager:
 
     def stop_print(self, printer_id: int) -> bool:
         """Stop the current print on a connected printer."""
+        backend = self._backends.get(printer_id)
+        if backend is not None:
+            return backend.cancel()
         if printer_id in self._clients:
             return self._clients[printer_id].stop_print()
         return False
+
+    def pause_print(self, printer_id: int) -> bool:
+        """Pause current print through its provider backend."""
+        backend = self._backends.get(printer_id)
+        if backend is not None:
+            return backend.pause()
+        client = self._clients.get(printer_id)
+        return client.pause_print() if client else False
+
+    def resume_print(self, printer_id: int) -> bool:
+        """Resume current print through its provider backend."""
+        backend = self._backends.get(printer_id)
+        if backend is not None:
+            return backend.resume()
+        client = self._clients.get(printer_id)
+        return client.resume_print() if client else False
 
     async def wait_for_cooldown(
         self,

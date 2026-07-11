@@ -837,7 +837,7 @@ class TestPrintControlAPI:
         printer = await printer_factory(name="Disconnected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = None
+            mock_pm.is_connected.return_value = False
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/stop")
 
@@ -850,17 +850,15 @@ class TestPrintControlAPI:
         """Verify successful stop print request."""
         printer = await printer_factory(name="Printing Printer")
 
-        mock_client = MagicMock()
-        mock_client.stop_print.return_value = True
-
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = mock_client
+            mock_pm.is_connected.return_value = True
+            mock_pm.stop_print.return_value = True
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/stop")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_client.stop_print.assert_called_once()
+            mock_pm.stop_print.assert_called_once_with(printer.id)
 
     # ========================================================================
     # Pause print endpoint
@@ -880,7 +878,7 @@ class TestPrintControlAPI:
         printer = await printer_factory(name="Disconnected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = None
+            mock_pm.is_connected.return_value = False
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/pause")
 
@@ -893,17 +891,15 @@ class TestPrintControlAPI:
         """Verify successful pause print request."""
         printer = await printer_factory(name="Printing Printer")
 
-        mock_client = MagicMock()
-        mock_client.pause_print.return_value = True
-
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = mock_client
+            mock_pm.is_connected.return_value = True
+            mock_pm.pause_print.return_value = True
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/pause")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_client.pause_print.assert_called_once()
+            mock_pm.pause_print.assert_called_once_with(printer.id)
 
     # ========================================================================
     # Resume print endpoint
@@ -923,7 +919,7 @@ class TestPrintControlAPI:
         printer = await printer_factory(name="Disconnected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = None
+            mock_pm.is_connected.return_value = False
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/resume")
 
@@ -936,17 +932,15 @@ class TestPrintControlAPI:
         """Verify successful resume print request."""
         printer = await printer_factory(name="Paused Printer")
 
-        mock_client = MagicMock()
-        mock_client.resume_print.return_value = True
-
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.get_client.return_value = mock_client
+            mock_pm.is_connected.return_value = True
+            mock_pm.resume_print.return_value = True
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/print/resume")
 
             assert response.status_code == 200
             assert response.json()["success"] is True
-            mock_client.resume_print.assert_called_once()
+            mock_pm.resume_print.assert_called_once_with(printer.id)
 
 
 class TestAMSRefreshAPI:

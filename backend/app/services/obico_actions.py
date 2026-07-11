@@ -39,12 +39,8 @@ async def _get_printer_name(printer_id: int) -> str:
 def _pause_print(printer_id: int) -> None:
     from backend.app.services.printer_manager import printer_manager
 
-    client = printer_manager.get_client(printer_id)
-    if not client:
-        logger.warning("Obico pause: no MQTT client for printer %s", printer_id)
-        return
-    if not client.pause_print():
-        logger.warning("Obico pause: pause_print() returned False for printer %s", printer_id)
+    if not printer_manager.pause_print(printer_id):
+        logger.warning("Obico pause: pause failed for printer %s", printer_id)
 
 
 async def _turn_off_linked_plugs(printer_id: int) -> None:

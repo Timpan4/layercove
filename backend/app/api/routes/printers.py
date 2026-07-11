@@ -2831,11 +2831,10 @@ async def stop_print(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    client = printer_manager.get_client(printer_id)
-    if not client:
+    if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = client.stop_print()
+    success = printer_manager.stop_print(printer_id)
     if not success:
         raise HTTPException(500, "Failed to stop print")
 
@@ -2901,11 +2900,10 @@ async def pause_print(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    client = printer_manager.get_client(printer_id)
-    if not client:
+    if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = client.pause_print()
+    success = printer_manager.pause_print(printer_id)
     if not success:
         raise HTTPException(500, "Failed to pause print")
 
@@ -2924,11 +2922,10 @@ async def resume_print(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    client = printer_manager.get_client(printer_id)
-    if not client:
+    if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = client.resume_print()
+    success = printer_manager.resume_print(printer_id)
     if not success:
         raise HTTPException(500, "Failed to resume print")
 
