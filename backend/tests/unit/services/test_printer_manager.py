@@ -3,6 +3,7 @@
 Tests printer connection management, status tracking, and print control.
 """
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -198,6 +199,47 @@ class TestPrinterManager:
 
             assert result is False
 
+    @pytest.mark.asyncio
+    async def test_connect_printer_forwards_bambu_callbacks_with_printer_id(self, manager, mock_printer):
+        """Freeze the manager-to-Bambu callback boundary before adapters land."""
+        callbacks = {
+            "on_state_change": AsyncMock(),
+            "on_print_start": AsyncMock(),
+            "on_print_complete": AsyncMock(),
+            "on_ams_change": AsyncMock(),
+        }
+        manager.set_event_loop(asyncio.get_running_loop())
+        manager.set_status_change_callback(callbacks["on_state_change"])
+        manager.set_print_start_callback(callbacks["on_print_start"])
+        manager.set_print_complete_callback(callbacks["on_print_complete"])
+        manager.set_ams_change_callback(callbacks["on_ams_change"])
+
+        with (
+            patch("backend.app.services.printer_manager.BambuMQTTClient") as mock_client_class,
+            patch("backend.app.services.printer_manager.asyncio.sleep", new=AsyncMock()),
+        ):
+            client = mock_client_class.return_value
+            client.state.connected = True
+            assert await manager.connect_printer(mock_printer) is True
+            client_callbacks = mock_client_class.call_args.kwargs
+
+        state = MagicMock()
+        start = {"filename": "benchy.3mf"}
+        complete = {"status": "completed"}
+        ams = [{"id": 0}]
+        scheduled = []
+        with patch.object(manager, "_schedule_async", side_effect=lambda coro: scheduled.append(coro)):
+            client_callbacks["on_state_change"](state)
+            client_callbacks["on_print_start"](start)
+            client_callbacks["on_print_complete"](complete)
+            client_callbacks["on_ams_change"](ams)
+        await asyncio.gather(*scheduled)
+
+        callbacks["on_state_change"].assert_awaited_once_with(mock_printer.id, state)
+        callbacks["on_print_start"].assert_awaited_once_with(mock_printer.id, start)
+        callbacks["on_print_complete"].assert_awaited_once_with(mock_printer.id, complete)
+        callbacks["on_ams_change"].assert_awaited_once_with(mock_printer.id, ams)
+
     # ========================================================================
     # Tests for disconnect_printer
     # ========================================================================
@@ -387,6 +429,41 @@ class TestPrinterManager:
         """Verify start_print returns False for unknown printer."""
         result = manager.start_print(999, "test.gcode")
         assert result is False
+
+    def test_start_print_forwards_all_bambu_options(self, manager, mock_client):
+        """Freeze every scheduler-controlled Bambu print option at the manager seam."""
+        mock_client.start_print.return_value = True
+        manager._clients[1] = mock_client
+
+        result = manager.start_print(
+            1,
+            "multi-color.3mf",
+            plate_id=4,
+            ams_mapping=[3, 2, 1, 0],
+            bed_levelling=False,
+            flow_cali=True,
+            vibration_cali=False,
+            layer_inspect=True,
+            timelapse=True,
+            use_ams=False,
+            nozzle_offset_cali=True,
+            nozzle_mapping='{"left": 1, "right": 0}',
+        )
+
+        assert result is True
+        mock_client.start_print.assert_called_once_with(
+            "multi-color.3mf",
+            4,
+            ams_mapping=[3, 2, 1, 0],
+            timelapse=True,
+            bed_levelling=False,
+            flow_cali=True,
+            vibration_cali=False,
+            layer_inspect=True,
+            use_ams=False,
+            nozzle_offset_cali=True,
+            nozzle_mapping='{"left": 1, "right": 0}',
+        )
 
     def test_start_print_logs_print_command_with_caller(self, manager, mock_client, caplog):
         """Verify start_print logs PRINT COMMAND with caller info (#374)."""
@@ -843,6 +920,15 @@ class TestPrinterStateToDict:
         assert result["state"] == "RUNNING"
         assert result["progress"] == 50
         assert result["temperatures"] == {"nozzle": 200, "bed": 60}
+
+    @pytest.mark.parametrize("state_name", ["RUNNING", "PAUSE", "IDLE"])
+    def test_bambu_activity_state_is_serialized_unchanged(self, mock_state, state_name):
+        """Clients depend on Bambu's active, paused, and idle state names."""
+        mock_state.state = state_name
+
+        result = printer_state_to_dict(mock_state)
+
+        assert result["state"] == state_name
 
     def test_ams_data_parsing(self, mock_state):
         """Verify AMS data is parsed correctly."""
