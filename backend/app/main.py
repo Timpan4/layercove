@@ -105,8 +105,10 @@ from backend.app.services.printer_manager import (
     init_printer_connections,
     parse_plate_id,
     printer_manager,
+    printer_snapshot_to_dict,
     printer_state_to_dict,
 )
+from backend.app.services.printer_types import PrinterSnapshot
 from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.services.spool_assignment_notifications import (
     notify_missing_spool_assignments_on_print_start,
@@ -1065,8 +1067,24 @@ async def _maybe_notify_printer_offline(printer_id: int) -> None:
         _printer_offline_notify_tasks.pop(printer_id, None)
 
 
-async def on_printer_status_change(printer_id: int, state: PrinterState):
+async def on_printer_status_change(printer_id: int, state: PrinterState | PrinterSnapshot):
     """Handle printer status changes - broadcast via WebSocket."""
+    if isinstance(state, PrinterSnapshot):
+        status_key = (
+            state.connected,
+            state.state,
+            state.filename,
+            state.progress,
+            state.remaining_seconds,
+            state.current_layer,
+            state.total_layers,
+            tuple(sorted(state.temperatures.items())),
+        )
+        if _last_status_broadcast.get(printer_id) == status_key:
+            return
+        _last_status_broadcast[printer_id] = status_key
+        await ws_manager.send_printer_status(printer_id, printer_snapshot_to_dict(state, printer_id))
+        return
     # Connected-edge reconciliation (#1542 follow-up). When the printer
     # transitions disconnected → connected — which covers both Bambuddy
     # startup (no prior connection) and a mid-session MQTT reconnect — fire

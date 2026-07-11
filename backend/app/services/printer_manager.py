@@ -4,6 +4,7 @@ import logging
 import re
 import traceback
 from collections.abc import Awaitable, Callable
+from dataclasses import replace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -332,7 +333,9 @@ class PrinterManager:
         self._loop: asyncio.AbstractEventLoop | None = None
         self._event_queues: dict[int, asyncio.Queue[BackendEvent | None]] = {}
         self._event_tasks: dict[int, asyncio.Task[None]] = {}
+        self._backend_sinks: dict[int, Callable[[BackendEvent], None]] = {}
         self._accepting_events: set[int] = set()
+        self._seen_lifecycle_events: set[tuple[int, str, str]] = set()
         # Track who started the current print (Issue #206)
         self._current_print_user: dict[int, dict] = {}  # {printer_id: {"user_id": int, "username": str}}
         # Track printers awaiting plate-clear acknowledgment after a finished/failed print.
@@ -560,6 +563,8 @@ class PrinterManager:
                 # The loop can close between the check and thread-safe enqueue.
                 return
 
+        self._backend_sinks[printer_id] = emit
+
         try:
             backend = self._registry.create(printer, emit=emit)
         except BackendError as exc:
@@ -576,6 +581,11 @@ class PrinterManager:
         try:
             await backend.connect()
         except Exception:
+            try:
+                await backend.disconnect()
+                await asyncio.sleep(0)
+            except Exception:
+                logger.warning("Failed to clean up printer %s after connect error", printer_id, exc_info=True)
             await self._stop_backend_events(printer_id)
             self._backends.pop(printer_id, None)
             self._clients.pop(printer_id, None)
@@ -623,6 +633,10 @@ class PrinterManager:
                 event.provider_state if event.provider_state is not None else event.snapshot,
             )
         elif isinstance(event, JobLifecycle):
+            dedupe_key = (printer_id, event.correlation_id, event.kind)
+            if dedupe_key in self._seen_lifecycle_events:
+                return
+            self._seen_lifecycle_events.add(dedupe_key)
             callback = self._on_print_start if event.kind == "started" else self._on_print_complete
             await self._call_backend_callback(callback, printer_id, event.data)
         elif isinstance(event, ProviderEvent):
@@ -655,6 +669,7 @@ class PrinterManager:
             await task
         self._event_queues.pop(printer_id, None)
         self._event_tasks.pop(printer_id, None)
+        self._backend_sinks.pop(printer_id, None)
 
     async def disconnect_printer_async(self, printer_id: int, timeout: float = 0) -> None:
         """Stop the producer, drain accepted events, then remove the backend."""
@@ -808,25 +823,18 @@ class PrinterManager:
         """Get a provider backend for generic application behavior."""
         return self._backends.get(printer_id)
 
-    def mark_printer_offline(self, printer_id: int):
-        """Mark a printer as offline and trigger status callback.
-
-        This is used when we know the printer power was cut (e.g., smart plug turned off)
-        to immediately update the UI without waiting for MQTT timeout.
-        """
-        import logging
-
-        logger = logging.getLogger(__name__)
-
-        if printer_id in self._clients:
-            client = self._clients[printer_id]
-            if client.state.connected:
-                logger.info("Marking printer %s as offline (smart plug power off)", printer_id)
-                client.state.connected = False
-                client.state.state = "unknown"
-                # Trigger the status change callback to broadcast via WebSocket
-                if self._on_status_change:
-                    self._schedule_async(self._on_status_change(printer_id, client.state))
+    def mark_printer_offline(self, printer_id: int) -> None:
+        """Queue a synthetic offline status after known power loss."""
+        backend = self._backends.get(printer_id)
+        sink = self._backend_sinks.get(printer_id)
+        if backend is None or sink is None:
+            return
+        snapshot = backend.snapshot()
+        logger.info("Marking printer %s as offline (smart plug power off)", printer_id)
+        if isinstance(backend, BambuBackend):
+            backend.mark_offline()
+        else:
+            sink(StatusChanged(replace(snapshot, connected=False, state=NormalizedPrinterState.OFFLINE)))
 
     def start_print(
         self,

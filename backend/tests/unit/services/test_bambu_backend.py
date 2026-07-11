@@ -18,6 +18,7 @@ async def test_bambu_backend_emits_typed_events_and_delegates_async_commands():
     client.state.remaining_time = 123
     client.state.layer_num = 3
     client.state.total_layers = 20
+    client.state.subtask_id = "task-42"
     client.state.temperatures = {"nozzle": 220.0}
     client.state.raw_data = {"private": "not in normalized detail"}
     events = []
@@ -41,14 +42,52 @@ async def test_bambu_backend_emits_typed_events_and_delegates_async_commands():
 
     factory.call_args.kwargs["on_state_change"](client.state)
     factory.call_args.kwargs["on_print_start"]({"job": "cube"})
+    factory.call_args.kwargs["on_print_complete"]({"status": "failed", "filename": "cube.3mf"})
 
     client.connect.assert_called_once_with()
     assert isinstance(events[0], StatusChanged)
     assert events[0].provider_state is client.state
     assert events[0].snapshot.state is NormalizedPrinterState.PRINTING
-    assert events[1] == JobLifecycle("started", {"job": "cube"})
+    assert isinstance(events[1], JobLifecycle)
+    assert events[1].kind == "started"
+    assert events[1].correlation_id
+    assert events[1].provider_job_id == "task-42"
+    assert events[1].data == {"job": "cube"}
+    assert events[2].kind == "failed"
+    assert events[2].correlation_id == events[1].correlation_id
+    assert events[2].reason == "failed"
+    backend.mark_offline()
+    assert client.state.connected is False
+    assert events[3].snapshot.state is NormalizedPrinterState.OFFLINE
+    assert events[3].provider_state is client.state
     client.check_staleness.assert_called()
     client.pause_print.assert_called_once_with()
     client.resume_print.assert_called_once_with()
     client.stop_print.assert_called_once_with()
     client.start_print.assert_called_once_with("cube.3mf", 2)
+
+
+def test_bambu_backend_classifies_aborted_terminal_as_cancelled():
+    client = MagicMock()
+    client.state.subtask_id = None
+    client.state.current_print = "cube.3mf"
+    events = []
+    factory = MagicMock(return_value=client)
+    BambuBackend(
+        SimpleNamespace(ip_address="192.168.1.2", serial_number="SERIAL", access_code="code", model="X1C"),
+        client_factory=factory,
+        emit=events.append,
+    )
+
+    factory.call_args.kwargs["on_print_start"]({"filename": "cube.3mf"})
+    factory.call_args.kwargs["on_print_complete"]({"status": "aborted", "filename": "cube.3mf"})
+
+    assert events[1].kind == "cancelled"
+    assert events[1].correlation_id == events[0].correlation_id
+    assert events[1].reason == "aborted"
+
+    factory.call_args.kwargs["on_print_start"]({"filename": "second.3mf"})
+    factory.call_args.kwargs["on_print_complete"]({"status": "completed", "filename": "second.3mf"})
+    assert events[3].kind == "completed"
+    assert events[3].correlation_id == events[2].correlation_id
+    assert events[3].reason is None

@@ -1,4 +1,5 @@
 import asyncio
+from datetime import datetime, timezone
 from types import SimpleNamespace
 
 import pytest
@@ -23,10 +24,13 @@ class FakeBackend:
         self.calls: list[str] = []
         self.emit = None
         self.disconnect_event = None
+        self.connect_error = None
 
     async def connect(self):
         self.connected = True
         self.calls.append("connect")
+        if self.connect_error is not None:
+            raise self.connect_error
 
     async def disconnect(self, timeout=0):
         if self.disconnect_event is not None:
@@ -57,6 +61,10 @@ class FakeBackend:
     async def cancel(self):
         self.calls.append("cancel")
         return True
+
+
+def lifecycle(kind, name, correlation_id="job-1"):
+    return JobLifecycle(kind, correlation_id, None, name, datetime.now(timezone.utc), None, {"name": name})
 
 
 @pytest.mark.asyncio
@@ -111,25 +119,36 @@ async def test_manager_forwards_events_fifo_and_drops_events_after_disconnect():
     async def on_start(printer_id, data):
         observed.append((printer_id, data["name"]))
 
+    async def on_complete(printer_id, data):
+        observed.append((printer_id, data["name"]))
+
     manager.set_status_change_callback(on_status)
     manager.set_print_start_callback(on_start)
+    manager.set_print_complete_callback(on_complete)
     printer = SimpleNamespace(id=7, provider="bambu", name="Test", serial_number="S", model="X1C")
     await manager.connect_printer(printer)
 
     snapshot = backend.snapshot()
     backend.emit(StatusChanged(snapshot))
-    backend.emit(JobLifecycle("started", {"name": "cube"}))
+    backend.emit(lifecycle("started", "cube"))
+    backend.emit(lifecycle("failed", "failed", "job-failed"))
+    backend.emit(lifecycle("failed", "failed", "job-failed"))
     await asyncio.sleep(0)
     await manager._event_queues[7].join()
 
-    assert observed == [(7, "idle"), (7, "cube")]
+    assert observed == [(7, "idle"), (7, "cube"), (7, "failed")]
 
-    backend.disconnect_event = JobLifecycle("started", {"name": "during disconnect"})
+    manager.mark_printer_offline(7)
+    await asyncio.sleep(0)
+    await manager._event_queues[7].join()
+    assert observed[-1] == (7, "offline")
+
+    backend.disconnect_event = lifecycle("started", "during disconnect", "job-2")
     await manager.disconnect_printer_async(7)
-    backend.emit(JobLifecycle("started", {"name": "too late"}))
+    backend.emit(lifecycle("started", "too late", "job-3"))
     await asyncio.sleep(0)
 
-    assert observed == [(7, "idle"), (7, "cube"), (7, "during disconnect")]
+    assert observed == [(7, "idle"), (7, "cube"), (7, "failed"), (7, "offline"), (7, "during disconnect")]
 
 
 @pytest.mark.asyncio
@@ -163,3 +182,28 @@ def test_non_bambu_snapshot_serializer_has_no_provider_detail_leak():
     assert payload["current_print"] == "cube.gcode"
     assert "provider_detail" not in payload
     assert "secret" not in repr(payload)
+
+
+@pytest.mark.asyncio
+async def test_connect_failure_stops_started_backend_before_dropping_events():
+    backend = FakeBackend()
+    backend.connect_error = RuntimeError("connect failed after producer start")
+    backend.disconnect_event = lifecycle("cancelled", "cleanup", "cleanup-job")
+    registry = PrinterBackendRegistry()
+
+    def make_backend(printer, emit):
+        backend.emit = emit
+        return backend
+
+    registry.register(PrinterProvider.BAMBU, make_backend)
+    manager = PrinterManager(registry=registry)
+    completed = []
+    manager.set_print_complete_callback(lambda printer_id, data: completed.append((printer_id, data["name"])))
+    printer = SimpleNamespace(id=9, provider="bambu", name="Test", serial_number="S", model="X1C")
+
+    with pytest.raises(RuntimeError, match="connect failed"):
+        await manager.connect_printer(printer)
+
+    assert backend.calls == ["connect", "disconnect:0"]
+    assert completed == [(9, "cleanup")]
+    assert manager.get_backend(9) is None

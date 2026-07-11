@@ -1,18 +1,33 @@
-"""Regression tests for the webhook printer-status / stop / cancel routes.
+"""Regression tests for provider-neutral webhook status and controls."""
 
-Pre-fix the routes treated ``printer_manager.get_status(...)``'s return value
-as a dict and called ``.get(...)`` on it. The return is a ``PrinterState``
-dataclass (``backend/app/services/bambu_mqtt.py``), so the call raised
-``AttributeError`` and surfaced as a generic 500 for any printer that
-actually had a status row. See #1584.
-"""
-
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
 
-from backend.app.services.bambu_mqtt import PrinterState
+from backend.app.services.printer_types import (
+    NormalizedPrinterState,
+    PrinterProvider,
+    PrinterSnapshot,
+)
+
+
+def _snapshot(
+    *,
+    connected: bool,
+    state: NormalizedPrinterState,
+    filename: str | None = None,
+    progress: float | None = None,
+    remaining_seconds: int | None = None,
+) -> PrinterSnapshot:
+    return PrinterSnapshot(
+        provider=PrinterProvider.BAMBU,
+        connected=connected,
+        state=state,
+        filename=filename,
+        progress=progress,
+        remaining_seconds=remaining_seconds,
+    )
 
 
 @pytest.fixture
@@ -53,10 +68,7 @@ async def printer_row(db_session):
 
 
 class TestWebhookGetPrinterStatus:
-    """``GET /api/v1/webhook/printer/{id}/status`` — the route reads the
-    dataclass via attribute access, not ``.get(...)``. Pre-fix the call
-    raised AttributeError → 500 for every printer with a status row.
-    """
+    """``GET /api/v1/webhook/printer/{id}/status`` uses normalized snapshots."""
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -66,18 +78,16 @@ class TestWebhookGetPrinterStatus:
         api_key_data,
         printer_row,
     ):
-        """A live PrinterState dataclass must yield a 200 with the
-        attributes mapped into the response — this is the exact regression
-        from #1584 where the dataclass crashed the ``.get(...)`` calls."""
-        state = PrinterState(
+        """A live normalized snapshot maps into the webhook response."""
+        state = _snapshot(
             connected=True,
-            state="RUNNING",
-            current_print="bench.3mf",
+            state=NormalizedPrinterState.PRINTING,
+            filename="bench.3mf",
             progress=42.0,
-            remaining_time=1234,
+            remaining_seconds=1234,
         )
         with patch(
-            "backend.app.api.routes.webhook.printer_manager.get_status",
+            "backend.app.api.routes.webhook.printer_manager.get_snapshot",
             MagicMock(return_value=state),
         ):
             resp = await async_client.get(
@@ -90,7 +100,7 @@ class TestWebhookGetPrinterStatus:
         assert body["id"] == printer_row.id
         assert body["name"] == "StatusTest"
         assert body["connected"] is True
-        assert body["state"] == "RUNNING"
+        assert body["state"] == "printing"
         assert body["current_print"] == "bench.3mf"
         assert body["progress"] == 42.0
         assert body["remaining_time"] == 1234
@@ -103,11 +113,9 @@ class TestWebhookGetPrinterStatus:
         api_key_data,
         printer_row,
     ):
-        """A registered printer the manager hasn't seen yet returns None from
-        ``get_status``; the response must still be 200 with sensible
-        defaults rather than 500."""
+        """An unseen registered printer still returns sensible defaults."""
         with patch(
-            "backend.app.api.routes.webhook.printer_manager.get_status",
+            "backend.app.api.routes.webhook.printer_manager.get_snapshot",
             MagicMock(return_value=None),
         ):
             resp = await async_client.get(
@@ -139,8 +147,7 @@ class TestWebhookGetPrinterStatus:
 
 
 class TestWebhookStopPrint:
-    """``POST /api/v1/webhook/printer/{id}/stop`` — same dataclass-shape
-    fix applies to the connection / state precondition checks (#1584)."""
+    """``POST /api/v1/webhook/printer/{id}/stop`` uses normalized state."""
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -150,9 +157,9 @@ class TestWebhookStopPrint:
         api_key_data,
         printer_row,
     ):
-        state = PrinterState(connected=False, state="unknown")
+        state = _snapshot(connected=False, state=NormalizedPrinterState.OFFLINE)
         with patch(
-            "backend.app.api.routes.webhook.printer_manager.get_status",
+            "backend.app.api.routes.webhook.printer_manager.get_snapshot",
             MagicMock(return_value=state),
         ):
             resp = await async_client.post(
@@ -171,9 +178,9 @@ class TestWebhookStopPrint:
         api_key_data,
         printer_row,
     ):
-        state = PrinterState(connected=True, state="FINISH")
+        state = _snapshot(connected=True, state=NormalizedPrinterState.COMPLETED)
         with patch(
-            "backend.app.api.routes.webhook.printer_manager.get_status",
+            "backend.app.api.routes.webhook.printer_manager.get_snapshot",
             MagicMock(return_value=state),
         ):
             resp = await async_client.post(
@@ -181,6 +188,25 @@ class TestWebhookStopPrint:
                 headers={"X-API-Key": api_key_data},
             )
         assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_stops_normalized_printing_snapshot(self, async_client, api_key_data, printer_row):
+        state = _snapshot(connected=True, state=NormalizedPrinterState.PRINTING)
+        with (
+            patch("backend.app.api.routes.webhook.printer_manager.get_snapshot", return_value=state),
+            patch(
+                "backend.app.api.routes.webhook.printer_manager.stop_print_async",
+                new=AsyncMock(return_value=True),
+            ) as stop,
+        ):
+            resp = await async_client.post(
+                f"/api/v1/webhook/printer/{printer_row.id}/stop",
+                headers={"X-API-Key": api_key_data},
+            )
+
+        assert resp.status_code == 200
+        stop.assert_awaited_once_with(printer_row.id)
 
 
 class TestWebhookCancelPrint:
@@ -194,9 +220,9 @@ class TestWebhookCancelPrint:
         api_key_data,
         printer_row,
     ):
-        state = PrinterState(connected=False, state="unknown")
+        state = _snapshot(connected=False, state=NormalizedPrinterState.OFFLINE)
         with patch(
-            "backend.app.api.routes.webhook.printer_manager.get_status",
+            "backend.app.api.routes.webhook.printer_manager.get_snapshot",
             MagicMock(return_value=state),
         ):
             resp = await async_client.post(
@@ -213,9 +239,9 @@ class TestWebhookCancelPrint:
         api_key_data,
         printer_row,
     ):
-        state = PrinterState(connected=True, state="IDLE")
+        state = _snapshot(connected=True, state=NormalizedPrinterState.IDLE)
         with patch(
-            "backend.app.api.routes.webhook.printer_manager.get_status",
+            "backend.app.api.routes.webhook.printer_manager.get_snapshot",
             MagicMock(return_value=state),
         ):
             resp = await async_client.post(
@@ -223,3 +249,22 @@ class TestWebhookCancelPrint:
                 headers={"X-API-Key": api_key_data},
             )
         assert resp.status_code == 409
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_cancels_normalized_paused_snapshot(self, async_client, api_key_data, printer_row):
+        state = _snapshot(connected=True, state=NormalizedPrinterState.PAUSED)
+        with (
+            patch("backend.app.api.routes.webhook.printer_manager.get_snapshot", return_value=state),
+            patch(
+                "backend.app.api.routes.webhook.printer_manager.stop_print_async",
+                new=AsyncMock(return_value=True),
+            ) as stop,
+        ):
+            resp = await async_client.post(
+                f"/api/v1/webhook/printer/{printer_row.id}/cancel",
+                headers={"X-API-Key": api_key_data},
+            )
+
+        assert resp.status_code == 200
+        stop.assert_awaited_once_with(printer_row.id)

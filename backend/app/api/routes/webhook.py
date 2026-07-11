@@ -12,6 +12,7 @@ from backend.app.models.archive import PrintArchive
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_types import NormalizedPrinterState
 
 logger = logging.getLogger(__name__)
 
@@ -195,14 +196,11 @@ async def webhook_stop_print(
     check_permission(api_key, "control_printer")
     check_printer_access(api_key, printer_id)
 
-    status = printer_manager.get_status(printer_id)
-    # `printer_manager.get_status(...)` returns a ``PrinterState`` dataclass
-    # (see backend/app/services/bambu_mqtt.py), not a dict — `.get(...)` on it
-    # raises AttributeError and surfaces as a generic 500 (#1584).
+    status = printer_manager.get_snapshot(printer_id)
     if not status or not status.connected:
         raise HTTPException(status_code=503, detail="Printer not connected")
 
-    if status.state != "RUNNING":
+    if status.state is not NormalizedPrinterState.PRINTING:
         raise HTTPException(status_code=409, detail="No print in progress")
 
     try:
@@ -226,16 +224,15 @@ async def webhook_cancel_print(
     check_permission(api_key, "control_printer")
     check_printer_access(api_key, printer_id)
 
-    status = printer_manager.get_status(printer_id)
-    # Same dataclass-not-dict shape as stop_print above (#1584).
+    status = printer_manager.get_snapshot(printer_id)
     if not status or not status.connected:
         raise HTTPException(status_code=503, detail="Printer not connected")
 
-    if status.state not in ["RUNNING", "PAUSE"]:
+    if status.state not in {NormalizedPrinterState.PRINTING, NormalizedPrinterState.PAUSED}:
         raise HTTPException(status_code=409, detail="No print to cancel")
 
     try:
-        await printer_manager.cancel_print(printer_id)
+        await printer_manager.stop_print_async(printer_id)
     except Exception as e:
         logger.error("Failed to cancel print: %s", e)
         raise HTTPException(status_code=500, detail=str(e))
@@ -262,20 +259,15 @@ async def webhook_get_printer_status(
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
 
-    status = printer_manager.get_status(printer_id)
-
-    # `printer_manager.get_status(...)` returns a ``PrinterState`` dataclass —
-    # attribute access, not dict lookup. The previous `.get(...)` calls raised
-    # AttributeError and surfaced as a generic 500 for any printer that
-    # actually had a status row (#1584).
+    status = printer_manager.get_snapshot(printer_id)
     return PrinterStatusResponse(
         id=printer.id,
         name=printer.name,
         connected=status.connected if status else False,
         state=status.state if status else None,
-        current_print=status.current_print if status else None,
+        current_print=status.filename if status else None,
         progress=status.progress if status else None,
-        remaining_time=status.remaining_time if status else None,
+        remaining_time=status.remaining_seconds if status else None,
     )
 
 

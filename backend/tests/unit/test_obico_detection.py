@@ -13,6 +13,7 @@ from backend.app.services.obico_detection import (
     stash_frame,
 )
 from backend.app.services.obico_smoothing import WARMUP_FRAMES
+from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
 FAKE_JPEG = b"\xff\xd8\xff\xe0\x00\x10JFIF\x00\x01\x01\x00\x00\x01\x00\x01\x00\x00\xff\xd9"
 
@@ -136,6 +137,25 @@ class TestPollOneStateLifecycle:
     """Confirms per-printer state is reset when a new print starts."""
 
     @pytest.mark.asyncio
+    async def test_poll_uses_normalized_snapshots(self):
+        svc = ObicoDetectionService()
+        svc._check_printer = AsyncMock()
+        snapshot = PrinterSnapshot(
+            provider=PrinterProvider.MOONRAKER,
+            connected=True,
+            state=NormalizedPrinterState.PRINTING,
+            filename="cube.gcode",
+        )
+        settings = {"enabled_printers": None}
+
+        with patch("backend.app.services.printer_manager.printer_manager") as manager:
+            manager.get_all_snapshots.return_value = {1: snapshot}
+            manager.is_connected.return_value = True
+            await svc._poll_once(settings)
+
+        svc._check_printer.assert_awaited_once_with(1, snapshot, settings)
+
+    @pytest.mark.asyncio
     async def test_new_task_name_resets_state(self):
         svc = ObicoDetectionService()
         # Seed a state that has been running for a while
@@ -157,7 +177,7 @@ class TestPollOneStateLifecycle:
             "enabled_printers": None,
             "external_url": "http://bambuddy:8000",
         }
-        status = MagicMock(state="RUNNING", task_name="new_task", subtask_name="")
+        status = MagicMock(state="RUNNING", filename="new_task")
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"detections": []}
@@ -190,7 +210,7 @@ class TestPollOneStateLifecycle:
             "enabled_printers": None,
             "external_url": "http://bambuddy:8000",
         }
-        status = MagicMock(state="RUNNING", task_name="job", subtask_name="")
+        status = MagicMock(state="RUNNING", filename="job")
 
         mock_client = MagicMock()
         mock_client.get = AsyncMock(side_effect=RuntimeError("connection refused"))
@@ -219,7 +239,7 @@ class TestPollOneStateLifecycle:
             "enabled_printers": None,
             "external_url": "http://bambuddy:8000",
         }
-        status = MagicMock(state="RUNNING", task_name="job", subtask_name="")
+        status = MagicMock(state="RUNNING", filename="job")
 
         class _SilentError(Exception):
             def __str__(self) -> str:
@@ -254,7 +274,7 @@ class TestPollOneStateLifecycle:
             "enabled_printers": None,
             "external_url": "http://bambuddy:8000",
         }
-        status = MagicMock(state="RUNNING", task_name="job", subtask_name="")
+        status = MagicMock(state="RUNNING", filename="job")
 
         # Seed state so the next frame crosses HIGH immediately
         from backend.app.services.obico_smoothing import PrintState
@@ -472,7 +492,7 @@ class TestCheckPrinterUsesCachedFrameUrl:
             "enabled_printers": None,
             "external_url": "http://bambuddy:8000",
         }
-        status = MagicMock(state="RUNNING", task_name="job", subtask_name="")
+        status = MagicMock(state="RUNNING", filename="job")
 
         mock_response = MagicMock()
         mock_response.json.return_value = {"detections": []}
@@ -512,7 +532,7 @@ class TestCheckPrinterUsesCachedFrameUrl:
             "enabled_printers": None,
             "external_url": "http://bambuddy:8000",
         }
-        status = MagicMock(state="RUNNING", task_name="job", subtask_name="")
+        status = MagicMock(state="RUNNING", filename="job")
 
         mock_client = MagicMock()
         mock_client.get = AsyncMock()
@@ -542,7 +562,7 @@ class TestCheckPrinterUsesCachedFrameUrl:
             "enabled_printers": None,
             "external_url": "",
         }
-        status = MagicMock(state="RUNNING", task_name="job", subtask_name="")
+        status = MagicMock(state="RUNNING", filename="job")
 
         mock_client = MagicMock()
         mock_client.get = AsyncMock()
@@ -577,7 +597,7 @@ class TestCheckPrinterUsesCachedFrameUrl:
             "enabled_printers": None,
             "external_url": "http://bambuddy:8000",
         }
-        status = MagicMock(state="RUNNING", task_name="job", subtask_name="")
+        status = MagicMock(state="RUNNING", filename="job")
 
         # Seed a prior transient error, as would be left by a cold-start capture timeout.
         svc._last_error = "Failed to capture snapshot for printer 1"

@@ -21,6 +21,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.app import main as main_module
+from backend.app.services.printer_types import (
+    NormalizedPrinterState,
+    PrinterProvider,
+    PrinterSnapshot,
+)
 
 
 def _state(connected: bool, state: str = "IDLE") -> SimpleNamespace:
@@ -162,6 +167,28 @@ class TestOfflineEdgeDetection:
         pm.get_printer.return_value = None  # Skip the relay payload branch.
         pm.get_model.return_value = ""
         return ws_mgr, relay, pm
+
+    @pytest.mark.asyncio
+    async def test_normalized_snapshot_uses_provider_neutral_serializer(self):
+        ws_mgr, _, _ = self._patch_handler_deps()
+        snapshot = PrinterSnapshot(
+            provider=PrinterProvider.MOONRAKER,
+            connected=True,
+            state=NormalizedPrinterState.PRINTING,
+            filename="cube.gcode",
+            progress=12.0,
+            provider_detail={"raw_data": "must not leak"},
+        )
+        main_module._last_status_broadcast.pop(77, None)
+
+        with patch("backend.app.main.ws_manager", ws_mgr):
+            await main_module.on_printer_status_change(77, snapshot)
+
+        payload = ws_mgr.send_printer_status.await_args.args[1]
+        assert payload["provider"] == "moonraker"
+        assert payload["current_print"] == "cube.gcode"
+        assert "provider_detail" not in payload
+        assert "raw_data" not in payload
 
     @pytest.mark.asyncio
     async def test_first_call_connected_does_not_schedule(self):

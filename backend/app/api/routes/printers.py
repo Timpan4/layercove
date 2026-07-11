@@ -898,8 +898,11 @@ async def refresh_printer_status(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
-    success = printer_manager.request_status_update(printer_id)
-    if not success:
+    if printer.provider != PrinterProvider.BAMBU:
+        raise HTTPException(400, "Status refresh is only supported for Bambu printers")
+
+    client = printer_manager.get_bambu_client(printer_id)
+    if client is None or not client.request_status_update():
         raise HTTPException(400, "Printer not connected")
 
     return {"status": "refresh_requested"}

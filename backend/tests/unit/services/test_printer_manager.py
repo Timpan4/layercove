@@ -354,39 +354,6 @@ class TestPrinterManager:
     # Tests for mark_printer_offline
     # ========================================================================
 
-    def test_mark_printer_offline_updates_state(self, manager, mock_client):
-        """Verify mark_printer_offline updates client state."""
-        mock_client.state.connected = True
-        manager._clients[1] = mock_client
-
-        manager.mark_printer_offline(1)
-
-        assert mock_client.state.connected is False
-        assert mock_client.state.state == "unknown"
-
-    def test_mark_printer_offline_triggers_callback(self, manager, mock_client):
-        """Verify mark_printer_offline triggers status callback."""
-        mock_client.state.connected = True
-        manager._clients[1] = mock_client
-
-        # Callback must return a coroutine
-        async def async_callback(printer_id, state):
-            pass
-
-        manager._on_status_change = async_callback
-
-        # Need a running loop for callback
-        mock_loop = MagicMock()
-        mock_loop.is_running.return_value = True
-        manager._loop = mock_loop
-
-        manager.mark_printer_offline(1)
-
-        # Callback should be scheduled via run_coroutine_threadsafe
-        mock_loop.is_running.assert_called()
-        # State should be updated
-        assert mock_client.state.connected is False
-
     def test_mark_printer_offline_handles_unknown(self, manager):
         """Verify mark_printer_offline handles unknown printer."""
         manager.mark_printer_offline(999)  # Should not raise

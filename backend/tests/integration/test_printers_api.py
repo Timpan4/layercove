@@ -760,7 +760,7 @@ class TestPrinterDataIntegrity:
         printer = await printer_factory(name="Disconnected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.request_status_update.return_value = False
+            mock_pm.get_bambu_client.return_value = None
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/refresh-status")
 
@@ -774,13 +774,32 @@ class TestPrinterDataIntegrity:
         printer = await printer_factory(name="Connected Printer")
 
         with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
-            mock_pm.request_status_update.return_value = True
+            client = MagicMock()
+            client.request_status_update.return_value = True
+            mock_pm.get_bambu_client.return_value = client
 
             response = await async_client.post(f"/api/v1/printers/{printer.id}/refresh-status")
 
             assert response.status_code == 200
             assert response.json()["status"] == "refresh_requested"
-            mock_pm.request_status_update.assert_called_once_with(printer.id)
+            client.request_status_update.assert_called_once_with()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_refresh_status_rejects_non_bambu_provider(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Klipper Printer",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125"},
+            },
+        )
+
+        response = await async_client.post(f"/api/v1/printers/{created.json()['id']}/refresh-status")
+
+        assert response.status_code == 400
+        assert "only supported for Bambu" in response.json()["detail"]
 
     # ========================================================================
     # Current print user endpoint (Issue #206)

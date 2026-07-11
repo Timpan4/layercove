@@ -2,6 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal, Protocol, TypeAlias
 
 from backend.app.services.printer_types import PrinterCapabilities, PrinterProvider, PrinterSnapshot
@@ -27,7 +28,12 @@ class StatusChanged:
 
 @dataclass(frozen=True)
 class JobLifecycle:
-    kind: Literal["started", "completed"]
+    kind: Literal["started", "completed", "failed", "cancelled"]
+    correlation_id: str
+    provider_job_id: str | None
+    filename: str | None
+    occurred_at: datetime
+    reason: str | None
     data: dict
 
 

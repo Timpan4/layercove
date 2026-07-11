@@ -27,6 +27,7 @@ from backend.app.services.obico_smoothing import (
     score_from_detections,
     thresholds,
 )
+from backend.app.services.printer_types import NormalizedPrinterState, PrinterSnapshot
 
 logger = logging.getLogger(__name__)
 
@@ -165,13 +166,13 @@ class ObicoDetectionService:
         # Late import to avoid cycles at module load time
         from backend.app.services.printer_manager import printer_manager
 
-        statuses = printer_manager.get_all_statuses()
+        statuses = printer_manager.get_all_snapshots()
         for printer_id, status in list(statuses.items()):
             if settings["enabled_printers"] is not None and printer_id not in settings["enabled_printers"]:
                 continue
             if not printer_manager.is_connected(printer_id):
                 continue
-            if not status or getattr(status, "state", None) != "RUNNING":
+            if not status or status.state is not NormalizedPrinterState.PRINTING:
                 # Reset state when not printing so the next print starts fresh
                 self._states.pop(printer_id, None)
                 self._state_keys.pop(printer_id, None)
@@ -231,8 +232,8 @@ class ObicoDetectionService:
             timeout=SNAPSHOT_CAPTURE_TIMEOUT,
         )
 
-    async def _check_printer(self, printer_id: int, status, settings: dict):
-        task_name = getattr(status, "task_name", None) or getattr(status, "subtask_name", "") or ""
+    async def _check_printer(self, printer_id: int, status: PrinterSnapshot, settings: dict):
+        task_name = status.filename or ""
         key = f"{task_name}"
         if self._state_keys.get(printer_id) != key:
             self._states[printer_id] = PrintState()
