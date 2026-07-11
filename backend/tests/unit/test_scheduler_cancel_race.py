@@ -235,3 +235,18 @@ async def test_happy_path_still_dispatches(queue_factory):
     assert started_at is not None
     ctx.upload.assert_awaited_once()
     ctx.start_print.assert_called_once()
+    args, kwargs = ctx.start_print.call_args
+    assert args[0] == ctx.printer_id
+    assert args[1].endswith(".3mf")
+    assert kwargs == {
+        "plate_id": 1,
+        "ams_mapping": None,
+        "bed_levelling": True,
+        "flow_cali": False,
+        "vibration_cali": True,
+        "layer_inspect": False,
+        "timelapse": False,
+        "use_ams": True,
+        "nozzle_offset_cali": True,
+        "nozzle_mapping": None,
+    }
