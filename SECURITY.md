@@ -41,25 +41,91 @@ Please include the following information in your report:
 
 ### Network Security
 
-Bambuddy communicates with your printers over your local network using:
+Bambuddy communicates with Bambu printers over your local network using:
 
 - **MQTT over TLS** (port 8883) - Encrypted printer communication
 - **FTPS** (port 990) - Encrypted file transfers
 
+LayerCove's Moonraker support is designed for an administrator-configured,
+trusted printer origin. It makes backend HTTP and WebSocket connections to that
+origin, so adding a Moonraker printer grants the application access to that
+printer's control API. Only administrators should create or edit printer
+connections.
+
+Moonraker connections enforce the following boundaries:
+
+- Only credential-free `http://` or `https://` origins are accepted. API keys
+  and authorization values are stored separately and encrypted at rest.
+- DNS is resolved for each connection and the socket is pinned to an approved
+  result. Loopback, link-local, multicast, unspecified, and known cloud metadata
+  addresses are rejected. Private LAN and VPN addresses are intentionally
+  allowed because they are the supported deployment topology.
+- HTTP and WebSocket redirects are rejected rather than followed. Configure the
+  final Moonraker origin directly.
+- Environment proxy variables are ignored for printer traffic. Connections have
+  bounded timeouts and response/message sizes; uploads accept safe `.gcode`
+  names and remain size-bounded.
+- TLS certificate verification is enabled by default per printer. For a private
+  certificate authority, install its CA certificate in the LayerCove host or
+  container trust store. Disabling verification is an explicit per-printer
+  fallback for a trusted network, not a global setting and not suitable across
+  an untrusted network.
+- Moonraker credentials are omitted from printer API responses and scrubbed
+  from log and support-bundle output. Operators must still redact exported
+  diagnostics before publishing them.
+- Upload/start, pause, resume, cancel, and emergency stop require printer
+  permissions. Emergency stop also requires an explicit confirmation payload.
+  LayerCove does not expose a generic G-code console, shell, or arbitrary URL
+  proxy.
+
+### Remote access and reverse proxies
+
+LayerCove and Moonraker should remain on a trusted LAN or private overlay such
+as Tailscale. If remote browser access is required, place LayerCove behind an
+authenticated HTTPS boundary such as a correctly configured reverse proxy or
+Cloudflare Access/Tunnel. Do not publish Moonraker directly, and do not treat a
+tunnel by itself as application authorization.
+
+Authentication must be enabled in LayerCove before it is reachable by untrusted
+clients. Grant printer-control and printer-file permissions only to users who
+may move, heat, start, or stop physical hardware. Keep Moonraker API keys and
+long-lived LayerCove tokens out of URLs, browser-visible configuration, proxy
+logs, and support tickets.
+
+Forwarded client-address headers are ignored unless `TRUSTED_PROXY_IPS` lists
+the direct proxy peers. Set it to the proxy addresses that actually connect to
+LayerCove, not to client networks and not to a broad subnet. The application
+then evaluates `X-Forwarded-For` from right to left and uses the first address
+that is not a trusted proxy. Configure the proxy to replace or append forwarded
+headers consistently and prevent clients from reaching LayerCove around the
+proxy.
+
+A public reverse proxy does not make printer protocols internet-safe. Keep
+LayerCove-to-printer traffic on the trusted LAN/VPN, restrict network routes and
+firewall rules to required destinations, and protect backups because they
+contain encrypted credentials and application data. DNS rebinding defenses
+validate and pin resolved peers for each connection, but administrators remain
+responsible for controlling the configured DNS zone and network path.
+
 ### Recommendations
 
-1. **Run on trusted network**: Bambuddy should only be accessible on your local network
-2. **Use reverse proxy**: If exposing to the internet, use a reverse proxy with HTTPS
-3. **Keep updated**: Always run the latest version for security patches
-4. **Secure API keys**: Treat API keys like passwords; don't share them publicly
-5. **Developer Mode**: Use your printer's Developer Mode access code; don't share it
+1. **Run on a trusted network**: Keep LayerCove and printer protocols on a trusted LAN or private VPN
+2. **Authenticate remote access**: Enable LayerCove authentication and use an authenticated HTTPS reverse proxy or access gateway
+3. **Do not expose Moonraker directly**: Configure its private origin in LayerCove and restrict it with network policy
+4. **Keep updated**: Always run the latest version for security patches
+5. **Secure credentials**: Treat LayerCove and Moonraker API keys like passwords; do not put them in URLs or public diagnostics
+6. **Verify TLS**: Prefer a trusted private CA; disable per-printer verification only on a controlled network
+7. **Developer Mode**: Use your Bambu printer's Developer Mode access code; don't share it
 
 ### Known Security Features
 
-- API key authentication for external access
+- API key and role-based authentication for external access
 - No default credentials
-- Local-only by default (no cloud dependency)
-- TLS encryption for printer communication
+- Local and private-network deployment by default (no cloud dependency)
+- TLS support for printer communication
+- Per-request Moonraker DNS validation and connection pinning
+- Redirect, proxy-environment, response-size, timeout, filename, and command boundaries
+- Stored-secret redaction in API, log, and support-bundle paths
 
 ## Scope
 

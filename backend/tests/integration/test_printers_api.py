@@ -205,6 +205,8 @@ class TestPrintersAPI:
             "tls_verify": False,
             "api_key_configured": True,
             "authorization_configured": False,
+            "spoolman_accounting_owner": "moonraker",
+            "spoolman_spool_id": None,
         }
         assert "top-secret" not in response.text
         assert result["capabilities"]["emergency_stop"] is True

@@ -40,9 +40,19 @@ def _cleanup_test_plate_cal_dir():
 atexit.register(_cleanup_test_plate_cal_dir)
 
 from backend.app.core.database import Base  # noqa: E402
+from backend.tests._fixtures.moonraker import FakeMoonraker  # noqa: E402
 
 # Use in-memory SQLite for tests
 TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
+
+
+@pytest.fixture
+async def fake_moonraker() -> AsyncGenerator[FakeMoonraker, None]:
+    server = await FakeMoonraker().start()
+    try:
+        yield server
+    finally:
+        await server.close()
 
 
 @pytest.fixture(autouse=True)
