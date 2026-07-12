@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.app.services.printer_backend import JobLifecycle, StatusChanged
+from backend.app.services.printer_backend import JobLifecycle, ProviderEvent, StatusChanged
 from backend.app.services.printer_backend_registry import PrinterBackendRegistry
 from backend.app.services.printer_manager import PrinterManager, printer_status_to_dict
 from backend.app.services.printer_types import (
@@ -165,6 +165,58 @@ async def test_manager_forwards_events_fifo_and_drops_events_after_disconnect():
         (7, "idle"),
         (7, "during disconnect"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_manager_routes_legacy_lifecycle_callbacks_only_for_bambu():
+    manager = PrinterManager(registry=PrinterBackendRegistry())
+    observed = []
+
+    async def on_start(printer_id, data):
+        observed.append((printer_id, "started", data["name"]))
+
+    async def on_complete(printer_id, data):
+        observed.append((printer_id, "completed", data["name"]))
+
+    manager.set_print_start_callback(on_start)
+    manager.set_print_complete_callback(on_complete)
+    manager._backends = {
+        1: SimpleNamespace(provider=PrinterProvider.MOONRAKER),
+        2: SimpleNamespace(provider=PrinterProvider.BAMBU),
+    }
+
+    for printer_id in (1, 2):
+        await manager._forward_backend_event(printer_id, lifecycle("started", "cube", f"job-{printer_id}"))
+        await manager._forward_backend_event(printer_id, lifecycle("completed", "cube", f"job-{printer_id}"))
+
+    assert observed == [(2, "started", "cube"), (2, "completed", "cube")]
+    assert manager._seen_lifecycle_events == {
+        (1, "job-1", "started"),
+        (1, "job-1", "completed"),
+        (2, "job-2", "started"),
+        (2, "job-2", "completed"),
+    }
+
+
+@pytest.mark.asyncio
+async def test_manager_routes_running_observed_callback_only_for_bambu():
+    manager = PrinterManager(registry=PrinterBackendRegistry())
+    observed = []
+
+    async def on_running(printer_id, data):
+        observed.append((printer_id, data["filename"]))
+
+    manager.set_print_running_observed_callback(on_running)
+    manager._backends = {
+        1: SimpleNamespace(provider=PrinterProvider.MOONRAKER),
+        2: SimpleNamespace(provider=PrinterProvider.BAMBU),
+    }
+    event = ProviderEvent("print_running_observed", {"filename": "cube.gcode"})
+
+    await manager._forward_backend_event(1, event)
+    await manager._forward_backend_event(2, event)
+
+    assert observed == [(2, "cube.gcode")]
 
 
 @pytest.mark.asyncio

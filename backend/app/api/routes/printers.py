@@ -204,7 +204,7 @@ async def create_printer(
         await db.refresh(printer, attribute_names=["moonraker_config"])
 
     # Connect to the printer
-    if printer.is_active and printer.provider == PrinterProvider.BAMBU:
+    if printer.is_active:
         await printer_manager.connect_printer(printer)
 
     return _serialize_printer(printer, include_secret=False)
@@ -490,9 +490,11 @@ async def update_printer(
         await db.refresh(printer, attribute_names=["moonraker_config"])
 
     # Reconnect if connection settings changed
-    if printer.provider == PrinterProvider.BAMBU and any(
-        k in update_data for k in ["ip_address", "access_code", "is_active"]
-    ):
+    connection_changed = (
+        printer.provider == PrinterProvider.BAMBU
+        and any(k in update_data for k in ["ip_address", "access_code", "is_active"])
+    ) or (printer.provider == PrinterProvider.MOONRAKER and (moonraker_data is not None or "is_active" in update_data))
+    if connection_changed:
         await printer_manager.disconnect_printer_async(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
@@ -986,7 +988,9 @@ async def connect_printer(
     db: AsyncSession = Depends(get_db),
 ):
     """Manually connect to a printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")

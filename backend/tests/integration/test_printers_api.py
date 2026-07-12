@@ -27,9 +27,19 @@ def _mock_printer_test_connection():
             new=AsyncMock(return_value={"success": True, "state": "IDLE", "model": "X1C"}),
         ) as m,
         patch("backend.app.api.routes.printers.MoonrakerHTTPClient") as moonraker_client_class,
+        patch(
+            "backend.app.api.routes.printers.printer_manager.connect_printer",
+            new=AsyncMock(return_value=True),
+        ) as connect_printer,
+        patch(
+            "backend.app.api.routes.printers.printer_manager.disconnect_printer_async",
+            new=AsyncMock(),
+        ) as disconnect_printer,
     ):
         moonraker_client_class.return_value.test_connection = AsyncMock(return_value=True)
         m.moonraker_client_class = moonraker_client_class
+        m.connect_printer = connect_printer
+        m.disconnect_printer = disconnect_printer
         yield m
 
 
@@ -140,6 +150,10 @@ class TestPrintersAPI:
             "authorization": None,
             "tls_verify": False,
         }
+        _mock_printer_test_connection.connect_printer.assert_awaited_once()
+        connected_printer = _mock_printer_test_connection.connect_printer.call_args.args[0]
+        assert connected_printer.id == result["id"]
+        assert connected_printer.moonraker_config.base_url == "https://klipper.local:7125"
 
         from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 
@@ -156,8 +170,34 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_manual_moonraker_connect_eager_loads_config(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Manual Klipper",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125"},
+            },
+        )
+        assert created.status_code == 200
+
+        async def connect(printer):
+            assert printer.moonraker_config.base_url == "http://klipper.local:7125"
+            return True
+
+        with patch(
+            "backend.app.api.routes.printers.printer_manager.connect_printer",
+            new=AsyncMock(side_effect=connect),
+        ):
+            response = await async_client.post(f"/api/v1/printers/{created.json()['id']}/connect")
+
+        assert response.status_code == 200
+        assert response.json() == {"connected": True}
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_create_moonraker_printer_rejects_failed_probe_without_persisting_secret(
-        self, async_client: AsyncClient, db_session
+        self, async_client: AsyncClient, db_session, _mock_printer_test_connection
     ):
         from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
         from backend.app.services.moonraker_http import MoonrakerHTTPError
@@ -185,6 +225,7 @@ class TestPrintersAPI:
         }
         assert "not-returned" not in response.text
         assert (await db_session.execute(select(MoonrakerPrinterConfig))).scalar_one_or_none() is None
+        _mock_printer_test_connection.connect_printer.assert_not_awaited()
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -640,6 +681,66 @@ class TestPrintersAPI:
 
         assert response.status_code == 200
         assert response.json()["is_active"] is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_update_active_moonraker_restarts_backend_with_refreshed_config(
+        self, async_client: AsyncClient, _mock_printer_test_connection
+    ):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Klipper Restart",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://old.local:7125", "api_key": "old-key"},
+            },
+        )
+        assert created.status_code == 200
+        printer_id = created.json()["id"]
+        _mock_printer_test_connection.connect_printer.reset_mock()
+        _mock_printer_test_connection.disconnect_printer.reset_mock()
+
+        response = await async_client.patch(
+            f"/api/v1/printers/{printer_id}",
+            json={
+                "moonraker_config": {
+                    "base_url": "https://new.local:7125",
+                    "authorization": "Bearer new-token",
+                    "tls_verify": False,
+                }
+            },
+        )
+
+        assert response.status_code == 200
+        _mock_printer_test_connection.disconnect_printer.assert_awaited_once_with(printer_id)
+        _mock_printer_test_connection.connect_printer.assert_awaited_once()
+        reconnected = _mock_printer_test_connection.connect_printer.call_args.args[0]
+        assert reconnected.moonraker_config.base_url == "https://new.local:7125"
+        assert reconnected.moonraker_config.authorization == "Bearer new-token"
+        assert reconnected.moonraker_config.api_key is None
+        assert reconnected.moonraker_config.tls_verify is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_deactivating_moonraker_disconnects_without_reconnecting(
+        self, async_client: AsyncClient, _mock_printer_test_connection
+    ):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Inactive Klipper",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125"},
+            },
+        )
+        printer_id = created.json()["id"]
+        _mock_printer_test_connection.connect_printer.reset_mock()
+
+        response = await async_client.patch(f"/api/v1/printers/{printer_id}", json={"is_active": False})
+
+        assert response.status_code == 200
+        _mock_printer_test_connection.disconnect_printer.assert_awaited_once_with(printer_id)
+        _mock_printer_test_connection.connect_printer.assert_not_awaited()
 
     @pytest.mark.asyncio
     @pytest.mark.integration

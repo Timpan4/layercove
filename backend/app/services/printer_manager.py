@@ -8,10 +8,12 @@ from dataclasses import replace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.app.models.printer import Printer
 from backend.app.services.bambu_backend import BambuBackend
 from backend.app.services.bambu_mqtt import BambuMQTTClient, MQTTLogEntry, PrinterState, get_stage_name
+from backend.app.services.moonraker_backend import MoonrakerBackend
 from backend.app.services.printer_backend import (
     BackendError,
     BackendEvent,
@@ -318,6 +320,10 @@ class PrinterManager:
                     client_factory=BambuMQTTClient,
                     **options,
                 ),
+            )
+            self._registry.register(
+                PrinterProvider.MOONRAKER,
+                lambda printer, **options: MoonrakerBackend(printer, **options),
             )
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
@@ -643,9 +649,16 @@ class PrinterManager:
             if dedupe_key in self._seen_lifecycle_events:
                 return
             self._seen_lifecycle_events.add(dedupe_key)
+            backend = self._backends.get(printer_id)
+            if backend is None or backend.provider is not PrinterProvider.BAMBU:
+                return
             callback = self._on_print_start if event.kind == "started" else self._on_print_complete
             await self._call_backend_callback(callback, printer_id, event.data)
         elif isinstance(event, ProviderEvent):
+            if event.kind == "print_running_observed":
+                backend = self._backends.get(printer_id)
+                if backend is None or backend.provider is not PrinterProvider.BAMBU:
+                    return
             callbacks = {
                 "ams_changed": self._on_ams_change,
                 "layer_changed": self._on_layer_change,
@@ -1563,7 +1576,9 @@ printer_manager = PrinterManager()
 
 async def init_printer_connections(db: AsyncSession):
     """Initialize connections to all active printers."""
-    result = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.is_active.is_(True))
+    )
     printers = result.scalars().all()
 
     for printer in printers:

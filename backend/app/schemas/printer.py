@@ -74,6 +74,17 @@ class MoonrakerPrinterConfigInput(BaseModel):
             info.data["websocket_url_override"] = SecretStr(
                 _normalize_provider_url(websocket_url.get_secret_value(), websocket=True)
             )
+            normalized_base_url = info.data.get("base_url")
+            if normalized_base_url is None:
+                return value
+            base = urlsplit(normalized_base_url.get_secret_value())
+            websocket_url = urlsplit(info.data["websocket_url_override"].get_secret_value())
+            base_port = base.port or (443 if base.scheme == "https" else 80)
+            websocket_port = websocket_url.port or (443 if websocket_url.scheme == "wss" else 80)
+            if websocket_url.hostname != base.hostname or websocket_port != base_port:
+                raise ValueError("websocket_url_override must use the base_url host and port")
+            if base.scheme == "https" and websocket_url.scheme != "wss":
+                raise ValueError("HTTPS base_url requires a secure WebSocket URL")
         return value
 
     @property

@@ -2276,7 +2276,9 @@ class PrintScheduler:
             logger.info("Powered on smart plug '%s' for printer %s", plug.name, printer_id)
 
         # Get printer from database for connection
-        result = await db.execute(select(Printer).where(Printer.id == printer_id))
+        result = await db.execute(
+            select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+        )
         printer = result.scalar_one_or_none()
         if not printer:
             logger.error("Printer %s not found in database", printer_id)
