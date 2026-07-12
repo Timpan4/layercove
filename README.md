@@ -655,6 +655,18 @@ services:
 
 </details>
 
+#### Local development with WSL
+
+Start the backend and Bun/Vite frontend together from the repository root:
+
+```bash
+bash scripts/dev.sh
+```
+
+Open `http://localhost:5173`. The Vite server proxies API and WebSocket traffic to
+the backend at `http://localhost:8000`. Press `Ctrl+C` to stop both servers. Set
+`BACKEND_PORT` before the command to use another backend port.
+
 #### Manual Installation (Linux/macOS)
 
 ```bash
