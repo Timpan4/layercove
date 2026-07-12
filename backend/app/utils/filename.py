@@ -57,6 +57,15 @@ def validate_print_filename(name: str) -> None:
         raise InvalidFilenameError(f"Filename exceeds {MAX_FILENAME_BYTES} bytes")
 
 
+def validate_moonraker_gcode_basename(name: str) -> None:
+    """Reject anything except one safe ``.gcode`` filename for Moonraker."""
+    if not isinstance(name, str) or name != name.rsplit("/", 1)[-1] or "\\" in name:
+        raise InvalidFilenameError("Moonraker upload requires a single filename")
+    validate_print_filename(name)
+    if not name.lower().endswith(".gcode"):
+        raise InvalidFilenameError("Moonraker upload requires a .gcode file")
+
+
 def derive_remote_filename(filename: str) -> str:
     """Compute the SD-card filename used when uploading a sliced print file.
 

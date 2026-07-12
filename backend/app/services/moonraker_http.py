@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import asyncio
 import ipaddress
+import json
 import socket
 import ssl
 from collections.abc import Awaitable, Callable, Iterable
 from dataclasses import dataclass
-from typing import Any
+from pathlib import PurePosixPath
+from typing import Any, BinaryIO
 from urllib.parse import urlsplit
 
 import anyio
@@ -16,8 +18,10 @@ import httpcore
 import httpx
 
 from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
+from backend.app.utils.filename import InvalidFilenameError, validate_moonraker_gcode_basename
 
 _MAX_RESPONSE_BYTES = 64 * 1024
+_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
 _TOTAL_TIMEOUT_SECONDS = 10.0
 _TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 
@@ -40,6 +44,30 @@ class MoonrakerHTTPResponse:
     status_code: int
     headers: dict[str, str]
     body: bytes
+
+
+class _BoundedUpload:
+    """Limit synchronous multipart reads without buffering a G-code in memory."""
+
+    def __init__(self, file: BinaryIO, size: int | None):
+        self._file = file
+        self._remaining = _MAX_UPLOAD_BYTES
+        if size is not None:
+            if not isinstance(size, int) or size < 0 or size > _MAX_UPLOAD_BYTES:
+                raise MoonrakerHTTPError("upload_too_large", "G-code upload exceeds size limit.")
+            self._remaining = size
+
+    def read(self, size: int = -1) -> bytes:
+        if self._remaining <= 0:
+            extra = self._file.read(1)
+            if extra:
+                raise MoonrakerHTTPError("upload_too_large", "G-code upload exceeds size limit.")
+            return b""
+        chunk = self._file.read(self._remaining if size < 0 else min(size, self._remaining))
+        if not isinstance(chunk, bytes):
+            raise MoonrakerHTTPError("invalid_upload", "G-code upload could not be read.")
+        self._remaining -= len(chunk)
+        return chunk
 
 
 def _is_safe_peer(address: IPAddress) -> bool:
@@ -328,16 +356,62 @@ class MoonrakerHTTPClient:
 
     async def get_server_info(self) -> MoonrakerHTTPResponse:
         """Probe Moonraker's documented read-only server-info endpoint."""
-        return await self._request("/server/info")
+        return await self._request("GET", "/server/info")
 
     async def test_connection(self) -> bool:
         response = await self.get_server_info()
         return 200 <= response.status_code < 300
 
-    async def _request(self, path: str) -> MoonrakerHTTPResponse:
+    async def upload_gcode(
+        self,
+        file: BinaryIO,
+        *,
+        filename: str,
+        size: int | None = None,
+    ) -> str:
+        """Stream one safe G-code to Moonraker's ``gcodes`` root without retries."""
+        try:
+            validate_moonraker_gcode_basename(filename)
+        except InvalidFilenameError as exc:
+            raise MoonrakerHTTPError("invalid_filename", str(exc)) from exc
+        response = await self._request(
+            "POST",
+            "/server/files/upload",
+            data={"root": "gcodes"},
+            files={"file": (filename, _BoundedUpload(file, size), "application/octet-stream")},
+        )
+        try:
+            item = json.loads(response.body).get("item")
+            path = item.get("path") if isinstance(item, dict) else None
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            path = None
+        if not _safe_moonraker_gcode_path(path):
+            raise MoonrakerHTTPError(
+                "invalid_response", "Moonraker upload response did not contain a safe G-code path."
+            )
+        return path
+
+    async def start_print(self, filename: str) -> None:
+        if not _safe_moonraker_gcode_path(filename):
+            raise MoonrakerHTTPError("invalid_filename", "Moonraker print requires a safe G-code path.")
+        await self._request("POST", "/printer/print/start", params={"filename": filename})
+
+    async def pause_print(self) -> None:
+        await self._request("POST", "/printer/print/pause")
+
+    async def resume_print(self) -> None:
+        await self._request("POST", "/printer/print/resume")
+
+    async def cancel_print(self) -> None:
+        await self._request("POST", "/printer/print/cancel")
+
+    async def emergency_stop(self) -> None:
+        await self._request("POST", "/printer/emergency_stop")
+
+    async def _request(self, method: str, path: str, **request_options: Any) -> MoonrakerHTTPResponse:
         try:
             async with asyncio.timeout(_TOTAL_TIMEOUT_SECONDS):
-                return await self._request_within_deadline(path)
+                return await self._request_within_deadline(method, path, **request_options)
         except MoonrakerHTTPError:
             raise
         except (TimeoutError, httpx.TimeoutException, httpcore.TimeoutException) as exc:
@@ -350,7 +424,7 @@ class MoonrakerHTTPClient:
                 ) from exc
             raise MoonrakerHTTPError("unavailable", "Could not connect to Moonraker.") from exc
 
-    async def _request_within_deadline(self, path: str) -> MoonrakerHTTPResponse:
+    async def _request_within_deadline(self, method: str, path: str, **request_options: Any) -> MoonrakerHTTPResponse:
         peers = frozenset(
             unwrap_ipv4_mapped(ipaddress.ip_address(peer)) for peer in await self._resolver(self._host, self._port)
         )
@@ -371,7 +445,7 @@ class MoonrakerHTTPClient:
                 follow_redirects=False,
                 trust_env=False,
             ) as client,
-            client.stream("GET", f"{self._base_url}{path}", headers=headers) as response,
+            client.stream(method, f"{self._base_url}{path}", headers=headers, **request_options) as response,
         ):
             if 300 <= response.status_code < 400:
                 raise MoonrakerHTTPError(
@@ -394,3 +468,10 @@ class MoonrakerHTTPClient:
                 if len(body) > _MAX_RESPONSE_BYTES:
                     raise MoonrakerHTTPError("response_too_large", "Moonraker response exceeded size limit.")
             return MoonrakerHTTPResponse(response.status_code, dict(response.headers), bytes(body))
+
+
+def _safe_moonraker_gcode_path(path: object) -> bool:
+    if not isinstance(path, str) or not path or "\\" in path or path.startswith("/"):
+        return False
+    parts = PurePosixPath(path).parts
+    return bool(parts) and all(part not in {".", ".."} for part in parts) and path.lower().endswith(".gcode")

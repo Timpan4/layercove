@@ -51,6 +51,26 @@ responses, DNS, and handshake are bounded. WebSocket heartbeat pings detect a
 silent peer and reconnect, while a healthy quiet printer stays connected. A
 stalled Moonraker does not block reconnect forever.
 
+## Upload and controls
+
+`POST /api/v1/printers/{printer_id}/moonraker/upload-gcode` accepts one
+multipart `file` and optional `start` form field. It requires `printers:files`,
+accepts only a single `.gcode` basename, streams at most 4 GiB to Moonraker's
+`gcodes` root, and returns Moonraker's `item.path`. `start=true` starts that
+returned path. Uploads and print commands are never retried automatically.
+
+Pause, resume, and cancel use Moonraker's dedicated print endpoints only when
+the normalized state permits them. Emergency stop is separate:
+
+```text
+POST /api/v1/printers/{printer_id}/emergency-stop
+{"confirmed": true}
+```
+
+It requires `printers:control`, calls only Moonraker's immediate
+`/printer/emergency_stop` endpoint, and never sends `M112` through a generic
+G-code path. Validate this only with a supervised hardware procedure.
+
 ## Network policy
 
 - Private and LAN addresses are allowed.

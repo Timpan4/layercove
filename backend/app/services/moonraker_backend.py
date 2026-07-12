@@ -12,6 +12,7 @@ from datetime import datetime, timezone
 from typing import Any, Protocol
 from uuid import uuid4
 
+from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
 from backend.app.services.moonraker_websocket import MoonrakerWebSocketTransport
 from backend.app.services.printer_backend import (
     BackendError,
@@ -107,6 +108,7 @@ class MoonrakerBackend:
         *,
         emit: BackendEventSink,
         transport_factory: TransportFactory = MoonrakerWebSocketTransport,
+        http_client_factory: Callable[..., MoonrakerHTTPClient] = MoonrakerHTTPClient,
         sleep: Sleep = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
         bootstrap_timeout: float = _BOOTSTRAP_RESPONSE_TIMEOUT_SECONDS,
@@ -126,6 +128,12 @@ class MoonrakerBackend:
             )
         except (TypeError, ValueError) as exc:
             raise BackendError("Moonraker printer configuration is invalid") from exc
+        self._http = http_client_factory(
+            base_url=config.base_url,
+            api_key=config.api_key,
+            authorization=config.authorization,
+            tls_verify=config.tls_verify,
+        )
         self._emit = emit
         self._sleep = sleep
         self._jitter = jitter
@@ -172,16 +180,53 @@ class MoonrakerBackend:
         return self._snapshot
 
     async def start_print(self, filename: str, *args: object, **options: object) -> bool:
-        return False
+        self._require_command("start_print", {NormalizedPrinterState.IDLE})
+        await self._run_command(self._http.start_print(filename))
+        return True
 
     async def pause(self) -> bool:
-        return False
+        self._require_command("pause", {NormalizedPrinterState.PRINTING})
+        await self._run_command(self._http.pause_print())
+        return True
 
     async def resume(self) -> bool:
-        return False
+        self._require_command("resume", {NormalizedPrinterState.PAUSED})
+        await self._run_command(self._http.resume_print())
+        return True
 
     async def cancel(self) -> bool:
-        return False
+        self._require_command(
+            "cancel", {NormalizedPrinterState.PREPARING, NormalizedPrinterState.PRINTING, NormalizedPrinterState.PAUSED}
+        )
+        await self._run_command(self._http.cancel_print())
+        return True
+
+    async def upload_gcode(self, file, *, filename: str, start: bool, size: int | None) -> str:
+        self._require_command("upload_gcode", {NormalizedPrinterState.IDLE})
+        path = await self._run_command(self._http.upload_gcode(file, filename=filename, size=size))
+        if start:
+            await self._run_command(self._http.start_print(path))
+        return path
+
+    async def emergency_stop(self) -> bool:
+        if not self.capabilities.emergency_stop or not self._snapshot.connected:
+            raise BackendError(
+                "Emergency stop is unavailable while Moonraker is disconnected.", code="command_unavailable"
+            )
+        await self._run_command(self._http.emergency_stop())
+        return True
+
+    def _require_command(self, capability: str, states: set[NormalizedPrinterState]) -> None:
+        if not getattr(self.capabilities, capability) or not self._snapshot.connected:
+            raise BackendError("Moonraker command is unavailable.", code="command_unavailable")
+        if self._snapshot.state not in states:
+            raise BackendError("Moonraker command is not valid for the current printer state.", code="invalid_state")
+
+    async def _run_command(self, command):
+        try:
+            return await command
+        except MoonrakerHTTPError as exc:
+            raise BackendError(exc.message, code=exc.code) from exc
 
     async def _run(self) -> None:
         attempt = 0

@@ -72,6 +72,57 @@ class TestPrintersAPI:
         assert len(data) >= 1
         assert any(p["name"] == "Test Printer" for p in data)
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_moonraker_upload_starts_returned_path_and_emergency_stop_is_dedicated(
+        self, async_client, db_session
+    ):
+        from dataclasses import replace
+
+        from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+        from backend.app.models.printer import Printer
+        from backend.app.services.moonraker_backend import MoonrakerBackend
+        from backend.app.services.printer_types import NormalizedPrinterState
+
+        calls = []
+
+        class HTTP:
+            async def upload_gcode(self, file, *, filename, size):
+                calls.append(("upload", filename, size))
+                return "moonraker-name.gcode"
+
+            async def start_print(self, filename):
+                calls.append(("start", filename))
+
+            async def emergency_stop(self):
+                calls.append(("emergency_stop",))
+
+        printer = Printer(name="Moon", provider="moonraker", is_active=False)
+        printer.moonraker_config = MoonrakerPrinterConfig(base_url="http://klipper.local:7125")
+        db_session.add(printer)
+        await db_session.commit()
+        await db_session.refresh(printer, attribute_names=["moonraker_config"])
+        backend = MoonrakerBackend(
+            printer,
+            emit=lambda _: None,
+            transport_factory=lambda **_: None,
+            http_client_factory=lambda **_: HTTP(),
+        )
+        backend._snapshot = replace(backend.snapshot(), connected=True, state=NormalizedPrinterState.IDLE)
+
+        with patch("backend.app.api.routes.printers.printer_manager.get_backend", return_value=backend):
+            upload = await async_client.post(
+                f"/api/v1/printers/{printer.id}/moonraker/upload-gcode",
+                files={"file": ("cube.gcode", b"G28")},
+                data={"start": "true"},
+            )
+            stop = await async_client.post(f"/api/v1/printers/{printer.id}/emergency-stop", json={"confirmed": True})
+
+        assert upload.status_code == 200, upload.text
+        assert upload.json() == {"success": True, "path": "moonraker-name.gcode", "started": True}
+        assert stop.status_code == 200, stop.text
+        assert calls == [("upload", "cube.gcode", 3), ("start", "moonraker-name.gcode"), ("emergency_stop",)]
+
     # ========================================================================
     # Create endpoints
     # ========================================================================
@@ -4390,3 +4441,38 @@ class TestExtruderJogAPI:
         assert response.status_code == 200
         sent = mock_client.send_gcode.call_args.args[0]
         assert "E-3.50" in sent
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_emergency_stop_requires_control_permission_and_confirmation(async_client: AsyncClient):
+    await async_client.post(
+        "/api/v1/auth/setup",
+        json={"auth_enabled": True, "admin_username": "stopadmin", "admin_password": "AdminPass1!"},
+    )
+    login = await async_client.post("/api/v1/auth/login", json={"username": "stopadmin", "password": "AdminPass1!"})
+    admin_token = login.json()["access_token"]
+    groups = (await async_client.get("/api/v1/groups/", headers={"Authorization": f"Bearer {admin_token}"})).json()
+    viewer_group = next(group for group in groups if group["name"] == "Viewers")
+    await async_client.post(
+        "/api/v1/users/",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"username": "stopviewer", "password": "ViewerPass1!", "group_ids": [viewer_group["id"]]},
+    )
+    viewer_login = await async_client.post(
+        "/api/v1/auth/login", json={"username": "stopviewer", "password": "ViewerPass1!"}
+    )
+
+    denied = await async_client.post(
+        "/api/v1/printers/1/emergency-stop",
+        headers={"Authorization": f"Bearer {viewer_login.json()['access_token']}"},
+        json={"confirmed": True},
+    )
+    unconfirmed = await async_client.post(
+        "/api/v1/printers/1/emergency-stop",
+        headers={"Authorization": f"Bearer {admin_token}"},
+        json={"confirmed": False},
+    )
+
+    assert denied.status_code == 403
+    assert unconfirmed.status_code == 400

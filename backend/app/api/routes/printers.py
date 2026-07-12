@@ -3,7 +3,7 @@ import logging
 import re
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
 from fastapi.responses import Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +28,7 @@ from backend.app.schemas.printer import (
     AMSTray,
     AMSUnit,
     DiagnosticRequest,
+    EmergencyStopRequest,
     FilaSwitchResponse,
     HmsActionBody,
     HMSErrorResponse,
@@ -51,7 +52,9 @@ from backend.app.services.bambu_ftp import (
     get_storage_info_async,
     list_files_async,
 )
+from backend.app.services.moonraker_backend import MoonrakerBackend
 from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+from backend.app.services.printer_backend import BackendError
 from backend.app.services.printer_diagnostic import run_connection_diagnostic
 from backend.app.services.printer_manager import (
     get_derived_status_name,
@@ -2913,6 +2916,58 @@ async def debug_simulate_print_complete(
 # =============================================================================
 # Print Control Endpoints
 # =============================================================================
+
+
+def _moonraker_command_error(error: BackendError) -> HTTPException:
+    return HTTPException(
+        status_code=400 if error.code in {"invalid_filename", "invalid_state", "command_unavailable"} else 502,
+        detail={"code": error.code, "message": error.safe_message},
+    )
+
+
+async def _moonraker_backend(printer_id: int, db: AsyncSession) -> MoonrakerBackend:
+    printer = (await db.execute(select(Printer).where(Printer.id == printer_id))).scalar_one_or_none()
+    if printer is None:
+        raise HTTPException(404, "Printer not found")
+    backend = printer_manager.get_backend(printer_id)
+    if printer.provider != PrinterProvider.MOONRAKER or not isinstance(backend, MoonrakerBackend):
+        raise HTTPException(400, "Moonraker printer is not connected")
+    return backend
+
+
+@router.post("/{printer_id}/moonraker/upload-gcode")
+async def upload_moonraker_gcode(
+    printer_id: int,
+    file: UploadFile = File(...),
+    start: bool = Form(False),
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload one G-code file to Moonraker's gcodes root, optionally starting it."""
+    backend = await _moonraker_backend(printer_id, db)
+    try:
+        path = await backend.upload_gcode(file.file, filename=file.filename or "", start=start, size=file.size)
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
+    return {"success": True, "path": path, "started": start}
+
+
+@router.post("/{printer_id}/emergency-stop")
+async def emergency_stop(
+    printer_id: int,
+    request: EmergencyStopRequest,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send Moonraker's immediate emergency-stop endpoint after explicit confirmation."""
+    if not request.confirmed:
+        raise HTTPException(400, "Emergency stop requires confirmed=true")
+    backend = await _moonraker_backend(printer_id, db)
+    try:
+        await backend.emergency_stop()
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
+    return {"success": True, "message": "Emergency stop command sent"}
 
 
 @router.post("/{printer_id}/print/stop")
