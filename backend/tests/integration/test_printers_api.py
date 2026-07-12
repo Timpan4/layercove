@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import unquote
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncByteStream, AsyncClient
 from sqlalchemy import select
 
 
@@ -4522,7 +4522,11 @@ async def test_emergency_stop_requires_control_permission_and_confirmation(async
 @pytest.mark.asyncio
 @pytest.mark.integration
 async def test_moonraker_upload_limits_map_to_413(async_client: AsyncClient):
-    from backend.app.core.moonraker_upload_limit import MOONRAKER_MAX_UPLOAD_BODY_BYTES
+    from backend.app.core.moonraker_upload_limit import (
+        MOONRAKER_MAX_UPLOAD_BODY_BYTES,
+        MoonrakerUploadBodyLimitMiddleware,
+    )
+    from backend.app.main import app
     from backend.app.services.printer_backend import BackendError
 
     declared = await async_client.post(
@@ -4530,6 +4534,34 @@ async def test_moonraker_upload_limits_map_to_413(async_client: AsyncClient):
         content=b"",
         headers={"Content-Length": str(MOONRAKER_MAX_UPLOAD_BODY_BYTES + 1)},
     )
+
+    boundary = b"moonraker-limit-test"
+    chunks = [
+        b"--"
+        + boundary
+        + b'\r\nContent-Disposition: form-data; name="file"; filename="cube.gcode"'
+        + b"\r\nContent-Type: application/octet-stream\r\n\r\n",
+        b"1234",
+        b"must-not-be-consumed",
+        b"\r\n--" + boundary + b"--\r\n",
+    ]
+
+    class ChunkedMultipart(AsyncByteStream):
+        yielded = 0
+
+        async def __aiter__(self):
+            for chunk in chunks:
+                self.yielded += 1
+                yield chunk
+
+    stream = ChunkedMultipart()
+    limited_app = MoonrakerUploadBodyLimitMiddleware(app, max_body_bytes=len(chunks[0]) + 3)
+    async with AsyncClient(transport=ASGITransport(app=limited_app), base_url="http://test") as chunked_client:
+        chunked = await chunked_client.post(
+            "/api/v1/printers/1/moonraker/upload-gcode",
+            content=stream,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary.decode()}"},
+        )
 
     backend = MagicMock()
     backend.upload_gcode = AsyncMock(
@@ -4543,5 +4575,8 @@ async def test_moonraker_upload_limits_map_to_413(async_client: AsyncClient):
 
     assert declared.status_code == 413
     assert declared.json()["detail"]["code"] == "upload_too_large"
+    assert chunked.status_code == 413
+    assert chunked.json()["detail"]["code"] == "upload_too_large"
+    assert stream.yielded == 2
     assert second_hop.status_code == 413
     assert second_hop.json()["detail"]["code"] == "upload_too_large"

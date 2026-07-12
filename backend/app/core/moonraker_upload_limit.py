@@ -30,29 +30,35 @@ class MoonrakerUploadBodyLimitMiddleware:
             return
 
         received = 0
-        response_started = False
+        limit_exceeded = False
+        response_messages = []
 
         async def limited_receive():
-            nonlocal received
+            nonlocal limit_exceeded, received
+            if limit_exceeded:
+                raise _UploadBodyTooLarge
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
                 if received > self.max_body_bytes:
+                    limit_exceeded = True
                     raise _UploadBodyTooLarge
             return message
 
-        async def tracked_send(message):
-            nonlocal response_started
-            if message["type"] == "http.response.start":
-                response_started = True
-            await send(message)
+        async def buffered_send(message):
+            response_messages.append(message)
 
         try:
-            await self.app(scope, limited_receive, tracked_send)
+            await self.app(scope, limited_receive, buffered_send)
         except _UploadBodyTooLarge:
-            if response_started:
-                raise
+            limit_exceeded = True
+
+        if limit_exceeded:
             await self._reject(scope, receive, send)
+            return
+
+        for message in response_messages:
+            await send(message)
 
     @staticmethod
     def _applies(scope) -> bool:
