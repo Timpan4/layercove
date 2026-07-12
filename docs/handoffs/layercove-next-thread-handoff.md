@@ -144,7 +144,17 @@ Full gate:
 ```sh
 uv run pytest -q -n 10 backend/tests
 uv run ruff check backend
-uv run ruff format --check <all issue-11 changed Python files>
+uv run ruff format --check \
+  backend/app/api/routes/print_queue.py \
+  backend/app/core/database.py \
+  backend/app/main.py \
+  backend/app/models/print_queue.py \
+  backend/app/services/moonraker_backend.py \
+  backend/app/services/print_scheduler.py \
+  backend/app/services/printer_manager.py \
+  backend/tests/unit/services/test_moonraker_backend.py \
+  backend/tests/unit/services/test_printer_manager_backends.py \
+  backend/tests/unit/test_scheduler_provider_dispatch.py
 git diff --check 16218cebd..HEAD
 ```
 
