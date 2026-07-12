@@ -68,7 +68,7 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_create_printer(self, async_client: AsyncClient):
+    async def test_create_printer(self, async_client: AsyncClient, db_session, _mock_printer_test_connection):
         """Verify printer can be created."""
         data = {
             "name": "New Printer",
@@ -86,6 +86,16 @@ class TestPrintersAPI:
         assert result["name"] == "New Printer"
         assert result["serial_number"] == "00M09A111111111"
         assert result["model"] == "X1C"
+        _mock_printer_test_connection.assert_awaited_once_with(
+            ip_address="192.168.1.100",
+            serial_number="00M09A111111111",
+            access_code="12345678",
+        )
+
+        from backend.app.models.printer import Printer
+
+        stored = (await db_session.execute(select(Printer).where(Printer.id == result["id"]))).scalar_one()
+        assert stored.access_code == "12345678"
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -180,6 +190,13 @@ class TestPrintersAPI:
         [
             (
                 {
+                    "name": "Incomplete Bambu Printer",
+                    "access_code": "access-secret-123",
+                },
+                ("access-secret-123",),
+            ),
+            (
+                {
                     "name": "Klipper Printer",
                     "provider": "moonraker",
                     "moonraker_config": {
@@ -201,7 +218,21 @@ class TestPrintersAPI:
                         "api_key": "nested-key-must-not-leak",
                     },
                 },
-                ("nested-key-must-not-leak",),
+                ("12345678", "nested-key-must-not-leak"),
+            ),
+            (
+                {
+                    "name": "Klipper Printer",
+                    "provider": "moonraker",
+                    "serial_number": "SERIAL-MUST-NOT-LEAK-SECRETS",
+                    "ip_address": "192.168.1.100",
+                    "access_code": "moon-access-secret",
+                    "moonraker_config": {
+                        "base_url": "http://klipper.local:7125",
+                        "authorization": "moonraker-auth-must-not-leak",
+                    },
+                },
+                ("moon-access-secret", "moonraker-auth-must-not-leak"),
             ),
         ],
     )
@@ -333,6 +364,57 @@ class TestPrintersAPI:
 
         assert clear_bambu_secret.status_code == 400
         assert add_bambu_field_to_moonraker.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_invalid_access_code_update_never_echoes_secret(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Bambu",
+                "serial_number": "00M09A444444444",
+                "ip_address": "192.168.1.44",
+                "access_code": "12345678",
+            },
+        )
+        secret = "invalid-access-code-must-not-leak"
+
+        response = await async_client.patch(
+            f"/api/v1/printers/{created.json()['id']}",
+            json={"access_code": secret},
+        )
+
+        assert response.status_code == 422
+        assert secret not in f"{response!r} {response.text} {response.json()!r}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_valid_access_code_update_persists_plaintext_boundary(self, async_client: AsyncClient, db_session):
+        from backend.app.models.printer import Printer
+
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Bambu",
+                "serial_number": "00M09A555555555",
+                "ip_address": "192.168.1.55",
+                "access_code": "12345678",
+            },
+        )
+
+        with (
+            patch("backend.app.api.routes.printers.printer_manager.disconnect_printer_async", new=AsyncMock()),
+            patch("backend.app.api.routes.printers.printer_manager.connect_printer", new=AsyncMock()) as reconnect,
+        ):
+            response = await async_client.patch(
+                f"/api/v1/printers/{created.json()['id']}",
+                json={"access_code": "87654321"},
+            )
+
+        assert response.status_code == 200
+        stored = (await db_session.execute(select(Printer).where(Printer.id == created.json()["id"]))).scalar_one()
+        assert stored.access_code == "87654321"
+        assert reconnect.call_args.args[0].access_code == "87654321"
 
     @pytest.mark.asyncio
     @pytest.mark.integration

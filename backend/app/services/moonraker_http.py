@@ -183,7 +183,7 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
         *,
         backend: httpcore.AsyncNetworkBackend | None = None,
     ):
-        self._host = host.encode("idna").decode("ascii").lower()
+        self._host = host.lower()
         self._peers = peers
         self._backend = backend or _AnyIONetworkBackend()
 
@@ -195,7 +195,7 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
         local_address: str | None = None,
         socket_options: Any = None,
     ):
-        if host.encode("idna").decode("ascii").lower() != self._host:
+        if host.lower() != self._host:
             raise httpcore.ConnectError("unexpected connection host")
 
         timed_out = False
@@ -316,8 +316,9 @@ class MoonrakerHTTPClient:
             or parsed.fragment
         ):
             raise ValueError("Moonraker base URL must be an HTTP(S) origin")
-        self._base_url = base_url.rstrip("/")
-        self._host = parsed.hostname
+        canonical_url = httpx.URL(base_url)
+        self._base_url = str(canonical_url).rstrip("/")
+        self._host = canonical_url.raw_host.decode("ascii")
         self._port = parsed.port or (443 if parsed.scheme == "https" else 80)
         self._api_key = api_key
         self._authorization = authorization

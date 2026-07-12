@@ -4,6 +4,7 @@ from socket import inet_aton
 from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, SecretStr, ValidationInfo, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
 from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
 from backend.app.services.printer_types import PrinterCapabilities, PrinterProvider, capabilities_for_provider
@@ -140,20 +141,24 @@ class PrinterCreate(PrinterBase):
     # access_code lives on the input shapes only — never on the default
     # PrinterResponse. Direct exposure on PRINTERS_READ would let a Viewer
     # connect to the printer's MQTT and bypass Bambuddy's RBAC.
-    access_code: str | None = Field(default=None, min_length=1, max_length=20, validate_default=True)
+    access_code: SecretStr | None = None
+    provider_configuration_valid: SkipJsonSchema[bool] = Field(default=True, exclude=True, validate_default=True)
 
-    @field_validator("access_code")
+    @field_validator("provider_configuration_valid")
     @classmethod
-    def _validate_provider_config(cls, value: str | None, info: ValidationInfo) -> str | None:
+    def _validate_provider_config(cls, value: bool, info: ValidationInfo) -> bool:
         provider = info.data.get("provider")
         moonraker_config = info.data.get("moonraker_config")
+        access_code = info.data.get("access_code")
+        if access_code is not None and not 1 <= len(access_code.get_secret_value()) <= 20:
+            raise ValueError("access_code must contain between 1 and 20 characters")
         if provider is PrinterProvider.BAMBU:
             missing = [
                 field
                 for field, field_value in (
                     ("serial_number", info.data.get("serial_number")),
                     ("ip_address", info.data.get("ip_address")),
-                    ("access_code", value),
+                    ("access_code", access_code),
                 )
                 if field_value is None
             ]
@@ -164,12 +169,16 @@ class PrinterCreate(PrinterBase):
         else:
             if any(
                 field_value is not None
-                for field_value in (info.data.get("serial_number"), info.data.get("ip_address"), value)
+                for field_value in (info.data.get("serial_number"), info.data.get("ip_address"), access_code)
             ):
                 raise ValueError("Moonraker printer must not include Bambu connection fields")
             if moonraker_config is None:
                 raise ValueError("Moonraker printer requires moonraker_config")
         return value
+
+    @property
+    def access_code_value(self) -> str | None:
+        return self.access_code.get_secret_value() if self.access_code is not None else None
 
 
 class PlateDetectionROI(BaseModel):
@@ -188,7 +197,8 @@ class PrinterUpdate(BaseModel):
         max_length=253,
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
-    access_code: str | None = Field(default=None, min_length=1, max_length=20)
+    access_code: SecretStr | None = None
+    access_code_valid: SkipJsonSchema[bool] = Field(default=True, exclude=True, validate_default=True)
     model: str | None = None
     location: str | None = None
     is_active: bool | None = None
@@ -202,6 +212,18 @@ class PrinterUpdate(BaseModel):
     plate_detection_enabled: bool | None = None
     plate_detection_roi: PlateDetectionROI | None = None
     moonraker_config: MoonrakerPrinterConfigInput | None = None
+
+    @field_validator("access_code_valid")
+    @classmethod
+    def _validate_access_code(cls, value: bool, info: ValidationInfo) -> bool:
+        access_code = info.data.get("access_code")
+        if access_code is not None and not 1 <= len(access_code.get_secret_value()) <= 20:
+            raise ValueError("access_code must contain between 1 and 20 characters")
+        return value
+
+    @property
+    def access_code_value(self) -> str | None:
+        return self.access_code.get_secret_value() if self.access_code is not None else None
 
 
 class PrinterResponse(PrinterBase):

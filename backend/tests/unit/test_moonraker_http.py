@@ -266,6 +266,39 @@ async def test_moonraker_client_total_deadline_bounds_slow_response_body(monkeyp
 
 
 @pytest.mark.asyncio
+async def test_moonraker_client_uses_httpx_raw_host_canonicalization():
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    expected_host = "xn--fa-hia.de"
+    observed_hosts: list[str] = []
+
+    async def resolver(host: str, port: int):
+        observed_hosts.append(host)
+        assert (host, port) == (expected_host, 7125)
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    def transport_factory(host, port, peers, tls_verify):
+        observed_hosts.append(host)
+
+        def handler(request: httpx.Request):
+            assert request.url.raw_host == expected_host.encode()
+            assert request.headers["Host"] == f"{expected_host}:7125"
+            return httpx.Response(200, content=b"{}")
+
+        return httpx.MockTransport(handler)
+
+    client = MoonrakerHTTPClient(
+        base_url="https://faß.de:7125",
+        resolver=resolver,
+        transport_factory=transport_factory,
+    )
+
+    await client.get_server_info()
+
+    assert observed_hosts == [expected_host, expected_host]
+
+
+@pytest.mark.asyncio
 async def test_pinned_transport_rejects_a_connected_peer_outside_resolved_set():
     import httpcore
 
@@ -425,10 +458,18 @@ async def test_pinned_transport_connect_timeout_maps_to_safe_timeout():
         ),
         (
             "https://prínter.lan:7125/server/info",
-            "prínter.lan",
+            "xn--prnter-4va.lan",
             True,
             "xn--prnter-4va.lan",
             "xn--prnter-4va.lan",
+            ssl.CERT_REQUIRED,
+        ),
+        (
+            "https://faß.de:7125/server/info",
+            "xn--fa-hia.de",
+            True,
+            "xn--fa-hia.de",
+            "xn--fa-hia.de",
             ssl.CERT_REQUIRED,
         ),
     ],

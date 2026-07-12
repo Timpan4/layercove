@@ -140,7 +140,7 @@ async def create_printer(
         test_result = await printer_manager.test_connection(
             ip_address=printer_data.ip_address,
             serial_number=printer_data.serial_number,
-            access_code=printer_data.access_code,
+            access_code=printer_data.access_code_value,
         )
         if not test_result.get("success"):
             raise HTTPException(
@@ -185,6 +185,7 @@ async def create_printer(
 
     printer_values = printer_data.model_dump(exclude={"moonraker_config"})
     printer_values["provider"] = printer_data.provider.value
+    printer_values["access_code"] = printer_data.access_code_value
     printer = Printer(**printer_values)
     if printer_data.moonraker_config is not None:
         config_input = printer_data.moonraker_config
@@ -427,6 +428,8 @@ async def update_printer(
         raise HTTPException(404, "Printer not found")
 
     update_data = printer_data.model_dump(exclude_unset=True)
+    if "access_code" in update_data:
+        update_data["access_code"] = printer_data.access_code_value
 
     bambu_connection_fields = {"ip_address", "access_code"}
     supplied_bambu_fields = bambu_connection_fields.intersection(update_data)
