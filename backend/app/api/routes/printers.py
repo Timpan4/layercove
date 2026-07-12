@@ -986,7 +986,9 @@ async def connect_printer(
     db: AsyncSession = Depends(get_db),
 ):
     """Manually connect to a printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")

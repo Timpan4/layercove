@@ -15,6 +15,7 @@ printer goes offline. These tests pin both layers:
 """
 
 import asyncio
+from dataclasses import replace
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -189,6 +190,27 @@ class TestOfflineEdgeDetection:
         assert payload["current_print"] == "cube.gcode"
         assert "provider_detail" not in payload
         assert "raw_data" not in payload
+
+    @pytest.mark.asyncio
+    async def test_normalized_snapshot_elapsed_and_message_changes_are_not_deduplicated(self):
+        ws_mgr, _, _ = self._patch_handler_deps()
+        first = PrinterSnapshot(
+            provider=PrinterProvider.MOONRAKER,
+            connected=True,
+            state=NormalizedPrinterState.PRINTING,
+            message="Heating",
+            elapsed_seconds=10,
+        )
+        elapsed_changed = replace(first, elapsed_seconds=11)
+        message_changed = replace(elapsed_changed, message="Printing")
+        main_module._last_status_broadcast.pop(79, None)
+
+        with patch("backend.app.main.ws_manager", ws_mgr):
+            await main_module.on_printer_status_change(79, first)
+            await main_module.on_printer_status_change(79, elapsed_changed)
+            await main_module.on_printer_status_change(79, message_changed)
+
+        assert ws_mgr.send_printer_status.await_count == 3
 
     @pytest.mark.asyncio
     async def test_normalized_snapshot_preserves_offline_notification_edge(self):

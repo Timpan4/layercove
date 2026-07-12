@@ -60,6 +60,12 @@ def moonraker_websocket_url(base_url: str, override: str | None = None) -> str:
         or parsed.fragment
     ):
         raise ValueError("Moonraker WebSocket URL must be a credential-free WS(S) URL")
+    base_port = base.port or (443 if base.scheme == "https" else 80)
+    websocket_port = parsed.port or (443 if parsed.scheme == "wss" else 80)
+    if parsed.hostname.lower() != base.hostname.lower() or websocket_port != base_port:
+        raise ValueError("Moonraker WebSocket URL must use the base URL host and port")
+    if base.scheme == "https" and parsed.scheme != "wss":
+        raise ValueError("HTTPS Moonraker origins require a secure WebSocket URL")
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/websocket", "", ""))
 
 
@@ -124,17 +130,23 @@ class MoonrakerWebSocket:
             try:
                 data = message.json()
             except (TypeError, ValueError) as exc:
-                raise MoonrakerWebSocketError("malformed_message", "Moonraker sent an invalid WebSocket message.") from exc
+                raise MoonrakerWebSocketError(
+                    "malformed_message", "Moonraker sent an invalid WebSocket message."
+                ) from exc
             if not isinstance(data, dict):
                 raise MoonrakerWebSocketError("malformed_message", "Moonraker sent an invalid WebSocket message.")
             return data
         if message.type is aiohttp.WSMsgType.ERROR:
-            raise MoonrakerWebSocketError("unavailable", "Moonraker WebSocket disconnected.") from self._websocket.exception()
+            raise MoonrakerWebSocketError(
+                "unavailable", "Moonraker WebSocket disconnected."
+            ) from self._websocket.exception()
         raise MoonrakerWebSocketError("unavailable", "Moonraker WebSocket disconnected.")
 
     async def close(self) -> None:
-        await self._websocket.close()
-        await self._session.close()
+        try:
+            await self._websocket.close()
+        finally:
+            await self._session.close()
 
 
 class MoonrakerWebSocketTransport:
@@ -163,38 +175,10 @@ class MoonrakerWebSocketTransport:
 
     async def connect(self) -> MoonrakerWebSocket:
         try:
-            async with asyncio.timeout(_TOTAL_TIMEOUT_SECONDS):
-                peers = _approved_peers(await self._resolver(self._host, self._port))
-                connector = aiohttp.TCPConnector(
-                    resolver=_PinnedResolver(self._host, peers),
-                    ssl=self._tls_verify,
-                    limit=1,
-                    force_close=True,
-                )
-                headers = {"X-Api-Key": self._api_key} if self._api_key is not None else {}
-                if self._authorization is not None:
-                    headers["Authorization"] = self._authorization
-                session = aiohttp.ClientSession(
-                    connector=connector,
-                    timeout=aiohttp.ClientTimeout(total=_TOTAL_TIMEOUT_SECONDS),
-                    trust_env=False,
-                )
-                try:
-                    websocket = await session.ws_connect(
-                        self._url,
-                        headers=headers,
-                        max_msg_size=_MAX_MESSAGE_BYTES,
-                    )
-                    if _connected_peer(websocket) not in peers:
-                        await websocket.close()
-                        raise MoonrakerWebSocketError("unsafe_target", "Moonraker connected to an unapproved address.")
-                    return MoonrakerWebSocket(session, websocket)
-                except Exception:
-                    await session.close()
-                    raise
+            return await asyncio.wait_for(self._connect_within_deadline(), timeout=_TOTAL_TIMEOUT_SECONDS)
         except MoonrakerWebSocketError:
             raise
-        except TimeoutError as exc:
+        except asyncio.TimeoutError as exc:
             raise MoonrakerWebSocketError("timeout", "Moonraker did not respond before timeout.") from exc
         except (aiohttp.ClientConnectorCertificateError, aiohttp.ClientConnectorSSLError) as exc:
             raise MoonrakerWebSocketError(
@@ -209,3 +193,33 @@ class MoonrakerWebSocketTransport:
             raise MoonrakerWebSocketError("unavailable", "Could not connect to Moonraker.") from exc
         except aiohttp.ClientError as exc:
             raise MoonrakerWebSocketError("unavailable", "Could not connect to Moonraker.") from exc
+
+    async def _connect_within_deadline(self) -> MoonrakerWebSocket:
+        peers = _approved_peers(await self._resolver(self._host, self._port))
+        connector = aiohttp.TCPConnector(
+            resolver=_PinnedResolver(self._host, peers),
+            ssl=self._tls_verify,
+            limit=1,
+            force_close=True,
+        )
+        headers = {"X-Api-Key": self._api_key} if self._api_key is not None else {}
+        if self._authorization is not None:
+            headers["Authorization"] = self._authorization
+        session = aiohttp.ClientSession(
+            connector=connector,
+            timeout=aiohttp.ClientTimeout(total=_TOTAL_TIMEOUT_SECONDS),
+            trust_env=False,
+        )
+        try:
+            websocket = await session.ws_connect(
+                self._url,
+                headers=headers,
+                max_msg_size=_MAX_MESSAGE_BYTES,
+            )
+            if _connected_peer(websocket) not in peers:
+                await websocket.close()
+                raise MoonrakerWebSocketError("unsafe_target", "Moonraker connected to an unapproved address.")
+            return MoonrakerWebSocket(session, websocket)
+        except BaseException:
+            await session.close()
+            raise

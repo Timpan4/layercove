@@ -12,7 +12,8 @@ probe leaves no printer or credential row behind.
 - `api_key`: sent as `X-Api-Key`.
 - `authorization`: sent as `Authorization`.
 - `tls_verify`: per-printer certificate verification; defaults to `true`.
-- `websocket_url_override`: optional WS(S) endpoint for later live-state support.
+- `websocket_url_override`: optional WS(S) endpoint on the same host and effective
+  port as `base_url`. HTTPS origins require WSS; HTTP origins may use WS.
 
 `api_key` and `authorization` are mutually exclusive. Credentials are encrypted
 at rest and responses expose only `api_key_configured` or
@@ -36,6 +37,19 @@ returns a safe success or failure message. It accepts no URL, credential, or
 request target. Updating a Moonraker config saves the update without probing;
 call this endpoint afterward to validate the stored values.
 
+## Live status
+
+LayerCove opens one backend-owned WebSocket per active Moonraker printer. It
+queries initial printer objects, subscribes to live changes, and forwards only
+normalized status through LayerCove's existing frontend event stream. Browsers
+never connect to Moonraker and raw provider payloads remain server-internal.
+
+Disconnects retry at 1, 2, 4, 8, 16, then 30 seconds with bounded positive
+jitter. A connection stable for 30 seconds resets that sequence. Shutdown
+cancels and closes the owned task and socket. Initial query and subscription
+responses, DNS, handshake, and messages are bounded so a stalled Moonraker does
+not block reconnect forever.
+
 ## Network policy
 
 - Private and LAN addresses are allowed.
@@ -49,5 +63,4 @@ call this endpoint afterward to validate the stored values.
 - Response bodies are limited to 64 KiB.
 - LayerCove exposes no generic Moonraker proxy or arbitrary G-code endpoint.
 
-End-user wiki and UI onboarding documentation belong to the later identity/docs
-wave when Moonraker controls are exposed in the frontend.
+External wiki and UI onboarding documentation remain deferred to issue #17.

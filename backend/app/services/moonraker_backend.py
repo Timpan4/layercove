@@ -37,6 +37,7 @@ _OBJECTS = {
     "heater_bed": None,
 }
 _BACKOFF_SECONDS = (1, 2, 4, 8, 16, 30)
+_BOOTSTRAP_RESPONSE_TIMEOUT_SECONDS = 10.0
 _STABLE_CONNECTION_SECONDS = 30
 _ACTIVE_STATES = {NormalizedPrinterState.PRINTING, NormalizedPrinterState.PAUSED}
 _TERMINAL_KINDS = {
@@ -106,6 +107,7 @@ class MoonrakerBackend:
         transport_factory: TransportFactory = MoonrakerWebSocketTransport,
         sleep: Sleep = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
+        bootstrap_timeout: float = _BOOTSTRAP_RESPONSE_TIMEOUT_SECONDS,
     ):
         config = getattr(printer, "moonraker_config", None)
         if config is None:
@@ -123,6 +125,7 @@ class MoonrakerBackend:
         self._emit = emit
         self._sleep = sleep
         self._jitter = jitter
+        self._bootstrap_timeout = bootstrap_timeout
         self._task: asyncio.Task[None] | None = None
         self._connection: _MoonrakerConnection | None = None
         self._stopping = False
@@ -182,8 +185,12 @@ class MoonrakerBackend:
                 connection = await self._transport.connect()
                 self._connection = connection
                 connected_at = asyncio.get_running_loop().time()
-                await self._request(connection, 1, "printer.objects.query")
-                await self._request(connection, 2, "printer.objects.subscribe")
+                await asyncio.wait_for(
+                    self._request(connection, 1, "printer.objects.query"), timeout=self._bootstrap_timeout
+                )
+                await asyncio.wait_for(
+                    self._request(connection, 2, "printer.objects.subscribe"), timeout=self._bootstrap_timeout
+                )
                 while True:
                     if asyncio.get_running_loop().time() - connected_at >= _STABLE_CONNECTION_SECONDS:
                         attempt = 0
@@ -205,7 +212,9 @@ class MoonrakerBackend:
                     self._connection = None
 
     async def _request(self, connection: _MoonrakerConnection, request_id: int, method: str) -> None:
-        await connection.send_json({"jsonrpc": "2.0", "method": method, "params": {"objects": _OBJECTS}, "id": request_id})
+        await connection.send_json(
+            {"jsonrpc": "2.0", "method": method, "params": {"objects": _OBJECTS}, "id": request_id}
+        )
         while True:
             message = await connection.receive_json()
             if message.get("id") == request_id:

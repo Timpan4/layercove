@@ -1087,8 +1087,10 @@ async def on_printer_status_change(printer_id: int, state: PrinterState | Printe
         status_key = (
             state.connected,
             state.state,
+            state.message,
             state.filename,
             state.progress,
+            state.elapsed_seconds,
             state.remaining_seconds,
             state.current_layer,
             state.total_layers,

@@ -156,6 +156,32 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_manual_moonraker_connect_eager_loads_config(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Manual Klipper",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125"},
+            },
+        )
+        assert created.status_code == 200
+
+        async def connect(printer):
+            assert printer.moonraker_config.base_url == "http://klipper.local:7125"
+            return True
+
+        with patch(
+            "backend.app.api.routes.printers.printer_manager.connect_printer",
+            new=AsyncMock(side_effect=connect),
+        ):
+            response = await async_client.post(f"/api/v1/printers/{created.json()['id']}/connect")
+
+        assert response.status_code == 200
+        assert response.json() == {"connected": True}
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_create_moonraker_printer_rejects_failed_probe_without_persisting_secret(
         self, async_client: AsyncClient, db_session
     ):

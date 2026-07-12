@@ -83,6 +83,33 @@ def test_moonraker_base_url_allows_private_lan_address():
     assert config.base_url_value == "http://192.168.1.20:7125"
 
 
+def test_http_moonraker_with_auth_may_use_same_origin_cleartext_websocket():
+    config = MoonrakerPrinterConfigInput(
+        base_url="http://klipper.local:7125",
+        websocket_url_override="ws://klipper.local:7125/websocket",
+        api_key="stored-secret",
+    )
+
+    assert config.websocket_url_override_value == "ws://klipper.local:7125/websocket"
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "wss://attacker.example:7125/websocket",
+        "wss://klipper.local:7443/websocket",
+        "ws://klipper.local:7125/websocket",
+    ],
+)
+def test_moonraker_override_rejects_host_port_changes_and_https_downgrade(override):
+    with pytest.raises(ValidationError, match="[Ww]eb[Ss]ocket"):
+        MoonrakerPrinterConfigInput(
+            base_url="https://klipper.local:7125",
+            websocket_url_override=override,
+            api_key="stored-secret",
+        )
+
+
 @pytest.mark.parametrize(
     "url",
     [

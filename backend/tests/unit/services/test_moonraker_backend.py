@@ -14,10 +14,12 @@ class FakeConnection:
         for message in messages:
             self.messages.put_nowait(message)
         self.sent = []
+        self.sent_event = asyncio.Event()
         self.closed = False
 
     async def send_json(self, data):
         self.sent.append(data)
+        self.sent_event.set()
 
     async def receive_json(self):
         message = await self.messages.get()
@@ -184,6 +186,39 @@ async def test_moonraker_connect_owns_one_task_and_disconnect_cancels_its_socket
     await backend.disconnect()
     assert backend._task is None
     assert connection.closed is True
+
+
+@pytest.mark.asyncio
+async def test_stalled_bootstrap_response_closes_socket_and_retries_without_long_wait():
+    stalled = FakeConnection([])
+    recovered = FakeConnection(
+        [
+            {"id": 1, "result": {"status": {"print_stats": {"state": "standby"}}}},
+            {"id": 2, "result": {"status": {"print_stats": {"state": "standby"}}}},
+        ]
+    )
+    transport = FakeTransport([stalled, recovered])
+    delays = []
+
+    async def sleep(delay):
+        delays.append(delay)
+
+    backend = MoonrakerBackend(
+        printer(),
+        emit=lambda _: None,
+        transport_factory=lambda **_: transport,
+        sleep=sleep,
+        jitter=lambda: 0,
+        bootstrap_timeout=0.01,
+    )
+
+    await backend.connect()
+    await asyncio.wait_for(recovered.sent_event.wait(), timeout=0.2)
+    await wait_for(lambda: backend.snapshot().connected)
+
+    assert stalled.closed is True
+    assert delays == [1]
+    await backend.disconnect()
 
 
 def test_moonraker_retry_delay_is_bounded_and_deterministic_with_injected_jitter():

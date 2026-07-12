@@ -8,6 +8,7 @@ from dataclasses import replace
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.app.models.printer import Printer
 from backend.app.services.bambu_backend import BambuBackend
@@ -1568,7 +1569,9 @@ printer_manager = PrinterManager()
 
 async def init_printer_connections(db: AsyncSession):
     """Initialize connections to all active printers."""
-    result = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.is_active.is_(True))
+    )
     printers = result.scalars().all()
 
     for printer in printers:
