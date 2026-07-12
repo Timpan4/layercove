@@ -652,7 +652,10 @@ async def test_moonraker_stop_awaits_cancel_and_leaves_finalization_to_lifecycle
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize(("status", "expected_print_count"), [("completed", 1), ("failed", 0)])
+@pytest.mark.parametrize(
+    ("status", "expected_print_count"),
+    [("completed", 1), ("failed", 0), ("cancelled", 0)],
+)
 async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue, status, expected_print_count):
     sessions, _base_dir, source, ids = moonraker_queue
     async with sessions() as db:
@@ -688,6 +691,7 @@ async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue, stat
         patch.object(main_module.ws_manager, "send_print_complete", AsyncMock()) as ws_complete,
         patch.object(main_module.ws_manager, "send_archive_updated", AsyncMock()) as ws_archive,
         patch.object(main_module.printer_manager, "clear_current_print_user") as clear_user,
+        patch.object(main_module.printer_manager, "set_awaiting_plate_clear") as set_plate_clear,
         patch.object(
             main_module.printer_manager,
             "get_printer",
@@ -706,6 +710,7 @@ async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue, stat
     ws_complete.assert_awaited_once()
     ws_archive.assert_awaited_once_with({"id": ids.archive, "status": status})
     clear_user.assert_called_once_with(ids.printer)
+    set_plate_clear.assert_called_once_with(ids.printer, True)
     relay_complete.assert_awaited_once()
     relay_queue.assert_awaited_once()
     relay_archive.assert_awaited_once()

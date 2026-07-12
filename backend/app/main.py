@@ -4033,6 +4033,7 @@ async def _run_moonraker_terminal_effects(outcome: dict, data: dict) -> None:
     except Exception:
         logger.warning("Moonraker completion WebSocket failed for printer %s", printer_id)
     printer_manager.clear_current_print_user(printer_id)
+    printer_manager.set_awaiting_plate_clear(printer_id, True)
 
     printer_info = printer_manager.get_printer(printer_id)
     if printer_info:
