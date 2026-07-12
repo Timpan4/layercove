@@ -4015,9 +4015,9 @@ async def slice_and_persist_as_archive(
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
-        archive_dir = app_settings.archive_dir / printer_folder / f"{timestamp}_{base_name}_sliced"
+        archive_dir = app_settings.archive_dir / printer_folder / f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}"
         out_path = archive_dir / out_filename
-        archive_dir_preexisting = archive_dir.exists()
+        archive_dir_created = False
         metadata = dict(source_archive.extra_data) if source_archive.extra_data else {}
         metadata.update(
             {
@@ -4051,7 +4051,8 @@ async def slice_and_persist_as_archive(
             created_by_id=current_user_id,
         )
         try:
-            archive_dir.mkdir(parents=True, exist_ok=True)
+            archive_dir.mkdir(parents=True, exist_ok=False)
+            archive_dir_created = True
             out_path.write_bytes(result.content)
             db.add(new_archive)
             await db.flush()
@@ -4061,8 +4062,8 @@ async def slice_and_persist_as_archive(
             try:
                 await db.rollback()
             finally:
-                out_path.unlink(missing_ok=True)
-                if not archive_dir_preexisting:
+                if archive_dir_created:
+                    out_path.unlink(missing_ok=True)
                     try:
                         archive_dir.rmdir()
                     except OSError:

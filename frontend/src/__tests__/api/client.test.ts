@@ -247,6 +247,26 @@ describe('API Client Auth Header', () => {
   });
 });
 
+describe('archive slicer URLs', () => {
+  it('uses the raw artifact extension for direct and token downloads', () => {
+    expect(api.getArchiveForSlicer(7, 'name', 'stored.gcode')).toBe(
+      '/api/v1/archives/7/file/name.gcode',
+    );
+    expect(api.getArchiveSlicerDownloadUrl(7, 'token', 'name', 'stored.gcode')).toBe(
+      '/api/v1/archives/7/dl/token/name.gcode',
+    );
+  });
+
+  it('keeps Bambu archive URLs as 3MF', () => {
+    expect(api.getArchiveForSlicer(7, 'name', 'stored.gcode.3mf')).toBe(
+      '/api/v1/archives/7/file/name.3mf',
+    );
+    expect(api.getArchiveSlicerDownloadUrl(7, 'token', 'name', 'stored.gcode.3mf')).toBe(
+      '/api/v1/archives/7/dl/token/name.3mf',
+    );
+  });
+});
+
 describe('Slicer download URLs', () => {
   it('keeps library slicer URLs ending in .3mf when the display name has no extension', () => {
     const path = api.getLibrarySlicerDownloadUrl(12, 'token-abc', 'Mecha Mewtwo No AMS Multi Color Parted Statue');

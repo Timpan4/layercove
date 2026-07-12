@@ -123,6 +123,7 @@ async function openInSlicerWithToken(
   filename: string,
   resourceType: 'file' | 'source',
   slicer: SlicerType,
+  artifactFilename?: string,
 ): Promise<void> {
   try {
     if (resourceType === 'source') {
@@ -131,14 +132,14 @@ async function openInSlicerWithToken(
       openInSlicer(`${window.location.origin}${path}`, slicer);
     } else {
       const { token } = await api.createArchiveSlicerToken(archiveId);
-      const path = api.getArchiveSlicerDownloadUrl(archiveId, token, filename);
+      const path = api.getArchiveSlicerDownloadUrl(archiveId, token, filename, artifactFilename);
       openInSlicer(`${window.location.origin}${path}`, slicer);
     }
   } catch {
     // Fallback to direct URL (works when auth is disabled)
     const path = resourceType === 'source'
       ? api.getSource3mfForSlicer(archiveId, filename)
-      : api.getArchiveForSlicer(archiveId, filename);
+      : api.getArchiveForSlicer(archiveId, filename, artifactFilename);
     openInSlicer(`${window.location.origin}${path}`, slicer);
   }
 }
@@ -422,7 +423,7 @@ function ArchiveCard({
         icon: <ExternalLink className="w-4 h-4" />,
         onClick: () => {
           const filename = archive.print_name || archive.filename || 'model';
-          openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer);
+          openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer, archive.filename);
         },
         disabled: !archive.file_path,
         title: !archive.file_path ? t('archives.card.noFileForReprint') : undefined,
@@ -436,7 +437,7 @@ function ArchiveCard({
             setShowSliceModal(true);
           } else {
             const filename = archive.print_name || archive.filename || 'model';
-            openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer);
+            openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer, archive.filename);
           }
         },
       },
@@ -1169,7 +1170,7 @@ function ArchiveCard({
                 className="min-w-0 p-1 sm:p-1.5"
                 onClick={() => {
                   const filename = archive.print_name || archive.filename || 'model';
-                  openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer);
+                  openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer, archive.filename);
                 }}
                 title={t('archives.card.openInBambuStudio')}
               >
@@ -1187,7 +1188,7 @@ function ArchiveCard({
                   setShowSliceModal(true);
                 } else {
                   const filename = archive.print_name || archive.filename || 'model';
-                  openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer);
+                  openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer, archive.filename);
                 }
               }}
               title={useSlicerApi ? t('slice.title') : t('archives.card.openInBambuStudioToSlice')}
@@ -1804,7 +1805,7 @@ function ArchiveListRow({
         icon: <ExternalLink className="w-4 h-4" />,
         onClick: () => {
           const filename = archive.print_name || archive.filename || 'model';
-          openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer);
+          openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer, archive.filename);
         },
         disabled: !archive.file_path,
         title: !archive.file_path ? t('archives.card.noFileForReprint') : undefined,
@@ -1818,7 +1819,7 @@ function ArchiveListRow({
             setShowSliceModal(true);
           } else {
             const filename = archive.print_name || archive.filename || 'model';
-            openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer);
+            openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer, archive.filename);
           }
         },
       },
@@ -2211,7 +2212,7 @@ function ArchiveListRow({
             size="sm"
             onClick={() => {
               const filename = archive.print_name || archive.filename || 'model';
-              openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer);
+              openInSlicerWithToken(archive.id, filename, 'file', preferredSlicer, archive.filename);
             }}
             title={t('archives.card.openInBambuStudio')}
           >

@@ -546,7 +546,7 @@ class TestSliceLibraryFile:
                 return fixed_now
 
         monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
-        output_dir = archive_root / "unassigned" / "20260712_120000_Failure_sliced"
+        output_dir = archive_root / "unassigned" / "20260712_120000_Failure_sliced_preexisting"
         preexisting = failure_method == "refresh"
         if preexisting:
             output_dir.mkdir(parents=True)
@@ -584,13 +584,172 @@ class TestSliceLibraryFile:
                 current_user_id=None,
             )
 
-        assert not (output_dir / "Failure.gcode").exists()
+        assert not list(archive_root.rglob("Failure.gcode"))
+        assert not list(
+            (archive_root / "unassigned").glob("20260712_120000_Failure_sliced_????????????????????????????????")
+        )
         assert output_dir.exists() is preexisting
         if preexisting:
             assert (output_dir / "keep.txt").read_text() == "keep"
         assert (
             await db_session.execute(select(PrintArchive).where(PrintArchive.filename == "Failure.gcode"))
         ).scalar_one_or_none() is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_same_timestamp_name_jobs_own_distinct_archive_paths(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        call_count = 0
+
+        def handler(_request: httpx.Request) -> httpx.Response:
+            nonlocal call_count
+            call_count += 1
+            return httpx.Response(status_code=200, content=f"G28 ; job {call_count}\n".encode())
+
+        _install_mock_sidecar(handler)
+        archive_root = slice_test_setup["tmp_path"] / "archives"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        fixed_now = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+
+        class FixedDateTime:
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_now
+
+        monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
+        source_archive = SimpleNamespace(
+            id=1000,
+            printer_id=None,
+            project_id=None,
+            extra_data=None,
+            print_name="Collision",
+            filament_type=None,
+            filament_color=None,
+            layer_height=None,
+            nozzle_diameter=None,
+            sliced_for_model=None,
+            bed_type=None,
+            makerworld_url=None,
+            designer=None,
+        )
+        request = SliceRequest(
+            printer_preset_id=slice_test_setup["printer_id"],
+            process_preset_id=slice_test_setup["process_id"],
+            filament_preset_id=slice_test_setup["filament_id"],
+            destination_artifact_kind="klipper_gcode",
+        )
+
+        await slice_and_persist_as_archive(
+            db_session,
+            model_bytes=b"solid collision\n",
+            model_filename="Collision.stl",
+            request=request,
+            source_archive=source_archive,
+            current_user_id=None,
+        )
+        original_commit = db_session.commit
+        monkeypatch.setattr(db_session, "commit", AsyncMock(side_effect=RuntimeError("commit failed")))
+        with pytest.raises(RuntimeError, match="commit failed"):
+            await slice_and_persist_as_archive(
+                db_session,
+                model_bytes=b"solid collision\n",
+                model_filename="Collision.stl",
+                request=request,
+                source_archive=source_archive,
+                current_user_id=None,
+            )
+        monkeypatch.setattr(db_session, "commit", original_commit)
+        await slice_and_persist_as_archive(
+            db_session,
+            model_bytes=b"solid collision\n",
+            model_filename="Collision.stl",
+            request=request,
+            source_archive=source_archive,
+            current_user_id=None,
+        )
+
+        rows = (
+            (
+                await db_session.execute(
+                    select(PrintArchive).where(PrintArchive.filename == "Collision.gcode").order_by(PrintArchive.id)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(rows) == 2
+        assert len({row.file_path for row in rows}) == 2
+        assert [(app_settings.base_dir / row.file_path).read_text() for row in rows] == [
+            "G28 ; job 1\n",
+            "G28 ; job 3\n",
+        ]
+        assert len(list((archive_root / "unassigned").glob("20260712_120000_Collision_sliced_*"))) == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_archive_uuid_collision_preserves_existing_artifact(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=b"new\n"))
+        archive_root = slice_test_setup["tmp_path"] / "archives"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        fixed_now = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+
+        class FixedDateTime:
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_now
+
+        monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
+        monkeypatch.setattr(library_routes.uuid, "uuid4", lambda: SimpleNamespace(hex="a" * 32))
+        existing_dir = archive_root / "unassigned" / f"20260712_120000_Collision_sliced_{'a' * 32}"
+        existing_dir.mkdir(parents=True)
+        existing_file = existing_dir / "Collision.gcode"
+        existing_file.write_bytes(b"existing sibling\n")
+        source_archive = SimpleNamespace(
+            id=1001,
+            printer_id=None,
+            project_id=None,
+            extra_data=None,
+            print_name="Collision",
+            filament_type=None,
+            filament_color=None,
+            layer_height=None,
+            nozzle_diameter=None,
+            sliced_for_model=None,
+            bed_type=None,
+            makerworld_url=None,
+            designer=None,
+        )
+
+        with pytest.raises(FileExistsError):
+            await slice_and_persist_as_archive(
+                db_session,
+                model_bytes=b"solid collision\n",
+                model_filename="Collision.stl",
+                request=SliceRequest(
+                    printer_preset_id=slice_test_setup["printer_id"],
+                    process_preset_id=slice_test_setup["process_id"],
+                    filament_preset_id=slice_test_setup["filament_id"],
+                    destination_artifact_kind="klipper_gcode",
+                ),
+                source_archive=source_archive,
+                current_user_id=None,
+            )
+
+        assert existing_file.read_bytes() == b"existing sibling\n"
+        assert existing_dir.exists()
 
     @pytest.mark.asyncio
     @pytest.mark.integration
