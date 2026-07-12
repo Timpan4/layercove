@@ -18,6 +18,7 @@ import json
 import zipfile
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
@@ -1168,6 +1169,48 @@ def _bambu_source_archive(tmp_path, *, print_name: str = "Display name"):
 
 
 class TestBambuArchivePersistenceSafety:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_output_write_failure_removes_partial_job_directory(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+    ):
+        archive_root = slice_test_setup["tmp_path"] / "archive"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=_make_sliced_3mf("X1C")))
+        source = _bambu_source_archive(slice_test_setup["tmp_path"], print_name="Write failure")
+        original_write_bytes = Path.write_bytes
+
+        def fail_output_write(path: Path, data: bytes) -> int:
+            if path.name == "Write failure.gcode.3mf":
+                original_write_bytes(path, b"partial")
+                raise OSError("disk full")
+            return original_write_bytes(path, data)
+
+        monkeypatch.setattr(Path, "write_bytes", fail_output_write)
+
+        with pytest.raises(OSError, match="disk full"):
+            await slice_and_persist_as_archive(
+                db_session,
+                model_bytes=b"source",
+                model_filename="Write failure.3mf",
+                request=SliceRequest(
+                    printer_preset_id=slice_test_setup["printer_id"],
+                    process_preset_id=slice_test_setup["process_id"],
+                    filament_preset_id=slice_test_setup["filament_id"],
+                ),
+                source_archive=source,
+                current_user_id=None,
+            )
+
+        assert not list(archive_root.rglob("Write failure.gcode.3mf"))
+        assert not list((archive_root / "unassigned").glob("*_Write failure_sliced_*"))
+        assert (
+            await db_session.execute(select(PrintArchive).where(PrintArchive.filename == "Write failure.gcode.3mf"))
+        ).scalar_one_or_none() is None
+
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_model_filename_traversal_stays_inside_archive_root(
