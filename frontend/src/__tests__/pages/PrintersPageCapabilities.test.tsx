@@ -100,10 +100,10 @@ function printer(provider: 'bambu' | 'moonraker', capabilities = provider === 'b
   };
 }
 
-function setupPage(item = printer('moonraker')) {
+function setupPage(item = printer('moonraker'), currentStatus = status) {
   server.use(
     http.get('/api/v1/printers/', () => HttpResponse.json([item])),
-    http.get('/api/v1/printers/:id/status', () => HttpResponse.json(status)),
+    http.get('/api/v1/printers/:id/status', () => HttpResponse.json(currentStatus)),
     http.get('/api/v1/queue/', () => HttpResponse.json([])),
     http.get('/api/v1/settings/ui-preferences', () => HttpResponse.json({ require_plate_clear: false })),
   );
@@ -129,51 +129,101 @@ describe('provider capability UI', () => {
   });
 
   it('keeps Bambu capability controls and capability queries', async () => {
-    let firmwareRequested = false;
-    let slotPresetsRequested = false;
+    const firmwareRequested = vi.fn();
+    const slotPresetsRequested = vi.fn();
+    const labelsRequested = vi.fn();
     server.use(
       http.get('/api/v1/firmware/updates/41', () => {
-        firmwareRequested = true;
+        firmwareRequested();
         return HttpResponse.json({ current_version: null, latest_version: null, update_available: false });
       }),
       http.get('/api/v1/printers/41/slot-presets', () => {
-        slotPresetsRequested = true;
+        slotPresetsRequested();
         return HttpResponse.json({});
       }),
+      http.get('/api/v1/printers/41/ams-labels', () => { labelsRequested(); return HttpResponse.json({}); }),
     );
-    setupPage(printer('bambu'));
+    setupPage(printer('bambu'), { ...status, state: 'IDLE', current_print: null });
 
     expect(await screen.findByText('Bambu One')).toBeInTheDocument();
     expect(await screen.findByTestId('speed-control')).toBeInTheDocument();
-    await waitFor(() => expect(firmwareRequested).toBe(true));
-    await waitFor(() => expect(slotPresetsRequested).toBe(true));
+    expect(screen.getAllByTitle(/view heater history/i)).not.toHaveLength(0);
+    expect(screen.getByRole('button', { name: 'OK' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^print$/i })).toBeInTheDocument();
+    await waitFor(() => expect(firmwareRequested).toHaveBeenCalledOnce());
+    await waitFor(() => expect(slotPresetsRequested).toHaveBeenCalledOnce());
+    await waitFor(() => expect(labelsRequested).toHaveBeenCalledOnce());
   });
 
   it('removes Moonraker unsupported controls and skips their APIs while retaining shared controls', async () => {
-    let firmwareRequested = false;
-    let slotPresetsRequested = false;
-    let labelsRequested = false;
+    const firmwareRequested = vi.fn();
+    const slotPresetsRequested = vi.fn();
+    const labelsRequested = vi.fn();
+    const objectsRequested = vi.fn();
     server.use(
-      http.get('/api/v1/firmware/updates/41', () => { firmwareRequested = true; return HttpResponse.json({}); }),
-      http.get('/api/v1/printers/41/slot-presets', () => { slotPresetsRequested = true; return HttpResponse.json({}); }),
-      http.get('/api/v1/printers/41/ams-labels', () => { labelsRequested = true; return HttpResponse.json({}); }),
+      http.get('/api/v1/firmware/updates/41', () => { firmwareRequested(); return HttpResponse.json({}); }),
+      http.get('/api/v1/printers/41/slot-presets', () => { slotPresetsRequested(); return HttpResponse.json({}); }),
+      http.get('/api/v1/printers/41/ams-labels', () => { labelsRequested(); return HttpResponse.json({}); }),
+      http.get('/api/v1/printers/41/print/objects', () => { objectsRequested(); return HttpResponse.json({ objects: [] }); }),
     );
     setupPage();
 
     expect(await screen.findByText('Klipper One')).toBeInTheDocument();
     expect(screen.queryByTestId('speed-control')).not.toBeInTheDocument();
     expect(screen.queryByTitle(/camera/i)).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/view heater history/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'OK' })).not.toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
+    expect(screen.getAllByText('cube.gcode').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('45%').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
     const menu = [...document.querySelectorAll('button')].find((button) =>
       button.querySelector('.lucide-ellipsis-vertical'),
     );
     await userEvent.click(menu!);
     expect(screen.queryByRole('button', { name: /mqtt debug/i })).not.toBeInTheDocument();
-    await new Promise((resolve) => setTimeout(resolve, 30));
-    expect(firmwareRequested).toBe(false);
-    expect(slotPresetsRequested).toBe(false);
-    expect(labelsRequested).toBe(false);
+    expect(screen.queryByRole('button', { name: /run diagnostics/i })).not.toBeInTheDocument();
+    expect(firmwareRequested).not.toHaveBeenCalled();
+    expect(slotPresetsRequested).not.toHaveBeenCalled();
+    expect(labelsRequested).not.toHaveBeenCalled();
+    expect(objectsRequested).not.toHaveBeenCalled();
+  });
+
+  it('normalizes paused jobs and hides start/upload when capabilities deny them', async () => {
+    const user = userEvent.setup();
+    const resumeRequested = vi.fn();
+    server.use(http.post('/api/v1/printers/41/print/resume', () => {
+      resumeRequested();
+      return HttpResponse.json({ success: true, message: 'Resumed' });
+    }));
+    setupPage(
+      printer('moonraker', { ...moonrakerCapabilities, upload_gcode: false, start_print: false }),
+      { ...status, state: 'paused' },
+    );
+
+    expect(await screen.findByText('Klipper One')).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: /resume/i })).toBeInTheDocument();
+    expect(screen.getAllByText('cube.gcode').length).toBeGreaterThan(0);
+    expect(screen.getAllByText('45%').length).toBeGreaterThan(0);
+    expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
+    await user.click(screen.getByTitle('Select'));
+    await user.click(await screen.findByRole('button', { name: /select all/i }));
+    const resumeButtons = screen.getAllByRole('button', { name: /resume/i });
+    await user.click(resumeButtons.at(-1)!);
+    await waitFor(() => expect(resumeRequested).toHaveBeenCalledOnce());
+  });
+
+  it('hides idle print/upload action when start or upload capability is missing', async () => {
+    setupPage(
+      printer('moonraker', { ...moonrakerCapabilities, upload_gcode: false, start_print: false }),
+      { ...status, state: 'IDLE', current_print: null },
+    );
+
+    expect(await screen.findByText('Klipper One')).toBeInTheDocument();
+    await screen.findAllByText('Idle');
+    expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
   });
 
   it('uses only same-origin camera route when camera capability is enabled', async () => {
@@ -224,11 +274,12 @@ describe('Moonraker onboarding and guarded stop', () => {
     await user.click(await screen.findByText(/add printer/i));
     await user.click(screen.getByRole('radio', { name: /moonraker/i }));
     await user.type(screen.getByPlaceholderText('My Printer'), 'Moon');
-    await user.type(screen.getByPlaceholderText('https://klipper.local:7125'), 'https://klipper.local:7125');
-    const secretInputs = document.querySelectorAll<HTMLInputElement>('input[type="password"]');
-    await user.type(secretInputs[0], 'key');
-    expect(secretInputs[1]).toBeDisabled();
-    await user.clear(secretInputs[0]);
+    await user.type(screen.getByLabelText(/moonraker base url/i), 'https://klipper.local:7125');
+    const apiKey = screen.getByLabelText(/api key/i);
+    const authorization = screen.getByLabelText(/^authorization$/i);
+    await user.type(apiKey, 'key');
+    expect(authorization).toBeDisabled();
+    await user.clear(apiKey);
     await user.click(screen.getAllByRole('button', { name: /add printer/i }).find((button) => button.getAttribute('type') === 'submit')!);
     await waitFor(() => expect(body).toBeDefined());
     expect((body!.moonraker_config as Record<string, unknown>).api_key).toBeUndefined();
@@ -257,6 +308,8 @@ describe('Moonraker onboarding and guarded stop', () => {
     };
     const user = await openMoonrakerEdit(redactedPrinter);
     expect(document.body.textContent).not.toContain('api-key-value');
+    expect(screen.getByLabelText(/moonraker base url/i)).toHaveValue('https://klipper.local:7125');
+    expect(screen.getByLabelText(/api key/i)).toHaveValue('');
     expect(screen.getByPlaceholderText(/secret retained/i)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /test.*connection/i }));
     expect(await screen.findByRole('status')).toHaveTextContent('Stored connection works.');
@@ -280,7 +333,9 @@ describe('Moonraker onboarding and guarded stop', () => {
     }));
     setupPage();
 
-    await user.click(await screen.findByRole('button', { name: /^emergency stop$/i }));
+    const emergencyStop = await screen.findByRole('button', { name: /^emergency stop$/i });
+    expect(emergencyStop).toHaveClass('!min-h-11');
+    await user.click(emergencyStop);
     expect(screen.getByRole('dialog')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^cancel$/i })).toHaveFocus();
     await user.click(screen.getByRole('button', { name: /^cancel$/i }));

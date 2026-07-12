@@ -49,6 +49,7 @@ export function ConfirmModal({
   onCancel,
 }: ConfirmModalProps) {
   const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
   const { t } = useTranslation();
   const resolvedConfirmText = confirmText ?? t('common.confirm');
   const resolvedCancelText = cancelText ?? t('common.cancel');
@@ -63,7 +64,35 @@ export function ConfirmModal({
   }, [onCancel, isLoading]);
 
   useEffect(() => {
-    dialogRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const getFocusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []);
+    (getFocusable()[0] ?? dialog)?.focus();
+
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog?.addEventListener('keydown', trapFocus);
+    return () => {
+      dialog?.removeEventListener('keydown', trapFocus);
+      previousFocusRef.current?.focus();
+    };
   }, []);
 
   const variantStyles = {
@@ -91,6 +120,7 @@ export function ConfirmModal({
       role="dialog"
       aria-modal="true"
       aria-label={title}
+      tabIndex={-1}
     >
       <Card
         className={`w-full max-w-md ${cardClassName ?? ''}`}
