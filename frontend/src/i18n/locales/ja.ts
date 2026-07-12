@@ -126,6 +126,22 @@ export default {
   },
   // Printers page
   printers: {
+    provider: 'プロバイダー',
+    moonrakerBaseUrl: 'Moonraker ベース URL',
+    moonrakerWebsocketUrl: 'WebSocket 上書き（任意）',
+    moonrakerApiKey: 'API キー',
+    moonrakerAuthorization: '認証',
+    moonrakerTlsVerify: 'TLS 証明書を検証',
+    moonrakerExternalCamera: '外部カメラを有効化',
+    moonrakerSecretRetained: '空欄の場合、保存済みシークレットを保持します',
+    moonrakerTestConnection: '保存済み接続をテスト',
+    moonrakerConnectionFailed: 'Moonraker に接続できませんでした。',
+    emergencyStop: '緊急停止',
+    emergencyStopTitle: 'プリンターを緊急停止しますか？',
+    emergencyStopMessage: '{{name}} を直ちに停止します。ヒーターと動作は通常の停止なしに止まる場合があります。',
+    emergencyStopConfirm: '緊急停止',
+    emergencyStopSent: '緊急停止コマンドを送信しました',
+    emergencyStopFailed: '緊急停止に失敗しました',
     addPreflight: {
       checking: '接続を確認しています...',
       warning: '一部の接続チェックに失敗しました。このプリンターはオフラインと表示される可能性があります。下のチェックを確認し、可能な範囲で修正するか、そのまま保存してください。',

@@ -127,6 +127,22 @@ export default {
 
   // Printers page
   printers: {
+    provider: '供應商',
+    moonrakerBaseUrl: 'Moonraker 基礎 URL',
+    moonrakerWebsocketUrl: 'WebSocket 覆寫（選用）',
+    moonrakerApiKey: 'API 金鑰',
+    moonrakerAuthorization: '授權',
+    moonrakerTlsVerify: '驗證 TLS 憑證',
+    moonrakerExternalCamera: '啟用外部攝影機',
+    moonrakerSecretRetained: '留白時保留已儲存的密鑰',
+    moonrakerTestConnection: '測試已儲存的連線',
+    moonrakerConnectionFailed: '無法連線至 Moonraker。',
+    emergencyStop: '緊急停止',
+    emergencyStopTitle: '要緊急停止印表機嗎？',
+    emergencyStopMessage: '立即停止 {{name}}。加熱器和運動可能在未正常關機時停止。',
+    emergencyStopConfirm: '緊急停止',
+    emergencyStopSent: '已傳送緊急停止命令',
+    emergencyStopFailed: '緊急停止失敗',
     addPreflight: {
       checking: '正在檢查連線...',
       warning: '部分連線檢查未通過。此印表機可能顯示為離線。請查看下方的檢查項目，盡量修復，或仍然儲存。',

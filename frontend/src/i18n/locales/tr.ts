@@ -127,6 +127,22 @@ export default {
 
   // Yazıcılar sayfası
   printers: {
+    provider: 'Sağlayıcı',
+    moonrakerBaseUrl: 'Moonraker temel URL’si',
+    moonrakerWebsocketUrl: 'WebSocket geçersiz kılma (isteğe bağlı)',
+    moonrakerApiKey: 'API anahtarı',
+    moonrakerAuthorization: 'Yetkilendirme',
+    moonrakerTlsVerify: 'TLS sertifikasını doğrula',
+    moonrakerExternalCamera: 'Harici kamerayı etkinleştir',
+    moonrakerSecretRetained: 'Boş bırakılırsa kayıtlı gizli bilgi korunur',
+    moonrakerTestConnection: 'Kayıtlı bağlantıyı test et',
+    moonrakerConnectionFailed: 'Moonraker’a bağlanılamadı.',
+    emergencyStop: 'Acil durdurma',
+    emergencyStopTitle: 'Yazıcı acil olarak durdurulsun mu?',
+    emergencyStopMessage: '{{name}} hemen durur. Isıtıcılar ve hareket normal kapanma olmadan durabilir.',
+    emergencyStopConfirm: 'Acil durdurma',
+    emergencyStopSent: 'Acil durdurma komutu gönderildi',
+    emergencyStopFailed: 'Acil durdurma başarısız',
     title: 'Yazıcılar',
     addPrinter: 'Yazıcı Ekle',
     addPreflight: {

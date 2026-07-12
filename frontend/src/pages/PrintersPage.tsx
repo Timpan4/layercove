@@ -1797,6 +1797,13 @@ function PrinterCard({
   fanSpeedPresets?: readonly [number, number, number];
 }) {
   const { t } = useTranslation();
+  const isBambu = printer.provider !== 'moonraker';
+  const capabilities = printer.capabilities ?? {
+    upload_gcode: true, upload_3mf: true, start_print: true, pause: true, resume: true, cancel: true,
+    emergency_stop: false, camera: true, bed_temperature: true, extruder_temperature: true,
+    chamber_temperature: true, ams: true, plate_selection: true, speed_control: true,
+    firmware_information: true, object_cancellation: true,
+  };
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -1814,6 +1821,7 @@ function PrinterCard({
   // #1762: AMS Filament Backup status / control modal — opens from the badge.
   const [amsBackupModalOpen, setAmsBackupModalOpen] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
+  const [showEmergencyStopConfirm, setShowEmergencyStopConfirm] = useState(false);
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState<number | null>(null);
   const [showAirductMenu, setShowAirductMenu] = useState<number | null>(null);
@@ -1898,6 +1906,10 @@ function PrinterCard({
     queryFn: () => api.getPrinterStatus(printer.id),
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
+  // Old Bambu payloads use RUNNING/PAUSE; normalized providers use PRINTING/PAUSED.
+  const normalizedState = status?.state?.toUpperCase();
+  const isPrinting = normalizedState === 'RUNNING' || normalizedState === 'PRINTING';
+  const isPaused = normalizedState === 'PAUSE' || normalizedState === 'PAUSED';
 
   // Check for firmware updates (cached for 5 minutes, can be disabled in settings)
   const { data: firmwareInfo } = useQuery({
@@ -1905,7 +1917,7 @@ function PrinterCard({
     queryFn: () => firmwareApi.checkPrinterUpdate(printer.id),
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
-    enabled: checkPrinterFirmware && hasPermission('firmware:read'),
+    enabled: isBambu && capabilities.firmware_information && checkPrinterFirmware && hasPermission('firmware:read'),
   });
 
   // Collect unique tray_info_idx values for cloud filament info lookup
@@ -1976,7 +1988,7 @@ function PrinterCard({
   const { data: filamentInfo } = useQuery({
     queryKey: ['filamentInfo', trayInfoIds],
     queryFn: () => api.getFilamentInfo(trayInfoIds),
-    enabled: trayInfoIds.length > 0,
+    enabled: isBambu && capabilities.ams && trayInfoIds.length > 0,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
@@ -1985,17 +1997,18 @@ function PrinterCard({
     queryKey: ['slotPresets', printer.id],
     queryFn: () => api.getSlotPresets(printer.id),
     staleTime: 2 * 60 * 1000, // 2 minutes
+    enabled: isBambu && capabilities.ams,
   });
 
   // Fetch plate list for the archive linked to the active print (#881 follow-up).
   // Only queried when there's a running print backed by an archive; shared
   // React Query cache with the Queue / Archives pages keeps it cheap.
   const activeArchiveId =
-    (status?.state === 'RUNNING' || status?.state === 'PAUSE') ? status?.current_archive_id ?? null : null;
+    (isPrinting || isPaused) ? status?.current_archive_id ?? null : null;
   const { data: activeArchivePlates } = useQuery({
     queryKey: ['archive-plates', activeArchiveId],
     queryFn: () => api.getArchivePlates(activeArchiveId!),
-    enabled: activeArchiveId != null,
+    enabled: isBambu && capabilities.plate_selection && activeArchiveId != null,
     staleTime: 5 * 60 * 1000,
   });
   const activePlateLabel = (() => {
@@ -2009,6 +2022,7 @@ function PrinterCard({
     queryKey: ['amsLabels', printer.id],
     queryFn: () => api.getAmsLabels(printer.id),
     staleTime: 5 * 60 * 1000, // 5 minutes
+    enabled: isBambu && capabilities.ams,
   });
 
   // Cache WiFi signal to prevent it disappearing on updates
@@ -2101,14 +2115,14 @@ function PrinterCard({
   const { data: printingQueueItems } = useQuery({
     queryKey: ['queue', printer.id, 'printing'],
     queryFn: () => api.getQueue(printer.id, 'printing'),
-    enabled: status?.state === 'RUNNING',
+    enabled: isPrinting,
   });
 
   // Fetch reprint user info (for prints started via Reprint, not queue - Issue #206)
   const { data: reprintUser } = useQuery({
     queryKey: ['currentPrintUser', printer.id],
     queryFn: () => api.getCurrentPrintUser(printer.id),
-    enabled: status?.state === 'RUNNING',
+    enabled: isPrinting,
   });
 
   // Combine both sources: queue item user takes precedence, then reprint user
@@ -2118,10 +2132,10 @@ function PrinterCard({
   const { data: lastPrints } = useQuery({
     queryKey: ['archives', printer.id, 'last'],
     queryFn: () => api.getArchives(printer.id, 1, 0),
-    enabled: status?.connected && status?.state !== 'RUNNING',
+    enabled: status?.connected && !isPrinting,
   });
   const lastPrint = lastPrints?.[0];
-  const isPrintingOrPaused = status?.state === 'RUNNING' || status?.state === 'PAUSE';
+  const isPrintingOrPaused = isPrinting || isPaused;
   const needsPlateClear = requirePlateClear && status?.awaiting_plate_clear === true;
   const showClearPlateButton = status?.connected && needsPlateClear && !isPrintingOrPaused;
   const activePrintName = status?.current_print && isPrintingOrPaused
@@ -2291,6 +2305,15 @@ function PrinterCard({
       queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToResumePrint'), 'error'),
+  });
+
+  const emergencyStopMutation = useMutation({
+    mutationFn: () => api.emergencyStop(printer.id),
+    onSuccess: () => {
+      showToast(t('printers.emergencyStopSent'), 'success');
+      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+    },
+    onError: (error: Error) => showToast(error.message || t('printers.emergencyStopFailed'), 'error'),
   });
 
   const clearPlateMutation = useMutation({
@@ -2538,8 +2561,8 @@ function PrinterCard({
   const { data: objectsData } = useQuery({
     queryKey: ['printableObjects', printer.id],
     queryFn: () => api.getPrintableObjects(printer.id),
-    enabled: showSkipObjectsModal || isPrintingWithObjects,
-    refetchInterval: showSkipObjectsModal ? 5000 : (isPrintingWithObjects ? 30000 : false), // 5s when modal open, 30s otherwise
+    enabled: isBambu && capabilities.object_cancellation && (showSkipObjectsModal || isPrintingWithObjects),
+    refetchInterval: isBambu && capabilities.object_cancellation ? (showSkipObjectsModal ? 5000 : (isPrintingWithObjects ? 30000 : false)) : false, // 5s when modal open, 30s otherwise
   });
 
   // State for tracking which AMS slot is being refreshed
@@ -3066,16 +3089,18 @@ function PrinterCard({
             <RotateCw className={`w-4 h-4 ${forceRefreshMutation.isPending ? 'animate-spin' : ''}`} />
             {t('printers.forceRefresh')}
           </button>
-          <button
-            className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
-            onClick={() => {
-              setShowMQTTDebug(true);
-              setShowMenu(false);
-            }}
-          >
-            <Terminal className="w-4 h-4" />
-            {t('printers.mqttDebug')}
-          </button>
+          {isBambu && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+              onClick={() => {
+                setShowMQTTDebug(true);
+                setShowMenu(false);
+              }}
+            >
+              <Terminal className="w-4 h-4" />
+              {t('printers.mqttDebug')}
+            </button>
+          )}
           <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
             onClick={() => {
@@ -3573,7 +3598,7 @@ function PrinterCard({
 
                   return (
                     <div className="p-2 bg-bambu-dark rounded-[10px] relative overflow-hidden">
-                      <button
+                      {isBambu && capabilities.object_cancellation && <button
                         onClick={() => setShowSkipObjectsModal(true)}
                         disabled={!isActivePrint || (status.printable_objects_count ?? 0) < 2 || !hasPermission('printers:control')}
                         className={`absolute top-2 right-2 p-1.5 rounded transition-colors z-10 ${
@@ -3597,7 +3622,7 @@ function PrinterCard({
                             {objectsData.skipped_count}
                           </span>
                         )}
-                      </button>
+                      </button>}
                       <div className="flex items-stretch gap-2">
                         <CoverImage
                           url={coverUrl}
@@ -4011,8 +4036,8 @@ function PrinterCard({
             {/* Controls */}
             {viewMode === 'expanded' && (() => {
               // Determine print state for control buttons
-              const isRunning = status.state === 'RUNNING';
-              const isPaused = status.state === 'PAUSE';
+              const isRunning = normalizedState === 'RUNNING' || normalizedState === 'PRINTING';
+              const isPaused = normalizedState === 'PAUSE' || normalizedState === 'PAUSED';
               const isPrinting = isRunning || isPaused;
               const isControlBusy = stopPrintMutation.isPending || pausePrintMutation.isPending || resumePrintMutation.isPending;
               const unavailablePrintActionClass = 'bg-bambu-dark text-bambu-gray/50 cursor-not-allowed opacity-50';
@@ -4030,8 +4055,8 @@ function PrinterCard({
                   </div>
 
                   <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
-                    {/* Left: Secondary controls */}
-                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    {/* Bambu-specific secondary controls. */}
+                    {isBambu && <div className="flex flex-wrap items-center gap-2 min-w-0">
                       <button
                         onClick={() => chamberLightMutation.mutate(!status.chamber_light)}
                         disabled={!status.connected || chamberLightMutation.isPending || !hasPermission('printers:control')}
@@ -4262,7 +4287,7 @@ function PrinterCard({
                         );
                       })()}
 
-                      <div className={`inline-flex rounded-lg ${printer.plate_detection_enabled ? 'ring-1 ring-green-500' : ''}`}>
+                      {isBambu && capabilities.plate_selection && <div className={`inline-flex rounded-lg ${printer.plate_detection_enabled ? 'ring-1 ring-green-500' : ''}`}>
                         <button
                           onClick={handleTogglePlateDetection}
                           disabled={!status.connected || plateDetectionMutation.isPending || !hasPermission('printers:update')}
@@ -4295,10 +4320,10 @@ function PrinterCard({
                             <ChevronDown className="w-4 h-4" />
                           )}
                         </button>
-                      </div>
+                      </div>}
 
                       {/* Print Speed */}
-                      {(() => (
+                      {isBambu && capabilities.speed_control && (() => (
                         <div className="relative">
                           <button
                             data-testid="speed-control"
@@ -4344,13 +4369,13 @@ function PrinterCard({
                         </div>
                       ))()}
 
-                    </div>
+                    </div>}
 
                     {/* Right: Print Control Buttons */}
                     <div className="ml-auto flex items-center justify-end gap-2 flex-shrink-0">
                       {/* Pause/Resume button */}
-                      {(() => {
-                        const pauseUnavailable = !isPrinting || isControlBusy || !hasPermission('printers:control');
+                      {(isPaused ? capabilities.resume : capabilities.pause) && (() => {
+                        const pauseUnavailable = (!isPrinting && !isPaused) || isControlBusy || !hasPermission('printers:control');
                         return (
                       <button
                         onClick={() => isPaused ? setShowResumeConfirm(true) : setShowPauseConfirm(true)}
@@ -4373,7 +4398,7 @@ function PrinterCard({
                       })()}
 
                       {/* Stop button */}
-                      {(() => {
+                      {capabilities.cancel && (() => {
                         const stopUnavailable = !isPrinting || isControlBusy || !hasPermission('printers:control');
                         return (
                       <button
@@ -4400,7 +4425,7 @@ function PrinterCard({
             })()}
 
             {/* AMS Units - 2-Column Grid Layout */}
-            {(amsData?.length > 0 || status.vt_tray.length > 0) && viewMode === 'expanded' && (() => {
+            {isBambu && capabilities.ams && (amsData?.length > 0 || status.vt_tray.length > 0) && viewMode === 'expanded' && (() => {
               // Separate regular AMS (4-tray) from HT AMS (1-tray)
               const regularAms = amsData.filter(ams => ams.tray.length > 1);
               const htAms = amsData.filter(ams => ams.tray.length === 1);
@@ -5591,8 +5616,8 @@ function PrinterCard({
             <div className="flex items-center justify-between gap-2">
               {printerActionsMenu}
               <div className="flex items-center justify-end gap-2 flex-wrap">
-                {/* Camera Button */}
-                <Button
+                {/* Camera always opens LayerCove's same-origin, tokenized route. */}
+                {capabilities.camera && <Button
                   variant="secondary"
                   size="sm"
                   onClick={() => {
@@ -5619,7 +5644,7 @@ function PrinterCard({
                   className={footerIconButtonClass}
                 >
                   <Video className="w-4 h-4" />
-                </Button>
+                </Button>}
                 <Button
                   variant="secondary"
                   size="sm"
@@ -5646,6 +5671,12 @@ function PrinterCard({
                   >
                     <PrinterIcon className="w-4 h-4" />
                     {t('common.print')}
+                  </Button>
+                )}
+                {printer.provider === 'moonraker' && capabilities.emergency_stop && hasPermission('printers:control') && (
+                  <Button variant="danger" size="sm" onClick={() => setShowEmergencyStopConfirm(true)} className={footerActionButtonClass}>
+                    <AlertTriangle className="w-4 h-4" />
+                    {t('printers.emergencyStop')}
                   </Button>
                 )}
               </div>
@@ -5705,7 +5736,7 @@ function PrinterCard({
       )}
 
       {/* MQTT Debug Modal */}
-      {showMQTTDebug && (
+      {isBambu && showMQTTDebug && (
         <MQTTDebugModal
           printerId={printer.id}
           printerName={printer.name}
@@ -6088,6 +6119,20 @@ function PrinterCard({
         />
       )}
 
+      {showEmergencyStopConfirm && (
+        <ConfirmModal
+          title={t('printers.emergencyStopTitle')}
+          message={t('printers.emergencyStopMessage', { name: printer.name })}
+          confirmText={t('printers.emergencyStopConfirm')}
+          variant="danger"
+          onConfirm={() => {
+            emergencyStopMutation.mutate();
+            setShowEmergencyStopConfirm(false);
+          }}
+          onCancel={() => setShowEmergencyStopConfirm(false)}
+        />
+      )}
+
       {/* Pause Print Confirmation */}
       {showPauseConfirm && (
         <ConfirmModal
@@ -6166,11 +6211,11 @@ function PrinterCard({
       )}
 
       {/* Skip Objects Modal */}
-      <SkipObjectsModal
+      {isBambu && capabilities.object_cancellation && <SkipObjectsModal
         printerId={printer.id}
         isOpen={showSkipObjectsModal}
         onClose={() => setShowSkipObjectsModal(false)}
-      />
+      />}
 
       {/* HMS Error Modal */}
       {showHMSModal && (
@@ -6184,7 +6229,7 @@ function PrinterCard({
       )}
 
       {/* AMS Filament Backup status / control modal (#1762) */}
-      {amsBackupModalOpen && status && (
+      {isBambu && capabilities.ams && amsBackupModalOpen && status && (
         <AmsBackupModal
           isOpen={amsBackupModalOpen}
           state={status.ams_filament_backup}
@@ -6199,7 +6244,7 @@ function PrinterCard({
       )}
 
       {/* AMS History Modal */}
-      {amsHistoryModal && (
+      {isBambu && capabilities.ams && amsHistoryModal && (
         <AMSHistoryModal
           isOpen={!!amsHistoryModal}
           onClose={() => setAmsHistoryModal(null)}
@@ -6251,7 +6296,7 @@ function PrinterCard({
       )}
 
       {/* Configure AMS Slot Modal */}
-      {configureSlotModal && (
+      {isBambu && capabilities.ams && configureSlotModal && (
         <ConfigureAmsSlotModal
           isOpen={!!configureSlotModal}
           onClose={() => setConfigureSlotModal(null)}
@@ -6276,7 +6321,7 @@ function PrinterCard({
       )}
 
       {/* Firmware Update Modal */}
-      {showFirmwareModal && firmwareInfo && (
+      {isBambu && capabilities.firmware_information && showFirmwareModal && firmwareInfo && (
         <FirmwareUpdateModal
           printer={printer}
           firmwareInfo={firmwareInfo}
@@ -6482,6 +6527,7 @@ export function AddPrinterModal({
   const { t } = useTranslation();
   const [form, setForm] = useState<PrinterCreate>({
     name: '',
+    provider: 'bambu',
     serial_number: '',
     ip_address: '',
     access_code: '',
@@ -6489,6 +6535,10 @@ export function AddPrinterModal({
     location: '',
     auto_archive: true,
   });
+  const [moonraker, setMoonraker] = useState({
+    base_url: '', websocket_url_override: '', api_key: '', authorization: '', tls_verify: true,
+  });
+  const isMoonraker = form.provider === 'moonraker';
 
   // Discovery state
   const [discovering, setDiscovering] = useState(false);
@@ -6540,6 +6590,29 @@ export function AddPrinterModal({
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const data: PrinterCreate = isMoonraker
+      ? {
+          name: form.name,
+          provider: 'moonraker',
+          model: form.model || undefined,
+          location: form.location || undefined,
+          auto_archive: form.auto_archive,
+          external_camera_url: form.external_camera_url || undefined,
+          external_camera_type: form.external_camera_type || undefined,
+          external_camera_enabled: form.external_camera_enabled || false,
+          moonraker_config: {
+            base_url: moonraker.base_url.trim(),
+            websocket_url_override: moonraker.websocket_url_override.trim() || undefined,
+            api_key: moonraker.api_key || undefined,
+            authorization: moonraker.authorization || undefined,
+            tls_verify: moonraker.tls_verify,
+          },
+        }
+      : form;
+    if (isMoonraker) {
+      onAdd(data);
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -6556,7 +6629,7 @@ export function AddPrinterModal({
     } finally {
       setCheckingSave(false);
     }
-    onAdd(form);
+    onAdd(data);
   };
 
   const startDiscovery = async () => {
@@ -6686,6 +6759,7 @@ export function AddPrinterModal({
         <CardContent>
           <h2 className="text-xl font-semibold mb-4">{t('printers.addPrinter')}</h2>
 
+          {!isMoonraker && <>
           {/* Discovery Section */}
           <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
             {/* Subnet picker — always visible. The dropdown lists detected
@@ -6813,7 +6887,25 @@ export function AddPrinterModal({
               </p>
             )}
           </div>
+          </>}
           <form onSubmit={handleAddSubmit} className="space-y-4">
+            <fieldset>
+              <legend className="block text-sm text-bambu-gray mb-1">{t('printers.provider')}</legend>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {(['bambu', 'moonraker'] as const).map((provider) => (
+                  <label key={provider} className="flex min-h-11 items-center gap-2 rounded-lg border border-bambu-dark-tertiary px-3 py-2 text-sm text-white">
+                    <input
+                      type="radio"
+                      name="provider"
+                      value={provider}
+                      checked={form.provider === provider}
+                      onChange={() => setForm({ ...form, provider, serial_number: '', ip_address: '', access_code: '' })}
+                    />
+                    {provider === 'bambu' ? 'Bambu Lab' : 'Moonraker / Klipper'}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.name')}</label>
               <input
@@ -6825,6 +6917,7 @@ export function AddPrinterModal({
                 placeholder={t('printers.modal.myPrinter')}
               />
             </div>
+            {!isMoonraker && <>
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.ipAddress')}</label>
               <input
@@ -6848,7 +6941,33 @@ export function AddPrinterModal({
                 placeholder="01P00A000000000"
               />
             </div>
+            </>}
+            {isMoonraker && <>
             <div>
+              <label className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerBaseUrl')}</label>
+              <input type="url" required className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.base_url} onChange={(e) => setMoonraker({ ...moonraker, base_url: e.target.value })} placeholder="https://klipper.local:7125" />
+            </div>
+            <div>
+              <label className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerWebsocketUrl')}</label>
+              <input type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.websocket_url_override} onChange={(e) => setMoonraker({ ...moonraker, websocket_url_override: e.target.value })} placeholder="wss://klipper.local/websocket" />
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerApiKey')}</label>
+                <input type="password" autoComplete="new-password" disabled={!!moonraker.authorization} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.api_key} onChange={(e) => setMoonraker({ ...moonraker, api_key: e.target.value })} />
+              </div>
+              <div>
+                <label className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerAuthorization')}</label>
+                <input type="password" autoComplete="new-password" disabled={!!moonraker.api_key} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.authorization} onChange={(e) => setMoonraker({ ...moonraker, authorization: e.target.value })} />
+              </div>
+            </div>
+            <label className="flex items-center gap-2 text-sm text-bambu-gray"><input type="checkbox" checked={moonraker.tls_verify} onChange={(e) => setMoonraker({ ...moonraker, tls_verify: e.target.checked })} />{t('printers.moonrakerTlsVerify')}</label>
+            <div className="space-y-2 rounded-lg border border-bambu-dark-tertiary p-3">
+              <label className="flex items-center gap-2 text-sm text-bambu-gray"><input type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
+              {form.external_camera_enabled && <><input type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
+            </div>
+            </>}
+            {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
               <input
                 type="password"
@@ -6858,7 +6977,7 @@ export function AddPrinterModal({
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
                 placeholder={t('printers.modal.fromPrinterSettings')}
               />
-            </div>
+            </div>}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
               <select
@@ -7275,7 +7394,17 @@ function EditPrinterModal({
     location: printer.location || '',
     auto_archive: printer.auto_archive,
     is_active: printer.is_active,
+    external_camera_url: printer.external_camera_url || '',
+    external_camera_type: printer.external_camera_type || '',
+    external_camera_enabled: printer.external_camera_enabled,
   });
+  const isMoonraker = printer.provider === 'moonraker';
+  const [moonraker, setMoonraker] = useState({
+    base_url: printer.moonraker_config?.base_url || '',
+    websocket_url_override: printer.moonraker_config?.websocket_url_override || '',
+    api_key: '', authorization: '', tls_verify: printer.moonraker_config?.tls_verify ?? true,
+  });
+  const [connectionResult, setConnectionResult] = useState<string | null>(null);
 
   // Setup-time pre-flight — same warn-on-save as the Add-Printer dialog, so an
   // edit that breaks connectivity (e.g. a mistyped IP) is caught before save.
@@ -7304,21 +7433,50 @@ function EditPrinterModal({
   const doSave = () => {
     const data: Partial<PrinterCreate> = {
       name: form.name,
-      ip_address: form.ip_address ?? undefined,
       model: form.model || undefined,
       location: form.location || undefined,
       auto_archive: form.auto_archive,
       is_active: form.is_active,
+      external_camera_url: form.external_camera_url || undefined,
+      external_camera_enabled: form.external_camera_enabled || false,
+      external_camera_type: form.external_camera_enabled ? (form.external_camera_type || 'mjpeg') : undefined,
     };
     // Only include access_code if it was changed
     if (form.access_code) {
       data.access_code = form.access_code;
     }
+    if (isMoonraker) {
+      delete data.ip_address;
+      delete data.access_code;
+      data.moonraker_config = {
+        base_url: moonraker.base_url.trim(),
+        websocket_url_override: moonraker.websocket_url_override.trim() || undefined,
+        api_key: moonraker.api_key || undefined,
+        authorization: moonraker.authorization || undefined,
+        tls_verify: moonraker.tls_verify,
+      };
+    } else {
+      data.ip_address = form.ip_address ?? undefined;
+    }
     updateMutation.mutate(data);
+  };
+
+  const testConnection = async () => {
+    setConnectionResult(null);
+    try {
+      const result = await api.testMoonrakerConnection(printer.id);
+      setConnectionResult(result.message);
+    } catch (error) {
+      setConnectionResult(error instanceof Error ? error.message : t('printers.moonrakerConnectionFailed'));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isMoonraker) {
+      doSave();
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -7358,7 +7516,7 @@ function EditPrinterModal({
                 placeholder={t('printers.modal.myPrinter')}
               />
             </div>
-            <div>
+            {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.ipAddress')}</label>
               <input
                 type="text"
@@ -7369,8 +7527,8 @@ function EditPrinterModal({
                 onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
                 placeholder="192.168.1.100 or printer.local"
               />
-            </div>
-            <div>
+            </div>}
+            {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
               <input
                 type="text"
@@ -7379,8 +7537,18 @@ function EditPrinterModal({
                 value={printer.serial_number ?? '—'}
               />
               <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
-            </div>
-            <div>
+            </div>}
+            {isMoonraker && <>
+              <div><label className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerBaseUrl')}</label><input type="url" required className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.base_url} onChange={(e) => setMoonraker({ ...moonraker, base_url: e.target.value })} /></div>
+              <div><label className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerWebsocketUrl')}</label><input type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.websocket_url_override} onChange={(e) => setMoonraker({ ...moonraker, websocket_url_override: e.target.value })} /></div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerApiKey')}</label><input type="password" autoComplete="new-password" placeholder={printer.moonraker_config?.api_key_configured ? t('printers.moonrakerSecretRetained') : ''} disabled={!!moonraker.authorization} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.api_key} onChange={(e) => setMoonraker({ ...moonraker, api_key: e.target.value })} /></div><div><label className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerAuthorization')}</label><input type="password" autoComplete="new-password" placeholder={printer.moonraker_config?.authorization_configured ? t('printers.moonrakerSecretRetained') : ''} disabled={!!moonraker.api_key} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.authorization} onChange={(e) => setMoonraker({ ...moonraker, authorization: e.target.value })} /></div></div>
+              <label className="flex items-center gap-2 text-sm text-bambu-gray"><input type="checkbox" checked={moonraker.tls_verify} onChange={(e) => setMoonraker({ ...moonraker, tls_verify: e.target.checked })} />{t('printers.moonrakerTlsVerify')}</label>
+              <button type="button" onClick={testConnection} className="w-full rounded-lg border border-bambu-dark-tertiary px-3 py-2 text-sm text-bambu-gray hover:text-white">{t('printers.moonrakerTestConnection')}</button>
+              {connectionResult && <p role="status" className="text-sm text-bambu-gray">{connectionResult}</p>}
+              <label className="flex items-center gap-2 text-sm text-bambu-gray"><input type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
+              {form.external_camera_enabled && <input type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" />}
+            </>}
+            {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
               <input
                 type="password"
@@ -7389,7 +7557,7 @@ function EditPrinterModal({
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
                 placeholder={t('printers.accessCodePlaceholder')}
               />
-            </div>
+            </div>}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
               <select
@@ -8611,7 +8779,7 @@ export function PrintersPage() {
         </Card>
       ) : pageView === 'camwall' ? (
         <CameraWall
-          printers={sortedPrinters}
+          printers={sortedPrinters.filter((printer) => printer.capabilities?.camera ?? printer.provider !== 'moonraker')}
           maxLive={camWallMaxLive}
           snapshotIntervalSec={camWallSnapshotSec}
           onTileClick={(id, name) => {

@@ -127,6 +127,22 @@ export default {
 
   // Printers page
   printers: {
+    provider: 'Provider',
+    moonrakerBaseUrl: 'Moonraker base URL',
+    moonrakerWebsocketUrl: 'WebSocket override (optional)',
+    moonrakerApiKey: 'API key',
+    moonrakerAuthorization: 'Authorization',
+    moonrakerTlsVerify: 'Verify TLS certificate',
+    moonrakerExternalCamera: 'Enable external camera',
+    moonrakerSecretRetained: 'Stored secret retained when left blank',
+    moonrakerTestConnection: 'Test stored connection',
+    moonrakerConnectionFailed: 'Could not connect to Moonraker.',
+    emergencyStop: 'Emergency stop',
+    emergencyStopTitle: 'Emergency stop printer?',
+    emergencyStopMessage: 'Immediately stop {{name}}. Heaters and motion may stop without a normal shutdown.',
+    emergencyStopConfirm: 'Emergency stop',
+    emergencyStopSent: 'Emergency stop command sent',
+    emergencyStopFailed: 'Emergency stop failed',
     title: 'Printers',
     addPrinter: 'Add Printer',
     addPreflight: {

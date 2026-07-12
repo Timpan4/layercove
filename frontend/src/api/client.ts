@@ -366,6 +366,11 @@ export interface MoonrakerPrinterConfigResponse {
   authorization_configured: boolean;
 }
 
+export interface MoonrakerConnectionTestResult {
+  success: boolean;
+  message: string;
+}
+
 export interface HMSError {
   code: string;
   attr: number;  // Attribute value for constructing wiki URL
@@ -3780,6 +3785,10 @@ export const api = {
       `/printers/${printerId}/camera/external/test?url=${encodeURIComponent(url)}&camera_type=${encodeURIComponent(cameraType)}`,
       { method: 'POST' }
     ),
+  testMoonrakerConnection: (printerId: number) =>
+    request<MoonrakerConnectionTestResult>(`/printers/${printerId}/test-connection`, {
+      method: 'POST',
+    }),
 
   // Print Control
   stopPrint: (printerId: number) =>
@@ -3793,6 +3802,11 @@ export const api = {
   resumePrint: (printerId: number) =>
     request<{ success: boolean; message: string }>(`/printers/${printerId}/print/resume`, {
       method: 'POST',
+    }),
+  emergencyStop: (printerId: number) =>
+    request<{ success: boolean; message: string }>(`/printers/${printerId}/emergency-stop`, {
+      method: 'POST',
+      body: JSON.stringify({ confirmed: true }),
     }),
   clearPlate: (printerId: number) =>
     request<{ success: boolean; message: string }>(`/printers/${printerId}/clear-plate`, {

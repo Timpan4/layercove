@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useRef, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { Card, CardContent } from './Card';
@@ -48,6 +48,7 @@ export function ConfirmModal({
   onConfirm,
   onCancel,
 }: ConfirmModalProps) {
+  const dialogRef = useRef<HTMLDivElement>(null);
   const { t } = useTranslation();
   const resolvedConfirmText = confirmText ?? t('common.confirm');
   const resolvedCancelText = cancelText ?? t('common.cancel');
@@ -60,6 +61,10 @@ export function ConfirmModal({
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onCancel, isLoading]);
+
+  useEffect(() => {
+    dialogRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, []);
 
   const variantStyles = {
     danger: {
@@ -81,7 +86,11 @@ export function ConfirmModal({
   return (
     <div
       className={`fixed inset-0 bg-black/50 flex items-center justify-center p-4 ${overlayZIndex ?? 'z-50'}`}
+      ref={dialogRef}
       onClick={isLoading ? undefined : onCancel}
+      role="dialog"
+      aria-modal="true"
+      aria-label={title}
     >
       <Card
         className={`w-full max-w-md ${cardClassName ?? ''}`}

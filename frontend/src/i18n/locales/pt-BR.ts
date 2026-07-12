@@ -127,6 +127,22 @@ export default {
 
   // Printers page
   printers: {
+    provider: 'Provedor',
+    moonrakerBaseUrl: 'URL base do Moonraker',
+    moonrakerWebsocketUrl: 'Substituição de WebSocket (opcional)',
+    moonrakerApiKey: 'Chave da API',
+    moonrakerAuthorization: 'Autorização',
+    moonrakerTlsVerify: 'Verificar certificado TLS',
+    moonrakerExternalCamera: 'Ativar câmera externa',
+    moonrakerSecretRetained: 'O segredo salvo é mantido quando deixado em branco',
+    moonrakerTestConnection: 'Testar conexão salva',
+    moonrakerConnectionFailed: 'Não foi possível conectar ao Moonraker.',
+    emergencyStop: 'Parada de emergência',
+    emergencyStopTitle: 'Parar a impressora em emergência?',
+    emergencyStopMessage: 'Para {{name}} imediatamente. Aquecedores e movimento podem parar sem desligamento normal.',
+    emergencyStopConfirm: 'Parada de emergência',
+    emergencyStopSent: 'Comando de parada de emergência enviado',
+    emergencyStopFailed: 'Falha na parada de emergência',
     addPreflight: {
       checking: 'Verificando a conexão...',
       warning: 'Algumas verificações de conexão falharam. Esta impressora pode aparecer como offline. Revise as verificações abaixo, corrija o que puder ou salve mesmo assim.',

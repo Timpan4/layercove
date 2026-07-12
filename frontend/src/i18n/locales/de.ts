@@ -127,6 +127,22 @@ export default {
 
   // Printers page
   printers: {
+    provider: 'Anbieter',
+    moonrakerBaseUrl: 'Moonraker-Basis-URL',
+    moonrakerWebsocketUrl: 'WebSocket-Überschreibung (optional)',
+    moonrakerApiKey: 'API-Schlüssel',
+    moonrakerAuthorization: 'Autorisierung',
+    moonrakerTlsVerify: 'TLS-Zertifikat prüfen',
+    moonrakerExternalCamera: 'Externe Kamera aktivieren',
+    moonrakerSecretRetained: 'Gespeichertes Geheimnis bleibt bei leerem Feld',
+    moonrakerTestConnection: 'Gespeicherte Verbindung testen',
+    moonrakerConnectionFailed: 'Moonraker-Verbindung fehlgeschlagen.',
+    emergencyStop: 'Not-Aus',
+    emergencyStopTitle: 'Drucker notstoppen?',
+    emergencyStopMessage: '{{name}} sofort stoppen. Heizung und Bewegung können ohne normalen Shutdown stoppen.',
+    emergencyStopConfirm: 'Not-Aus',
+    emergencyStopSent: 'Not-Aus-Befehl gesendet',
+    emergencyStopFailed: 'Not-Aus fehlgeschlagen',
     addPreflight: {
       checking: 'Verbindung wird geprüft...',
       warning: 'Einige Verbindungsprüfungen sind fehlgeschlagen. Dieser Drucker wird möglicherweise als offline angezeigt. Prüfe die Punkte unten, behebe was möglich ist, oder speichere trotzdem.',
