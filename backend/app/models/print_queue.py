@@ -107,6 +107,8 @@ class PrintQueueItem(Base):
     # command; provider_job_id is filled by the matching started event.
     provider_correlation_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     provider_job_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    cancel_dispatched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
     # Cleared by the per-printer "Resume after failure" action (#1818) so the
     # scheduler's `_check_previous_success` lookback skips this row. Without

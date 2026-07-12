@@ -204,7 +204,7 @@ async def test_manager_routes_bambu_lifecycle_and_moonraker_terminal_callbacks()
 
 
 @pytest.mark.asyncio
-async def test_manager_routes_running_observed_callback_only_for_bambu():
+async def test_manager_routes_running_observed_callback_for_lifecycle_backends():
     manager = PrinterManager(registry=PrinterBackendRegistry())
     observed = []
 
@@ -221,7 +221,7 @@ async def test_manager_routes_running_observed_callback_only_for_bambu():
     await manager._forward_backend_event(1, event)
     await manager._forward_backend_event(2, event)
 
-    assert observed == [(2, "cube.gcode")]
+    assert observed == [(1, "cube.gcode"), (2, "cube.gcode")]
 
 
 @pytest.mark.asyncio

@@ -673,7 +673,7 @@ class PrinterManager:
         elif isinstance(event, ProviderEvent):
             if event.kind == "print_running_observed":
                 backend = self._backends.get(printer_id)
-                if backend is None or backend.provider is not PrinterProvider.BAMBU:
+                if backend is None or backend.provider not in (PrinterProvider.BAMBU, PrinterProvider.MOONRAKER):
                     return
             callbacks = {
                 "ams_changed": self._on_ams_change,

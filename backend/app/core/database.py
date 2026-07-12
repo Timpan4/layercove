@@ -3434,6 +3434,8 @@ async def _migrate_print_queue_provider_identity(conn) -> None:
     """Add durable provider lifecycle identity for queued prints."""
     await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN provider_correlation_id VARCHAR(255)")
     await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN provider_job_id VARCHAR(255)")
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN cancel_requested_at TIMESTAMP")
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN cancel_dispatched_at TIMESTAMP")
     await _safe_execute(
         conn,
         "CREATE INDEX IF NOT EXISTS ix_print_queue_provider_correlation_id ON print_queue (provider_correlation_id)",

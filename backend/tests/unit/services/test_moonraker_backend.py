@@ -210,6 +210,23 @@ def test_queued_binding_becomes_started_and_terminal_lifecycle_identity():
     assert {event.provider_job_id for event in lifecycle} == {"42"}
 
 
+def test_unrelated_external_print_does_not_consume_pending_queue_binding():
+    events = []
+    backend = MoonrakerBackend(printer(), emit=events.append)
+    backend._last_state = NormalizedPrinterState.IDLE
+    backend.bind_queued_job("queue-correlation", "queue/cube.gcode", "queue/cube.gcode")
+
+    backend._merge_status(
+        {"print_stats": {"state": "printing", "filename": "external.gcode", "job_id": "99"}},
+        bootstrap=False,
+    )
+
+    started = next(event for event in events if isinstance(event, JobLifecycle))
+    assert started.correlation_id == "moonraker:99"
+    assert started.provider_job_id == "99"
+    assert started.filename == "external.gcode"
+
+
 @pytest.mark.asyncio
 async def test_stalled_bootstrap_response_closes_socket_and_retries_without_long_wait():
     stalled = FakeConnection([])
@@ -369,7 +386,10 @@ def test_moonraker_active_bootstrap_observation_does_not_invent_started_event():
 
     backend._merge_status({"print_stats": {"state": "printing", "filename": "existing.gcode"}}, bootstrap=True)
 
-    assert any(isinstance(event, ProviderEvent) and event.kind == "print_running_observed" for event in events)
+    observed = next(
+        event for event in events if isinstance(event, ProviderEvent) and event.kind == "print_running_observed"
+    )
+    assert observed.data["correlation_id"]
     assert not any(isinstance(event, JobLifecycle) and event.kind == "started" for event in events)
 
 

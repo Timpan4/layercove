@@ -1300,14 +1300,12 @@ async def stop_queue_item(
     # Moonraker cancellation is awaited; its terminal lifecycle event owns
     # queue/archive/log finalization so command and event cannot race two outcomes.
     if printer is not None and printer.provider == PrinterProvider.MOONRAKER.value:
-        try:
-            if not await printer_manager.stop_print_async(printer_id):
-                raise HTTPException(502, "Moonraker did not accept the cancel command")
-        except HTTPException:
-            raise
-        except Exception as exc:
-            logger.warning("Moonraker cancel failed for queue item %s: %s", item_id, exc)
-            raise HTTPException(502, "Moonraker did not accept the cancel command") from exc
+        from backend.app.services.print_scheduler import PrintScheduler
+
+        if item.cancel_requested_at is None:
+            item.cancel_requested_at = datetime.now(timezone.utc)
+            await db.commit()
+        await PrintScheduler.dispatch_moonraker_cancel_intent(item.id, printer_id)
         return {"message": "Print stop requested"}
 
     # Try to send stop command to printer

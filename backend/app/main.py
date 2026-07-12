@@ -3704,6 +3704,11 @@ async def on_print_running_observed(printer_id: int, data: dict):
     """
     logger = logging.getLogger(__name__)
 
+    backend = printer_manager.get_backend(printer_id)
+    if backend is not None and backend.provider is PrinterProvider.MOONRAKER:
+        await print_scheduler.bind_moonraker_observed(printer_id, data)
+        return
+
     # Avoid double-capture: on_print_start may have run earlier in this
     # Bambuddy process if the print started AFTER startup and we crashed
     # later in the same session. (Realistically this can't happen — the
@@ -4002,12 +4007,19 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
         producer_done.set()
 
 
-async def _on_moonraker_print_complete(printer_id: int, data: dict) -> None:
-    """Run shared terminal effects after one correlated Moonraker CAS winner."""
+async def _run_moonraker_terminal_effects(outcome: dict, data: dict) -> None:
+    """Run provider-neutral effects for one already-recorded Moonraker outcome."""
+    from backend.app.models.archive import PrintArchive
+    from backend.app.models.print_queue import PrintQueueItem
+
     logger = logging.getLogger(__name__)
-    outcome = await print_scheduler.finalize_moonraker_job(printer_id, data)
-    if outcome is None:
-        return
+    printer_id = int(data.get("printer_id") or 0)
+    if not printer_id:
+        async with async_session() as db:
+            item = await db.get(PrintQueueItem, outcome["queue_item_id"])
+            if item is None or item.printer_id is None:
+                return
+            printer_id = item.printer_id
 
     try:
         await ws_manager.send_print_complete(
@@ -4047,9 +4059,6 @@ async def _on_moonraker_print_complete(printer_id: int, data: dict) -> None:
         pass
 
     async with async_session() as db:
-        from backend.app.models.archive import PrintArchive
-        from backend.app.models.print_queue import PrintQueueItem
-
         item = await db.get(PrintQueueItem, outcome["queue_item_id"])
         if item is None:
             return
@@ -4066,6 +4075,18 @@ async def _on_moonraker_print_complete(printer_id: int, data: dict) -> None:
                     "created_by_id": outcome["created_by_id"],
                     "print_time_seconds": archive.print_time_seconds,
                 }
+                try:
+                    await ws_manager.send_archive_updated({"id": archive.id, "status": outcome["status"]})
+                except Exception:
+                    logger.warning("Moonraker archive WebSocket event failed for archive %s", archive.id)
+                try:
+                    await mqtt_relay.on_archive_updated(
+                        archive_id=archive.id,
+                        print_name=archive.print_name or outcome["filename"],
+                        status=outcome["status"],
+                    )
+                except Exception:
+                    logger.warning("Moonraker archive MQTT event failed for archive %s", archive.id)
         try:
             await notification_service.on_print_complete(
                 printer_id,
@@ -4092,7 +4113,9 @@ async def _on_moonraker_print_complete(printer_id: int, data: dict) -> None:
         if not pending_count:
             completed_count = await db.scalar(
                 select(func.count(PrintQueueItem.id)).where(
-                    PrintQueueItem.status.in_(["completed", "failed", "skipped", "cancelled"])
+                    PrintQueueItem.status.in_(["completed", "failed", "skipped"]),
+                    PrintQueueItem.completed_at
+                    >= datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0),
                 )
             )
             try:
@@ -4105,6 +4128,13 @@ async def _on_moonraker_print_complete(printer_id: int, data: dict) -> None:
                 await smart_plug_manager.schedule_off_after_queue_job(printer_id, db)
             except Exception:
                 logger.warning("Moonraker queue auto-off failed for printer %s", printer_id)
+
+
+async def _on_moonraker_print_complete(printer_id: int, data: dict) -> None:
+    """Record one correlated terminal winner, then run shared effects."""
+    outcome = await print_scheduler.finalize_moonraker_job(printer_id, data)
+    if outcome is not None:
+        await _run_moonraker_terminal_effects(outcome, {**data, "printer_id": printer_id})
 
 
 async def on_print_complete(printer_id: int, data: dict):
@@ -6159,6 +6189,7 @@ async def lifespan(app: FastAPI):
     printer_manager.set_print_running_observed_callback(on_print_running_observed)
     printer_manager.set_finish_photo_moment_callback(on_finish_photo_moment)
     printer_manager.set_ams_change_callback(on_ams_change)
+    print_scheduler.set_moonraker_terminal_effects(_run_moonraker_terminal_effects)
 
     # Rehydrate persisted awaiting-plate-clear gate (#961) so prompts survive restarts
     await printer_manager.load_awaiting_plate_clear_from_db()
