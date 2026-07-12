@@ -356,6 +356,8 @@ export interface MoonrakerPrinterConfigInput {
   api_key?: string | null;
   authorization?: string | null;
   tls_verify?: boolean;
+  spoolman_accounting_owner?: 'layercove' | 'moonraker';
+  spoolman_spool_id?: number | null;
 }
 
 export interface MoonrakerPrinterConfigResponse {
@@ -364,6 +366,8 @@ export interface MoonrakerPrinterConfigResponse {
   tls_verify: boolean;
   api_key_configured: boolean;
   authorization_configured: boolean;
+  spoolman_accounting_owner: 'layercove' | 'moonraker';
+  spoolman_spool_id: number | null;
 }
 
 export interface MoonrakerConnectionTestResult {

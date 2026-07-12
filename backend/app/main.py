@@ -118,6 +118,7 @@ from backend.app.services.spoolman import close_spoolman_client, get_spoolman_cl
 from backend.app.services.spoolman_tracking import (
     cleanup_tracking as _cleanup_spoolman_tracking,
     report_usage as _report_spoolman_usage,
+    store_moonraker_print_data as _store_moonraker_spoolman_print_data,
     store_print_data as _store_spoolman_print_data,
 )
 from backend.app.services.tasmota import tasmota_service
@@ -2285,7 +2286,12 @@ async def on_print_start(printer_id: int, data: dict):
     """Handle print start - archive the 3MF file immediately."""
     backend = printer_manager.get_backend(printer_id)
     if backend is not None and backend.provider is PrinterProvider.MOONRAKER:
-        await print_scheduler.bind_moonraker_started(printer_id, data)
+        bound = await print_scheduler.bind_moonraker_started(printer_id, data)
+        if bound:
+            try:
+                await _store_moonraker_spoolman_print_data(printer_id, data)
+            except Exception as exc:
+                logging.getLogger(__name__).warning("[SPOOLMAN] Moonraker tracking start failed: %s", exc)
         await ws_manager.send_print_start(printer_id, data)
         return
 
@@ -3706,7 +3712,12 @@ async def on_print_running_observed(printer_id: int, data: dict):
 
     backend = printer_manager.get_backend(printer_id)
     if backend is not None and backend.provider is PrinterProvider.MOONRAKER:
-        await print_scheduler.bind_moonraker_observed(printer_id, data)
+        bound = await print_scheduler.bind_moonraker_observed(printer_id, data)
+        if bound:
+            try:
+                await _store_moonraker_spoolman_print_data(printer_id, data)
+            except Exception as exc:
+                logger.warning("[SPOOLMAN] Moonraker recovery tracking start failed: %s", exc)
         return
 
     # Avoid double-capture: on_print_start may have run earlier in this
@@ -4063,6 +4074,19 @@ async def _run_moonraker_terminal_effects(outcome: dict, data: dict) -> None:
         item = await db.get(PrintQueueItem, outcome["queue_item_id"])
         if item is None:
             return
+        if outcome["archive_id"]:
+            try:
+                if outcome["status"] == "completed":
+                    await _report_spoolman_usage(printer_id, outcome["archive_id"])
+                else:
+                    await _cleanup_spoolman_tracking(
+                        printer_id,
+                        outcome["archive_id"],
+                        db,
+                        last_progress=data.get("last_progress") or data.get("progress"),
+                    )
+            except Exception as exc:
+                logger.warning("[SPOOLMAN] Moonraker terminal accounting failed: %s", exc)
         await _bump_library_file_usage_if_completed(db, item, outcome["status"])
         await db.commit()
 

@@ -49,6 +49,7 @@ from backend.app.services.location_service import (
     resolve_spoolman_location_string,
 )
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_types import PrinterProvider, capabilities_for_provider
 from backend.app.services.slicer_filament_resolver import resolve_slicer_filament
 from backend.app.services.spoolman import (
     SpoolmanClient,
@@ -1419,6 +1420,8 @@ async def assign_spoolman_slot(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
+    if not capabilities_for_provider(PrinterProvider(printer.provider)).ams:
+        raise HTTPException(status_code=400, detail="Printer does not support AMS slot assignments")
 
     # Verify the Spoolman spool exists before committing to local DB.
     # This prevents ghost rows pointing at non-existent spool IDs.

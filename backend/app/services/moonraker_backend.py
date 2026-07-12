@@ -460,7 +460,7 @@ class MoonrakerBackend:
             return False
         return expected.strip().lstrip("/") == observed.strip().lstrip("/")
 
-    def _lifecycle_data(self, status: str) -> dict[str, str | None]:
+    def _lifecycle_data(self, status: str) -> dict[str, str | float | None]:
         filename = self._active_filename or self._snapshot.filename
         return {
             "status": status,
@@ -468,6 +468,7 @@ class MoonrakerBackend:
             "subtask_name": filename,
             "provider_job_id": self._active_provider_job_id or self._provider_job_id(),
             "correlation_id": self._active_correlation_id,
+            "progress": self._snapshot.progress,
         }
 
     def _emit_offline(self) -> None:

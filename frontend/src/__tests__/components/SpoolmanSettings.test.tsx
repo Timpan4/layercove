@@ -215,6 +215,23 @@ describe('SpoolmanSettings', () => {
       });
     });
 
+    it('shows only AMS-capable printers in the sync selector', async () => {
+      vi.mocked(api.getSpoolmanStatus).mockResolvedValue({
+        enabled: true,
+        connected: true,
+        url: 'http://localhost:7912',
+      });
+      vi.mocked(api.getPrinters).mockResolvedValue([
+        { id: 1, name: 'Bambu', capabilities: { ams: true } },
+        { id: 2, name: 'Klipper', capabilities: { ams: false } },
+      ] as Awaited<ReturnType<typeof api.getPrinters>>);
+
+      render(<SpoolmanSettings />);
+
+      await waitFor(() => expect(screen.getByRole('option', { name: 'Bambu' })).toBeInTheDocument());
+      expect(screen.queryByRole('option', { name: 'Klipper' })).not.toBeInTheDocument();
+    });
+
     it('shows sync section when connected', async () => {
       vi.mocked(api.getSpoolmanStatus).mockResolvedValue({
         enabled: true,

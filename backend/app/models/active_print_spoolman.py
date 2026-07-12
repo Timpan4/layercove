@@ -51,3 +51,8 @@ class ActivePrintSpoolman(Base):
     # ``tray_remain_start`` snapshot at usage_tracker.py:301.
     # Format: {"<ams_id>-<tray_id>": {"remain": int, "tray_uuid": str}, ...}
     tray_remain_start: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Provider-neutral direct assignment used by single-tool Moonraker jobs.
+    # Bambu rows leave this null and continue resolving physical AMS slots.
+    spoolman_spool_id: Mapped[int | None] = mapped_column(nullable=True)
+    provider: Mapped[str] = mapped_column(default="bambu")

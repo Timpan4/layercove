@@ -228,6 +228,90 @@ def _snapshot_tray_remain(raw_data: dict) -> dict[str, dict]:
     return snapshot
 
 
+async def store_moonraker_print_data(printer_id: int, data: dict) -> None:
+    """Persist one single-tool Moonraker job when LayerCove owns accounting."""
+    from backend.app.api.routes.settings import get_setting
+    from backend.app.models.active_print_spoolman import ActivePrintSpoolman
+    from backend.app.models.archive import PrintArchive
+    from backend.app.models.library import LibraryFile
+    from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+    from backend.app.models.print_queue import PrintQueueItem
+
+    async with async_session() as db:
+        if (await get_setting(db, "spoolman_enabled") or "").lower() != "true":
+            return
+        config = await db.get(MoonrakerPrinterConfig, printer_id)
+        if (
+            config is None
+            or config.spoolman_accounting_owner != "layercove"
+            or config.spoolman_spool_id is None
+        ):
+            return
+
+        provider_job_id = str(data.get("provider_job_id") or data.get("filename") or "").lstrip("/")
+        if not provider_job_id:
+            return
+        item = (
+            await db.scalars(
+                select(PrintQueueItem).where(
+                    PrintQueueItem.printer_id == printer_id,
+                    PrintQueueItem.status == "printing",
+                    PrintQueueItem.provider_job_id == provider_job_id,
+                )
+            )
+        ).one_or_none()
+        if item is None or item.archive_id is None:
+            return
+
+        archive = await db.get(PrintArchive, item.archive_id)
+        estimated_grams = float(archive.filament_used_grams or 0) if archive is not None else 0.0
+        if estimated_grams <= 0 and item.library_file_id is not None:
+            library_file = await db.get(LibraryFile, item.library_file_id)
+            metadata = library_file.file_metadata if library_file is not None else None
+            estimated_grams = float((metadata or {}).get("filament_used_grams") or 0)
+        if estimated_grams <= 0:
+            logger.info("[SPOOLMAN] Moonraker job %s has no filament estimate", item.id)
+            return
+
+        await db.execute(
+            delete(ActivePrintSpoolman).where(
+                ActivePrintSpoolman.printer_id == printer_id,
+                ActivePrintSpoolman.archive_id == item.archive_id,
+            )
+        )
+        db.add(
+            ActivePrintSpoolman(
+                printer_id=printer_id,
+                archive_id=item.archive_id,
+                filament_usage=[{"slot_id": 1, "used_g": estimated_grams}],
+                ams_trays={},
+                spoolman_spool_id=config.spoolman_spool_id,
+                provider="moonraker",
+            )
+        )
+        await db.commit()
+
+
+async def _report_moonraker_usage(tracking, *, completed: bool, progress: float | None = None) -> None:
+    """Charge the explicitly selected spool once, without fabricating AMS state."""
+    usage = tracking.filament_usage or []
+    grams = sum(float(item.get("used_g") or 0) for item in usage)
+    if not completed:
+        if progress is None:
+            return
+        grams *= min(max(float(progress), 0.0), 100.0) / 100.0
+    grams = round(grams, 2)
+    if grams <= 0 or tracking.spoolman_spool_id is None:
+        return
+    client = await _get_spoolman_client_with_fallback()
+    if client is None:
+        return
+    try:
+        await client.use_spool(tracking.spoolman_spool_id, grams)
+    except (SpoolmanNotFoundError, SpoolmanClientError, SpoolmanUnavailableError) as exc:
+        logger.warning("[SPOOLMAN] Moonraker usage report failed: %s", exc)
+
+
 async def store_print_data(
     printer_id: int,
     archive_id: int,
@@ -390,6 +474,12 @@ async def cleanup_tracking(
 
     if not tracking:
         logger.debug("[SPOOLMAN] No tracking data to clean up for printer=%s, archive=%s", printer_id, archive_id)
+        return
+
+    if getattr(tracking, "provider", "bambu") == "moonraker":
+        await _report_moonraker_usage(tracking, completed=False, progress=last_progress)
+        await db.delete(tracking)
+        await db.commit()
         return
 
     # Try to report partial usage before cleanup
@@ -912,6 +1002,12 @@ async def report_usage(printer_id: int, archive_id: int):
 
         if not tracking:
             logger.info("[SPOOLMAN] No tracking data for print (printer=%s, archive=%s)", printer_id, archive_id)
+            return
+
+        if getattr(tracking, "provider", "bambu") == "moonraker":
+            await db.delete(tracking)
+            await db.commit()
+            await _report_moonraker_usage(tracking, completed=True)
             return
 
         filament_usage = tracking.filament_usage or []
