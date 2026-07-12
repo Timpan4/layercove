@@ -127,6 +127,24 @@ export default {
 
   // Printers page
   printers: {
+    provider: 'Provider',
+    moonrakerBaseUrl: 'Moonraker base URL',
+    moonrakerWebsocketUrl: 'WebSocket override (optional)',
+    moonrakerApiKey: 'API key',
+    moonrakerAuthorization: 'Authorization',
+    moonrakerTlsVerify: 'Verify TLS certificate',
+    moonrakerExternalCamera: 'Enable external camera',
+    moonrakerExternalCameraUrl: 'External camera URL',
+    moonrakerExternalCameraType: 'External camera type',
+    moonrakerSecretRetained: 'Stored secret retained when left blank',
+    moonrakerTestConnection: 'Test stored connection',
+    moonrakerConnectionFailed: 'Could not connect to Moonraker.',
+    emergencyStop: 'Emergency stop',
+    emergencyStopTitle: 'Emergency stop printer?',
+    emergencyStopMessage: 'Immediately stop {{name}}. Heaters and motion may stop without a normal shutdown.',
+    emergencyStopConfirm: 'Emergency stop',
+    emergencyStopSent: 'Emergency stop command sent',
+    emergencyStopFailed: 'Emergency stop failed',
     title: 'Printers',
     addPrinter: 'Add Printer',
     addPreflight: {
@@ -709,6 +727,8 @@ export default {
     howToEnable: 'How to enable',
     incompatibleFile: 'This file was sliced for {{slicedFor}}, but this printer is a {{printerModel}}',
     dropNotPrintable: 'Only .gcode and .gcode.3mf files can be printed',
+    dropNotPrintableGcode: 'Only .gcode files can be printed on this printer',
+    dropNotPrintable3mf: 'Only .gcode.3mf files can be printed on this printer',
     dropToPrint: 'Drop to print',
     cannotPrint: 'Printer busy',
   },

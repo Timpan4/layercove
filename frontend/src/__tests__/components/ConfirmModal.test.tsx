@@ -54,6 +54,25 @@ describe('ConfirmModal', () => {
   });
 
   describe('interactions', () => {
+    it('focuses Cancel, traps Tab, and restores prior focus on close', () => {
+      const opener = document.createElement('button');
+      document.body.appendChild(opener);
+      opener.focus();
+      const { unmount } = render(<ConfirmModal {...defaultProps} />);
+      const dialog = screen.getByRole('dialog');
+      const cancel = screen.getByRole('button', { name: 'Cancel' });
+      const confirm = screen.getByRole('button', { name: 'Confirm' });
+
+      expect(cancel).toHaveFocus();
+      fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+      expect(confirm).toHaveFocus();
+      fireEvent.keyDown(dialog, { key: 'Tab' });
+      expect(cancel).toHaveFocus();
+      unmount();
+      expect(opener).toHaveFocus();
+      opener.remove();
+    });
+
     it('calls onConfirm when confirm button is clicked', async () => {
       const user = userEvent.setup();
       const onConfirm = vi.fn();

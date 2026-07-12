@@ -127,6 +127,24 @@ export default {
 
   // Yazıcılar sayfası
   printers: {
+    provider: 'Sağlayıcı',
+    moonrakerBaseUrl: 'Moonraker temel URL’si',
+    moonrakerWebsocketUrl: 'WebSocket geçersiz kılma (isteğe bağlı)',
+    moonrakerApiKey: 'API anahtarı',
+    moonrakerAuthorization: 'Yetkilendirme',
+    moonrakerTlsVerify: 'TLS sertifikasını doğrula',
+    moonrakerExternalCamera: 'Harici kamerayı etkinleştir',
+    moonrakerExternalCameraUrl: 'Harici kamera URL\'si',
+    moonrakerExternalCameraType: 'Harici kamera türü',
+    moonrakerSecretRetained: 'Boş bırakılırsa kayıtlı gizli bilgi korunur',
+    moonrakerTestConnection: 'Kayıtlı bağlantıyı test et',
+    moonrakerConnectionFailed: 'Moonraker’a bağlanılamadı.',
+    emergencyStop: 'Acil durdurma',
+    emergencyStopTitle: 'Yazıcı acil olarak durdurulsun mu?',
+    emergencyStopMessage: '{{name}} hemen durur. Isıtıcılar ve hareket normal kapanma olmadan durabilir.',
+    emergencyStopConfirm: 'Acil durdurma',
+    emergencyStopSent: 'Acil durdurma komutu gönderildi',
+    emergencyStopFailed: 'Acil durdurma başarısız',
     title: 'Yazıcılar',
     addPrinter: 'Yazıcı Ekle',
     addPreflight: {
@@ -705,6 +723,8 @@ export default {
     howToEnable: 'Nasıl etkinleştirilir',
     incompatibleFile: 'Bu dosya {{slicedFor}} için dilimlendi, ancak bu yazıcı bir {{printerModel}}',
     dropNotPrintable: 'Yalnızca .gcode ve .gcode.3mf dosyaları yazdırılabilir',
+    dropNotPrintableGcode: 'Bu yazıcıda yalnızca .gcode dosyaları yazdırılabilir',
+    dropNotPrintable3mf: 'Bu yazıcıda yalnızca .gcode.3mf dosyaları yazdırılabilir',
     dropToPrint: 'Yazdırmak için bırakın',
     cannotPrint: 'Yazıcı meşgul',
   },

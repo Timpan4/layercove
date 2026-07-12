@@ -414,3 +414,24 @@ describe('Project cover image URL (#1155)', () => {
     expect(params.get('token')).toBe('a&b=c');
   });
 });
+
+describe('Moonraker control API', () => {
+  it('sends confirmed emergency stop to exact endpoint', async () => {
+    let body: unknown;
+    server.use(http.post('/api/v1/printers/9/emergency-stop', async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({ success: true, message: 'sent' });
+    }));
+
+    await expect(api.emergencyStop(9)).resolves.toEqual({ success: true, message: 'sent' });
+    expect(body).toEqual({ confirmed: true });
+  });
+
+  it('tests only stored Moonraker configuration', async () => {
+    server.use(http.post('/api/v1/printers/9/test-connection', () =>
+      HttpResponse.json({ success: true, message: 'Connected to Moonraker.' }),
+    ));
+
+    await expect(api.testMoonrakerConnection(9)).resolves.toEqual({ success: true, message: 'Connected to Moonraker.' });
+  });
+});

@@ -11,6 +11,7 @@ import {
   buildPresetOptions,
   parsePresetTriple,
 } from '../utils/temperatureFanPresets';
+import { isActivePrintState, normalizePrintState } from '../utils/printerState';
 
 // AMS drying popover dimensions — w-[240px] on the popover, estimated height
 // covers header + filament select + temp slider + duration + rotate-tray
@@ -992,13 +993,15 @@ function StatusSummaryBar({ printers }: { printers: Printer[] | undefined }) {
         offline++;
       } else {
         // Count printers with active HMS errors as problems
-        const knownHmsCount =
-          status.hms_errors ? filterKnownHMSErrors(status.hms_errors).length : 0;
+        const knownHmsCount = printer.provider !== 'moonraker' && status.hms_errors
+          ? filterKnownHMSErrors(status.hms_errors).length
+          : 0;
         if (knownHmsCount > 0) {
           error++;
         }
-        switch (status.state) {
-          case 'RUNNING':
+        switch (normalizePrintState(status.state)) {
+          case 'preparing':
+          case 'printing':
             printing++;
             if (status.remaining_time != null && status.remaining_time > 0) {
               if (nextRemainingMin === null || status.remaining_time < nextRemainingMin) {
@@ -1008,13 +1011,13 @@ function StatusSummaryBar({ printers }: { printers: Printer[] | undefined }) {
               }
             }
             break;
-          case 'PAUSE':
+          case 'paused':
             paused++;
             break;
-          case 'FINISH':
+          case 'finished':
             finished++;
             break;
-          case 'FAILED':
+          case 'failed':
             // FAILED is the printer's terminal gcode_state after a print stops —
             // including user cancellations, where there's no actual fault. Only
             // count it as a "problem" when an HMS error is also active; otherwise
@@ -1408,22 +1411,38 @@ const STATUS_GROUP_META: Record<string, { labelKey: string; dot: string }> = {
   offline:  { labelKey: 'printers.status.offline',   dot: 'bg-gray-400' },
 };
 
+function isPrintableArtifact(
+  filename: string,
+  capabilities: Pick<Printer['capabilities'], 'upload_gcode' | 'upload_3mf'>,
+): boolean {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.3mf')) return lower.includes('.gcode.') && capabilities.upload_3mf;
+  if (lower.endsWith('.gcode')) return capabilities.upload_gcode;
+  return false;
+}
+
+function printableArtifactAccept(capabilities: Pick<Printer['capabilities'], 'upload_gcode' | 'upload_3mf'>): string {
+  return [capabilities.upload_gcode && '.gcode', capabilities.upload_3mf && '.3mf'].filter(Boolean).join(',');
+}
+
 /** Classify a printer into one of the UI status buckets. */
 function classifyPrinterStatus(
   status: { connected: boolean; state: string | null; hms_errors?: HMSError[] } | undefined,
+  supportsHms = true,
 ): PrinterState {
   if (!status?.connected) return 'offline';
-  const hmsErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
+  const hmsErrors = supportsHms && status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
   if (hmsErrors.length > 0) return 'error';
-  switch (status.state) {
-    case 'RUNNING': return 'printing';
-    case 'PAUSE':   return 'paused';
-    case 'FINISH':  return 'finished';
+  switch (normalizePrintState(status.state)) {
+    case 'preparing': return 'printing';
+    case 'printing': return 'printing';
+    case 'paused':   return 'paused';
+    case 'finished': return 'finished';
     // FAILED without an active HMS error is the printer's terminal state after
     // any unsuccessful end — including user-cancellations. Treat the same as
     // FINISH for grouping/badging purposes; only escalate to "error" when an
     // HMS code is actually attached (handled by the early-return above).
-    case 'FAILED':  return 'finished';
+    case 'failed':  return 'finished';
     default:        return 'idle';
   }
 }
@@ -1440,19 +1459,21 @@ function getStatusDisplay(state: string | null | undefined, stg_cur_name: string
   }
 
   // Format the gcode_state nicely
-  switch (state) {
-    case 'RUNNING':
+  switch (normalizePrintState(state)) {
+    case 'preparing':
+      return 'Preparing';
+    case 'printing':
       return 'Printing';
-    case 'PAUSE':
+    case 'paused':
       return 'Paused';
-    case 'FINISH':
+    case 'finished':
       return 'Finished';
-    case 'FAILED':
+    case 'failed':
       return 'Failed';
-    case 'IDLE':
-      return 'Idle';
-    default:
-      return state ? state.charAt(0) + state.slice(1).toLowerCase() : 'Idle';
+    case 'idle':
+      return state && state.toUpperCase() !== 'IDLE'
+        ? state.charAt(0) + state.slice(1).toLowerCase()
+        : 'Idle';
   }
 }
 
@@ -1797,6 +1818,18 @@ function PrinterCard({
   fanSpeedPresets?: readonly [number, number, number];
 }) {
   const { t } = useTranslation();
+  const isBambu = printer.provider !== 'moonraker';
+  const capabilities = printer.capabilities ?? {
+    upload_gcode: true, upload_3mf: true, start_print: true, pause: true, resume: true, cancel: true,
+    emergency_stop: false, camera: true, bed_temperature: true, extruder_temperature: true,
+    chamber_temperature: true, ams: true, plate_selection: true, speed_control: true,
+    firmware_information: true, object_cancellation: true,
+  };
+  const unsupportedArtifactMessage = capabilities.upload_gcode
+    ? capabilities.upload_3mf
+      ? t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed')
+      : t('printers.dropNotPrintableGcode', 'Only .gcode files can be printed on this printer')
+    : t('printers.dropNotPrintable3mf', 'Only .gcode.3mf files can be printed on this printer');
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -1814,6 +1847,7 @@ function PrinterCard({
   // #1762: AMS Filament Backup status / control modal — opens from the badge.
   const [amsBackupModalOpen, setAmsBackupModalOpen] = useState(false);
   const [showStopConfirm, setShowStopConfirm] = useState(false);
+  const [showEmergencyStopConfirm, setShowEmergencyStopConfirm] = useState(false);
   const [showPauseConfirm, setShowPauseConfirm] = useState(false);
   const [showSpeedMenu, setShowSpeedMenu] = useState<number | null>(null);
   const [showAirductMenu, setShowAirductMenu] = useState<number | null>(null);
@@ -1898,6 +1932,7 @@ function PrinterCard({
     queryFn: () => api.getPrinterStatus(printer.id),
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
+  const printState = normalizePrintState(status?.state);
 
   // Check for firmware updates (cached for 5 minutes, can be disabled in settings)
   const { data: firmwareInfo } = useQuery({
@@ -1905,7 +1940,7 @@ function PrinterCard({
     queryFn: () => firmwareApi.checkPrinterUpdate(printer.id),
     staleTime: 5 * 60 * 1000,
     refetchInterval: 5 * 60 * 1000,
-    enabled: checkPrinterFirmware && hasPermission('firmware:read'),
+    enabled: isBambu && capabilities.firmware_information && checkPrinterFirmware && hasPermission('firmware:read'),
   });
 
   // Collect unique tray_info_idx values for cloud filament info lookup
@@ -1976,7 +2011,7 @@ function PrinterCard({
   const { data: filamentInfo } = useQuery({
     queryKey: ['filamentInfo', trayInfoIds],
     queryFn: () => api.getFilamentInfo(trayInfoIds),
-    enabled: trayInfoIds.length > 0,
+    enabled: isBambu && capabilities.ams && trayInfoIds.length > 0,
     staleTime: 5 * 60 * 1000, // 5 minutes
   });
 
@@ -1985,17 +2020,18 @@ function PrinterCard({
     queryKey: ['slotPresets', printer.id],
     queryFn: () => api.getSlotPresets(printer.id),
     staleTime: 2 * 60 * 1000, // 2 minutes
+    enabled: isBambu && capabilities.ams,
   });
 
   // Fetch plate list for the archive linked to the active print (#881 follow-up).
   // Only queried when there's a running print backed by an archive; shared
   // React Query cache with the Queue / Archives pages keeps it cheap.
   const activeArchiveId =
-    (status?.state === 'RUNNING' || status?.state === 'PAUSE') ? status?.current_archive_id ?? null : null;
+    isActivePrintState(status?.state) ? status?.current_archive_id ?? null : null;
   const { data: activeArchivePlates } = useQuery({
     queryKey: ['archive-plates', activeArchiveId],
     queryFn: () => api.getArchivePlates(activeArchiveId!),
-    enabled: activeArchiveId != null,
+    enabled: isBambu && capabilities.plate_selection && activeArchiveId != null,
     staleTime: 5 * 60 * 1000,
   });
   const activePlateLabel = (() => {
@@ -2009,6 +2045,7 @@ function PrinterCard({
     queryKey: ['amsLabels', printer.id],
     queryFn: () => api.getAmsLabels(printer.id),
     staleTime: 5 * 60 * 1000, // 5 minutes
+    enabled: isBambu && capabilities.ams,
   });
 
   // Cache WiFi signal to prevent it disappearing on updates
@@ -2101,14 +2138,14 @@ function PrinterCard({
   const { data: printingQueueItems } = useQuery({
     queryKey: ['queue', printer.id, 'printing'],
     queryFn: () => api.getQueue(printer.id, 'printing'),
-    enabled: status?.state === 'RUNNING',
+    enabled: isActivePrintState(status?.state),
   });
 
   // Fetch reprint user info (for prints started via Reprint, not queue - Issue #206)
   const { data: reprintUser } = useQuery({
     queryKey: ['currentPrintUser', printer.id],
     queryFn: () => api.getCurrentPrintUser(printer.id),
-    enabled: status?.state === 'RUNNING',
+    enabled: isActivePrintState(status?.state),
   });
 
   // Combine both sources: queue item user takes precedence, then reprint user
@@ -2118,10 +2155,10 @@ function PrinterCard({
   const { data: lastPrints } = useQuery({
     queryKey: ['archives', printer.id, 'last'],
     queryFn: () => api.getArchives(printer.id, 1, 0),
-    enabled: status?.connected && status?.state !== 'RUNNING',
+    enabled: status?.connected && !isActivePrintState(status?.state),
   });
   const lastPrint = lastPrints?.[0];
-  const isPrintingOrPaused = status?.state === 'RUNNING' || status?.state === 'PAUSE';
+  const isPrintingOrPaused = isActivePrintState(status?.state);
   const needsPlateClear = requirePlateClear && status?.awaiting_plate_clear === true;
   const showClearPlateButton = status?.connected && needsPlateClear && !isPrintingOrPaused;
   const activePrintName = status?.current_print && isPrintingOrPaused
@@ -2291,6 +2328,15 @@ function PrinterCard({
       queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToResumePrint'), 'error'),
+  });
+
+  const emergencyStopMutation = useMutation({
+    mutationFn: () => api.emergencyStop(printer.id),
+    onSuccess: () => {
+      showToast(t('printers.emergencyStopSent'), 'success');
+      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+    },
+    onError: (error: Error) => showToast(error.message || t('printers.emergencyStopFailed'), 'error'),
   });
 
   const clearPlateMutation = useMutation({
@@ -2525,7 +2571,7 @@ function PrinterCard({
   // for the in-flight job).
   const [confirmMaintenanceEnter, setConfirmMaintenanceEnter] = useState(false);
   const handleEnterMaintenance = () => {
-    if (status?.state === 'RUNNING' || status?.state === 'PAUSE') {
+    if (isActivePrintState(status?.state)) {
       setConfirmMaintenanceEnter(true);
     } else {
       maintenanceMutation.mutate(false);
@@ -2534,12 +2580,12 @@ function PrinterCard({
 
   // Query for printable objects (for skip functionality)
   // Fetch when printing with 2+ objects OR when modal is open
-  const isPrintingWithObjects = (status?.state === 'RUNNING' || status?.state === 'PAUSE') && (status?.printable_objects_count ?? 0) >= 2;
+  const isPrintingWithObjects = isActivePrintState(status?.state) && (status?.printable_objects_count ?? 0) >= 2;
   const { data: objectsData } = useQuery({
     queryKey: ['printableObjects', printer.id],
     queryFn: () => api.getPrintableObjects(printer.id),
-    enabled: showSkipObjectsModal || isPrintingWithObjects,
-    refetchInterval: showSkipObjectsModal ? 5000 : (isPrintingWithObjects ? 30000 : false), // 5s when modal open, 30s otherwise
+    enabled: isBambu && capabilities.object_cancellation && (showSkipObjectsModal || isPrintingWithObjects),
+    refetchInterval: isBambu && capabilities.object_cancellation ? (showSkipObjectsModal ? 5000 : (isPrintingWithObjects ? 30000 : false)) : false, // 5s when modal open, 30s otherwise
   });
 
   // State for tracking which AMS slot is being refreshed
@@ -2838,7 +2884,8 @@ function PrinterCard({
     }
   };
 
-  const canDrop = isConnected && status?.state !== 'RUNNING' && status?.state !== 'PAUSE' && hasPermission('printers:control');
+  const canStartPrint = capabilities.start_print && (capabilities.upload_gcode || capabilities.upload_3mf);
+  const canDrop = isConnected && !isActivePrintState(status?.state) && canStartPrint && hasPermission('printers:control');
 
   const handleCardDragEnter = (e: React.DragEvent) => {
     e.preventDefault();
@@ -2869,9 +2916,8 @@ function PrinterCard({
     if (!file) return;
 
     // Only accept sliced/printable files (.gcode, .gcode.3mf, etc.)
-    const lower = file.name.toLowerCase();
-    if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
-      showToast(t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed'), 'error');
+    if (!isPrintableArtifact(file.name, capabilities)) {
+      showToast(unsupportedArtifactMessage, 'error');
       return;
     }
 
@@ -2921,7 +2967,7 @@ function PrinterCard({
     isRefreshing?: boolean;
     includeRfid?: boolean;
   }) => {
-    const printerBusy = status?.state === 'RUNNING';
+    const printerBusy = isActivePrintState(status?.state);
 
     return (
       <>
@@ -3011,7 +3057,7 @@ function PrinterCard({
             <Pencil className="w-4 h-4" />
             {t('common.edit')}
           </button>
-          <button
+          {isBambu && <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
             onClick={() => {
               setShowPrinterInfo(true);
@@ -3020,7 +3066,7 @@ function PrinterCard({
           >
             <Info className="w-4 h-4" />
             {t('printers.printerInformation')}
-          </button>
+          </button>}
           {/* Maintenance Mode toggle (#1476) — leverages backend is_active flag */}
           <button
             className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
@@ -3066,17 +3112,19 @@ function PrinterCard({
             <RotateCw className={`w-4 h-4 ${forceRefreshMutation.isPending ? 'animate-spin' : ''}`} />
             {t('printers.forceRefresh')}
           </button>
-          <button
-            className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
-            onClick={() => {
-              setShowMQTTDebug(true);
-              setShowMenu(false);
-            }}
-          >
-            <Terminal className="w-4 h-4" />
-            {t('printers.mqttDebug')}
-          </button>
-          <button
+          {isBambu && (
+            <button
+              className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
+              onClick={() => {
+                setShowMQTTDebug(true);
+                setShowMenu(false);
+              }}
+            >
+              <Terminal className="w-4 h-4" />
+              {t('printers.mqttDebug')}
+            </button>
+          )}
+          {isBambu && <button
             className="w-full px-4 py-2 text-left text-sm hover:bg-bambu-dark-tertiary flex items-center gap-2"
             onClick={() => {
               setShowDiagnostic(true);
@@ -3085,7 +3133,7 @@ function PrinterCard({
           >
             <Stethoscope className="w-4 h-4" />
             {t('diagnostic.runButton')}
-          </button>
+          </button>}
           <button
             className={`w-full px-4 py-2 text-left text-sm flex items-center gap-2 ${
               hasPermission('printers:delete')
@@ -3179,7 +3227,7 @@ function PrinterCard({
                     <h3 className={`font-semibold text-white ${getTitleSize()}`}>{printer.name}</h3>
                     {/* Connection indicator dot for compact mode */}
                     {viewMode === 'compact' && (() => {
-                      const hmsErrors = status?.connected && status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
+                      const hmsErrors = isBambu && status?.connected && status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
                       const hasSevere = hmsErrors.some(e => e.severity <= 2);
                       const hasWarning = hmsErrors.length > 0;
                       const pipColor = !status?.connected
@@ -3273,7 +3321,7 @@ function PrinterCard({
                 </span>
               )}
               {/* Run connection diagnostic — offered when the printer is offline, NOT in maintenance */}
-              {printer.is_active !== false && !status?.connected && (
+              {isBambu && printer.is_active !== false && !status?.connected && (
                 <button
                   onClick={() => setShowDiagnostic(true)}
                   className="flex items-center gap-1 px-2 py-1 rounded-full text-xs cursor-pointer bg-bambu-dark-tertiary text-bambu-gray hover:text-white transition-colors"
@@ -3314,7 +3362,7 @@ function PrinterCard({
                 </span>
               )}
               {/* HMS Status Indicator */}
-              {status?.connected && (() => {
+              {isBambu && status?.connected && (() => {
                 const knownErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
                 return (
                   <button
@@ -3523,19 +3571,19 @@ function PrinterCard({
             {/* Compact: Simple status bar */}
             {viewMode === 'compact' ? (
               (() => {
-                const hmsErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
-                const hasProblem = status.state === 'FAILED' || hmsErrors.length > 0;
-                const compactProgress = status.state === 'RUNNING' || status.state === 'PAUSE'
+                const hmsErrors = isBambu && status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
+                const hasProblem = normalizePrintState(status.state) === 'failed' || hmsErrors.length > 0;
+                const compactProgress = isActivePrintState(status.state)
                   ? Math.max(0, Math.min(100, status.progress || 0))
                   : showClearPlateButton
                     ? 100
                     : hasProblem
                       ? 100
                       : 0;
-                const isActiveCompactPrint = status.state === 'RUNNING' || status.state === 'PAUSE';
+                const isActiveCompactPrint = isActivePrintState(status.state);
                 const compactProgressClass = hasProblem
                   ? 'bg-status-error'
-                  : status.state === 'PAUSE'
+                  : normalizePrintState(status.state) === 'paused'
                     ? 'bg-status-warning'
                     : 'bg-bambu-green';
 
@@ -3565,7 +3613,7 @@ function PrinterCard({
 
                 {/* Current Print or Idle Placeholder */}
                 {(() => {
-                  const isActivePrint = !!(status.current_print && (status.state === 'RUNNING' || status.state === 'PAUSE'));
+                  const isActivePrint = !!(status.current_print && isActivePrintState(status.state));
                   const showRetainedPrint = !isActivePrint && needsPlateClear && retainedPrintJob;
                   const printName = isActivePrint ? activePrintName : showRetainedPrint ? retainedPrintJob.name : null;
                   const coverUrl = isActivePrint ? status.cover_url : showRetainedPrint ? retainedPrintJob.coverUrl : null;
@@ -3573,7 +3621,7 @@ function PrinterCard({
 
                   return (
                     <div className="p-2 bg-bambu-dark rounded-[10px] relative overflow-hidden">
-                      <button
+                      {isBambu && capabilities.object_cancellation && <button
                         onClick={() => setShowSkipObjectsModal(true)}
                         disabled={!isActivePrint || (status.printable_objects_count ?? 0) < 2 || !hasPermission('printers:control')}
                         className={`absolute top-2 right-2 p-1.5 rounded transition-colors z-10 ${
@@ -3597,7 +3645,7 @@ function PrinterCard({
                             {objectsData.skipped_count}
                           </span>
                         )}
-                      </button>
+                      </button>}
                       <div className="flex items-stretch gap-2">
                         <CoverImage
                           url={coverUrl}
@@ -3615,7 +3663,7 @@ function PrinterCard({
                           <div className="flex h-3 items-center gap-2 text-sm">
                             <div className="h-1.5 min-w-0 flex-1 rounded-full bg-bambu-dark-tertiary">
                               <div
-                                className={`${isActivePrint ? (status.state === 'PAUSE' ? 'bg-status-warning' : 'bg-bambu-green') : showRetainedPrint ? 'bg-bambu-green' : 'bg-bambu-dark-tertiary'} h-1.5 rounded-full transition-all`}
+                                className={`${isActivePrint ? (normalizePrintState(status.state) === 'paused' ? 'bg-status-warning' : 'bg-bambu-green') : showRetainedPrint ? 'bg-bambu-green' : 'bg-bambu-dark-tertiary'} h-1.5 rounded-full transition-all`}
                                 style={{ width: `${progress}%` }}
                               />
                             </div>
@@ -3677,17 +3725,20 @@ function PrinterCard({
             )}
 
             {/* Temperatures */}
-            {status.temperatures && viewMode === 'expanded' && (() => {
+            {status.temperatures && viewMode === 'expanded' && (
+              capabilities.extruder_temperature || capabilities.bed_temperature || capabilities.chamber_temperature
+            ) && (() => {
               // Use actual heater states from MQTT stream
               const nozzleHeating = status.temperatures.nozzle_heating || status.temperatures.nozzle_2_heating || false;
               const bedHeating = status.temperatures.bed_heating || false;
               const chamberHeating = status.temperatures.chamber_heating || false;
               const isDualNozzle = printer.nozzle_count === 2 || status.temperatures.nozzle_2 !== undefined;
               const availableHeaterKinds: HeaterSensorKind[] = (() => {
-                const kinds: HeaterSensorKind[] = ['nozzle'];
-                if (status.temperatures.nozzle_2 !== undefined) kinds.push('nozzle_2');
-                kinds.push('bed');
-                if (status.temperatures.chamber !== undefined) kinds.push('chamber');
+                const kinds: HeaterSensorKind[] = [];
+                if (capabilities.extruder_temperature) kinds.push('nozzle');
+                if (capabilities.extruder_temperature && status.temperatures.nozzle_2 !== undefined) kinds.push('nozzle_2');
+                if (capabilities.bed_temperature) kinds.push('bed');
+                if (capabilities.chamber_temperature && status.temperatures.chamber !== undefined) kinds.push('chamber');
                 return kinds;
               })();
               // active_extruder: 0=right, 1=left
@@ -3709,7 +3760,7 @@ function PrinterCard({
               // control that does nothing. Mirrors the enclosure-door badge
               // gate above.
               const hasChamberFan = MODELS_WITH_CHAMBER_FAN.has(printer.model ?? '');
-              const fanItems = [
+              const fanItems = isBambu ? [
                 {
                   key: 'part',
                   label: t('printers.fans.partCooling'),
@@ -3735,13 +3786,13 @@ function PrinterCard({
                       },
                     ]
                   : []),
-              ];
+              ] : [];
 
               return (
                 <>
                   <div className="mt-2 flex items-stretch gap-1.5 flex-wrap">
                     {/* Nozzle temp - combined for dual nozzle */}
-                    <div
+                    {capabilities.extruder_temperature && <div
                       className={statusControlClass}
                       title={statusControlTitle}
                       onClick={() => canUseStatusControls && setStatusControlMenu(statusControlMenu === 'nozzle-temp' ? null : 'nozzle-temp')}
@@ -3826,8 +3877,8 @@ function PrinterCard({
                           />
                         )
                       )}
-                    </div>
-                    <div
+                    </div>}
+                    {capabilities.bed_temperature && <div
                       className={statusControlClass}
                       title={statusControlTitle}
                       onClick={() => canUseStatusControls && setStatusControlMenu(statusControlMenu === 'bed-temp' ? null : 'bed-temp')}
@@ -3860,8 +3911,8 @@ function PrinterCard({
                           onSubmit={(target) => bedTemperatureMutation.mutate(target)}
                         />
                       )}
-                    </div>
-                    {status.temperatures.chamber !== undefined && (() => {
+                    </div>}
+                    {capabilities.chamber_temperature && status.temperatures.chamber !== undefined && (() => {
                       // Sensor-only models (X1C, X1E, P2S) show the chamber reading
                       // but can't act on M141, so we keep the card read-only there.
                       const hasChamberHeater = status.supports_chamber_heater === true;
@@ -3907,7 +3958,7 @@ function PrinterCard({
                       );
                     })()}
                     {/* Active nozzle indicator for dual-nozzle printers */}
-                    {isDualNozzle && (
+                    {isBambu && capabilities.extruder_temperature && isDualNozzle && (
                       <DualNozzleHoverCard
                         leftSlot={leftNozzleSlot}
                         rightSlot={rightNozzleSlot}
@@ -3951,11 +4002,11 @@ function PrinterCard({
                       </DualNozzleHoverCard>
                     )}
                     {/* H2C nozzle rack (tool-changer dock) — only show when rack nozzles exist (IDs >= 2) */}
-                    {status.nozzle_rack && status.nozzle_rack.some(s => s.id >= 2) && (
+                    {isBambu && capabilities.extruder_temperature && status.nozzle_rack && status.nozzle_rack.some(s => s.id >= 2) && (
                       <NozzleRackCard slots={status.nozzle_rack} filamentInfo={filamentInfo} />
                     )}
                   </div>
-                  <div className="mt-2 flex items-center gap-1.5">
+                  {fanItems.length > 0 && <div className="mt-2 flex items-center gap-1.5">
                     {fanItems.map(({ key, label, value, Icon, activeClass }) => {
                       const active = value > 0;
                       return (
@@ -3986,7 +4037,7 @@ function PrinterCard({
                         </div>
                       );
                     })}
-                  </div>
+                  </div>}
                 </>
               );
             })()}
@@ -4011,9 +4062,9 @@ function PrinterCard({
             {/* Controls */}
             {viewMode === 'expanded' && (() => {
               // Determine print state for control buttons
-              const isRunning = status.state === 'RUNNING';
-              const isPaused = status.state === 'PAUSE';
-              const isPrinting = isRunning || isPaused;
+              const isPaused = printState === 'paused';
+              const isPrinting = isActivePrintState(status.state);
+              const canPause = printState === 'printing';
               const isControlBusy = stopPrintMutation.isPending || pausePrintMutation.isPending || resumePrintMutation.isPending;
               const unavailablePrintActionClass = 'bg-bambu-dark text-bambu-gray/50 cursor-not-allowed opacity-50';
               const iconControlClass = 'flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
@@ -4030,8 +4081,8 @@ function PrinterCard({
                   </div>
 
                   <div className="flex flex-wrap items-start justify-between gap-x-2 gap-y-2">
-                    {/* Left: Secondary controls */}
-                    <div className="flex flex-wrap items-center gap-2 min-w-0">
+                    {/* Bambu-specific secondary controls. */}
+                    {isBambu && <div className="flex flex-wrap items-center gap-2 min-w-0">
                       <button
                         onClick={() => chamberLightMutation.mutate(!status.chamber_light)}
                         disabled={!status.connected || chamberLightMutation.isPending || !hasPermission('printers:control')}
@@ -4262,7 +4313,7 @@ function PrinterCard({
                         );
                       })()}
 
-                      <div className={`inline-flex rounded-lg ${printer.plate_detection_enabled ? 'ring-1 ring-green-500' : ''}`}>
+                      {isBambu && capabilities.plate_selection && <div className={`inline-flex rounded-lg ${printer.plate_detection_enabled ? 'ring-1 ring-green-500' : ''}`}>
                         <button
                           onClick={handleTogglePlateDetection}
                           disabled={!status.connected || plateDetectionMutation.isPending || !hasPermission('printers:update')}
@@ -4295,10 +4346,10 @@ function PrinterCard({
                             <ChevronDown className="w-4 h-4" />
                           )}
                         </button>
-                      </div>
+                      </div>}
 
                       {/* Print Speed */}
-                      {(() => (
+                      {isBambu && capabilities.speed_control && (() => (
                         <div className="relative">
                           <button
                             data-testid="speed-control"
@@ -4344,13 +4395,13 @@ function PrinterCard({
                         </div>
                       ))()}
 
-                    </div>
+                    </div>}
 
                     {/* Right: Print Control Buttons */}
                     <div className="ml-auto flex items-center justify-end gap-2 flex-shrink-0">
                       {/* Pause/Resume button */}
-                      {(() => {
-                        const pauseUnavailable = !isPrinting || isControlBusy || !hasPermission('printers:control');
+                      {(isPaused ? capabilities.resume : capabilities.pause) && (() => {
+                        const pauseUnavailable = (!canPause && !isPaused) || isControlBusy || !hasPermission('printers:control');
                         return (
                       <button
                         onClick={() => isPaused ? setShowResumeConfirm(true) : setShowPauseConfirm(true)}
@@ -4373,7 +4424,7 @@ function PrinterCard({
                       })()}
 
                       {/* Stop button */}
-                      {(() => {
+                      {capabilities.cancel && (() => {
                         const stopUnavailable = !isPrinting || isControlBusy || !hasPermission('printers:control');
                         return (
                       <button
@@ -4400,7 +4451,7 @@ function PrinterCard({
             })()}
 
             {/* AMS Units - 2-Column Grid Layout */}
-            {(amsData?.length > 0 || status.vt_tray.length > 0) && viewMode === 'expanded' && (() => {
+            {isBambu && capabilities.ams && (amsData?.length > 0 || status.vt_tray.length > 0) && viewMode === 'expanded' && (() => {
               // Separate regular AMS (4-tray) from HT AMS (1-tray)
               const regularAms = amsData.filter(ams => ams.tray.length > 1);
               const htAms = amsData.filter(ams => ams.tray.length === 1);
@@ -4411,7 +4462,7 @@ function PrinterCard({
               // mapping. Catches the reporter's scenario — "any X1C" queue job
               // staged to a printer with mismatched filament: the wrong-slot pill
               // is visible the instant printing starts.
-              const isPrintingForMapping = status.state === 'RUNNING' || status.state === 'PAUSE';
+              const isPrintingForMapping = isActivePrintState(status.state);
               const activeMapping: number[] = isPrintingForMapping && Array.isArray(status.ams_mapping)
                 ? status.ams_mapping
                 : [];
@@ -5591,8 +5642,8 @@ function PrinterCard({
             <div className="flex items-center justify-between gap-2">
               {printerActionsMenu}
               <div className="flex items-center justify-end gap-2 flex-wrap">
-                {/* Camera Button */}
-                <Button
+                {/* Camera always opens LayerCove's same-origin, tokenized route. */}
+                {capabilities.camera && <Button
                   variant="secondary"
                   size="sm"
                   onClick={() => {
@@ -5619,7 +5670,7 @@ function PrinterCard({
                   className={footerIconButtonClass}
                 >
                   <Video className="w-4 h-4" />
-                </Button>
+                </Button>}
                 <Button
                   variant="secondary"
                   size="sm"
@@ -5630,7 +5681,7 @@ function PrinterCard({
                 >
                   <HardDrive className="w-4 h-4" />
                 </Button>
-                {isConnected && status?.state !== 'RUNNING' && status?.state !== 'PAUSE' && (
+                {isConnected && !isActivePrintState(status?.state) && capabilities.start_print && (capabilities.upload_gcode || capabilities.upload_3mf) && (
                   <Button
                     size="sm"
                     onClick={() => setShowUploadForPrint(true)}
@@ -5646,6 +5697,12 @@ function PrinterCard({
                   >
                     <PrinterIcon className="w-4 h-4" />
                     {t('common.print')}
+                  </Button>
+                )}
+                {printer.provider === 'moonraker' && capabilities.emergency_stop && hasPermission('printers:control') && (
+                  <Button variant="danger" size="sm" onClick={() => setShowEmergencyStopConfirm(true)} className="!min-h-11 !px-3 !py-2">
+                    <AlertTriangle className="w-4 h-4" />
+                    {t('printers.emergencyStop')}
                   </Button>
                 )}
               </div>
@@ -5671,11 +5728,10 @@ function PrinterCard({
           onClose={() => setShowUploadForPrint(false)}
           onUploadComplete={() => {}}
           autoUpload
-          accept=".gcode,.3mf"
+          accept={printableArtifactAccept(capabilities)}
           validateFile={(file) => {
-            const lower = file.name.toLowerCase();
-            if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
-              return t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed');
+            if (!isPrintableArtifact(file.name, capabilities)) {
+              return unsupportedArtifactMessage;
             }
           }}
           onFileUploaded={(uploadedFile) => {
@@ -5705,7 +5761,7 @@ function PrinterCard({
       )}
 
       {/* MQTT Debug Modal */}
-      {showMQTTDebug && (
+      {isBambu && showMQTTDebug && (
         <MQTTDebugModal
           printerId={printer.id}
           printerName={printer.name}
@@ -5713,7 +5769,7 @@ function PrinterCard({
         />
       )}
 
-      {showDiagnostic && (
+      {isBambu && showDiagnostic && (
         <ConnectionDiagnosticModal
           printerId={printer.id}
           printerName={printer.name}
@@ -6040,7 +6096,7 @@ function PrinterCard({
         <ConfirmModal
           title={t('printers.confirm.powerOffTitle')}
           message={
-            status?.state === 'RUNNING'
+            isPrintingOrPaused
               ? t('printers.confirm.powerOffWarning', { name: printer.name })
               : t('printers.confirm.powerOffMessage', { name: printer.name })
           }
@@ -6059,12 +6115,12 @@ function PrinterCard({
         <ConfirmModal
           title={t('printers.confirm.haToggleTitle', { name: haToggleConfirm.name })}
           message={
-            status?.state === 'RUNNING'
+            isPrintingOrPaused
               ? t('printers.confirm.haToggleWarning', { name: printer.name, entity: haToggleConfirm.ha_entity_id || haToggleConfirm.name })
               : t('printers.confirm.haToggleMessage', { entity: haToggleConfirm.ha_entity_id || haToggleConfirm.name })
           }
           confirmText={t('printers.confirm.haToggleButton')}
-          variant={status?.state === 'RUNNING' ? 'danger' : 'default'}
+          variant={isPrintingOrPaused ? 'danger' : 'default'}
           onConfirm={() => {
             runScriptMutation.mutate({ id: haToggleConfirm.id, action: 'toggle' });
             setHaToggleConfirm(null);
@@ -6085,6 +6141,20 @@ function PrinterCard({
             setShowStopConfirm(false);
           }}
           onCancel={() => setShowStopConfirm(false)}
+        />
+      )}
+
+      {showEmergencyStopConfirm && (
+        <ConfirmModal
+          title={t('printers.emergencyStopTitle')}
+          message={t('printers.emergencyStopMessage', { name: printer.name })}
+          confirmText={t('printers.emergencyStopConfirm')}
+          variant="danger"
+          onConfirm={() => {
+            emergencyStopMutation.mutate();
+            setShowEmergencyStopConfirm(false);
+          }}
+          onCancel={() => setShowEmergencyStopConfirm(false)}
         />
       )}
 
@@ -6166,14 +6236,14 @@ function PrinterCard({
       )}
 
       {/* Skip Objects Modal */}
-      <SkipObjectsModal
+      {isBambu && capabilities.object_cancellation && <SkipObjectsModal
         printerId={printer.id}
         isOpen={showSkipObjectsModal}
         onClose={() => setShowSkipObjectsModal(false)}
-      />
+      />}
 
       {/* HMS Error Modal */}
-      {showHMSModal && (
+      {isBambu && showHMSModal && (
         <HMSErrorModal
           printerName={printer.name}
           errors={status?.hms_errors || []}
@@ -6184,7 +6254,7 @@ function PrinterCard({
       )}
 
       {/* AMS Filament Backup status / control modal (#1762) */}
-      {amsBackupModalOpen && status && (
+      {isBambu && capabilities.ams && amsBackupModalOpen && status && (
         <AmsBackupModal
           isOpen={amsBackupModalOpen}
           state={status.ams_filament_backup}
@@ -6199,7 +6269,7 @@ function PrinterCard({
       )}
 
       {/* AMS History Modal */}
-      {amsHistoryModal && (
+      {isBambu && capabilities.ams && amsHistoryModal && (
         <AMSHistoryModal
           isOpen={!!amsHistoryModal}
           onClose={() => setAmsHistoryModal(null)}
@@ -6251,7 +6321,7 @@ function PrinterCard({
       )}
 
       {/* Configure AMS Slot Modal */}
-      {configureSlotModal && (
+      {isBambu && capabilities.ams && configureSlotModal && (
         <ConfigureAmsSlotModal
           isOpen={!!configureSlotModal}
           onClose={() => setConfigureSlotModal(null)}
@@ -6276,7 +6346,7 @@ function PrinterCard({
       )}
 
       {/* Firmware Update Modal */}
-      {showFirmwareModal && firmwareInfo && (
+      {isBambu && capabilities.firmware_information && showFirmwareModal && firmwareInfo && (
         <FirmwareUpdateModal
           printer={printer}
           firmwareInfo={firmwareInfo}
@@ -6482,6 +6552,7 @@ export function AddPrinterModal({
   const { t } = useTranslation();
   const [form, setForm] = useState<PrinterCreate>({
     name: '',
+    provider: 'bambu',
     serial_number: '',
     ip_address: '',
     access_code: '',
@@ -6489,6 +6560,10 @@ export function AddPrinterModal({
     location: '',
     auto_archive: true,
   });
+  const [moonraker, setMoonraker] = useState({
+    base_url: '', websocket_url_override: '', api_key: '', authorization: '', tls_verify: true,
+  });
+  const isMoonraker = form.provider === 'moonraker';
 
   // Discovery state
   const [discovering, setDiscovering] = useState(false);
@@ -6540,6 +6615,29 @@ export function AddPrinterModal({
 
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    const data: PrinterCreate = isMoonraker
+      ? {
+          name: form.name,
+          provider: 'moonraker',
+          model: form.model || undefined,
+          location: form.location || undefined,
+          auto_archive: form.auto_archive,
+          external_camera_url: form.external_camera_url || undefined,
+          external_camera_type: form.external_camera_type || undefined,
+          external_camera_enabled: form.external_camera_enabled || false,
+          moonraker_config: {
+            base_url: moonraker.base_url.trim(),
+            websocket_url_override: moonraker.websocket_url_override.trim() || undefined,
+            api_key: moonraker.api_key || undefined,
+            authorization: moonraker.authorization || undefined,
+            tls_verify: moonraker.tls_verify,
+          },
+        }
+      : form;
+    if (isMoonraker) {
+      onAdd(data);
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -6556,7 +6654,7 @@ export function AddPrinterModal({
     } finally {
       setCheckingSave(false);
     }
-    onAdd(form);
+    onAdd(data);
   };
 
   const startDiscovery = async () => {
@@ -6686,6 +6784,7 @@ export function AddPrinterModal({
         <CardContent>
           <h2 className="text-xl font-semibold mb-4">{t('printers.addPrinter')}</h2>
 
+          {!isMoonraker && <>
           {/* Discovery Section */}
           <div className="mb-4 pb-4 border-b border-bambu-dark-tertiary">
             {/* Subnet picker — always visible. The dropdown lists detected
@@ -6813,7 +6912,25 @@ export function AddPrinterModal({
               </p>
             )}
           </div>
+          </>}
           <form onSubmit={handleAddSubmit} className="space-y-4">
+            <fieldset>
+              <legend className="block text-sm text-bambu-gray mb-1">{t('printers.provider')}</legend>
+              <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                {(['bambu', 'moonraker'] as const).map((provider) => (
+                  <label key={provider} className="flex min-h-11 items-center gap-2 rounded-lg border border-bambu-dark-tertiary px-3 py-2 text-sm text-white">
+                    <input
+                      type="radio"
+                      name="provider"
+                      value={provider}
+                      checked={form.provider === provider}
+                      onChange={() => setForm({ ...form, provider, serial_number: '', ip_address: '', access_code: '' })}
+                    />
+                    {provider === 'bambu' ? 'Bambu Lab' : 'Moonraker / Klipper'}
+                  </label>
+                ))}
+              </div>
+            </fieldset>
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.name')}</label>
               <input
@@ -6825,6 +6942,7 @@ export function AddPrinterModal({
                 placeholder={t('printers.modal.myPrinter')}
               />
             </div>
+            {!isMoonraker && <>
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.ipAddress')}</label>
               <input
@@ -6848,7 +6966,33 @@ export function AddPrinterModal({
                 placeholder="01P00A000000000"
               />
             </div>
+            </>}
+            {isMoonraker && <>
             <div>
+              <label htmlFor="add_moonraker_base_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerBaseUrl')}</label>
+              <input id="add_moonraker_base_url" type="url" required className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.base_url} onChange={(e) => setMoonraker({ ...moonraker, base_url: e.target.value })} placeholder="https://klipper.local:7125" />
+            </div>
+            <div>
+              <label htmlFor="add_moonraker_websocket_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerWebsocketUrl')}</label>
+              <input id="add_moonraker_websocket_url" type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.websocket_url_override} onChange={(e) => setMoonraker({ ...moonraker, websocket_url_override: e.target.value })} placeholder="wss://klipper.local/websocket" />
+            </div>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+              <div>
+                <label htmlFor="add_moonraker_api_key" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerApiKey')}</label>
+                <input id="add_moonraker_api_key" type="password" autoComplete="new-password" disabled={!!moonraker.authorization} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.api_key} onChange={(e) => setMoonraker({ ...moonraker, api_key: e.target.value })} />
+              </div>
+              <div>
+                <label htmlFor="add_moonraker_authorization" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerAuthorization')}</label>
+                <input id="add_moonraker_authorization" type="password" autoComplete="new-password" disabled={!!moonraker.api_key} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.authorization} onChange={(e) => setMoonraker({ ...moonraker, authorization: e.target.value })} />
+              </div>
+            </div>
+            <label htmlFor="add_moonraker_tls_verify" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="add_moonraker_tls_verify" type="checkbox" checked={moonraker.tls_verify} onChange={(e) => setMoonraker({ ...moonraker, tls_verify: e.target.checked })} />{t('printers.moonrakerTlsVerify')}</label>
+            <div className="space-y-2 rounded-lg border border-bambu-dark-tertiary p-3">
+              <label htmlFor="add_moonraker_external_camera_enabled" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="add_moonraker_external_camera_enabled" type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
+              {form.external_camera_enabled && <><input id="add_moonraker_external_camera_url" type="url" aria-label={t('printers.moonrakerExternalCameraUrl')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="add_moonraker_external_camera_type" aria-label={t('printers.moonrakerExternalCameraType')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
+            </div>
+            </>}
+            {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
               <input
                 type="password"
@@ -6858,7 +7002,7 @@ export function AddPrinterModal({
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
                 placeholder={t('printers.modal.fromPrinterSettings')}
               />
-            </div>
+            </div>}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.modal.modelOptional')}</label>
               <select
@@ -6918,7 +7062,7 @@ export function AddPrinterModal({
                 {t('printers.modal.autoArchiveLabel')}
               </label>
             </div>
-            <button
+            {!isMoonraker && <button
               type="button"
               onClick={() => setShowDiagnostic(true)}
               disabled={!form.ip_address?.trim()}
@@ -6926,7 +7070,7 @@ export function AddPrinterModal({
             >
               <Stethoscope className="w-4 h-4" />
               {t('diagnostic.runButton')}
-            </button>
+            </button>}
             {saveWarning ? (
               <div className="rounded-lg bg-amber-50 dark:bg-amber-500/10 border border-amber-300 dark:border-amber-500/30 p-3 space-y-3">
                 <div className="flex items-start gap-2">
@@ -6962,7 +7106,7 @@ export function AddPrinterModal({
         </CardContent>
       </Card>
     </div>
-    {showDiagnostic && (
+    {!isMoonraker && showDiagnostic && (
       <ConnectionDiagnosticModal
         connection={{
           ip_address: form.ip_address?.trim() ?? '',
@@ -7275,7 +7419,17 @@ function EditPrinterModal({
     location: printer.location || '',
     auto_archive: printer.auto_archive,
     is_active: printer.is_active,
+    external_camera_url: printer.external_camera_url || '',
+    external_camera_type: printer.external_camera_type || '',
+    external_camera_enabled: printer.external_camera_enabled,
   });
+  const isMoonraker = printer.provider === 'moonraker';
+  const [moonraker, setMoonraker] = useState({
+    base_url: printer.moonraker_config?.base_url || '',
+    websocket_url_override: printer.moonraker_config?.websocket_url_override || '',
+    api_key: '', authorization: '', tls_verify: printer.moonraker_config?.tls_verify ?? true,
+  });
+  const [connectionResult, setConnectionResult] = useState<string | null>(null);
 
   // Setup-time pre-flight — same warn-on-save as the Add-Printer dialog, so an
   // edit that breaks connectivity (e.g. a mistyped IP) is caught before save.
@@ -7304,21 +7458,50 @@ function EditPrinterModal({
   const doSave = () => {
     const data: Partial<PrinterCreate> = {
       name: form.name,
-      ip_address: form.ip_address ?? undefined,
       model: form.model || undefined,
       location: form.location || undefined,
       auto_archive: form.auto_archive,
       is_active: form.is_active,
+      external_camera_url: form.external_camera_url || undefined,
+      external_camera_enabled: form.external_camera_enabled || false,
+      external_camera_type: form.external_camera_enabled ? (form.external_camera_type || 'mjpeg') : undefined,
     };
     // Only include access_code if it was changed
     if (form.access_code) {
       data.access_code = form.access_code;
     }
+    if (isMoonraker) {
+      delete data.ip_address;
+      delete data.access_code;
+      data.moonraker_config = {
+        base_url: moonraker.base_url.trim(),
+        websocket_url_override: moonraker.websocket_url_override.trim() || undefined,
+        api_key: moonraker.api_key || undefined,
+        authorization: moonraker.authorization || undefined,
+        tls_verify: moonraker.tls_verify,
+      };
+    } else {
+      data.ip_address = form.ip_address ?? undefined;
+    }
     updateMutation.mutate(data);
+  };
+
+  const testConnection = async () => {
+    setConnectionResult(null);
+    try {
+      const result = await api.testMoonrakerConnection(printer.id);
+      setConnectionResult(result.message);
+    } catch (error) {
+      setConnectionResult(error instanceof Error ? error.message : t('printers.moonrakerConnectionFailed'));
+    }
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (isMoonraker) {
+      doSave();
+      return;
+    }
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
@@ -7358,7 +7541,7 @@ function EditPrinterModal({
                 placeholder={t('printers.modal.myPrinter')}
               />
             </div>
-            <div>
+            {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.ipAddress')}</label>
               <input
                 type="text"
@@ -7369,8 +7552,8 @@ function EditPrinterModal({
                 onChange={(e) => setForm({ ...form, ip_address: e.target.value })}
                 placeholder="192.168.1.100 or printer.local"
               />
-            </div>
-            <div>
+            </div>}
+            {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
               <input
                 type="text"
@@ -7379,8 +7562,18 @@ function EditPrinterModal({
                 value={printer.serial_number ?? '—'}
               />
               <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
-            </div>
-            <div>
+            </div>}
+            {isMoonraker && <>
+              <div><label htmlFor="edit_moonraker_base_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerBaseUrl')}</label><input id="edit_moonraker_base_url" type="url" required className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.base_url} onChange={(e) => setMoonraker({ ...moonraker, base_url: e.target.value })} /></div>
+              <div><label htmlFor="edit_moonraker_websocket_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerWebsocketUrl')}</label><input id="edit_moonraker_websocket_url" type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.websocket_url_override} onChange={(e) => setMoonraker({ ...moonraker, websocket_url_override: e.target.value })} /></div>
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label htmlFor="edit_moonraker_api_key" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerApiKey')}</label><input id="edit_moonraker_api_key" type="password" autoComplete="new-password" placeholder={printer.moonraker_config?.api_key_configured ? t('printers.moonrakerSecretRetained') : ''} disabled={!!moonraker.authorization} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.api_key} onChange={(e) => setMoonraker({ ...moonraker, api_key: e.target.value })} /></div><div><label htmlFor="edit_moonraker_authorization" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerAuthorization')}</label><input id="edit_moonraker_authorization" type="password" autoComplete="new-password" placeholder={printer.moonraker_config?.authorization_configured ? t('printers.moonrakerSecretRetained') : ''} disabled={!!moonraker.api_key} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.authorization} onChange={(e) => setMoonraker({ ...moonraker, authorization: e.target.value })} /></div></div>
+              <label htmlFor="edit_moonraker_tls_verify" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="edit_moonraker_tls_verify" type="checkbox" checked={moonraker.tls_verify} onChange={(e) => setMoonraker({ ...moonraker, tls_verify: e.target.checked })} />{t('printers.moonrakerTlsVerify')}</label>
+              <button type="button" onClick={testConnection} className="w-full rounded-lg border border-bambu-dark-tertiary px-3 py-2 text-sm text-bambu-gray hover:text-white">{t('printers.moonrakerTestConnection')}</button>
+              {connectionResult && <p role="status" className="text-sm text-bambu-gray">{connectionResult}</p>}
+              <label htmlFor="edit_moonraker_external_camera_enabled" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="edit_moonraker_external_camera_enabled" type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
+              {form.external_camera_enabled && <><input id="edit_moonraker_external_camera_url" type="url" aria-label={t('printers.moonrakerExternalCameraUrl')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="edit_moonraker_external_camera_type" aria-label={t('printers.moonrakerExternalCameraType')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
+            </>}
+            {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>
               <input
                 type="password"
@@ -7389,7 +7582,7 @@ function EditPrinterModal({
                 onChange={(e) => setForm({ ...form, access_code: e.target.value })}
                 placeholder={t('printers.accessCodePlaceholder')}
               />
-            </div>
+            </div>}
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
               <select
@@ -7950,12 +8143,16 @@ export function PrintersPage() {
     const applicableIds = ids.filter(id => {
       const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', id]);
       if (!status?.connected) return false;
+      const printer = printers?.find(item => item.id === id);
+      if (!printer) return false;
+      const capabilities = printer.capabilities;
+      const printState = normalizePrintState(status.state);
       switch (action) {
-        case 'stop': return status.state === 'RUNNING' || status.state === 'PAUSE';
-        case 'pause': return status.state === 'RUNNING';
-        case 'resume': return status.state === 'PAUSE';
+        case 'stop': return capabilities?.cancel !== false && isActivePrintState(status.state);
+        case 'pause': return capabilities?.pause !== false && printState === 'printing';
+        case 'resume': return capabilities?.resume !== false && printState === 'paused';
         case 'clearPlate': return !!(status as { awaiting_plate_clear?: boolean }).awaiting_plate_clear;
-        case 'clearHMS': return status.hms_errors && filterKnownHMSErrors(status.hms_errors).length > 0;
+        case 'clearHMS': return printer.provider !== 'moonraker' && !!status.hms_errors && filterKnownHMSErrors(status.hms_errors).length > 0;
         default: return false;
       }
     });
@@ -7995,7 +8192,7 @@ export function PrintersPage() {
 
     setBulkActionPending(false);
     setBulkConfirmAction(null);
-  }, [selectedPrinterIds, queryClient, showToast, t]);
+  }, [selectedPrinterIds, queryClient, printers, showToast, t]);
 
   const handleBulkAction = useCallback((action: 'stop' | 'pause' | 'resume' | 'clearPlate' | 'clearHMS') => {
     // Actions that need confirmation
@@ -8077,16 +8274,7 @@ export function PrintersPage() {
       result = result.filter(p => {
         const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', p.id]);
         if (!status?.connected) return statusFilter === 'offline';
-        const hmsErrors = status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
-        switch (statusFilter) {
-          case 'printing': return status.state === 'RUNNING';
-          case 'paused':   return status.state === 'PAUSE';
-          case 'finished': return status.state === 'FINISH';
-          case 'error':    return status.state === 'FAILED' || hmsErrors.length > 0;
-          case 'idle':     return status.state !== 'RUNNING' && status.state !== 'PAUSE' && status.state !== 'FINISH' && status.state !== 'FAILED' && hmsErrors.length === 0;
-          case 'offline':  return false; // Connected printers are never offline
-          default:         return true;
-        }
+        return classifyPrinterStatus(status, p.provider !== 'moonraker') === statusFilter;
       });
     }
 
@@ -8127,15 +8315,11 @@ export function PrintersPage() {
           const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', a.id]);
           const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', b.id]);
 
-          const getPriority = (s: typeof statusA) => {
-            if (!s?.connected) return 3; // offline
-            const hmsErrors = s.hms_errors ? filterKnownHMSErrors(s.hms_errors) : [];
-            if (hmsErrors.length > 0) return 0; // HMS errors - top priority
-            if (s.state === 'RUNNING') return 1; // printing
-            return 2; // idle
+          const priorities: Record<PrinterState, number> = {
+            error: 0, printing: 1, paused: 2, finished: 3, idle: 4, offline: 5,
           };
-
-          return getPriority(statusA) - getPriority(statusB);
+          return priorities[classifyPrinterStatus(statusA, a.provider !== 'moonraker')]
+            - priorities[classifyPrinterStatus(statusB, b.provider !== 'moonraker')];
         });
         break;
       case 'eta':
@@ -8145,8 +8329,8 @@ export function PrintersPage() {
 
           const tier = (s: typeof statusA) => {
             if (!s?.connected) return 3; // offline last
-            if (s.state === 'RUNNING' && s.remaining_time != null && s.remaining_time > 0) return 0; // printing with ETA
-            if (s.state === 'RUNNING') return 1; // printing without ETA
+            if (normalizePrintState(s.state) === 'printing' && s.remaining_time != null && s.remaining_time > 0) return 0; // printing with ETA
+            if (normalizePrintState(s.state) === 'printing') return 1; // printing without ETA
             return 2; // idle
           };
 
@@ -8180,7 +8364,7 @@ export function PrintersPage() {
       const next = new Set(prev);
       sortedPrinters.forEach(p => {
         const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', p.id]);
-        if (classifyPrinterStatus(status) === state) next.add(p.id);
+        if (classifyPrinterStatus(status, p.provider !== 'moonraker') === state) next.add(p.id);
       });
       return next;
     });
@@ -8234,7 +8418,7 @@ export function PrintersPage() {
     } else if (sortBy === 'status') {
       sortedPrinters.forEach(printer => {
         const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', printer.id]);
-        const group = classifyPrinterStatus(status);
+        const group = classifyPrinterStatus(status, printer.provider !== 'moonraker');
         if (!groups[group]) groups[group] = [];
         groups[group].push(printer);
       });
@@ -8611,7 +8795,7 @@ export function PrintersPage() {
         </Card>
       ) : pageView === 'camwall' ? (
         <CameraWall
-          printers={sortedPrinters}
+          printers={sortedPrinters.filter((printer) => printer.capabilities?.camera ?? printer.provider !== 'moonraker')}
           maxLive={camWallMaxLive}
           snapshotIntervalSec={camWallSnapshotSec}
           onTileClick={(id, name) => {

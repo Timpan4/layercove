@@ -127,6 +127,24 @@ export default {
 
   // Printers page
   printers: {
+    provider: 'Provider',
+    moonrakerBaseUrl: 'URL base Moonraker',
+    moonrakerWebsocketUrl: 'Override WebSocket (facoltativo)',
+    moonrakerApiKey: 'Chiave API',
+    moonrakerAuthorization: 'Autorizzazione',
+    moonrakerTlsVerify: 'Verifica certificato TLS',
+    moonrakerExternalCamera: 'Abilita videocamera esterna',
+    moonrakerExternalCameraUrl: 'URL della videocamera esterna',
+    moonrakerExternalCameraType: 'Tipo di videocamera esterna',
+    moonrakerSecretRetained: 'Il segreto salvato viene mantenuto se lasciato vuoto',
+    moonrakerTestConnection: 'Testa connessione salvata',
+    moonrakerConnectionFailed: 'Impossibile connettersi a Moonraker.',
+    emergencyStop: 'Arresto di emergenza',
+    emergencyStopTitle: 'Arrestare la stampante in emergenza?',
+    emergencyStopMessage: 'Arresta subito {{name}}. Riscaldatori e movimento possono fermarsi senza spegnimento normale.',
+    emergencyStopConfirm: 'Arresto di emergenza',
+    emergencyStopSent: 'Comando di arresto di emergenza inviato',
+    emergencyStopFailed: 'Arresto di emergenza non riuscito',
     addPreflight: {
       checking: 'Verifica della connessione...',
       warning: 'Alcuni controlli di connessione non sono riusciti. Questa stampante potrebbe risultare offline. Controlla le verifiche qui sotto, risolvi ciò che puoi oppure salva comunque.',
@@ -705,6 +723,8 @@ export default {
     howToEnable: 'Come attivare',
     incompatibleFile: 'Questo file è stato preparato per {{slicedFor}}, ma questa stampante è una {{printerModel}}',
     dropNotPrintable: 'Solo i file .gcode e .gcode.3mf possono essere stampati',
+    dropNotPrintableGcode: 'Su questa stampante è possibile stampare solo file .gcode',
+    dropNotPrintable3mf: 'Su questa stampante è possibile stampare solo file .gcode.3mf',
     dropToPrint: 'Rilascia per stampare',
     cannotPrint: 'Stampante occupata',
   },

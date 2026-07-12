@@ -14,6 +14,7 @@ import {
 import { Button } from './Button';
 import { filterKnownHMSErrors } from './HMSErrorModal';
 import type { Printer, HMSError } from '../api/client';
+import { isActivePrintState, normalizePrintState } from '../utils/printerState';
 
 export type BulkAction = 'stop' | 'pause' | 'resume' | 'clearPlate' | 'clearHMS';
 export type PrinterState = 'printing' | 'paused' | 'finished' | 'idle' | 'error' | 'offline';
@@ -65,21 +66,24 @@ export function BulkPrinterToolbar({
   const selectedStatuses = Array.from(selectedIds).map(id => ({
     id,
     status: queryClient.getQueryData<PrinterStatus>(['printerStatus', id]),
+    printer: printers.find(printer => printer.id === id),
   }));
 
   // Smart enablement: check if any selected printer is in the right state
   const anyRunning = selectedStatuses.some(
-    ({ status }) => status?.connected && status.state === 'RUNNING',
+    ({ status, printer }) => status?.connected && normalizePrintState(status.state) === 'printing' && printer?.capabilities?.pause !== false,
   );
   const anyPaused = selectedStatuses.some(
-    ({ status }) => status?.connected && status.state === 'PAUSE',
+    ({ status, printer }) => status?.connected && normalizePrintState(status.state) === 'paused' && printer?.capabilities?.resume !== false,
   );
-  const anyStoppable = anyRunning || anyPaused;
+  const anyStoppable = selectedStatuses.some(
+    ({ status, printer }) => status?.connected && isActivePrintState(status.state) && printer?.capabilities?.cancel !== false,
+  );
   const anyNeedsClearPlate = selectedStatuses.some(
     ({ status }) => !!(status?.connected && status.awaiting_plate_clear),
   );
-  const anyWithHMS = selectedStatuses.some(({ status }) => {
-    if (!status?.connected || !status.hms_errors) return false;
+  const anyWithHMS = selectedStatuses.some(({ status, printer }) => {
+    if (printer?.provider === 'moonraker' || !status?.connected || !status.hms_errors) return false;
     return filterKnownHMSErrors(status.hms_errors).length > 0;
   });
 
@@ -94,16 +98,17 @@ export function BulkPrinterToolbar({
   printers.forEach(p => {
     const status = queryClient.getQueryData<PrinterStatus>(['printerStatus', p.id]);
     if (!status || !status.connected) { stateCounts.offline++; return; }
-    const hasKnownHms = status.hms_errors ? filterKnownHMSErrors(status.hms_errors).length > 0 : false;
+    const hasKnownHms = p.provider !== 'moonraker' && status.hms_errors ? filterKnownHMSErrors(status.hms_errors).length > 0 : false;
     if (hasKnownHms) stateCounts.error++;
-    switch (status.state) {
-      case 'RUNNING': stateCounts.printing++; break;
-      case 'PAUSE': stateCounts.paused++; break;
-      case 'FINISH': stateCounts.finished++; break;
+    switch (normalizePrintState(status.state)) {
+      case 'preparing': stateCounts.printing++; break;
+      case 'printing': stateCounts.printing++; break;
+      case 'paused': stateCounts.paused++; break;
+      case 'finished': stateCounts.finished++; break;
       // FAILED without an active HMS error is the post-cancel terminal state —
       // group with FINISH. When HMS is active the error bucket is already
       // incremented above; don't double-count.
-      case 'FAILED': if (!hasKnownHms) stateCounts.finished++; break;
+      case 'failed': if (!hasKnownHms) stateCounts.finished++; break;
       default: stateCounts.idle++; break;
     }
   });
