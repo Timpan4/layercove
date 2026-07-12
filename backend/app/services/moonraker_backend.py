@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import math
 import random
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import replace
 from datetime import datetime, timezone
@@ -68,6 +69,7 @@ class _MoonrakerConnection(Protocol):
 
 TransportFactory = Callable[..., _MoonrakerConnection]
 Sleep = Callable[[float], Awaitable[None]]
+Clock = Callable[[], float]
 
 
 def moonraker_retry_delay(attempt: int, jitter: Callable[[], float] = random.random) -> float:
@@ -108,6 +110,8 @@ class MoonrakerBackend:
         sleep: Sleep = asyncio.sleep,
         jitter: Callable[[], float] = random.random,
         bootstrap_timeout: float = _BOOTSTRAP_RESPONSE_TIMEOUT_SECONDS,
+        clock: Clock = time.monotonic,
+        stable_connection_seconds: float = _STABLE_CONNECTION_SECONDS,
     ):
         config = getattr(printer, "moonraker_config", None)
         if config is None:
@@ -126,6 +130,8 @@ class MoonrakerBackend:
         self._sleep = sleep
         self._jitter = jitter
         self._bootstrap_timeout = bootstrap_timeout
+        self._clock = clock
+        self._stable_connection_seconds = stable_connection_seconds
         self._task: asyncio.Task[None] | None = None
         self._connection: _MoonrakerConnection | None = None
         self._stopping = False
@@ -181,10 +187,11 @@ class MoonrakerBackend:
         attempt = 0
         while not self._stopping:
             connection: _MoonrakerConnection | None = None
+            connected_at: float | None = None
             try:
                 connection = await self._transport.connect()
                 self._connection = connection
-                connected_at = asyncio.get_running_loop().time()
+                connected_at = self._clock()
                 await asyncio.wait_for(
                     self._request(connection, 1, "printer.objects.query"), timeout=self._bootstrap_timeout
                 )
@@ -192,13 +199,15 @@ class MoonrakerBackend:
                     self._request(connection, 2, "printer.objects.subscribe"), timeout=self._bootstrap_timeout
                 )
                 while True:
-                    if asyncio.get_running_loop().time() - connected_at >= _STABLE_CONNECTION_SECONDS:
+                    if self._clock() - connected_at >= self._stable_connection_seconds:
                         attempt = 0
                     self._process_message(await connection.receive_json(), bootstrap=False)
             except asyncio.CancelledError:
                 raise
             except Exception:
                 if not self._stopping:
+                    if connected_at is not None and self._clock() - connected_at >= self._stable_connection_seconds:
+                        attempt = 0
                     self._emit_offline()
                     await self._sleep(moonraker_retry_delay(attempt, self._jitter))
                     attempt = min(attempt + 1, len(_BACKOFF_SECONDS) - 1)
@@ -308,6 +317,15 @@ class MoonrakerBackend:
         was_active = self._last_state in _ACTIVE_STATES
         is_active = state in _ACTIVE_STATES
         provider_job_id = self._provider_job_id()
+        if (
+            bootstrap
+            and state is NormalizedPrinterState.IDLE
+            and was_active
+            and self._active_correlation_id is not None
+        ):
+            self._active_correlation_id = None
+            self._active_provider_job_id = None
+            self._active_filename = None
         if is_active and not was_active and self._active_correlation_id is None:
             self._active_provider_job_id = provider_job_id
             self._active_correlation_id = f"moonraker:{provider_job_id}" if provider_job_id else str(uuid4())

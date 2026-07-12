@@ -221,6 +221,53 @@ async def test_stalled_bootstrap_response_closes_socket_and_retries_without_long
     await backend.disconnect()
 
 
+@pytest.mark.asyncio
+async def test_quiet_stable_connection_resets_prior_backoff_when_it_disconnects():
+    failed = [FakeConnection([RuntimeError("unavailable")]) for _ in range(4)]
+    now = [0.0]
+
+    class QuietStableConnection(FakeConnection):
+        async def receive_json(self):
+            if not self.messages.empty():
+                return await super().receive_json()
+            now[0] = 31.0
+            raise RuntimeError("disconnect after quiet healthy period")
+
+    quiet = QuietStableConnection(
+        [
+            {"id": 1, "result": {"status": {"print_stats": {"state": "standby"}}}},
+            {"id": 2, "result": {"status": {"print_stats": {"state": "standby"}}}},
+        ]
+    )
+    recovered = FakeConnection(
+        [
+            {"id": 1, "result": {"status": {"print_stats": {"state": "standby"}}}},
+            {"id": 2, "result": {"status": {"print_stats": {"state": "standby"}}}},
+        ]
+    )
+    transport = FakeTransport([*failed, quiet, recovered])
+    delays = []
+
+    async def sleep(delay):
+        delays.append(delay)
+
+    backend = MoonrakerBackend(
+        printer(),
+        emit=lambda _: None,
+        transport_factory=lambda **_: transport,
+        sleep=sleep,
+        jitter=lambda: 0,
+        clock=lambda: now[0],
+    )
+
+    await backend.connect()
+    await asyncio.wait_for(recovered.sent_event.wait(), timeout=0.2)
+
+    assert delays == [1, 2, 4, 8, 1]
+    assert quiet.closed is True
+    await backend.disconnect()
+
+
 def test_moonraker_retry_delay_is_bounded_and_deterministic_with_injected_jitter():
     assert moonraker_retry_delay(0, lambda: 0) == 1
     assert moonraker_retry_delay(4, lambda: 1) == 19.2
@@ -269,6 +316,27 @@ def test_official_history_finished_shape_emits_one_completed_event_across_reconn
     assert completed[0].provider_job_id == "000027"
     assert completed[0].data["status"] == "completed"
     assert backend.snapshot().elapsed_seconds == 42
+
+
+def test_reconnect_idle_discards_stale_job_before_next_start_and_completion():
+    events = []
+    backend = MoonrakerBackend(printer(), emit=events.append, transport_factory=lambda **_: None)
+    backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)
+    backend._merge_status({"print_stats": {"state": "printing", "filename": "a.gcode"}}, bootstrap=False)
+    backend._emit_offline()
+
+    backend._merge_status({"print_stats": {"state": "standby", "filename": ""}}, bootstrap=True)
+    backend._merge_status({"print_stats": {"state": "printing", "filename": "b.gcode"}}, bootstrap=False)
+    backend._merge_status({"print_stats": {"state": "completed", "filename": "b.gcode"}}, bootstrap=False)
+
+    lifecycle = [event for event in events if isinstance(event, JobLifecycle)]
+    assert [(event.kind, event.filename) for event in lifecycle] == [
+        ("started", "a.gcode"),
+        ("started", "b.gcode"),
+        ("completed", "b.gcode"),
+    ]
+    assert lifecycle[1].correlation_id != lifecycle[0].correlation_id
+    assert lifecycle[2].correlation_id == lifecycle[1].correlation_id
 
 
 @pytest.mark.parametrize(
