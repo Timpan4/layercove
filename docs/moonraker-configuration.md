@@ -47,8 +47,9 @@ never connect to Moonraker and raw provider payloads remain server-internal.
 Disconnects retry at 1, 2, 4, 8, 16, then 30 seconds with bounded positive
 jitter. A connection stable for 30 seconds resets that sequence. Shutdown
 cancels and closes the owned task and socket. Initial query and subscription
-responses, DNS, handshake, and messages are bounded so a stalled Moonraker does
-not block reconnect forever.
+responses, DNS, and handshake are bounded. WebSocket heartbeat pings detect a
+silent peer and reconnect, while a healthy quiet printer stays connected. A
+stalled Moonraker does not block reconnect forever.
 
 ## Network policy
 

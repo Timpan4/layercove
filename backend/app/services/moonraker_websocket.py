@@ -22,6 +22,7 @@ from backend.app.services.moonraker_http import (
 
 _MAX_MESSAGE_BYTES = 64 * 1024
 _TOTAL_TIMEOUT_SECONDS = 10.0
+_HEARTBEAT_SECONDS = 30.0
 
 
 class MoonrakerWebSocketError(Exception):
@@ -161,6 +162,7 @@ class MoonrakerWebSocketTransport:
         authorization: str | None = None,
         tls_verify: bool = True,
         resolver: Resolver = resolve_moonraker_host,
+        heartbeat: float = _HEARTBEAT_SECONDS,
     ):
         if api_key is not None and authorization is not None:
             raise ValueError("api_key and authorization are mutually exclusive")
@@ -172,6 +174,7 @@ class MoonrakerWebSocketTransport:
         self._authorization = authorization
         self._tls_verify = tls_verify
         self._resolver = resolver
+        self._heartbeat = heartbeat
 
     async def connect(self) -> MoonrakerWebSocket:
         try:
@@ -214,6 +217,7 @@ class MoonrakerWebSocketTransport:
             websocket = await session.ws_connect(
                 self._url,
                 headers=headers,
+                heartbeat=self._heartbeat,
                 max_msg_size=_MAX_MESSAGE_BYTES,
             )
             if _connected_peer(websocket) not in peers:

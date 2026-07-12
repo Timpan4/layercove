@@ -148,3 +148,45 @@ async def test_cancelled_websocket_handshake_closes_client_session(monkeypatch):
         await task
 
     assert session.closed is True
+
+
+@pytest.mark.asyncio
+async def test_websocket_heartbeat_closes_silent_peer(monkeypatch):
+    from backend.app.services import moonraker_websocket
+
+    ping_seen = asyncio.Event()
+    release_server = asyncio.Event()
+
+    async def handler(request):
+        websocket = web.WebSocketResponse(autoping=False)
+        await websocket.prepare(request)
+        message = await websocket.receive()
+        if message.type is web.WSMsgType.PING:
+            ping_seen.set()
+        await release_server.wait()
+        return websocket
+
+    app = web.Application()
+    app.router.add_get("/websocket", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+
+    async def resolver(*_):
+        return ["127.0.0.1"]
+
+    monkeypatch.setattr(moonraker_websocket, "_is_safe_peer", lambda _: True)
+    transport = moonraker_websocket.MoonrakerWebSocketTransport(
+        base_url=f"http://printer.test:{port}", resolver=resolver, heartbeat=0.01
+    )
+    try:
+        connection = await transport.connect()
+        await asyncio.wait_for(ping_seen.wait(), timeout=0.2)
+        with pytest.raises(MoonrakerWebSocketError, match="disconnected"):
+            await asyncio.wait_for(connection.receive_json(), timeout=0.2)
+        await connection.close()
+    finally:
+        release_server.set()
+        await runner.cleanup()

@@ -235,3 +235,60 @@ def test_moonraker_active_bootstrap_observation_does_not_invent_started_event():
 
     assert any(isinstance(event, ProviderEvent) and event.kind == "print_running_observed" for event in events)
     assert not any(isinstance(event, JobLifecycle) and event.kind == "started" for event in events)
+
+
+def test_official_history_finished_shape_emits_one_completed_event_across_reconnect():
+    events = []
+    backend = MoonrakerBackend(printer(), emit=events.append, transport_factory=lambda **_: None)
+    backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)
+    backend._merge_status({"print_stats": {"state": "printing", "filename": "cube.gcode"}}, bootstrap=False)
+    message = {
+        "method": "notify_history_changed",
+        "params": [
+            {
+                "action": "finished",
+                "job": {
+                    "job_id": "000027",
+                    "filename": "cube.gcode",
+                    "status": "completed",
+                    "print_duration": 42.9,
+                },
+            }
+        ],
+    }
+
+    backend._process_message(message, bootstrap=False)
+    backend._emit_offline()
+    backend._process_message(message, bootstrap=True)
+
+    started = [event for event in events if isinstance(event, JobLifecycle) and event.kind == "started"]
+    completed = [event for event in events if isinstance(event, JobLifecycle) and event.kind == "completed"]
+    assert len(started) == 1
+    assert len(completed) == 1
+    assert completed[0].correlation_id == started[0].correlation_id
+    assert completed[0].provider_job_id == "000027"
+    assert completed[0].data["status"] == "completed"
+    assert backend.snapshot().elapsed_seconds == 42
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        [],
+        [{}],
+        [{"action": "finished", "job": "invalid"}],
+        [{"action": "finished"}],
+        [{"action": "unknown", "job": {"status": "completed"}}],
+    ],
+)
+def test_malformed_history_notifications_are_ignored(params):
+    events = []
+    backend = MoonrakerBackend(printer(), emit=events.append, transport_factory=lambda **_: None)
+    backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)
+    before = backend.snapshot()
+    events.clear()
+
+    backend._process_message({"method": "notify_history_changed", "params": params}, bootstrap=False)
+
+    assert backend.snapshot() == before
+    assert events == []

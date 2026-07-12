@@ -233,8 +233,19 @@ class MoonrakerBackend:
             self._merge_status(params[0] if isinstance(params, list) and params else None, bootstrap=bootstrap)
         elif message.get("method") == "notify_history_changed":
             params = message.get("params")
-            history = params[1] if isinstance(params, list) and len(params) > 1 else None
-            if isinstance(history, dict):
+            change = params[0] if isinstance(params, list) and params else None
+            if not isinstance(change, dict) or not isinstance(change.get("job"), dict):
+                return
+            if change.get("action") not in {"added", "finished"}:
+                return
+            job = change["job"]
+            history: dict[str, Any] = {}
+            for field in ("filename", "job_id", "print_duration"):
+                if field in job:
+                    history[field] = job[field]
+            if change.get("action") == "finished" and isinstance(job.get("status"), str):
+                history["state"] = job["status"]
+            if history:
                 self._merge_status({"print_stats": history}, bootstrap=bootstrap)
 
     def _merge_status(self, status: object, *, bootstrap: bool) -> None:
