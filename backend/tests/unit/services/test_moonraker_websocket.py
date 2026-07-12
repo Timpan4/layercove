@@ -117,6 +117,66 @@ async def test_websocket_transport_handshake_auth_and_pinned_local_peer(monkeypa
 
 
 @pytest.mark.asyncio
+async def test_websocket_transport_rejects_redirect_before_forwarding_auth(monkeypatch):
+    from backend.app.services import moonraker_websocket
+
+    redirected_requests = []
+
+    async def redirected_handler(request):
+        redirected_requests.append(request.headers.get("X-Api-Key"))
+        return web.Response(status=400)
+
+    redirected_app = web.Application()
+    redirected_app.router.add_get("/websocket", redirected_handler)
+    redirected_runner = web.AppRunner(redirected_app)
+    await redirected_runner.setup()
+    redirected_site = web.TCPSite(redirected_runner, "127.0.0.1", 0)
+    await redirected_site.start()
+    redirected_port = redirected_site._server.sockets[0].getsockname()[1]
+
+    async def approved_handler(_request):
+        raise web.HTTPFound(location=f"ws://printer.test:{redirected_port}/websocket")
+
+    approved_app = web.Application()
+    approved_app.router.add_get("/websocket", approved_handler)
+    approved_runner = web.AppRunner(approved_app)
+    await approved_runner.setup()
+    approved_site = web.TCPSite(approved_runner, "127.0.0.1", 0)
+    await approved_site.start()
+    approved_port = approved_site._server.sockets[0].getsockname()[1]
+
+    async def resolver(host, port):
+        assert host == "printer.test"
+        assert port == approved_port
+        return ["127.0.0.1"]
+
+    real_client_session = moonraker_websocket.aiohttp.ClientSession
+    sessions = []
+
+    def client_session(**kwargs):
+        session = real_client_session(**kwargs)
+        sessions.append(session)
+        return session
+
+    monkeypatch.setattr(moonraker_websocket, "_is_safe_peer", lambda _: True)
+    monkeypatch.setattr(moonraker_websocket.aiohttp, "ClientSession", client_session)
+    transport = moonraker_websocket.MoonrakerWebSocketTransport(
+        base_url=f"http://printer.test:{approved_port}",
+        api_key="must-not-be-forwarded",
+        resolver=resolver,
+    )
+    try:
+        with pytest.raises(MoonrakerWebSocketError, match="redirect_not_allowed"):
+            await transport.connect()
+
+        assert redirected_requests == []
+        assert sessions and all(session.closed for session in sessions)
+    finally:
+        await approved_runner.cleanup()
+        await redirected_runner.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_cancelled_websocket_handshake_closes_client_session(monkeypatch):
     from backend.app.services import moonraker_websocket
 

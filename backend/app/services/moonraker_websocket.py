@@ -115,6 +115,10 @@ def _connected_peer(websocket: aiohttp.ClientWebSocketResponse) -> IPAddress | N
         return None
 
 
+async def _reject_redirect(*_: object) -> None:
+    raise MoonrakerWebSocketError("redirect_not_allowed", "Moonraker WebSocket redirects are not allowed.")
+
+
 class MoonrakerWebSocket:
     """Small wrapper that owns both aiohttp session and its WebSocket."""
 
@@ -208,9 +212,12 @@ class MoonrakerWebSocketTransport:
         headers = {"X-Api-Key": self._api_key} if self._api_key is not None else {}
         if self._authorization is not None:
             headers["Authorization"] = self._authorization
+        trace = aiohttp.TraceConfig()
+        trace.on_request_redirect.append(_reject_redirect)
         session = aiohttp.ClientSession(
             connector=connector,
             timeout=aiohttp.ClientTimeout(total=_TOTAL_TIMEOUT_SECONDS),
+            trace_configs=[trace],
             trust_env=False,
         )
         try:
