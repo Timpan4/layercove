@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.models.printer import Printer
 from backend.app.services.bambu_backend import BambuBackend
 from backend.app.services.bambu_mqtt import BambuMQTTClient, MQTTLogEntry, PrinterState, get_stage_name
+from backend.app.services.moonraker_backend import MoonrakerBackend
 from backend.app.services.printer_backend import (
     BackendError,
     BackendEvent,
@@ -318,6 +319,10 @@ class PrinterManager:
                     client_factory=BambuMQTTClient,
                     **options,
                 ),
+            )
+            self._registry.register(
+                PrinterProvider.MOONRAKER,
+                lambda printer, **options: MoonrakerBackend(printer, **options),
             )
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
