@@ -175,6 +175,48 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("payload", "secrets"),
+        [
+            (
+                {
+                    "name": "Klipper Printer",
+                    "provider": "moonraker",
+                    "moonraker_config": {
+                        "base_url": "http://klipper.local:7125",
+                        "api_key": "api-key-must-not-leak",
+                        "authorization": "authorization-must-not-leak",
+                    },
+                },
+                ("api-key-must-not-leak", "authorization-must-not-leak"),
+            ),
+            (
+                {
+                    "name": "Bambu Printer",
+                    "serial_number": "00M09A111111111",
+                    "ip_address": "192.168.1.100",
+                    "access_code": "12345678",
+                    "moonraker_config": {
+                        "base_url": "http://klipper.local:7125",
+                        "api_key": "nested-key-must-not-leak",
+                    },
+                },
+                ("nested-key-must-not-leak",),
+            ),
+        ],
+    )
+    async def test_invalid_moonraker_configuration_never_echoes_credentials(
+        self, async_client: AsyncClient, payload: dict, secrets: tuple[str, ...]
+    ):
+        response = await async_client.post("/api/v1/printers/", json=payload)
+
+        assert response.status_code == 422
+        rendered = f"{response!r} {response.text} {response.json()!r}"
+        for secret in secrets:
+            assert secret not in rendered
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_update_moonraker_config_keeps_credentials_redacted(self, async_client: AsyncClient):
         created = await async_client.post(
             "/api/v1/printers/",

@@ -18,6 +18,7 @@ import httpx
 from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
 
 _MAX_RESPONSE_BYTES = 64 * 1024
+_TOTAL_TIMEOUT_SECONDS = 10.0
 _TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 
 Resolver = Callable[[str, int], Awaitable[Iterable[str | ipaddress.IPv4Address | ipaddress.IPv6Address]]]
@@ -182,7 +183,7 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
         *,
         backend: httpcore.AsyncNetworkBackend | None = None,
     ):
-        self._host = host.lower()
+        self._host = host.encode("idna").decode("ascii").lower()
         self._peers = peers
         self._backend = backend or _AnyIONetworkBackend()
 
@@ -194,20 +195,31 @@ class _PinnedNetworkBackend(httpcore.AsyncNetworkBackend):
         local_address: str | None = None,
         socket_options: Any = None,
     ):
-        if host.lower() != self._host:
+        if host.encode("idna").decode("ascii").lower() != self._host:
             raise httpcore.ConnectError("unexpected connection host")
 
-        for peer in sorted(self._peers, key=str):
-            try:
-                stream = await self._backend.connect_tcp(str(peer), port, timeout, local_address, socket_options)
-                connected = stream.get_extra_info("server_addr")
-                connected_peer = unwrap_ipv4_mapped(ipaddress.ip_address(connected[0])) if connected else None
-                if connected_peer not in self._peers:
-                    await stream.aclose()
-                    continue
-                return stream
-            except httpcore.NetworkError:
-                continue
+        timed_out = False
+        try:
+            async with asyncio.timeout(timeout):
+                for peer in sorted(self._peers, key=str):
+                    try:
+                        stream = await self._backend.connect_tcp(
+                            str(peer), port, timeout, local_address, socket_options
+                        )
+                        connected = stream.get_extra_info("server_addr")
+                        connected_peer = unwrap_ipv4_mapped(ipaddress.ip_address(connected[0])) if connected else None
+                        if connected_peer not in self._peers:
+                            await stream.aclose()
+                            continue
+                        return stream
+                    except httpcore.ConnectTimeout:
+                        timed_out = True
+                    except httpcore.NetworkError:
+                        continue
+        except TimeoutError as exc:
+            raise httpcore.ConnectTimeout("approved Moonraker peers timed out") from exc
+        if timed_out:
+            raise httpcore.ConnectTimeout("approved Moonraker peers timed out")
         raise httpcore.ConnectError("approved Moonraker peer was unavailable")
 
     async def connect_unix_socket(self, path: str, timeout: float | None = None, socket_options: Any = None):
@@ -322,6 +334,22 @@ class MoonrakerHTTPClient:
         return 200 <= response.status_code < 300
 
     async def _request(self, path: str) -> MoonrakerHTTPResponse:
+        try:
+            async with asyncio.timeout(_TOTAL_TIMEOUT_SECONDS):
+                return await self._request_within_deadline(path)
+        except MoonrakerHTTPError:
+            raise
+        except (TimeoutError, httpx.TimeoutException, httpcore.TimeoutException) as exc:
+            raise MoonrakerHTTPError("timeout", "Moonraker did not respond before timeout.") from exc
+        except (httpx.HTTPError, httpcore.NetworkError, httpcore.ProtocolError, _TLSVerificationError) as exc:
+            if _caused_by_tls_verification(exc):
+                raise MoonrakerHTTPError(
+                    "tls_verification_failed",
+                    "Moonraker TLS certificate verification failed. Trust it or disable TLS verification for this printer.",
+                ) from exc
+            raise MoonrakerHTTPError("unavailable", "Could not connect to Moonraker.") from exc
+
+    async def _request_within_deadline(self, path: str) -> MoonrakerHTTPResponse:
         peers = frozenset(
             unwrap_ipv4_mapped(ipaddress.ip_address(peer)) for peer in await self._resolver(self._host, self._port)
         )
@@ -335,45 +363,33 @@ class MoonrakerHTTPClient:
             headers["Authorization"] = self._authorization
 
         transport = self._transport_factory(self._host, self._port, peers, self._tls_verify)
-        try:
-            async with (
-                httpx.AsyncClient(
-                    transport=transport,
-                    timeout=_TIMEOUT,
-                    follow_redirects=False,
-                    trust_env=False,
-                ) as client,
-                client.stream("GET", f"{self._base_url}{path}", headers=headers) as response,
-            ):
-                if 300 <= response.status_code < 400:
-                    raise MoonrakerHTTPError(
-                        "redirect_blocked",
-                        "Moonraker redirects are blocked; configure the final printer origin.",
-                    )
-                if response.status_code in {401, 403}:
-                    raise MoonrakerHTTPError(
-                        "authentication_failed",
-                        "Moonraker rejected configured credentials.",
-                    )
-                if response.status_code >= 400:
-                    raise MoonrakerHTTPError(
-                        "http_status",
-                        f"Moonraker returned HTTP {response.status_code}.",
-                    )
-                body = bytearray()
-                async for chunk in response.aiter_bytes():
-                    body.extend(chunk)
-                    if len(body) > _MAX_RESPONSE_BYTES:
-                        raise MoonrakerHTTPError("response_too_large", "Moonraker response exceeded size limit.")
-                return MoonrakerHTTPResponse(response.status_code, dict(response.headers), bytes(body))
-        except MoonrakerHTTPError:
-            raise
-        except (httpx.TimeoutException, httpcore.TimeoutException) as exc:
-            raise MoonrakerHTTPError("timeout", "Moonraker did not respond before timeout.") from exc
-        except (httpx.HTTPError, httpcore.NetworkError, httpcore.ProtocolError, _TLSVerificationError) as exc:
-            if _caused_by_tls_verification(exc):
+        async with (
+            httpx.AsyncClient(
+                transport=transport,
+                timeout=_TIMEOUT,
+                follow_redirects=False,
+                trust_env=False,
+            ) as client,
+            client.stream("GET", f"{self._base_url}{path}", headers=headers) as response,
+        ):
+            if 300 <= response.status_code < 400:
                 raise MoonrakerHTTPError(
-                    "tls_verification_failed",
-                    "Moonraker TLS certificate verification failed. Trust it or disable TLS verification for this printer.",
-                ) from exc
-            raise MoonrakerHTTPError("unavailable", "Could not connect to Moonraker.") from exc
+                    "redirect_blocked",
+                    "Moonraker redirects are blocked; configure the final printer origin.",
+                )
+            if response.status_code in {401, 403}:
+                raise MoonrakerHTTPError(
+                    "authentication_failed",
+                    "Moonraker rejected configured credentials.",
+                )
+            if response.status_code >= 400:
+                raise MoonrakerHTTPError(
+                    "http_status",
+                    f"Moonraker returned HTTP {response.status_code}.",
+                )
+            body = bytearray()
+            async for chunk in response.aiter_bytes():
+                body.extend(chunk)
+                if len(body) > _MAX_RESPONSE_BYTES:
+                    raise MoonrakerHTTPError("response_too_large", "Moonraker response exceeded size limit.")
+            return MoonrakerHTTPResponse(response.status_code, dict(response.headers), bytes(body))

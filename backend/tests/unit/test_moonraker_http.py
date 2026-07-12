@@ -1,5 +1,7 @@
+import asyncio
 import ipaddress
 import ssl
+import time
 
 import httpcore
 import httpx
@@ -218,6 +220,52 @@ async def test_moonraker_client_rejects_responses_over_body_limit():
 
 
 @pytest.mark.asyncio
+async def test_moonraker_client_total_deadline_bounds_dns_resolution(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    monkeypatch.setattr(moonraker_http, "_TOTAL_TIMEOUT_SECONDS", 0.02)
+
+    async def resolver(host: str, port: int):
+        await asyncio.Event().wait()
+
+    client = MoonrakerHTTPClient(base_url="http://printer.lan:7125", resolver=resolver)
+
+    with pytest.raises(MoonrakerHTTPError) as caught:
+        await client.get_server_info()
+
+    assert caught.value.code == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_client_total_deadline_bounds_slow_response_body(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    monkeypatch.setattr(moonraker_http, "_TOTAL_TIMEOUT_SECONDS", 0.025)
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    class SlowBody(httpx.AsyncByteStream):
+        async def __aiter__(self):
+            while True:
+                await asyncio.sleep(0.015)
+                yield b"x"
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(lambda request: httpx.Response(200, stream=SlowBody())),
+    )
+
+    with pytest.raises(MoonrakerHTTPError) as caught:
+        await client.get_server_info()
+
+    assert caught.value.code == "timeout"
+
+
+@pytest.mark.asyncio
 async def test_pinned_transport_rejects_a_connected_peer_outside_resolved_set():
     import httpcore
 
@@ -276,16 +324,122 @@ async def test_pinned_transport_accepts_ipv4_mapped_connected_peer():
 
 
 @pytest.mark.asyncio
+async def test_pinned_backend_bounds_all_peer_attempts_with_one_connect_timeout():
+    from backend.app.services.moonraker_http import _PinnedNetworkBackend
+
+    class Backend:
+        calls = 0
+
+        async def connect_tcp(self, *args):
+            self.calls += 1
+            await asyncio.sleep(0.03)
+            raise httpcore.ConnectTimeout("peer timed out")
+
+        async def sleep(self, seconds: float):
+            pass
+
+    connector = Backend()
+    backend = _PinnedNetworkBackend(
+        "printer.lan",
+        frozenset(
+            {
+                ipaddress.ip_address("192.168.1.25"),
+                ipaddress.ip_address("192.168.1.26"),
+                ipaddress.ip_address("192.168.1.27"),
+            }
+        ),
+        backend=connector,
+    )
+    started = time.monotonic()
+
+    with pytest.raises(httpcore.ConnectTimeout):
+        await backend.connect_tcp("printer.lan", 7125, timeout=0.04)
+
+    assert time.monotonic() - started < 0.08
+    assert connector.calls == 2
+
+
+@pytest.mark.asyncio
+async def test_pinned_transport_connect_timeout_maps_to_safe_timeout():
+    from backend.app.services.moonraker_http import (
+        MoonrakerHTTPClient,
+        MoonrakerHTTPError,
+        _PinnedHTTPTransport,
+        _PinnedNetworkBackend,
+    )
+
+    peer = ipaddress.ip_address("192.168.1.25")
+
+    async def resolver(host: str, port: int):
+        return {peer}
+
+    class TimeoutBackend(httpcore.AsyncNetworkBackend):
+        async def connect_tcp(self, host, port, timeout=None, local_address=None, socket_options=None):
+            raise httpcore.ConnectTimeout("secret connection detail")
+
+        async def connect_unix_socket(self, path, timeout=None, socket_options=None):
+            raise AssertionError("unexpected unix socket")
+
+        async def sleep(self, seconds):
+            pass
+
+    def transport_factory(host, port, peers, tls_verify):
+        return _PinnedHTTPTransport(
+            tls_verify=tls_verify,
+            network_backend=_PinnedNetworkBackend(host, peers, backend=TimeoutBackend()),
+        )
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=transport_factory,
+    )
+
+    with pytest.raises(MoonrakerHTTPError) as caught:
+        await client.get_server_info()
+
+    assert caught.value.code == "timeout"
+    assert "secret" not in str(caught.value)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("url", "tls_verify", "expected_sni", "expected_verify_mode"),
+    ("url", "expected_backend_host", "tls_verify", "expected_host", "expected_sni", "expected_verify_mode"),
     [
-        ("http://printer.lan:7125/server/info", True, None, None),
-        ("https://printer.lan:7125/server/info", True, "printer.lan", ssl.CERT_REQUIRED),
-        ("https://printer.lan:7125/server/info", False, "printer.lan", ssl.CERT_NONE),
+        ("http://printer.lan:7125/server/info", "printer.lan", True, "printer.lan", None, None),
+        (
+            "https://printer.lan:7125/server/info",
+            "printer.lan",
+            True,
+            "printer.lan",
+            "printer.lan",
+            ssl.CERT_REQUIRED,
+        ),
+        (
+            "https://printer.lan:7125/server/info",
+            "printer.lan",
+            False,
+            "printer.lan",
+            "printer.lan",
+            ssl.CERT_NONE,
+        ),
+        (
+            "https://prínter.lan:7125/server/info",
+            "prínter.lan",
+            True,
+            "xn--prnter-4va.lan",
+            "xn--prnter-4va.lan",
+            ssl.CERT_REQUIRED,
+        ),
     ],
 )
 async def test_public_pinned_transport_wires_http_https_sni_and_peer(
-    url: str, tls_verify: bool, expected_sni: str | None, expected_verify_mode: ssl.VerifyMode | None
+    url: str,
+    expected_backend_host: str,
+    tls_verify: bool,
+    expected_host: str,
+    expected_sni: str | None,
+    expected_verify_mode: ssl.VerifyMode | None,
 ):
     from backend.app.services.moonraker_http import _PinnedHTTPTransport, _PinnedNetworkBackend
 
@@ -337,7 +491,7 @@ async def test_public_pinned_transport_wires_http_https_sni_and_peer(
 
     connector = Connector()
     backend = _PinnedNetworkBackend(
-        "printer.lan",
+        expected_backend_host,
         frozenset({ipaddress.ip_address("192.168.1.25")}),
         backend=connector,
     )
@@ -348,6 +502,6 @@ async def test_public_pinned_transport_wires_http_https_sni_and_peer(
 
     assert response.status_code == 200
     assert connector.connections == [("192.168.1.25", 7125)]
-    assert b"Host: printer.lan:7125" in b"".join(connector.stream.writes)
+    assert f"Host: {expected_host}:7125".encode() in b"".join(connector.stream.writes)
     assert connector.stream.sni == expected_sni
     assert connector.stream.verify_mode == expected_verify_mode

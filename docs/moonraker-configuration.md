@@ -44,7 +44,9 @@ call this endpoint afterward to validate the stored values.
 - The HTTP connection is pinned to an approved DNS result and verifies the
   connected peer.
 - Redirects and environment proxies are disabled.
-- Timeouts and response size are bounded.
+- Each request has one 10-second wall-clock deadline covering DNS resolution,
+  all peer connection attempts, response headers, and the response body.
+- Response bodies are limited to 64 KiB.
 - LayerCove exposes no generic Moonraker proxy or arbitrary G-code endpoint.
 
 End-user wiki and UI onboarding documentation belong to the later identity/docs

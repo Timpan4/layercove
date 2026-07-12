@@ -3,7 +3,7 @@ from ipaddress import ip_address
 from socket import inet_aton
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, ValidationInfo, field_validator
 
 from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
 from backend.app.services.printer_types import PrinterCapabilities, PrinterProvider, capabilities_for_provider
@@ -50,9 +50,9 @@ def _normalize_provider_url(value: str, *, websocket: bool) -> str:
 class MoonrakerPrinterConfigInput(BaseModel):
     base_url: str
     websocket_url_override: str | None = None
-    api_key: str | None = Field(default=None, min_length=1)
-    authorization: str | None = Field(default=None, min_length=1)
-    tls_verify: bool = True
+    api_key: SecretStr | None = Field(default=None, min_length=1)
+    authorization: SecretStr | None = Field(default=None, min_length=1)
+    tls_verify: bool = Field(default=True, validate_default=True)
 
     @field_validator("base_url")
     @classmethod
@@ -64,11 +64,20 @@ class MoonrakerPrinterConfigInput(BaseModel):
     def _normalize_websocket_url(cls, value: str | None) -> str | None:
         return _normalize_provider_url(value, websocket=True) if value is not None else None
 
-    @model_validator(mode="after")
-    def _one_auth_value(self):
-        if self.api_key is not None and self.authorization is not None:
+    @field_validator("tls_verify")
+    @classmethod
+    def _one_auth_value(cls, value: bool, info: ValidationInfo) -> bool:
+        if info.data.get("api_key") is not None and info.data.get("authorization") is not None:
             raise ValueError("api_key and authorization are mutually exclusive")
-        return self
+        return value
+
+    @property
+    def api_key_value(self) -> str | None:
+        return self.api_key.get_secret_value() if self.api_key is not None else None
+
+    @property
+    def authorization_value(self) -> str | None:
+        return self.authorization.get_secret_value() if self.authorization is not None else None
 
 
 class MoonrakerPrinterConfigResponse(BaseModel):
@@ -127,28 +136,40 @@ class PrinterBase(BaseModel):
 
 
 class PrinterCreate(PrinterBase):
+    moonraker_config: MoonrakerPrinterConfigInput | None = None
     # access_code lives on the input shapes only — never on the default
     # PrinterResponse. Direct exposure on PRINTERS_READ would let a Viewer
     # connect to the printer's MQTT and bypass Bambuddy's RBAC.
-    access_code: str | None = Field(default=None, min_length=1, max_length=20)
-    moonraker_config: MoonrakerPrinterConfigInput | None = None
+    access_code: str | None = Field(default=None, min_length=1, max_length=20, validate_default=True)
 
-    @model_validator(mode="after")
-    def _validate_provider_config(self):
-        if self.provider is PrinterProvider.BAMBU:
+    @field_validator("access_code")
+    @classmethod
+    def _validate_provider_config(cls, value: str | None, info: ValidationInfo) -> str | None:
+        provider = info.data.get("provider")
+        moonraker_config = info.data.get("moonraker_config")
+        if provider is PrinterProvider.BAMBU:
             missing = [
-                field for field in ("serial_number", "ip_address", "access_code") if getattr(self, field) is None
+                field
+                for field, field_value in (
+                    ("serial_number", info.data.get("serial_number")),
+                    ("ip_address", info.data.get("ip_address")),
+                    ("access_code", value),
+                )
+                if field_value is None
             ]
             if missing:
                 raise ValueError(f"Bambu printer requires {', '.join(missing)}")
-            if self.moonraker_config is not None:
+            if moonraker_config is not None:
                 raise ValueError("Bambu printer must not include moonraker_config")
         else:
-            if any(value is not None for value in (self.serial_number, self.ip_address, self.access_code)):
+            if any(
+                field_value is not None
+                for field_value in (info.data.get("serial_number"), info.data.get("ip_address"), value)
+            ):
                 raise ValueError("Moonraker printer must not include Bambu connection fields")
-            if self.moonraker_config is None:
+            if moonraker_config is None:
                 raise ValueError("Moonraker printer requires moonraker_config")
-        return self
+        return value
 
 
 class PlateDetectionROI(BaseModel):

@@ -160,8 +160,8 @@ async def create_printer(
         try:
             connected = await MoonrakerHTTPClient(
                 base_url=config.base_url,
-                api_key=config.api_key,
-                authorization=config.authorization,
+                api_key=config.api_key_value,
+                authorization=config.authorization_value,
                 tls_verify=config.tls_verify,
             ).test_connection()
             if not connected:
@@ -193,8 +193,8 @@ async def create_printer(
             websocket_url_override=config_input.websocket_url_override,
             tls_verify=config_input.tls_verify,
         )
-        config.api_key = config_input.api_key
-        config.authorization = config_input.authorization
+        config.api_key = config_input.api_key_value
+        config.authorization = config_input.authorization_value
         printer.moonraker_config = config
     db.add(printer)
     await db.commit()
@@ -448,12 +448,14 @@ async def update_printer(
         if "tls_verify" in moonraker_data:
             config.tls_verify = moonraker_data["tls_verify"]
         if "api_key" in moonraker_data:
-            config.api_key = moonraker_data["api_key"]
-            if moonraker_data["api_key"] is not None:
+            api_key = printer_data.moonraker_config.api_key_value
+            config.api_key = api_key
+            if api_key is not None:
                 config.authorization = None
         if "authorization" in moonraker_data:
-            config.authorization = moonraker_data["authorization"]
-            if moonraker_data["authorization"] is not None:
+            authorization = printer_data.moonraker_config.authorization_value
+            config.authorization = authorization
+            if authorization is not None:
                 config.api_key = None
 
     # Handle nested ROI object - flatten to individual columns
