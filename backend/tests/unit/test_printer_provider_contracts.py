@@ -165,12 +165,15 @@ def test_normalized_state_and_capabilities_are_exact_mvp_contract():
         "firmware_information",
         "object_cancellation",
     }
-    assert moonraker["upload_gcode"] is False
+    assert moonraker["upload_gcode"] is True
     assert moonraker["upload_3mf"] is False
-    assert moonraker["emergency_stop"] is False
+    assert moonraker["start_print"] is True
+    assert moonraker["pause"] is True
+    assert moonraker["resume"] is True
+    assert moonraker["cancel"] is True
+    assert moonraker["emergency_stop"] is True
     assert moonraker["ams"] is False
     assert moonraker["plate_selection"] is False
-    assert not any(moonraker.values())
 
 
 def test_normalized_snapshot_keeps_provider_detail_internal_to_backend_contract():

@@ -3,11 +3,15 @@ import logging
 import re
 import zipfile
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+from python_multipart.exceptions import MultipartParseError
+from python_multipart.multipart import parse_options_header
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
@@ -28,6 +32,7 @@ from backend.app.schemas.printer import (
     AMSTray,
     AMSUnit,
     DiagnosticRequest,
+    EmergencyStopRequest,
     FilaSwitchResponse,
     HmsActionBody,
     HMSErrorResponse,
@@ -51,7 +56,9 @@ from backend.app.services.bambu_ftp import (
     get_storage_info_async,
     list_files_async,
 )
+from backend.app.services.moonraker_backend import MoonrakerBackend
 from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+from backend.app.services.printer_backend import BackendError
 from backend.app.services.printer_diagnostic import run_connection_diagnostic
 from backend.app.services.printer_manager import (
     get_derived_status_name,
@@ -2915,6 +2922,144 @@ async def debug_simulate_print_complete(
 # =============================================================================
 
 
+def _moonraker_command_error(error: BackendError) -> HTTPException:
+    if error.code == "upload_too_large":
+        status_code = 413
+    elif error.code in {"invalid_filename", "invalid_state", "command_unavailable"}:
+        status_code = 400
+    else:
+        status_code = 502
+    return HTTPException(
+        status_code=status_code,
+        detail={"code": error.code, "message": error.safe_message},
+    )
+
+
+async def _moonraker_backend(printer_id: int, db: AsyncSession) -> MoonrakerBackend:
+    printer = (await db.execute(select(Printer).where(Printer.id == printer_id))).scalar_one_or_none()
+    if printer is None:
+        raise HTTPException(404, "Printer not found")
+    backend = printer_manager.get_backend(printer_id)
+    if printer.provider != PrinterProvider.MOONRAKER or not isinstance(backend, MoonrakerBackend):
+        raise HTTPException(400, "Moonraker printer is not connected")
+    return backend
+
+
+_MULTIPART_BOUNDARY_CHARS = frozenset(b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'()+_,-./:=? ")
+
+
+def _valid_multipart_content_type(value: str) -> bool:
+    try:
+        media_type, options = parse_options_header(value)
+    except (TypeError, ValueError):
+        return False
+    boundary = options.get(b"boundary")
+    return (
+        media_type.lower() == b"multipart/form-data"
+        and boundary is not None
+        and 1 <= len(boundary) <= 70
+        and boundary[-1:] != b" "
+        and all(character in _MULTIPART_BOUNDARY_CHARS for character in boundary)
+    )
+
+
+@router.post(
+    "/{printer_id}/moonraker/upload-gcode",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "properties": {
+                            "file": {"type": "string", "format": "binary"},
+                            "start": {"type": "boolean", "default": False},
+                        },
+                        "additionalProperties": False,
+                    }
+                }
+            },
+        }
+    },
+)
+async def upload_moonraker_gcode(
+    printer_id: int,
+    request: Request,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
+    db: AsyncSession = Depends(get_db),
+):
+    """Upload one G-code file to Moonraker's gcodes root, optionally starting it."""
+    if not _valid_multipart_content_type(request.headers.get("content-type", "")):
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_multipart", "message": "Invalid Moonraker upload form."},
+        )
+
+    parser = MultiPartParser(request.headers, request.stream(), max_files=1, max_fields=1, max_part_size=16)
+    form = None
+    try:
+        try:
+            form = await parser.parse()
+        except BaseException as exc:
+            if isinstance(exc, (MultiPartException, MultipartParseError, OSError, ValueError)):
+                raise HTTPException(
+                    400,
+                    detail={"code": "invalid_multipart", "message": "Invalid Moonraker upload form."},
+                ) from exc
+            raise
+
+        files = [(name, value) for name, value in form.multi_items() if isinstance(value, UploadFile)]
+        fields = [(name, value) for name, value in form.multi_items() if not isinstance(value, UploadFile)]
+        if len(files) != 1 or files[0][0] != "file" or len(fields) > 1:
+            raise HTTPException(
+                400,
+                detail={"code": "invalid_multipart", "message": "Expected one file and optional start field."},
+            )
+        start_value = fields[0][1] if fields else "false"
+        if (fields and fields[0][0] != "start") or start_value not in {"true", "false"}:
+            raise HTTPException(
+                400,
+                detail={"code": "invalid_start", "message": "start must be true or false."},
+            )
+        start = start_value == "true"
+        file = files[0][1]
+        backend = await _moonraker_backend(printer_id, db)
+        try:
+            path = await backend.upload_gcode(file.file, filename=file.filename or "", start=start, size=file.size)
+        except BackendError as exc:
+            raise _moonraker_command_error(exc) from exc
+        return {"success": True, "path": path, "started": start}
+    finally:
+        parser_files = {id(temporary_file) for temporary_file in parser._files_to_close_on_error}
+        for temporary_file in parser._files_to_close_on_error:
+            if not temporary_file.closed:
+                temporary_file.close()
+        if form is not None:
+            for _, value in form.multi_items():
+                if isinstance(value, UploadFile) and id(value.file) not in parser_files:
+                    await value.close()
+
+
+@router.post("/{printer_id}/emergency-stop")
+async def emergency_stop(
+    printer_id: int,
+    request: EmergencyStopRequest,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CONTROL),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send Moonraker's immediate emergency-stop endpoint after explicit confirmation."""
+    if not request.confirmed:
+        raise HTTPException(400, "Emergency stop requires confirmed=true")
+    backend = await _moonraker_backend(printer_id, db)
+    try:
+        await backend.emergency_stop()
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
+    return {"success": True, "message": "Emergency stop command sent"}
+
+
 @router.post("/{printer_id}/print/stop")
 async def stop_print(
     printer_id: int,
@@ -2930,7 +3075,10 @@ async def stop_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = await printer_manager.stop_print_async(printer_id)
+    try:
+        success = await printer_manager.stop_print_async(printer_id)
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
     if not success:
         raise HTTPException(500, "Failed to stop print")
 
@@ -2999,7 +3147,10 @@ async def pause_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = await printer_manager.pause_print_async(printer_id)
+    try:
+        success = await printer_manager.pause_print_async(printer_id)
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
     if not success:
         raise HTTPException(500, "Failed to pause print")
 
@@ -3021,7 +3172,10 @@ async def resume_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = await printer_manager.resume_print_async(printer_id)
+    try:
+        success = await printer_manager.resume_print_async(printer_id)
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
     if not success:
         raise HTTPException(500, "Failed to resume print")
 

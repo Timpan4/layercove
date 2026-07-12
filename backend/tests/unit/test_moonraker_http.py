@@ -1,4 +1,5 @@
 import asyncio
+import io
 import ipaddress
 import ssl
 import time
@@ -142,6 +143,283 @@ async def test_moonraker_client_maps_http_status_and_timeout_safely():
     assert timeout_error.value.code == "timeout"
     assert "secret" not in str(status_error.value)
     assert "secret" not in str(timeout_error.value)
+
+
+@pytest.mark.asyncio
+async def test_moonraker_upload_uses_multipart_gcodes_root_and_returned_path():
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.method == "POST"
+        assert request.url.path == "/server/files/upload"
+        assert request.headers["X-Api-Key"] == "moonraker-secret"
+        assert "multipart/form-data" in request.headers["content-type"]
+        assert b'name="root"' in request.content and b"gcodes" in request.content
+        assert b'name="print"' not in request.content
+        assert b'filename="cube.gcode"' in request.content
+        return httpx.Response(201, json={"item": {"root": "gcodes", "path": "server-name.gcode"}})
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        api_key="moonraker-secret",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+
+    assert await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3) == "server-name.gcode"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response_json", [None, [], "ok", 1])
+async def test_moonraker_upload_rejects_non_object_json_response(response_json):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(lambda request: httpx.Response(201, json=response_json)),
+    )
+
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
+
+    assert error.value.code == "invalid_response"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("filename", ["../cube.gcode", "folder/cube.gcode", "cube.3mf", "cube.gcode\\x00"])
+async def test_moonraker_upload_rejects_unsafe_filename_before_request(filename: str):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    calls = 0
+
+    async def resolver(host: str, port: int):
+        nonlocal calls
+        calls += 1
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(base_url="http://printer.lan:7125", resolver=resolver)
+
+    with pytest.raises(MoonrakerHTTPError, match="invalid_filename"):
+        await client.upload_gcode(io.BytesIO(b"G28"), filename=filename, size=3)
+
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_moonraker_upload_rejects_size_over_limit_before_request(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    monkeypatch.setattr(moonraker_http, "_MAX_UPLOAD_BYTES", 3)
+    calls = 0
+
+    async def resolver(host: str, port: int):
+        nonlocal calls
+        calls += 1
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(base_url="http://printer.lan:7125", resolver=resolver)
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.upload_gcode(io.BytesIO(b"G28X"), filename="cube.gcode", size=4)
+
+    assert error.value.code == "upload_too_large"
+    assert calls == 0
+
+
+@pytest.mark.asyncio
+async def test_moonraker_upload_streaming_bound_rejects_unknown_oversize_file(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    monkeypatch.setattr(moonraker_http, "_MAX_UPLOAD_BYTES", 3)
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(lambda request: httpx.Response(201, json={"item": {}})),
+    )
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.upload_gcode(io.BytesIO(b"G28X"), filename="cube.gcode")
+
+    assert error.value.code == "upload_too_large"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_upload_uses_separate_bounded_transfer_deadline(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    monkeypatch.setattr(moonraker_http, "_TOTAL_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(moonraker_http, "_UPLOAD_TOTAL_TIMEOUT_SECONDS", 0.1)
+
+    async def resolver(host: str, port: int):
+        await asyncio.sleep(0.01)
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(
+            lambda request: httpx.Response(201, json={"item": {"path": "cube.gcode"}})
+        ),
+    )
+
+    assert await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3) == "cube.gcode"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_upload_transfer_deadline_is_bounded(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    monkeypatch.setattr(moonraker_http, "_UPLOAD_TOTAL_TIMEOUT_SECONDS", 0.01)
+
+    async def resolver(host: str, port: int):
+        await asyncio.Event().wait()
+
+    client = MoonrakerHTTPClient(base_url="http://printer.lan:7125", resolver=resolver)
+
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
+
+    assert error.value.code == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_ingress_rejects_declared_and_chunked_oversize_bodies():
+    from backend.app.core.moonraker_upload_limit import MoonrakerUploadBodyLimitMiddleware
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/printers/1/moonraker/upload-gcode",
+        "headers": [],
+    }
+
+    async def run(headers, chunks):
+        messages = iter(chunks)
+        sent = []
+        reached_app = False
+
+        async def receive():
+            return next(messages)
+
+        async def send(message):
+            sent.append(message)
+
+        async def app(_scope, receive, send):
+            nonlocal reached_app
+            reached_app = True
+            while (await receive()).get("more_body", False):
+                pass
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        limited_scope = {**scope, "headers": headers}
+        await MoonrakerUploadBodyLimitMiddleware(app, max_body_bytes=5)(limited_scope, receive, send)
+        return reached_app, sent
+
+    declared_reached, declared = await run(
+        [(b"content-length", b"6")],
+        [{"type": "http.request", "body": b"", "more_body": False}],
+    )
+    chunked_reached, chunked = await run(
+        [],
+        [
+            {"type": "http.request", "body": b"123", "more_body": True},
+            {"type": "http.request", "body": b"456", "more_body": False},
+        ],
+    )
+
+    assert declared_reached is False
+    assert declared[0]["status"] == 413
+    assert chunked_reached is True
+    assert chunked[0]["status"] == 413
+
+
+@pytest.mark.asyncio
+async def test_moonraker_commands_map_auth_timeout_and_never_retry_mutating_posts():
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    calls = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        assert request.method == "POST"
+        return httpx.Response(401, text="moonraker-secret")
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        api_key="moonraker-secret",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+    with pytest.raises(MoonrakerHTTPError) as auth_error:
+        await client.pause_print()
+    assert auth_error.value.code == "authentication_failed"
+    assert calls == 1
+
+    async def timeout(request: httpx.Request):
+        raise httpx.ReadTimeout("secret", request=request)
+
+    timeout_client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(timeout),
+    )
+    with pytest.raises(MoonrakerHTTPError) as timeout_error:
+        await timeout_client.emergency_stop()
+    assert timeout_error.value.code == "timeout"
+    assert "secret" not in str(timeout_error.value)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("method", "args", "path"),
+    [
+        ("start_print", ("server-name.gcode",), "/printer/print/start"),
+        ("pause_print", (), "/printer/print/pause"),
+        ("resume_print", (), "/printer/print/resume"),
+        ("cancel_print", (), "/printer/print/cancel"),
+    ],
+)
+async def test_moonraker_print_command_failures_are_safe_and_not_retried(method, args, path):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    paths = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        paths.append(request.url.path)
+        return httpx.Response(500, text="moonraker-secret")
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await getattr(client, method)(*args)
+
+    assert error.value.code == "http_status"
+    assert "moonraker-secret" not in str(error.value)
+    assert paths == [path]
 
 
 @pytest.mark.asyncio

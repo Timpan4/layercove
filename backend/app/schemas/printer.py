@@ -120,6 +120,10 @@ class MoonrakerConnectionTestResponse(BaseModel):
     message: str
 
 
+class EmergencyStopRequest(BaseModel):
+    confirmed: bool = False
+
+
 class PrinterBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     provider: PrinterProvider = PrinterProvider.BAMBU

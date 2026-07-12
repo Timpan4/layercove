@@ -48,7 +48,15 @@ def capabilities_for_provider(
     camera_configured: bool = False,
 ) -> PrinterCapabilities:
     if provider is PrinterProvider.MOONRAKER:
-        return PrinterCapabilities(camera=camera_configured)
+        return PrinterCapabilities(
+            upload_gcode=True,
+            start_print=True,
+            pause=True,
+            resume=True,
+            cancel=True,
+            emergency_stop=True,
+            camera=camera_configured,
+        )
     return PrinterCapabilities(
         upload_3mf=True,
         start_print=True,
