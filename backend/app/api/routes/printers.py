@@ -3,11 +3,14 @@ import logging
 import re
 import zipfile
 
-from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+from python_multipart.exceptions import MultipartParseError
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
@@ -2941,21 +2944,77 @@ async def _moonraker_backend(printer_id: int, db: AsyncSession) -> MoonrakerBack
     return backend
 
 
-@router.post("/{printer_id}/moonraker/upload-gcode")
+@router.post(
+    "/{printer_id}/moonraker/upload-gcode",
+    openapi_extra={
+        "requestBody": {
+            "required": True,
+            "content": {
+                "multipart/form-data": {
+                    "schema": {
+                        "type": "object",
+                        "required": ["file"],
+                        "properties": {
+                            "file": {"type": "string", "format": "binary"},
+                            "start": {"type": "boolean", "default": False},
+                        },
+                        "additionalProperties": False,
+                    }
+                }
+            },
+        }
+    },
+)
 async def upload_moonraker_gcode(
     printer_id: int,
-    file: UploadFile = File(...),
-    start: bool = Form(False),
+    request: Request,
     _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
     db: AsyncSession = Depends(get_db),
 ):
     """Upload one G-code file to Moonraker's gcodes root, optionally starting it."""
-    backend = await _moonraker_backend(printer_id, db)
+    if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+        raise HTTPException(
+            400,
+            detail={"code": "invalid_multipart", "message": "Invalid Moonraker upload form."},
+        )
+
+    parser = MultiPartParser(request.headers, request.stream(), max_files=1, max_fields=1, max_part_size=16)
     try:
-        path = await backend.upload_gcode(file.file, filename=file.filename or "", start=start, size=file.size)
-    except BackendError as exc:
-        raise _moonraker_command_error(exc) from exc
-    return {"success": True, "path": path, "started": start}
+        form = await parser.parse()
+    except BaseException as exc:
+        for temporary_file in parser._files_to_close_on_error:
+            temporary_file.close()
+        if isinstance(exc, (MultiPartException, MultipartParseError, OSError, ValueError)):
+            raise HTTPException(
+                400,
+                detail={"code": "invalid_multipart", "message": "Invalid Moonraker upload form."},
+            ) from exc
+        raise
+
+    try:
+        files = [(name, value) for name, value in form.multi_items() if isinstance(value, UploadFile)]
+        fields = [(name, value) for name, value in form.multi_items() if not isinstance(value, UploadFile)]
+        if len(files) != 1 or files[0][0] != "file" or len(fields) > 1:
+            raise HTTPException(
+                400,
+                detail={"code": "invalid_multipart", "message": "Expected one file and optional start field."},
+            )
+        start_value = fields[0][1] if fields else "false"
+        if (fields and fields[0][0] != "start") or start_value not in {"true", "false"}:
+            raise HTTPException(
+                400,
+                detail={"code": "invalid_start", "message": "start must be true or false."},
+            )
+        start = start_value == "true"
+        file = files[0][1]
+        backend = await _moonraker_backend(printer_id, db)
+        try:
+            path = await backend.upload_gcode(file.file, filename=file.filename or "", start=start, size=file.size)
+        except BackendError as exc:
+            raise _moonraker_command_error(exc) from exc
+        return {"success": True, "path": path, "started": start}
+    finally:
+        await form.close()
 
 
 @router.post("/{printer_id}/emergency-stop")

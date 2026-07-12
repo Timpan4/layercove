@@ -384,7 +384,8 @@ class MoonrakerHTTPClient:
             files={"file": (filename, _BoundedUpload(file, size), "application/octet-stream")},
         )
         try:
-            item = json.loads(response.body).get("item")
+            payload = json.loads(response.body)
+            item = payload.get("item") if isinstance(payload, dict) else None
             path = item.get("path") if isinstance(item, dict) else None
         except (UnicodeDecodeError, json.JSONDecodeError):
             path = None

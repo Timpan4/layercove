@@ -173,6 +173,26 @@ async def test_moonraker_upload_uses_multipart_gcodes_root_and_returned_path():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("response_json", [None, [], "ok", 1])
+async def test_moonraker_upload_rejects_non_object_json_response(response_json):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(lambda request: httpx.Response(201, json=response_json)),
+    )
+
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
+
+    assert error.value.code == "invalid_response"
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("filename", ["../cube.gcode", "folder/cube.gcode", "cube.3mf", "cube.gcode\\x00"])
 async def test_moonraker_upload_rejects_unsafe_filename_before_request(filename: str):
     from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError

@@ -85,9 +85,12 @@ class TestPrintersAPI:
         from backend.app.services.printer_types import NormalizedPrinterState
 
         calls = []
+        uploaded_files = []
 
         class HTTP:
             async def upload_gcode(self, file, *, filename, size):
+                assert not file.closed
+                uploaded_files.append(file)
                 calls.append(("upload", filename, size))
                 return "moonraker-name.gcode"
 
@@ -134,6 +137,7 @@ class TestPrintersAPI:
             ("start", "moonraker-name.gcode"),
             ("emergency_stop",),
         ]
+        assert all(file.closed for file in uploaded_files)
 
     # ========================================================================
     # Create endpoints
@@ -4580,3 +4584,72 @@ async def test_moonraker_upload_limits_map_to_413(async_client: AsyncClient):
     assert stream.yielded == 2
     assert second_hop.status_code == 413
     assert second_hop.json()["detail"]["code"] == "upload_too_large"
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_moonraker_upload_rejects_invalid_multipart_before_backend(async_client: AsyncClient):
+    backend_lookup = AsyncMock()
+    requests = [
+        {
+            "files": [
+                ("file", ("one.gcode", b"G1")),
+                ("file", ("two.gcode", b"G2")),
+            ]
+        },
+        {
+            "files": [
+                ("file", ("cube.gcode", b"G1")),
+                ("start", (None, "false")),
+                ("extra", (None, "value")),
+            ]
+        },
+        {
+            "files": [
+                ("file", ("cube.gcode", b"G1")),
+                ("start", (None, "x" * 17)),
+            ]
+        },
+        {
+            "files": [
+                ("file", ("cube.gcode", b"G1")),
+                ("start", (None, "false")),
+                ("start", (None, "true")),
+            ]
+        },
+        {"files": {"file": ("cube.gcode", b"G1")}, "data": {"start": "yes"}},
+    ]
+
+    with patch("backend.app.api.routes.printers._moonraker_backend", new=backend_lookup):
+        responses = [
+            await async_client.post("/api/v1/printers/1/moonraker/upload-gcode", **request) for request in requests
+        ]
+
+    assert [response.status_code for response in responses] == [400] * len(requests)
+    assert all(response.json()["detail"]["code"] in {"invalid_multipart", "invalid_start"} for response in responses)
+    backend_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_moonraker_upload_invalid_backend_response_maps_to_safe_502(async_client: AsyncClient):
+    from backend.app.services.printer_backend import BackendError
+
+    backend = MagicMock()
+    backend.upload_gcode = AsyncMock(
+        side_effect=BackendError(
+            "Moonraker upload response did not contain a safe G-code path.",
+            code="invalid_response",
+        )
+    )
+    with patch("backend.app.api.routes.printers._moonraker_backend", new=AsyncMock(return_value=backend)):
+        response = await async_client.post(
+            "/api/v1/printers/1/moonraker/upload-gcode",
+            files={"file": ("cube.gcode", b"G28")},
+        )
+
+    assert response.status_code == 502
+    assert response.json()["detail"] == {
+        "code": "invalid_response",
+        "message": "Moonraker upload response did not contain a safe G-code path.",
+    }
