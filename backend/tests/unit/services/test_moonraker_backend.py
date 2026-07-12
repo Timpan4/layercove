@@ -189,6 +189,27 @@ async def test_moonraker_connect_owns_one_task_and_disconnect_cancels_its_socket
     assert connection.closed is True
 
 
+def test_queued_binding_becomes_started_and_terminal_lifecycle_identity():
+    events = []
+    backend = MoonrakerBackend(printer(), emit=events.append)
+    backend._last_state = NormalizedPrinterState.IDLE
+    backend.bind_queued_job("queue-correlation", "queue/cube.gcode")
+
+    backend._merge_status(
+        {"print_stats": {"state": "printing", "filename": "queue/cube.gcode", "job_id": "42"}},
+        bootstrap=False,
+    )
+    backend._merge_status(
+        {"print_stats": {"state": "complete", "filename": "queue/cube.gcode", "job_id": "42"}},
+        bootstrap=False,
+    )
+
+    lifecycle = [event for event in events if isinstance(event, JobLifecycle)]
+    assert [event.kind for event in lifecycle] == ["started", "completed"]
+    assert {event.correlation_id for event in lifecycle} == {"queue-correlation"}
+    assert {event.provider_job_id for event in lifecycle} == {"42"}
+
+
 @pytest.mark.asyncio
 async def test_stalled_bootstrap_response_closes_socket_and_retries_without_long_wait():
     stalled = FakeConnection([])

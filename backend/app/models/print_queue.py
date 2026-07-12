@@ -103,6 +103,11 @@ class PrintQueueItem(Base):
     # Status: pending, printing, completed, failed, skipped, cancelled
     status: Mapped[str] = mapped_column(String(20), default="pending")
 
+    # Provider lifecycle identity. Correlation is assigned before the start
+    # command; provider_job_id is filled by the matching started event.
+    provider_correlation_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
+    provider_job_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+
     # Cleared by the per-printer "Resume after failure" action (#1818) so the
     # scheduler's `_check_previous_success` lookback skips this row. Without
     # this, a single `failed` or `aborted` print poisoned every later

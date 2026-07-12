@@ -190,6 +190,7 @@ async def test_manager_routes_bambu_lifecycle_and_moonraker_terminal_callbacks()
         await manager._forward_backend_event(printer_id, lifecycle("completed", "cube", f"job-{printer_id}"))
 
     assert observed == [
+        (1, "started", "cube"),
         (1, "completed", "cube"),
         (2, "started", "cube"),
         (2, "completed", "cube"),

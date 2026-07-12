@@ -653,19 +653,20 @@ class PrinterManager:
             if backend is None:
                 return
             if backend.provider is PrinterProvider.MOONRAKER:
-                if event.kind != "started":
-                    await self._call_backend_callback(
-                        self._on_print_complete,
-                        printer_id,
-                        {
-                            **event.data,
-                            "status": event.kind,
-                            "filename": event.filename,
-                            "reason": event.reason,
-                            "occurred_at": event.occurred_at,
-                            "correlation_id": event.correlation_id,
-                        },
-                    )
+                callback = self._on_print_start if event.kind == "started" else self._on_print_complete
+                await self._call_backend_callback(
+                    callback,
+                    printer_id,
+                    {
+                        **event.data,
+                        "status": event.kind,
+                        "filename": event.filename,
+                        "reason": event.reason,
+                        "occurred_at": event.occurred_at,
+                        "correlation_id": event.correlation_id,
+                        "provider_job_id": event.provider_job_id,
+                    },
+                )
                 return
             callback = self._on_print_start if event.kind == "started" else self._on_print_complete
             await self._call_backend_callback(callback, printer_id, event.data)

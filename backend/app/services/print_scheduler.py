@@ -6,6 +6,7 @@ import logging
 import time
 from datetime import datetime, timezone
 from pathlib import Path
+from uuid import uuid4
 
 from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -33,6 +34,7 @@ from backend.app.services.bambu_ftp import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
+from backend.app.services.printer_backend import BackendError
 from backend.app.services.printer_manager import (
     printer_manager,
     supports_airduct,
@@ -2487,12 +2489,6 @@ class PrintScheduler:
             return file_path.suffix.lower() == ".gcode" and declared in (None, "klipper_gcode")
         return file_path.suffix.lower() == ".3mf" and declared in (None, "bambu_3mf")
 
-    async def _fail_artifact_mismatch(self, db: AsyncSession, item: PrintQueueItem, printer: Printer) -> None:
-        item.status = "failed"
-        item.error_message = f"Source artifact is not compatible with {printer.provider} printers"
-        item.completed_at = datetime.now(timezone.utc)
-        await db.commit()
-
     @staticmethod
     def _safe_moonraker_path(value: object) -> str:
         from pathlib import PurePosixPath
@@ -2541,10 +2537,16 @@ class PrintScheduler:
             return
 
         now = datetime.now(timezone.utc)
+        correlation_id = str(uuid4())
         cas = await db.execute(
             update(PrintQueueItem)
             .where(PrintQueueItem.id == item.id, PrintQueueItem.status == "pending")
-            .values(status="printing", started_at=now)
+            .values(
+                status="printing",
+                started_at=now,
+                provider_correlation_id=correlation_id,
+                provider_job_id=None,
+            )
         )
         await db.commit()
         if cas.rowcount == 0:
@@ -2553,6 +2555,7 @@ class PrintScheduler:
 
         item.status = "printing"
         item.started_at = now
+        item.provider_correlation_id = correlation_id
         for cleanup_path in cleanup_disk_paths:
             try:
                 cleanup_path.unlink(missing_ok=True)
@@ -2564,18 +2567,39 @@ class PrintScheduler:
             await db.commit()
         await self._propagate_owner_to_printer_manager(db, item)
 
+        bind_job = getattr(backend, "bind_queued_job", None)
+        if bind_job is not None:
+            bind_job(correlation_id, remote_path)
+
         try:
             started = await backend.start_print(remote_path)
-        except Exception as exc:
+        except BackendError as exc:
             logger.warning("Queue item %s: Moonraker start failed: %s", item.id, exc)
+            if exc.code in {"timeout", "unavailable"}:
+                logger.warning(
+                    "Queue item %s: Moonraker start outcome is ambiguous; retaining printing state for reconciliation",
+                    item.id,
+                )
+                return
             started = False
+        except Exception:
+            logger.exception(
+                "Queue item %s: unexpected Moonraker start error; retaining printing state for reconciliation",
+                item.id,
+            )
+            return
         if not started:
+            clear_binding = getattr(backend, "clear_queued_job_binding", None)
+            if clear_binding is not None:
+                clear_binding(correlation_id)
             await self.finalize_moonraker_job(
                 item.printer_id,
                 {
                     "status": "failed",
                     "filename": remote_path,
                     "reason": "Moonraker rejected the print start",
+                    "correlation_id": correlation_id,
+                    "provider_job_id": None,
                 },
             )
             return
@@ -2601,9 +2625,14 @@ class PrintScheduler:
         reason: str,
     ) -> None:
         completed_at = datetime.now(timezone.utc)
-        item.status = "failed"
-        item.error_message = reason
-        item.completed_at = completed_at
+        cas = await db.execute(
+            update(PrintQueueItem)
+            .where(PrintQueueItem.id == item.id, PrintQueueItem.status == "pending")
+            .values(status="failed", error_message=reason, completed_at=completed_at)
+        )
+        if cas.rowcount == 0:
+            await db.rollback()
+            return
         if archive is not None:
             archive.status = "failed"
             archive.completed_at = completed_at
@@ -2624,8 +2653,27 @@ class PrintScheduler:
         await db.commit()
 
     @staticmethod
-    async def finalize_moonraker_job(printer_id: int, data: dict) -> bool:
-        """Finalize one Moonraker queue row exactly once using its printing-state guard."""
+    async def bind_moonraker_started(printer_id: int, data: dict) -> bool:
+        correlation_id = data.get("correlation_id")
+        if not isinstance(correlation_id, str) or not correlation_id:
+            return False
+        provider_job_id = data.get("provider_job_id")
+        async with async_session() as db:
+            result = await db.execute(
+                update(PrintQueueItem)
+                .where(
+                    PrintQueueItem.printer_id == printer_id,
+                    PrintQueueItem.status == "printing",
+                    PrintQueueItem.provider_correlation_id == correlation_id,
+                )
+                .values(provider_job_id=str(provider_job_id) if provider_job_id is not None else None)
+            )
+            await db.commit()
+            return result.rowcount == 1
+
+    @staticmethod
+    async def finalize_moonraker_job(printer_id: int, data: dict) -> dict | None:
+        """Atomically finalize only the queue row bound to this provider job."""
         raw_status = str(data.get("status") or "failed")
         status = "cancelled" if raw_status in ("cancelled", "aborted") else raw_status
         if status not in ("completed", "failed", "cancelled"):
@@ -2633,24 +2681,40 @@ class PrintScheduler:
         completed_at = data.get("occurred_at")
         if not isinstance(completed_at, datetime):
             completed_at = datetime.now(timezone.utc)
+        correlation_id = data.get("correlation_id")
+        if not isinstance(correlation_id, str) or not correlation_id:
+            return None
+        provider_job_id = data.get("provider_job_id")
 
         async with async_session() as db:
-            result = await db.execute(
-                select(PrintQueueItem)
-                .where(PrintQueueItem.printer_id == printer_id, PrintQueueItem.status == "printing")
-                .order_by(PrintQueueItem.started_at, PrintQueueItem.id)
-                .limit(1)
+            query = select(PrintQueueItem).where(
+                PrintQueueItem.printer_id == printer_id,
+                PrintQueueItem.status == "printing",
+                PrintQueueItem.provider_correlation_id == correlation_id,
             )
+            if provider_job_id is not None:
+                query = query.where(PrintQueueItem.provider_job_id == str(provider_job_id))
+            result = await db.execute(query.order_by(PrintQueueItem.started_at, PrintQueueItem.id).limit(1))
             item = result.scalar_one_or_none()
             if item is None:
-                return False
+                return None
 
             printer = await db.get(Printer, printer_id)
             archive = await db.get(PrintArchive, item.archive_id) if item.archive_id else None
-            item.status = status
-            item.completed_at = completed_at
+            terminal_values = {"status": status, "completed_at": completed_at}
             if status == "failed":
-                item.error_message = str(data.get("reason") or "Moonraker print failed")
+                terminal_values["error_message"] = str(data.get("reason") or "Moonraker print failed")
+            terminal_query = update(PrintQueueItem).where(
+                PrintQueueItem.id == item.id,
+                PrintQueueItem.status == "printing",
+                PrintQueueItem.provider_correlation_id == correlation_id,
+            )
+            if provider_job_id is not None:
+                terminal_query = terminal_query.where(PrintQueueItem.provider_job_id == str(provider_job_id))
+            terminal = await db.execute(terminal_query.values(**terminal_values))
+            if terminal.rowcount != 1:
+                await db.rollback()
+                return None
             if archive is not None:
                 archive.status = status
                 archive.completed_at = completed_at
@@ -2678,7 +2742,16 @@ class PrintScheduler:
                 )
             )
             await db.commit()
-        return True
+        return {
+            "queue_item_id": item.id,
+            "archive_id": item.archive_id,
+            "library_file_id": item.library_file_id,
+            "created_by_id": item.created_by_id,
+            "auto_off_after": item.auto_off_after,
+            "status": status,
+            "printer_name": printer.name if printer else f"Printer {printer_id}",
+            "filename": str(data.get("filename") or ""),
+        }
 
     async def _start_print(self, db: AsyncSession, item: PrintQueueItem):
         """Upload file and start print for a queue item.
@@ -2750,7 +2823,14 @@ class PrintScheduler:
             file_path = settings.base_dir / archive.file_path
             filename = archive.filename
             if not self._artifact_matches_provider(printer, file_path, archive.extra_data):
-                await self._fail_artifact_mismatch(db, item, printer)
+                await self._record_moonraker_dispatch_failure(
+                    db,
+                    item,
+                    archive,
+                    printer,
+                    filename,
+                    f"Source artifact is not compatible with {printer.provider} printers",
+                )
                 return
 
         elif item.library_file_id:
@@ -2770,7 +2850,14 @@ class PrintScheduler:
             file_path = lib_path if lib_path.is_absolute() else settings.base_dir / library_file.file_path
             filename = library_file.filename
             if not self._artifact_matches_provider(printer, file_path, library_file.file_metadata):
-                await self._fail_artifact_mismatch(db, item, printer)
+                await self._record_moonraker_dispatch_failure(
+                    db,
+                    item,
+                    None,
+                    printer,
+                    filename,
+                    f"Source artifact is not compatible with {printer.provider} printers",
+                )
                 return
 
             # Create archive from library file so usage tracking has access to the 3MF
