@@ -65,6 +65,34 @@ class TestSupportLogsAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_get_logs_scrubs_stored_moonraker_secrets(self, async_client: AsyncClient, db_session):
+        from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+        from backend.app.models.printer import Printer
+
+        printer = Printer(name="Klipper", provider="moonraker")
+        config = MoonrakerPrinterConfig(base_url="http://klipper.local:7125")
+        config.api_key = "moonraker-secret"
+        printer.moonraker_config = config
+        db_session.add(printer)
+        await db_session.commit()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "bambuddy.log"
+            log_file.write_text(
+                "2024-01-15 10:30:45,123 INFO [moonraker] "
+                f"X-Api-Key: moonraker-secret ciphertext={config.api_key_ciphertext}\n"
+            )
+            with patch("backend.app.services.log_reader.settings") as mock_settings:
+                mock_settings.log_dir = Path(tmpdir)
+                response = await async_client.get("/api/v1/support/logs")
+
+        assert response.status_code == 200
+        assert "moonraker-secret" not in response.text
+        assert config.api_key_ciphertext not in response.text
+        assert "[MOONRAKER_API_KEY]" in response.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_get_logs_with_level_filter(self, async_client: AsyncClient):
         """Verify get logs filters by log level."""
         log_content = """2024-01-15 10:30:45,123 INFO [backend.app.main] Server started

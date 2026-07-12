@@ -31,6 +31,7 @@ from backend.app.schemas.printer import (
     FilaSwitchResponse,
     HmsActionBody,
     HMSErrorResponse,
+    MoonrakerConnectionTestResponse,
     NozzleInfoResponse,
     NozzleRackSlot,
     PrinterCreate,
@@ -50,6 +51,7 @@ from backend.app.services.bambu_ftp import (
     get_storage_info_async,
     list_files_async,
 )
+from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
 from backend.app.services.printer_diagnostic import run_connection_diagnostic
 from backend.app.services.printer_manager import (
     get_derived_status_name,
@@ -180,6 +182,38 @@ async def create_printer(
         await printer_manager.connect_printer(printer)
 
     return _serialize_printer(printer, include_secret=False)
+
+
+@router.post("/{printer_id}/test-connection", response_model=MoonrakerConnectionTestResponse)
+async def test_moonraker_connection(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
+    db: AsyncSession = Depends(get_db),
+):
+    """Test only the stored Moonraker origin; never accept a request-time URL."""
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+    )
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    if printer.provider != PrinterProvider.MOONRAKER or printer.moonraker_config is None:
+        raise HTTPException(400, "Printer does not have a Moonraker configuration")
+
+    config = printer.moonraker_config
+    try:
+        connected = await MoonrakerHTTPClient(
+            base_url=config.base_url,
+            api_key=config.api_key,
+            authorization=config.authorization,
+            tls_verify=config.tls_verify,
+        ).test_connection()
+    except (MoonrakerHTTPError, RuntimeError, ValueError):
+        return MoonrakerConnectionTestResponse(success=False, message="Could not connect to Moonraker.")
+
+    if not connected:
+        return MoonrakerConnectionTestResponse(success=False, message="Moonraker did not accept the connection test.")
+    return MoonrakerConnectionTestResponse(success=True, message="Connected to Moonraker.")
 
 
 @router.get("/usb-cameras")

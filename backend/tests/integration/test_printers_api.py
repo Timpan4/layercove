@@ -173,6 +173,50 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_moonraker_connection_test_uses_stored_secret_without_returning_it(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Klipper Printer",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125", "api_key": "stored-secret"},
+            },
+        )
+        assert created.status_code == 200
+
+        with patch("backend.app.api.routes.printers.MoonrakerHTTPClient") as client_class:
+            client_class.return_value.test_connection = AsyncMock(return_value=True)
+            response = await async_client.post(f"/api/v1/printers/{created.json()['id']}/test-connection")
+
+        assert response.status_code == 200
+        assert response.json() == {"success": True, "message": "Connected to Moonraker."}
+        assert "stored-secret" not in response.text
+        assert client_class.call_args.kwargs["api_key"] == "stored-secret"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_moonraker_connection_test_requires_printer_update_permission(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Klipper Printer",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125"},
+            },
+        )
+        assert created.status_code == 200
+        enabled = await async_client.post(
+            "/api/v1/auth/setup",
+            json={"auth_enabled": True, "admin_username": "admin", "admin_password": "AdminPass1!"},
+        )
+        assert enabled.status_code == 200
+
+        response = await async_client.post(f"/api/v1/printers/{created.json()['id']}/test-connection")
+
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_update_rejects_fields_from_the_other_provider(self, async_client: AsyncClient):
         bambu = await async_client.post(
             "/api/v1/printers/",

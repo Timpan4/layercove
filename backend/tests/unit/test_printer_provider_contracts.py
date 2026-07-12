@@ -90,6 +90,7 @@ def test_moonraker_base_url_allows_private_lan_address():
         "http://klipper.local?token=secret",
         "http://127.0.0.1:7125",
         "http://169.254.169.254:7125",
+        "http://100.100.100.200:7125",
         "http://224.0.0.1:7125",
         "http://0.0.0.0:7125",
         "http://2130706433:7125",

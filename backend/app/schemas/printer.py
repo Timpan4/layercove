@@ -5,6 +5,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
 from backend.app.services.printer_types import PrinterCapabilities, PrinterProvider, capabilities_for_provider
 
 
@@ -28,8 +29,14 @@ def _normalize_provider_url(value: str, *, websocket: bool) -> str:
         except OSError:
             address = None
     if address is not None:
-        address = getattr(address, "ipv4_mapped", None) or address
-        if address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified:
+        address = unwrap_ipv4_mapped(address)
+        if (
+            address in CLOUD_METADATA_IPS
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_unspecified
+        ):
             raise ValueError("URL host is not allowed")
 
     host = parsed.hostname.lower()
@@ -73,6 +80,11 @@ class MoonrakerPrinterConfigResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class MoonrakerConnectionTestResponse(BaseModel):
+    success: bool
+    message: str
 
 
 class PrinterBase(BaseModel):
@@ -217,9 +229,7 @@ class PrinterResponse(PrinterBase):
             "capabilities": capabilities_for_provider(
                 PrinterProvider(printer.provider),
                 camera_configured=bool(
-                    printer.external_camera_enabled
-                    and printer.external_camera_url
-                    and printer.external_camera_type
+                    printer.external_camera_enabled and printer.external_camera_url and printer.external_camera_type
                 ),
             ),
             "moonraker_config": (
