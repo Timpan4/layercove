@@ -4031,8 +4031,12 @@ async def slice_and_persist_as_archive(
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
-        archive_dir = app_settings.archive_dir / printer_folder / f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}"
-        out_path = archive_dir / out_filename
+        archive_dir = safe_join_under(
+            app_settings.archive_dir,
+            printer_folder,
+            f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}",
+        )
+        out_path = safe_join_under(archive_dir, out_filename)
         archive_dir_created = False
         metadata = dict(source_archive.extra_data) if source_archive.extra_data else {}
         metadata.update(
