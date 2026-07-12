@@ -358,6 +358,46 @@ def test_reconnect_idle_discards_stale_job_before_next_start_and_completion():
     assert lifecycle[2].correlation_id == lifecycle[1].correlation_id
 
 
+@pytest.mark.parametrize("disconnect_before_idle", [False, True])
+def test_idle_after_terminal_scrubs_job_cache_before_partial_next_job(disconnect_before_idle):
+    events = []
+    backend = MoonrakerBackend(printer(), emit=events.append, transport_factory=lambda **_: None)
+    backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)
+    backend._merge_status(
+        {
+            "print_stats": {
+                "state": "printing",
+                "filename": "a.gcode",
+                "job_id": "job-a",
+                "message": "old job",
+                "print_duration": 12,
+                "info": {"current_layer": 3, "total_layer": 10},
+            },
+            "virtual_sdcard": {"progress": 0.3, "file_path": "a.gcode"},
+        },
+        bootstrap=False,
+    )
+    backend._merge_status({"print_stats": {"state": "completed"}}, bootstrap=False)
+    if disconnect_before_idle:
+        backend._emit_offline()
+
+    backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=disconnect_before_idle)
+    backend._merge_status({"print_stats": {"state": "printing"}}, bootstrap=False)
+    backend._merge_status({"print_stats": {"state": "completed"}}, bootstrap=False)
+
+    lifecycle = [event for event in events if isinstance(event, JobLifecycle)]
+    starts = [event for event in lifecycle if event.kind == "started"]
+    completions = [event for event in lifecycle if event.kind == "completed"]
+    assert len(starts) == 2
+    assert len(completions) == 2
+    assert starts[0].correlation_id == "moonraker:job-a"
+    assert starts[1].correlation_id != starts[0].correlation_id
+    assert starts[1].provider_job_id is None
+    assert starts[1].filename is None
+    assert completions[1].correlation_id == starts[1].correlation_id
+    assert completions[1].filename is None
+
+
 @pytest.mark.parametrize(
     "params",
     [

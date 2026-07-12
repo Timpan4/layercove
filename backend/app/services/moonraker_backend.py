@@ -264,11 +264,8 @@ class MoonrakerBackend:
             if isinstance(name, str) and isinstance(value, dict):
                 self._objects.setdefault(name, {}).update(value)
         self._snapshot = self._snapshot_from_objects(connected=True)
-        if (
-            bootstrap
-            and self._snapshot.state is NormalizedPrinterState.IDLE
-            and self._last_state in _ACTIVE_STATES
-            and self._active_correlation_id is not None
+        if self._snapshot.state is NormalizedPrinterState.IDLE and (
+            self._last_state in _ACTIVE_STATES or self._last_state in _TERMINAL_KINDS
         ):
             self._clear_stale_job_data()
             self._snapshot = self._snapshot_from_objects(connected=True)

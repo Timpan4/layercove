@@ -649,6 +649,9 @@ class PrinterManager:
             if dedupe_key in self._seen_lifecycle_events:
                 return
             self._seen_lifecycle_events.add(dedupe_key)
+            backend = self._backends.get(printer_id)
+            if backend is None or backend.provider is not PrinterProvider.BAMBU:
+                return
             callback = self._on_print_start if event.kind == "started" else self._on_print_complete
             await self._call_backend_callback(callback, printer_id, event.data)
         elif isinstance(event, ProviderEvent):

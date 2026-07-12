@@ -168,6 +168,37 @@ async def test_manager_forwards_events_fifo_and_drops_events_after_disconnect():
 
 
 @pytest.mark.asyncio
+async def test_manager_routes_legacy_lifecycle_callbacks_only_for_bambu():
+    manager = PrinterManager(registry=PrinterBackendRegistry())
+    observed = []
+
+    async def on_start(printer_id, data):
+        observed.append((printer_id, "started", data["name"]))
+
+    async def on_complete(printer_id, data):
+        observed.append((printer_id, "completed", data["name"]))
+
+    manager.set_print_start_callback(on_start)
+    manager.set_print_complete_callback(on_complete)
+    manager._backends = {
+        1: SimpleNamespace(provider=PrinterProvider.MOONRAKER),
+        2: SimpleNamespace(provider=PrinterProvider.BAMBU),
+    }
+
+    for printer_id in (1, 2):
+        await manager._forward_backend_event(printer_id, lifecycle("started", "cube", f"job-{printer_id}"))
+        await manager._forward_backend_event(printer_id, lifecycle("completed", "cube", f"job-{printer_id}"))
+
+    assert observed == [(2, "started", "cube"), (2, "completed", "cube")]
+    assert manager._seen_lifecycle_events == {
+        (1, "job-1", "started"),
+        (1, "job-1", "completed"),
+        (2, "job-2", "started"),
+        (2, "job-2", "completed"),
+    }
+
+
+@pytest.mark.asyncio
 async def test_queued_connected_status_cannot_override_later_forced_offline_status():
     backend = FakeBackend()
     registry = PrinterBackendRegistry()
