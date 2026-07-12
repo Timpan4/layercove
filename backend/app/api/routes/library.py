@@ -3499,6 +3499,7 @@ async def _run_slicer_with_fallback(
     # specific fields the user changed (printer/process/filament) while
     # the embedded plate / model definitions remain intact.
     is_3mf = model_filename.lower().endswith(".3mf")
+    is_bambu_3mf = request.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
     primary_bytes = model_bytes
     if is_3mf:
         # Strip "-1" inherit-from-parent sentinels from
@@ -3516,7 +3517,8 @@ async def _run_slicer_with_fallback(
         # without patching, the source's `enable_support: 1` + support-slot
         # assignments get discarded and the slice comes out single-material
         # with a PVA slot loaded but never used.
-        presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
+        if is_bambu_3mf:
+            presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
 
     used_embedded_settings = False
     service = SlicerApiService(api_url)
@@ -3578,7 +3580,7 @@ async def _run_slicer_with_fallback(
     # never touches the unused slot. Replace unused-slot entries with the
     # slot-1 selection before the real slice so the loaded-filament set
     # is materially homogeneous.
-    if is_3mf and request.plate is not None:
+    if is_3mf and is_bambu_3mf and request.plate is not None:
         from backend.app.services.slicer_3mf_convert import substitute_unused_plate_filaments
 
         filament_jsons = substitute_unused_plate_filaments(primary_bytes, request.plate, filament_jsons)
@@ -3843,7 +3845,6 @@ async def slice_and_persist(
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
         out_path = get_library_files_dir() / f"{uuid.uuid4().hex}.gcode"
-        out_path.write_bytes(result.content)
         metadata: dict = {
             "destination_artifact_kind": DestinationArtifactKind.KLIPPER_GCODE.value,
             "print_time_seconds": result.print_time_seconds,
@@ -3863,8 +3864,16 @@ async def slice_and_persist(
             source_type="sliced",
             created_by_id=current_user_id,
         )
-        db.add(new_file)
-        await db.commit()
+        try:
+            out_path.write_bytes(result.content)
+            db.add(new_file)
+            await db.commit()
+        except Exception:
+            try:
+                await db.rollback()
+            finally:
+                out_path.unlink(missing_ok=True)
+            raise
         return SliceResponse(
             library_file_id=new_file.id,
             name=new_file.filename,
@@ -4007,9 +4016,8 @@ async def slice_and_persist_as_archive(
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
         archive_dir = app_settings.archive_dir / printer_folder / f"{timestamp}_{base_name}_sliced"
-        archive_dir.mkdir(parents=True, exist_ok=True)
         out_path = archive_dir / out_filename
-        out_path.write_bytes(result.content)
+        archive_dir_preexisting = archive_dir.exists()
         metadata = dict(source_archive.extra_data) if source_archive.extra_data else {}
         metadata.update(
             {
@@ -4042,9 +4050,24 @@ async def slice_and_persist_as_archive(
             extra_data=metadata,
             created_by_id=current_user_id,
         )
-        db.add(new_archive)
-        await db.commit()
-        await db.refresh(new_archive)
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=True)
+            out_path.write_bytes(result.content)
+            db.add(new_archive)
+            await db.flush()
+            await db.refresh(new_archive)
+            await db.commit()
+        except Exception:
+            try:
+                await db.rollback()
+            finally:
+                out_path.unlink(missing_ok=True)
+                if not archive_dir_preexisting:
+                    try:
+                        archive_dir.rmdir()
+                    except OSError:
+                        pass
+            raise
         return SliceArchiveResponse(
             archive_id=new_archive.id,
             name=new_archive.print_name or out_filename,

@@ -344,3 +344,108 @@ class TestArchivePlatesHasGcode:
         # The endpoint still reports plates (from JSON/PNG) — the flag is what
         # the frontend keys on, not an empty plate list.
         assert len(data["plates"]) == 3
+
+
+class TestRawGcodeArchive:
+    """Raw Klipper artifacts are previewable without treating them as ZIPs."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_raw_gcode_is_downloadable_and_previewable(
+        self,
+        async_client: AsyncClient,
+        archive_factory,
+        printer_factory,
+        _patch_archive_base_dir,
+    ):
+        raw_path = _patch_archive_base_dir / "voron.gcode"
+        raw_path.write_bytes(b"; generated for Voron\nG28\n")
+        printer = await printer_factory()
+        archive = await archive_factory(
+            printer.id,
+            filename="voron.gcode",
+            file_path="voron.gcode",
+        )
+
+        capabilities = await async_client.get(f"/api/v1/archives/{archive.id}/capabilities")
+        plates = await async_client.get(f"/api/v1/archives/{archive.id}/plates")
+        preview = await async_client.get(f"/api/v1/archives/{archive.id}/gcode")
+        download = await async_client.get(f"/api/v1/archives/{archive.id}/download")
+
+        assert capabilities.status_code == 200
+        assert capabilities.json()["has_gcode"] is True
+        assert plates.status_code == 200
+        assert plates.json()["has_gcode"] is True
+        assert plates.json()["is_multi_plate"] is False
+        assert preview.status_code == 200
+        assert preview.content == raw_path.read_bytes()
+        assert preview.headers["content-type"].startswith("text/plain")
+        assert download.status_code == 200
+        assert download.content == raw_path.read_bytes()
+        assert download.headers["content-type"].startswith("text/x-gcode")
+        assert 'filename="voron.gcode"' in download.headers["content-disposition"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_raw_gcode_path_must_stay_under_base_dir(
+        self,
+        async_client: AsyncClient,
+        archive_factory,
+        printer_factory,
+        _patch_archive_base_dir,
+    ):
+        outside = _patch_archive_base_dir.parent / "outside.gcode"
+        outside.write_bytes(b"M112\n")
+        printer = await printer_factory()
+        archive = await archive_factory(
+            printer.id,
+            filename="outside.gcode",
+            file_path="../outside.gcode",
+        )
+
+        response = await async_client.get(f"/api/v1/archives/{archive.id}/gcode")
+
+        assert response.status_code == 400
+        assert response.content != outside.read_bytes()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_raw_gcode_requires_matching_stored_suffix(
+        self,
+        async_client: AsyncClient,
+        archive_factory,
+        printer_factory,
+        _patch_archive_base_dir,
+    ):
+        wrong_path = _patch_archive_base_dir / "not-gcode.txt"
+        wrong_path.write_text("G28\n")
+        printer = await printer_factory()
+        archive = await archive_factory(
+            printer.id,
+            filename="not-gcode.gcode",
+            file_path="not-gcode.txt",
+        )
+
+        response = await async_client.get(f"/api/v1/archives/{archive.id}/gcode")
+
+        assert response.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_missing_raw_gcode_returns_404(
+        self,
+        async_client: AsyncClient,
+        archive_factory,
+        printer_factory,
+        _patch_archive_base_dir,
+    ):
+        printer = await printer_factory()
+        archive = await archive_factory(
+            printer.id,
+            filename="missing.gcode",
+            file_path="missing.gcode",
+        )
+
+        response = await async_client.get(f"/api/v1/archives/{archive.id}/gcode")
+
+        assert response.status_code == 404

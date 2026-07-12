@@ -17,11 +17,14 @@ import io
 import json
 import zipfile
 from collections.abc import Callable
+from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import httpx
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
 
 from backend.app.api.routes.library import (
     _slicer_rejection_message,
@@ -29,6 +32,7 @@ from backend.app.api.routes.library import (
     slice_and_persist_as_archive,
 )
 from backend.app.core.config import settings as app_settings
+from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
 from backend.app.models.local_preset import LocalPreset
 from backend.app.models.settings import Settings as SettingsModel
@@ -292,6 +296,78 @@ class TestSliceLibraryFile:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_klipper_3mf_forwards_selected_profiles_verbatim(
+        self,
+        async_client: AsyncClient,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+    ):
+        source_path = slice_test_setup["tmp_path"] / "library" / "files" / "Voron.3mf"
+        source_path.write_bytes(_make_3mf_with_settings({"enable_support": "1"}))
+        source = LibraryFile(
+            filename=source_path.name,
+            file_path=str(source_path.relative_to(slice_test_setup["tmp_path"])),
+            file_type="3mf",
+            file_size=source_path.stat().st_size,
+        )
+        db_session.add(source)
+
+        printer = await db_session.get(LocalPreset, slice_test_setup["printer_id"])
+        process = await db_session.get(LocalPreset, slice_test_setup["process_id"])
+        filament_one = await db_session.get(LocalPreset, slice_test_setup["filament_id"])
+        assert printer is not None and process is not None and filament_one is not None
+        printer.setting = json.dumps({"type": "machine", "wire_marker": "printer-selected"})
+        process.setting = json.dumps({"type": "process", "wire_marker": "process-selected", "enable_support": "0"})
+        filament_one.setting = json.dumps({"type": "filament", "wire_marker": "filament-one"})
+        filament_two = LocalPreset(
+            name="Distinct unused filament",
+            preset_type="filament",
+            source="orcaslicer",
+            setting=json.dumps({"type": "filament", "wire_marker": "filament-two-unused"}),
+        )
+        db_session.add(filament_two)
+        await db_session.commit()
+        await db_session.refresh(source)
+        await db_session.refresh(filament_two)
+
+        def forbidden_substitution(*_args, **_kwargs):
+            raise AssertionError("Klipper profiles must not use Bambu unused-slot substitution")
+
+        monkeypatch.setattr(
+            "backend.app.services.slicer_3mf_convert.substitute_unused_plate_filaments",
+            forbidden_substitution,
+        )
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = bytes(request.content)
+            return httpx.Response(status_code=200, content=b"G28\n")
+
+        _install_mock_sidecar(handler)
+        response = await async_client.post(
+            f"/api/v1/library/files/{source.id}/slice",
+            json={
+                "printer_preset_id": printer.id,
+                "process_preset_id": process.id,
+                "filament_presets": [
+                    {"source": "local", "id": str(filament_one.id)},
+                    {"source": "local", "id": str(filament_two.id)},
+                ],
+                "plate": 1,
+                "destination_artifact_kind": "klipper_gcode",
+            },
+        )
+        assert response.status_code == 202, response.text
+        final = await _wait_for_job(async_client, response.json()["job_id"])
+        assert final["status"] == "completed", final
+
+        body = captured["body"]
+        for selected in (printer.setting, process.setting, filament_one.setting, filament_two.setting):
+            assert body.count(selected.encode()) == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_klipper_destination_sanitizes_stored_source_name(
         self, async_client: AsyncClient, db_session, slice_test_setup
     ):
@@ -412,6 +488,109 @@ class TestSliceLibraryFile:
             "filament_used_g": 1.5,
             "filament_used_mm": 25.0,
         }
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_klipper_library_commit_failure_removes_file_and_rolls_back(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+    ):
+        _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=b"G28\n"))
+        files_dir = slice_test_setup["tmp_path"] / "library" / "files"
+        before = set(files_dir.iterdir())
+        monkeypatch.setattr(db_session, "commit", AsyncMock(side_effect=RuntimeError("commit failed")))
+
+        with pytest.raises(RuntimeError, match="commit failed"):
+            await slice_and_persist(
+                db_session,
+                model_bytes=b"solid failure\n",
+                model_filename="Failure.stl",
+                folder_id=None,
+                extra_metadata=None,
+                request=SliceRequest(
+                    printer_preset_id=slice_test_setup["printer_id"],
+                    process_preset_id=slice_test_setup["process_id"],
+                    filament_preset_id=slice_test_setup["filament_id"],
+                    destination_artifact_kind="klipper_gcode",
+                ),
+                current_user_id=None,
+            )
+
+        assert set(files_dir.iterdir()) == before
+        assert (
+            await db_session.execute(select(LibraryFile).where(LibraryFile.filename == "Failure.gcode"))
+        ).scalar_one_or_none() is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("failure_method", ["commit", "refresh"])
+    async def test_klipper_archive_db_failure_cleans_only_new_artifacts(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+        failure_method,
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=b"G28\n"))
+        archive_root = slice_test_setup["tmp_path"] / "archives"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        fixed_now = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+
+        class FixedDateTime:
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_now
+
+        monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
+        output_dir = archive_root / "unassigned" / "20260712_120000_Failure_sliced"
+        preexisting = failure_method == "refresh"
+        if preexisting:
+            output_dir.mkdir(parents=True)
+            (output_dir / "keep.txt").write_text("keep")
+
+        monkeypatch.setattr(db_session, failure_method, AsyncMock(side_effect=RuntimeError(f"{failure_method} failed")))
+        source_archive = SimpleNamespace(
+            id=999,
+            printer_id=None,
+            project_id=None,
+            extra_data=None,
+            print_name="Failure",
+            filament_type=None,
+            filament_color=None,
+            layer_height=None,
+            nozzle_diameter=None,
+            sliced_for_model=None,
+            bed_type=None,
+            makerworld_url=None,
+            designer=None,
+        )
+
+        with pytest.raises(RuntimeError, match=f"{failure_method} failed"):
+            await slice_and_persist_as_archive(
+                db_session,
+                model_bytes=b"solid failure\n",
+                model_filename="Failure.stl",
+                request=SliceRequest(
+                    printer_preset_id=slice_test_setup["printer_id"],
+                    process_preset_id=slice_test_setup["process_id"],
+                    filament_preset_id=slice_test_setup["filament_id"],
+                    destination_artifact_kind="klipper_gcode",
+                ),
+                source_archive=source_archive,
+                current_user_id=None,
+            )
+
+        assert not (output_dir / "Failure.gcode").exists()
+        assert output_dir.exists() is preexisting
+        if preexisting:
+            assert (output_dir / "keep.txt").read_text() == "keep"
+        assert (
+            await db_session.execute(select(PrintArchive).where(PrintArchive.filename == "Failure.gcode"))
+        ).scalar_one_or_none() is None
 
     @pytest.mark.asyncio
     @pytest.mark.integration
