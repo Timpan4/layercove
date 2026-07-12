@@ -41,6 +41,9 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/archives", tags=["archives"])
 
+_THREEMF_MEDIA_TYPE = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
+_GCODE_MEDIA_TYPE = "text/x-gcode"
+
 
 def _safe_filename(filename: str) -> str:
     """Extract basename from a client-supplied filename, preventing path traversal.
@@ -49,6 +52,20 @@ def _safe_filename(filename: str) -> str:
     '..\\\\..\\\\evil.3mf' is correctly stripped to 'evil.3mf' on Linux.
     """
     return Path(filename.replace("\\", "/")).name
+
+
+def _archive_file_path(archive: PrintArchive) -> Path:
+    """Resolve a DB-stored archive path without allowing it outside storage."""
+    return safe_join_under(settings.base_dir, archive.file_path)
+
+
+def _is_raw_gcode_archive(archive: PrintArchive, file_path: Path) -> bool:
+    """Raw G-code requires agreement between its public and stored suffixes."""
+    return archive.filename.lower().endswith(".gcode") and file_path.suffix.lower() == ".gcode"
+
+
+def _archive_media_type(archive: PrintArchive, file_path: Path) -> str:
+    return _GCODE_MEDIA_TYPE if _is_raw_gcode_archive(archive, file_path) else _THREEMF_MEDIA_TYPE
 
 
 _TIMELAPSE_FILENAME_TS_RE = _re.compile(r"(\d{4}-\d{2}-\d{2}_\d{2}-\d{2}-\d{2})")
@@ -2024,12 +2041,12 @@ async def download_archive(
         )
     ),
 ):
-    """Download the 3MF file."""
+    """Download the stored 3MF or raw G-code artifact."""
     user, can_read_all = auth_result
     service = ArchiveService(db)
     archive = _ensure_archive_visible(await service.get_archive(archive_id), user, can_read_all)
 
-    file_path = settings.base_dir / archive.file_path
+    file_path = _archive_file_path(archive)
     if not file_path.is_file():
         raise HTTPException(404, "File not found")
 
@@ -2039,7 +2056,7 @@ async def download_archive(
     return FileResponse(
         path=file_path,
         filename=archive.filename,
-        media_type="application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+        media_type=_archive_media_type(archive, file_path),
         content_disposition_type=content_disposition,
     )
 
@@ -2056,19 +2073,19 @@ async def download_archive_with_filename(
         )
     ),
 ):
-    """Download the 3MF file with filename in URL."""
+    """Download the stored artifact with filename in URL."""
     user, can_read_all = auth_result
     service = ArchiveService(db)
     archive = _ensure_archive_visible(await service.get_archive(archive_id), user, can_read_all)
 
-    file_path = settings.base_dir / archive.file_path
+    file_path = _archive_file_path(archive)
     if not file_path.is_file():
         raise HTTPException(404, "File not found")
 
     return FileResponse(
         path=file_path,
         filename=archive.filename,
-        media_type="application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+        media_type=_archive_media_type(archive, file_path),
     )
 
 
@@ -2105,7 +2122,7 @@ async def download_archive_for_slicer(
     filename: str,
     db: AsyncSession = Depends(get_db),
 ):
-    """Download 3MF file using a slicer download token.
+    """Download an archive artifact using a slicer download token.
 
     Token-authenticated (no auth headers needed). The token is short-lived
     and single-use, created by POST /{archive_id}/slicer-token.
@@ -2121,14 +2138,14 @@ async def download_archive_for_slicer(
     if not archive:
         raise HTTPException(404, "Archive not found")
 
-    file_path = settings.base_dir / archive.file_path
+    file_path = _archive_file_path(archive)
     if not file_path.is_file():
         raise HTTPException(404, "File not found")
 
     return FileResponse(
         path=file_path,
         filename=archive.filename,
-        media_type="application/vnd.ms-package.3dmanufacturing-3dmodel+xml",
+        media_type=_archive_media_type(archive, file_path),
     )
 
 
@@ -2912,14 +2929,14 @@ async def get_archive_capabilities(
         )
     ),
 ):
-    """Check what viewing capabilities are available for this 3MF file."""
+    """Check what viewing capabilities are available for this artifact."""
     import defusedxml.ElementTree as ET
 
     user, can_read_all = auth_result
     service = ArchiveService(db)
     archive = _ensure_archive_visible(await service.get_archive(archive_id), user, can_read_all)
 
-    file_path = settings.base_dir / archive.file_path
+    file_path = _archive_file_path(archive)
     if not file_path.is_file():
         raise HTTPException(404, "File not found")
 
@@ -3013,6 +3030,15 @@ async def get_archive_capabilities(
             filament_colors = source_colors
         if source_volume["x"] != 256 or source_volume["y"] != 256 or source_volume["z"] != 256:
             build_volume = source_volume
+
+    if _is_raw_gcode_archive(archive, file_path):
+        return {
+            "has_model": has_model,
+            "has_gcode": True,
+            "has_source": has_source,
+            "build_volume": build_volume,
+            "filament_colors": filament_colors,
+        }
 
     try:
         with zipfile.ZipFile(file_path, "r") as zf:
@@ -3137,7 +3163,7 @@ async def get_gcode(
         )
     ),
 ):
-    """Extract and return G-code from the 3MF file.
+    """Stream raw G-code or extract it from a 3MF file.
 
     When *plate* is provided, returns the G-code for that specific plate
     (e.g. ``?plate=2`` returns ``Metadata/plate_2.gcode``). If omitted, falls
@@ -3148,12 +3174,18 @@ async def get_gcode(
     service = ArchiveService(db)
     archive = _ensure_archive_visible(await service.get_archive(archive_id), user, can_read_all)
 
-    file_path = settings.base_dir / archive.file_path
+    file_path = _archive_file_path(archive)
     if not file_path.is_file():
         raise HTTPException(404, "File not found")
 
     if plate is not None and plate < 1:
         raise HTTPException(400, "Plate index must be >= 1")
+
+    if _is_raw_gcode_archive(archive, file_path):
+        if plate not in (None, 1):
+            raise HTTPException(404, f"Plate {plate} not found in this archive")
+        # Stream raw Klipper output so large jobs stay memory-bounded.
+        return FileResponse(path=file_path, media_type="text/plain")
 
     try:
         with zipfile.ZipFile(file_path, "r") as zf:
@@ -3402,7 +3434,7 @@ async def get_archive_plates(
     service = ArchiveService(db)
     archive = _ensure_archive_visible(await service.get_archive(archive_id), user, can_read_all)
 
-    file_path = settings.base_dir / archive.file_path
+    file_path = _archive_file_path(archive)
     if not file_path.is_file():
         raise HTTPException(404, "Archive file not found")
 
@@ -3414,6 +3446,17 @@ async def get_archive_plates(
     # Printer / process preset names the 3MF was prepared with — used by the
     # SliceModal to default its dropdowns (#1325).
     embedded_presets: dict[str, str | None] = {"printer": None, "process": None}
+
+    if _is_raw_gcode_archive(archive, file_path):
+        return {
+            "archive_id": archive_id,
+            "filename": archive.filename,
+            "plates": [],
+            "is_multi_plate": False,
+            "has_gcode": True,
+            "embedded_printer": None,
+            "embedded_process": None,
+        }
 
     try:
         with zipfile.ZipFile(file_path, "r") as zf:

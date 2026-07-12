@@ -4001,6 +4001,11 @@ export default {
     actionAllTitle: 'Laminar todas las bandejas en una salida única de varias bandejas (un solo archivo). La selección de filamento cubre cada hueco que defina el proyecto.',
     allPlatesToggle: 'Laminar las {{count}} bandejas',
     slicing: 'Laminando…',
+    destination: {
+      label: 'Salida',
+      bambu: '3MF de Bambu',
+      klipper: 'G-code de Klipper',
+    },
     printer: 'Perfil de impresora',
     process: 'Perfil de proceso',
     filament: 'Perfil de filamento',

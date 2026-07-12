@@ -62,11 +62,12 @@ from backend.app.schemas.library import (
     ZipExtractResponse,
     ZipExtractResult,
 )
-from backend.app.schemas.slicer import SliceRequest, SliceResponse
+from backend.app.schemas.slicer import DestinationArtifactKind, SliceRequest, SliceResponse
 from backend.app.services.archive import ThreeMFParser
 from backend.app.services.plate_thumbnail import inject_plate_thumbnails_if_missing
 from backend.app.services.stl_thumbnail import MIN_USABLE_STL_BYTES, generate_stl_thumbnail
 from backend.app.utils.filename import InvalidFilenameError, validate_print_filename
+from backend.app.utils.safe_path import safe_join_under
 from backend.app.utils.threemf_tools import (
     extract_embedded_presets_from_3mf,
     extract_nozzle_mapping_from_3mf,
@@ -3499,6 +3500,7 @@ async def _run_slicer_with_fallback(
     # specific fields the user changed (printer/process/filament) while
     # the embedded plate / model definitions remain intact.
     is_3mf = model_filename.lower().endswith(".3mf")
+    is_bambu_3mf = request.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
     primary_bytes = model_bytes
     if is_3mf:
         # Strip "-1" inherit-from-parent sentinels from
@@ -3516,7 +3518,8 @@ async def _run_slicer_with_fallback(
         # without patching, the source's `enable_support: 1` + support-slot
         # assignments get discarded and the slice comes out single-material
         # with a PVA slot loaded but never used.
-        presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
+        if is_bambu_3mf:
+            presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
 
     used_embedded_settings = False
     service = SlicerApiService(api_url)
@@ -3578,7 +3581,7 @@ async def _run_slicer_with_fallback(
     # never touches the unused slot. Replace unused-slot entries with the
     # slot-1 selection before the real slice so the loaded-filament set
     # is materially homogeneous.
-    if is_3mf and request.plate is not None:
+    if is_3mf and is_bambu_3mf and request.plate is not None:
         from backend.app.services.slicer_3mf_convert import substitute_unused_plate_filaments
 
         filament_jsons = substitute_unused_plate_filaments(primary_bytes, request.plate, filament_jsons)
@@ -3593,7 +3596,8 @@ async def _run_slicer_with_fallback(
     # and merge the per-plate outputs into one multi-plate 3MF instead.
     # Same-class slice-all goes through the regular path below — the
     # sidecar's native ``--slice 0`` produces the right shape directly.
-    use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and request.export_3mf
+    export_3mf = request.export_3mf and request.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
+    use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and export_3mf
 
     try:
         try:
@@ -3684,7 +3688,7 @@ async def _run_slicer_with_fallback(
                     process_profile_json=presets["process"],
                     filament_profile_jsons=filament_jsons,
                     plate=request.plate,
-                    export_3mf=request.export_3mf,
+                    export_3mf=export_3mf,
                     arrange=cross_class_arrange,
                     request_id=progress_request_id,
                     on_progress=progress_callback,
@@ -3699,7 +3703,7 @@ async def _run_slicer_with_fallback(
                 # (e.g. re-slicing an H2D model for an X1C: the object is off
                 # the smaller bed). Surface the slicer's reason instead.
                 raise HTTPException(status_code=400, detail=rejection) from exc
-            if not is_3mf:
+            if not is_3mf or request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE:
                 raise
             logger.warning(
                 "Slicer CLI failed on the --load-settings path for %s (%s); retrying with embedded settings",
@@ -3718,7 +3722,7 @@ async def _run_slicer_with_fallback(
                 model_bytes=primary_bytes,
                 model_filename=model_filename,
                 plate=request.plate,
-                export_3mf=request.export_3mf,
+                export_3mf=export_3mf,
                 request_id=progress_request_id,
                 on_progress=progress_callback,
             )
@@ -3813,13 +3817,13 @@ async def slice_and_persist(
     """Slice a model and save the result as a new ``LibraryFile`` in
     ``folder_id`` (same folder as the source by convention).
 
-    Always exports as ``.gcode.3mf`` so the existing library thumbnail
-    pipeline works on the new file. Plain ``.gcode`` would have no
-    embedded thumbnail to extract.
+    Bambu keeps the existing ``.gcode.3mf`` thumbnail pipeline. Klipper
+    persists raw ``.gcode`` and skips ZIP, thumbnail, and 3MF parsing.
     """
     from backend.app.services.archive import ThreeMFParser
 
-    library_request = request.model_copy(update={"export_3mf": True})
+    is_klipper_gcode = request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
+    library_request = request.model_copy(update={"export_3mf": not is_klipper_gcode})
 
     result, used_embedded_settings = await _run_slicer_with_fallback(
         db,
@@ -3829,6 +3833,71 @@ async def slice_and_persist(
         current_user_id=current_user_id,
         job_id=job_id,
     )
+
+    if is_klipper_gcode:
+        from backend.app.utils.filename import validate_moonraker_gcode_basename
+
+        safe_source_name = Path(model_filename.replace("\\", "/")).name
+        base_name = safe_source_name.rsplit(".", 1)[0]
+        out_filename = f"{base_name}.gcode"
+        try:
+            validate_moonraker_gcode_basename(out_filename)
+        except InvalidFilenameError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        files_dir = get_library_files_dir()
+        out_path: Path | None = None
+        for _ in range(8):
+            candidate = files_dir / f"{uuid.uuid4().hex}.gcode"
+            try:
+                with candidate.open("xb") as output:
+                    output.write(result.content)
+            except FileExistsError:
+                continue
+            except Exception:
+                candidate.unlink(missing_ok=True)
+                raise
+            out_path = candidate
+            break
+        if out_path is None:
+            raise RuntimeError("Could not allocate a unique library G-code path")
+
+        metadata: dict = {
+            "destination_artifact_kind": DestinationArtifactKind.KLIPPER_GCODE.value,
+            "print_time_seconds": result.print_time_seconds,
+            "filament_used_g": result.filament_used_g,
+            "filament_used_mm": result.filament_used_mm,
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+        new_file = LibraryFile(
+            folder_id=folder_id,
+            filename=out_filename,
+            file_path=to_relative_path(out_path),
+            file_type="gcode",
+            file_size=len(result.content),
+            file_hash=hashlib.sha256(result.content).hexdigest(),
+            file_metadata=metadata,
+            source_type="sliced",
+            created_by_id=current_user_id,
+        )
+        try:
+            db.add(new_file)
+            await db.commit()
+        except Exception:
+            try:
+                await db.rollback()
+            finally:
+                out_path.unlink(missing_ok=True)
+            raise
+        return SliceResponse(
+            library_file_id=new_file.id,
+            name=new_file.filename,
+            print_time_seconds=result.print_time_seconds,
+            filament_used_g=result.filament_used_g,
+            filament_used_mm=result.filament_used_mm,
+            used_embedded_settings=used_embedded_settings,
+        )
 
     base_name = model_filename.rsplit(".", 1)[0]
     out_filename = f"{base_name}.gcode.3mf"
@@ -3930,17 +3999,15 @@ async def slice_and_persist_as_archive(
 ):
     """Slice a model and save the result as a new ``PrintArchive`` row,
     inheriting printer / project / makerworld metadata from the source
-    archive. Always exports as a `.gcode.3mf` so the existing thumbnail
-    and plates infrastructure (which expects a zip-shaped 3MF) works on
-    the new archive. Returns ``SliceArchiveResponse``.
+    archive. Bambu keeps `.gcode.3mf`; Klipper persists raw `.gcode` without
+    ZIP, thumbnail, or 3MF-metadata processing. Returns ``SliceArchiveResponse``.
     """
     from backend.app.models.archive import PrintArchive
     from backend.app.schemas.slicer import SliceArchiveResponse
     from backend.app.services.archive import ThreeMFParser
 
-    # Archive sinks always want a 3MF. The library route still respects the
-    # caller's `export_3mf` flag; here we override.
-    archive_request = request.model_copy(update={"export_3mf": True})
+    is_klipper_gcode = request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
+    archive_request = request.model_copy(update={"export_3mf": not is_klipper_gcode})
 
     result, used_embedded_settings = await _run_slicer_with_fallback(
         db,
@@ -3951,158 +4018,254 @@ async def slice_and_persist_as_archive(
         current_user_id=current_user_id,
     )
 
-    base_name = model_filename.rsplit(".", 1)[0]
+    if is_klipper_gcode:
+        from backend.app.utils.filename import validate_moonraker_gcode_basename
+
+        safe_source_name = Path(model_filename.replace("\\", "/")).name
+        base_name = safe_source_name.rsplit(".", 1)[0]
+        out_filename = f"{base_name}.gcode"
+        try:
+            validate_moonraker_gcode_basename(out_filename)
+        except InvalidFilenameError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
+        archive_dir = safe_join_under(
+            app_settings.archive_dir,
+            printer_folder,
+            f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}",
+        )
+        out_path = safe_join_under(archive_dir, out_filename)
+        archive_dir_created = False
+        metadata = dict(source_archive.extra_data) if source_archive.extra_data else {}
+        metadata.update(
+            {
+                "destination_artifact_kind": DestinationArtifactKind.KLIPPER_GCODE.value,
+                "sliced_from_archive_id": source_archive.id,
+                "print_time_seconds": result.print_time_seconds,
+                "filament_used_g": result.filament_used_g,
+                "filament_used_mm": result.filament_used_mm,
+            }
+        )
+        new_archive = PrintArchive(
+            printer_id=source_archive.printer_id,
+            project_id=source_archive.project_id,
+            filename=out_filename,
+            file_path=str(out_path.relative_to(app_settings.base_dir)),
+            file_size=len(result.content),
+            content_hash=hashlib.sha256(result.content).hexdigest(),
+            thumbnail_path=None,
+            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_time_seconds=result.print_time_seconds,
+            filament_used_grams=result.filament_used_g or None,
+            filament_type=source_archive.filament_type,
+            filament_color=source_archive.filament_color,
+            layer_height=source_archive.layer_height,
+            nozzle_diameter=source_archive.nozzle_diameter,
+            sliced_for_model=source_archive.sliced_for_model,
+            bed_type=source_archive.bed_type,
+            makerworld_url=source_archive.makerworld_url,
+            designer=source_archive.designer,
+            extra_data=metadata,
+            created_by_id=current_user_id,
+        )
+        try:
+            archive_dir.mkdir(parents=True, exist_ok=False)
+            archive_dir_created = True
+            out_path.write_bytes(result.content)
+            db.add(new_archive)
+            await db.flush()
+            await db.refresh(new_archive)
+            await db.commit()
+        except Exception:
+            try:
+                await db.rollback()
+            finally:
+                if archive_dir_created:
+                    out_path.unlink(missing_ok=True)
+                    try:
+                        archive_dir.rmdir()
+                    except OSError:
+                        pass
+            raise
+        return SliceArchiveResponse(
+            archive_id=new_archive.id,
+            name=new_archive.print_name or out_filename,
+            print_time_seconds=result.print_time_seconds,
+            filament_used_g=result.filament_used_g,
+            filament_used_mm=result.filament_used_mm,
+            used_embedded_settings=used_embedded_settings,
+        )
+
+    safe_source_name = Path(model_filename.replace("\\", "/")).name
+    base_name = safe_source_name.rsplit(".", 1)[0]
     out_filename = f"{base_name}.gcode.3mf"
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
-    archive_subdir = f"{timestamp}_{base_name}_sliced"
-    archive_dir = (
-        app_settings.archive_dir / printer_folder / archive_subdir
-    )  # SEC-PATH-OK: printer_folder = str(int|None), archive_subdir = f"{timestamp}_{base_name}_sliced" where base_name went through _safe_filename
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    out_path = (
-        archive_dir / out_filename
-    )  # SEC-PATH-OK: out_filename = f"{base_name}.gcode.3mf" where base_name went through _safe_filename
-    # See library-slice path: BS/Orca sidecar CLIs don't embed plate_N.png
-    # in headless --export-3mf, so the produced 3MF often has no thumbnail
-    # at all. Server-side render fills the gap; no-op when the slicer did
-    # embed (desktop Studio path) and best-effort on any render error.
-    result = result._replace(content=inject_plate_thumbnails_if_missing(result.content))
-    out_path.write_bytes(result.content)
-
-    # Extract a thumbnail for the new archive card. Priority order:
-    #   1. Source archive's ``Metadata/plate_{N}.png`` — the GUI-rendered
-    #      preview of the same plate the user is re-slicing. Closer to
-    #      "what's actually printing" than any other available image
-    #      (with --arrange the layout may differ slightly, but objects
-    #      and colours match).
-    #   2. ``ThreeMFParser`` fallback chain on the sliced output: the
-    #      slicer's own per-plate render if it wrote one, then the
-    #      project-wide thumbnail under ``Auxiliaries/.thumbnails/``.
-    # BambuStudio CLI frequently doesn't emit a fresh per-plate render
-    # (slice writes the new gcode but leaves the preview slot empty),
-    # so without (1) the card falls all the way through to the
-    # MakerWorld-style cover art — visually unrelated to what the user
-    # picked, see #1493 follow-up. Failures don't fail the slice — the
-    # archive row is still useful without a thumbnail.
-    plate_num = request.plate or 1
-    thumbnail_path: str | None = None
-    parsed_metadata: dict = {}
-
-    src_3mf_path = app_settings.base_dir / source_archive.file_path
-    source_plate_bytes = _read_3mf_entry(src_3mf_path, f"Metadata/plate_{plate_num}.png")
-    if source_plate_bytes:
-        thumb_dest = archive_dir / "thumbnail.png"
-        thumb_dest.write_bytes(source_plate_bytes)
-        thumbnail_path = str(thumb_dest.relative_to(app_settings.base_dir))
-
+    archive_dir: Path | None = None
+    for _ in range(8):
+        archive_subdir = f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}"
+        candidate = safe_join_under(app_settings.archive_dir, printer_folder, archive_subdir)
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue
+        archive_dir = candidate
+        break
+    if archive_dir is None:
+        raise RuntimeError("Could not allocate a unique sliced archive directory")
+    out_path = safe_join_under(archive_dir, out_filename)
     try:
-        parser = ThreeMFParser(str(out_path), plate_number=plate_num)
-        parsed = parser.parse()
-        if thumbnail_path is None:
-            thumb_data = parsed.get("_thumbnail_data")
-            thumb_ext = parsed.get("_thumbnail_ext", ".png")
-            if thumb_data:
-                thumb_dest = archive_dir / f"thumbnail{thumb_ext}"
-                thumb_dest.write_bytes(thumb_data)
-                thumbnail_path = str(thumb_dest.relative_to(app_settings.base_dir))
-        parsed_metadata = {k: v for k, v in parsed.items() if not k.startswith("_")}
-    except Exception as exc:
-        logger.warning("Failed to parse sliced 3MF metadata for %s: %s", out_filename, exc)
+        # See library-slice path: BS/Orca sidecar CLIs don't embed plate_N.png
+        # in headless --export-3mf, so the produced 3MF often has no thumbnail
+        # at all. Server-side render fills the gap; no-op when the slicer did
+        # embed (desktop Studio path) and best-effort on any render error.
+        result = result._replace(content=inject_plate_thumbnails_if_missing(result.content))
+        out_path.write_bytes(result.content)
 
-    metadata = dict(source_archive.extra_data) if source_archive.extra_data else {}
-    metadata.update(parsed_metadata)
-    # Fall back to the produced 3MF's G-code-header totals when the sidecar
-    # leaves the X-Filament-Used-* headers unset (result.filament_used_g == 0
-    # even for a real multi-hour print).
-    filament_g = result.filament_used_g or parsed_metadata.get("filament_used_grams") or 0.0
-    filament_mm = result.filament_used_mm or parsed_metadata.get("filament_used_mm") or 0.0
-    metadata.update(
-        {
-            "sliced_from_archive_id": source_archive.id,
-            "print_time_seconds": result.print_time_seconds,
-            "filament_used_g": filament_g,
-            "filament_used_mm": filament_mm,
-        }
-    )
-    if used_embedded_settings:
-        metadata["used_embedded_settings"] = True
+        # Extract a thumbnail for the new archive card. Priority order:
+        #   1. Source archive's ``Metadata/plate_{N}.png`` — the GUI-rendered
+        #      preview of the same plate the user is re-slicing. Closer to
+        #      "what's actually printing" than any other available image
+        #      (with --arrange the layout may differ slightly, but objects
+        #      and colours match).
+        #   2. ``ThreeMFParser`` fallback chain on the sliced output: the
+        #      slicer's own per-plate render if it wrote one, then the
+        #      project-wide thumbnail under ``Auxiliaries/.thumbnails/``.
+        # BambuStudio CLI frequently doesn't emit a fresh per-plate render
+        # (slice writes the new gcode but leaves the preview slot empty),
+        # so without (1) the card falls all the way through to the
+        # MakerWorld-style cover art — visually unrelated to what the user
+        # picked, see #1493 follow-up. Failures don't fail the slice — the
+        # archive row is still useful without a thumbnail.
+        plate_num = request.plate or 1
+        thumbnail_path: str | None = None
+        parsed_metadata: dict = {}
 
-    # Prefer the actually-used filament list from the sliced output's
-    # slice_info.config (parsed_metadata.filament_* — only entries with
-    # used_g > 0). Falling back to the source_archive's list would
-    # surface every project-wide AMS slot, including ones the picked
-    # plate doesn't use (16+ swatches on the card for a 2-color print).
-    new_filament_type = parsed_metadata.get("filament_type") or source_archive.filament_type
-    new_filament_color = parsed_metadata.get("filament_color") or source_archive.filament_color
+        src_3mf_path = app_settings.base_dir / source_archive.file_path
+        source_plate_bytes = _read_3mf_entry(src_3mf_path, f"Metadata/plate_{plate_num}.png")
+        if source_plate_bytes:
+            thumb_dest = safe_join_under(archive_dir, "thumbnail.png")
+            thumb_dest.write_bytes(source_plate_bytes)
+            thumbnail_path = str(thumb_dest.relative_to(app_settings.base_dir))
 
-    # When the user re-slices for a different printer model than the source,
-    # the source's printer_id (e.g. an H2D's "Workshop H2C") no longer
-    # represents where the new archive can be reprinted. The archive card
-    # and reprint modal both read printer_id first and only fall back to
-    # sliced_for_model when it's None, so leaving the inherited id makes
-    # the X1C-sliced card display the source H2D's printer name.
-    # Same pitfall as the sliced_for_model copy a few lines below.
-    new_target_model = parsed_metadata.get("sliced_for_model") or source_archive.sliced_for_model
-    is_cross_model_reslice = (
-        new_target_model is not None
-        and source_archive.sliced_for_model is not None
-        and new_target_model != source_archive.sliced_for_model
-    )
-    new_printer_id = None if is_cross_model_reslice else source_archive.printer_id
+        try:
+            parser = ThreeMFParser(str(out_path), plate_number=plate_num)
+            parsed = parser.parse()
+        except Exception as exc:
+            logger.warning("Failed to parse sliced 3MF metadata for %s: %s", out_filename, exc)
+        else:
+            if thumbnail_path is None:
+                thumb_data = parsed.get("_thumbnail_data")
+                thumb_ext = parsed.get("_thumbnail_ext", ".png")
+                if thumb_data:
+                    thumb_dest = safe_join_under(archive_dir, f"thumbnail{thumb_ext}")
+                    thumb_dest.write_bytes(thumb_data)
+                    thumbnail_path = str(thumb_dest.relative_to(app_settings.base_dir))
+            parsed_metadata = {k: v for k, v in parsed.items() if not k.startswith("_")}
 
-    new_archive = PrintArchive(
-        printer_id=new_printer_id,
-        project_id=source_archive.project_id,
-        filename=out_filename,
-        file_path=str(out_path.relative_to(app_settings.base_dir)),
-        file_size=len(result.content),
-        content_hash=hashlib.sha256(result.content).hexdigest(),
-        thumbnail_path=thumbnail_path,
-        # Inherit identity from the source archive so the new entry shows
-        # up alongside its sibling in the archives list.
-        print_name=(source_archive.print_name or base_name) + " (re-sliced)",
-        print_time_seconds=result.print_time_seconds,
-        filament_used_grams=filament_g or None,
-        filament_type=new_filament_type,
-        filament_color=new_filament_color,
-        layer_height=source_archive.layer_height,
-        nozzle_diameter=source_archive.nozzle_diameter,
-        # The re-sliced output is for whatever printer the user just picked,
-        # not the source archive's printer — read the model the slicer baked
-        # into the new 3MF, falling back to the source only if it's absent.
-        # (Copying source_archive.sliced_for_model kept a cross-printer
-        # re-slice, e.g. X1C→H2D, showing the old "X1C sliced" model.)
-        sliced_for_model=parsed_metadata.get("sliced_for_model") or source_archive.sliced_for_model,
-        # Build plate type that the sliced output was produced for (#1493
-        # follow-up): the frontend's ArchiveCard reads ``archive.bed_type``
-        # off the top-level column, not extra_data, so without this lift the
-        # re-sliced card had no plate badge. ThreeMFParser pulls it from the
-        # sliced 3MF's ``slice_info.config`` ``curr_bed_type``; if that's
-        # absent (older sidecar / older slice profile) the source archive's
-        # bed_type is the right default.
-        bed_type=parsed_metadata.get("bed_type") or source_archive.bed_type,
-        makerworld_url=source_archive.makerworld_url,
-        designer=source_archive.designer,
-        # Sliced-but-not-printed: keep status default ("completed") so it
-        # surfaces in the normal archives list, but do not stamp
-        # started/completed_at — the user hasn't actually printed it yet.
-        extra_data=metadata,
-        created_by_id=current_user_id,
-    )
-    db.add(new_archive)
-    await db.commit()
-    await db.refresh(new_archive)
+        metadata = dict(source_archive.extra_data) if source_archive.extra_data else {}
+        metadata.update(parsed_metadata)
+        # Fall back to the produced 3MF's G-code-header totals when the sidecar
+        # leaves the X-Filament-Used-* headers unset (result.filament_used_g == 0
+        # even for a real multi-hour print).
+        filament_g = result.filament_used_g or parsed_metadata.get("filament_used_grams") or 0.0
+        filament_mm = result.filament_used_mm or parsed_metadata.get("filament_used_mm") or 0.0
+        metadata.update(
+            {
+                "sliced_from_archive_id": source_archive.id,
+                "print_time_seconds": result.print_time_seconds,
+                "filament_used_g": filament_g,
+                "filament_used_mm": filament_mm,
+            }
+        )
+        if used_embedded_settings:
+            metadata["used_embedded_settings"] = True
 
-    return SliceArchiveResponse(
-        archive_id=new_archive.id,
-        name=new_archive.print_name or out_filename,
-        print_time_seconds=result.print_time_seconds,
-        filament_used_g=filament_g,
-        filament_used_mm=filament_mm,
-        used_embedded_settings=used_embedded_settings,
-    )
+        # Prefer the actually-used filament list from the sliced output's
+        # slice_info.config (parsed_metadata.filament_* — only entries with
+        # used_g > 0). Falling back to the source_archive's list would
+        # surface every project-wide AMS slot, including ones the picked
+        # plate doesn't use (16+ swatches on the card for a 2-color print).
+        new_filament_type = parsed_metadata.get("filament_type") or source_archive.filament_type
+        new_filament_color = parsed_metadata.get("filament_color") or source_archive.filament_color
+
+        # When the user re-slices for a different printer model than the source,
+        # the source's printer_id (e.g. an H2D's "Workshop H2C") no longer
+        # represents where the new archive can be reprinted. The archive card
+        # and reprint modal both read printer_id first and only fall back to
+        # sliced_for_model when it's None, so leaving the inherited id makes
+        # the X1C-sliced card display the source H2D's printer name.
+        # Same pitfall as the sliced_for_model copy a few lines below.
+        new_target_model = parsed_metadata.get("sliced_for_model") or source_archive.sliced_for_model
+        is_cross_model_reslice = (
+            new_target_model is not None
+            and source_archive.sliced_for_model is not None
+            and new_target_model != source_archive.sliced_for_model
+        )
+        new_printer_id = None if is_cross_model_reslice else source_archive.printer_id
+
+        new_archive = PrintArchive(
+            printer_id=new_printer_id,
+            project_id=source_archive.project_id,
+            filename=out_filename,
+            file_path=str(out_path.relative_to(app_settings.base_dir)),
+            file_size=len(result.content),
+            content_hash=hashlib.sha256(result.content).hexdigest(),
+            thumbnail_path=thumbnail_path,
+            # Inherit identity from the source archive so the new entry shows
+            # up alongside its sibling in the archives list.
+            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_time_seconds=result.print_time_seconds,
+            filament_used_grams=filament_g or None,
+            filament_type=new_filament_type,
+            filament_color=new_filament_color,
+            layer_height=source_archive.layer_height,
+            nozzle_diameter=source_archive.nozzle_diameter,
+            # The re-sliced output is for whatever printer the user just picked,
+            # not the source archive's printer — read the model the slicer baked
+            # into the new 3MF, falling back to the source only if it's absent.
+            # (Copying source_archive.sliced_for_model kept a cross-printer
+            # re-slice, e.g. X1C→H2D, showing the old "X1C sliced" model.)
+            sliced_for_model=parsed_metadata.get("sliced_for_model") or source_archive.sliced_for_model,
+            # Build plate type that the sliced output was produced for (#1493
+            # follow-up): the frontend's ArchiveCard reads ``archive.bed_type``
+            # off the top-level column, not extra_data, so without this lift the
+            # re-sliced card had no plate badge. ThreeMFParser pulls it from the
+            # sliced 3MF's ``slice_info.config`` ``curr_bed_type``; if that's
+            # absent (older sidecar / older slice profile) the source archive's
+            # bed_type is the right default.
+            bed_type=parsed_metadata.get("bed_type") or source_archive.bed_type,
+            makerworld_url=source_archive.makerworld_url,
+            designer=source_archive.designer,
+            # Sliced-but-not-printed: keep status default ("completed") so it
+            # surfaces in the normal archives list, but do not stamp
+            # started/completed_at — the user hasn't actually printed it yet.
+            extra_data=metadata,
+            created_by_id=current_user_id,
+        )
+        db.add(new_archive)
+        await db.flush()
+        await db.refresh(new_archive)
+        await db.commit()
+        return SliceArchiveResponse(
+            archive_id=new_archive.id,
+            name=new_archive.print_name or out_filename,
+            print_time_seconds=result.print_time_seconds,
+            filament_used_g=filament_g,
+            filament_used_mm=filament_mm,
+            used_embedded_settings=used_embedded_settings,
+        )
+    except BaseException:
+        try:
+            await db.rollback()
+        except BaseException:
+            pass
+        finally:
+            shutil.rmtree(archive_dir, ignore_errors=True)
+        raise
 
 
 @router.post("/files/{file_id}/slice", status_code=202)

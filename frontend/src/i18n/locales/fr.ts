@@ -3987,6 +3987,11 @@ export default {
     actionAllTitle: "Slicer tous les plateaux dans une sortie multi-plateaux (une seule archive). La sélection de filament couvre chaque emplacement défini par le projet.",
     allPlatesToggle: 'Slicer les {{count}} plateaux',
     slicing: 'Découpage…',
+    destination: {
+      label: 'Sortie',
+      bambu: '3MF Bambu',
+      klipper: 'G-code Klipper',
+    },
     printer: 'Profil d\'imprimante',
     process: 'Profil de processus',
     filament: 'Profil de filament',

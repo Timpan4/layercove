@@ -3986,6 +3986,11 @@ export default {
     actionAllTitle: 'Slicia tutti i piatti in un unico output multi-piatto (un solo archivio). La selezione del filamento copre ogni slot definito dal progetto.',
     allPlatesToggle: 'Slicia tutti i {{count}} piatti',
     slicing: 'Slicing…',
+    destination: {
+      label: 'Uscita',
+      bambu: '3MF Bambu',
+      klipper: 'G-code Klipper',
+    },
     printer: 'Profilo stampante',
     process: 'Profilo processo',
     filament: 'Profilo filamento',

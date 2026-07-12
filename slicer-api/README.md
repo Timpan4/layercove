@@ -61,6 +61,39 @@ In the Bambuddy UI: **Settings → Slicer**:
 Leaving the URL field blank uses the `SLICER_API_URL` /
 `BAMBU_STUDIO_API_URL` environment defaults from Bambuddy's config.
 
+## Destination artifact contract
+
+The Slice dialog sends an explicit destination artifact kind. It never guesses
+from a printer-profile name:
+
+| Destination | Sidecar request | Persisted result |
+| --- | --- | --- |
+| `bambu_3mf` (default) | `exportType=3mf` | `.gcode.3mf`; existing thumbnail and 3MF metadata flow |
+| `klipper_gcode` | omits `exportType` | raw `.gcode`; SHA-256 and sidecar estimate headers are stored, with no ZIP/thumbnail injection |
+
+All selected `printerProfile`, `presetProfile`, and repeated
+`filamentProfile` JSON parts are forwarded unchanged in both modes. For a
+custom Voron/Klipper setup, import and select complete printer, process, and
+filament profiles. LayerCove does not synthesize a Klipper profile or fetch an
+absent inheritance parent at slice time. The bundled sidecar resolves its known
+GUI-export inheritance chains, but an imported custom profile with unavailable
+external parents must be flattened or imported as a complete profile set first.
+
+### Manual Docker verification
+
+Not run by automated tests. With a representative STL, STEP, or 3MF and
+complete imported Voron profiles, start the sidecar and LayerCove, choose
+**Klipper G-code** in Slice, then inspect the saved library artifact:
+
+```bash
+docker compose up -d
+head -40 /path/to/layercove-data/archive/library/files/*.gcode
+```
+
+Confirm output is raw G-code (not `PK`/a ZIP), has expected slicer headers,
+and the selected printer/process/filament values. Repeat with **Bambu 3MF** and
+confirm the result remains a `.gcode.3mf` archive.
+
 ## Where the images live
 
 Pre-built images are published to two registries on every Bambuddy

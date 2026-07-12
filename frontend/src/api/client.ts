@@ -1516,6 +1516,7 @@ export interface SliceRequest {
   filament_presets?: PresetRef[];
   plate?: number;
   export_3mf?: boolean;
+  destination_artifact_kind?: 'bambu_3mf' | 'klipper_gcode';
   // Build-plate override (#1337). When omitted, the slicer uses the process
   // preset's curr_bed_type as-is. Canonical values match BambuStudio /
   // OrcaSlicer's enum: "Cool Plate", "Engineering Plate", "High Temp Plate",
@@ -4562,15 +4563,19 @@ export const api = {
     }),
   getArchiveProjectImageUrl: (archiveId: number, imagePath: string) =>
     withStreamToken(`${API_BASE}/archives/${archiveId}/project-image/${encodeURIComponent(imagePath)}`),
-  getArchiveForSlicer: (id: number, filename: string) => {
+  getArchiveForSlicer: (id: number, filename: string, artifactFilename = filename) => {
     const safe = filename.replace(/[/\\?#]/g, '_');
-    return `${API_BASE}/archives/${id}/file/${encodeURIComponent(safe.endsWith('.3mf') ? safe : safe + '.3mf')}`;
+    const extension = artifactFilename.toLowerCase().endsWith('.gcode') ? '.gcode' : '.3mf';
+    const withExtension = safe.toLowerCase().endsWith(extension) ? safe : safe + extension;
+    return `${API_BASE}/archives/${id}/file/${encodeURIComponent(withExtension)}`;
   },
   createArchiveSlicerToken: (archiveId: number) =>
     request<{ token: string }>(`/archives/${archiveId}/slicer-token`, { method: 'POST' }),
-  getArchiveSlicerDownloadUrl: (archiveId: number, token: string, filename: string) => {
+  getArchiveSlicerDownloadUrl: (archiveId: number, token: string, filename: string, artifactFilename = filename) => {
     const safe = filename.replace(/[/\\?#]/g, '_');
-    return `${API_BASE}/archives/${archiveId}/dl/${token}/${encodeURIComponent(safe.endsWith('.3mf') ? safe : safe + '.3mf')}`;
+    const extension = artifactFilename.toLowerCase().endsWith('.gcode') ? '.gcode' : '.3mf';
+    const withExtension = safe.toLowerCase().endsWith(extension) ? safe : safe + extension;
+    return `${API_BASE}/archives/${archiveId}/dl/${token}/${encodeURIComponent(withExtension)}`;
   },
   getArchivePlates: (archiveId: number) =>
     request<ArchivePlatesResponse>(`/archives/${archiveId}/plates`),

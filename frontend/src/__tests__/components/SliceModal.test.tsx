@@ -250,6 +250,7 @@ describe('SliceModal', () => {
       // so the auto-pick lands on the local entries even when a cloud entry
       // with the same slot is also available in the listing.
       expect(mockApi.sliceLibraryFile).toHaveBeenCalledWith(100, {
+        destination_artifact_kind: 'bambu_3mf',
         printer_preset: { source: 'local', id: '1' },
         process_preset: { source: 'local', id: '2' },
         filament_preset: { source: 'local', id: '3' },
@@ -257,6 +258,35 @@ describe('SliceModal', () => {
       });
     });
     await waitFor(() => expect(onClose).toHaveBeenCalled());
+  });
+
+  it('sends explicit Klipper G-code destination without changing selected profiles', async () => {
+    mockApi.sliceLibraryFile.mockResolvedValue({
+      job_id: 42,
+      status: 'pending',
+      status_url: '/api/v1/slice-jobs/42',
+    });
+    renderWithTracker({
+      source: { kind: 'libraryFile', id: 100, filename: 'Cube.stl' },
+      onClose: vi.fn(),
+    });
+    await waitFor(() => expect(screen.getByText('Imported X1C 0.4')).toBeDefined());
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('radio', { name: /Klipper G-code/i }));
+    await user.click(screen.getByRole('button', { name: /^Slice$/ }));
+
+    await waitFor(() => {
+      expect(mockApi.sliceLibraryFile).toHaveBeenCalledWith(
+        100,
+        expect.objectContaining({
+          destination_artifact_kind: 'klipper_gcode',
+          printer_preset: { source: 'local', id: '1' },
+          process_preset: { source: 'local', id: '2' },
+          filament_presets: [{ source: 'local', id: '3' }],
+        }),
+      );
+    });
   });
 
   it('includes bed_type in the request when the user picks a non-auto plate (#1337)', async () => {

@@ -3986,6 +3986,11 @@ export default {
     actionAllTitle: 'Fatiar todas as bandejas em uma saída multi-bandeja única (um único arquivo). A seleção de filamento cobre cada slot definido pelo projeto.',
     allPlatesToggle: 'Fatiar todas as {{count}} bandejas',
     slicing: 'Fatiando…',
+    destination: {
+      label: 'Saída',
+      bambu: '3MF Bambu',
+      klipper: 'G-code Klipper',
+    },
     printer: 'Perfil de impressora',
     process: 'Perfil de processo',
     filament: 'Perfil de filamento',

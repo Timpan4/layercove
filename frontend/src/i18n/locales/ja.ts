@@ -3998,6 +3998,11 @@ export default {
     actionAllTitle: 'すべてのプレートを 1 つのマルチプレート出力としてスライスします（アーカイブは 1 件）。フィラメントの選択はプロジェクトで定義されたすべてのスロットを対象とします。',
     allPlatesToggle: '{{count}} プレートすべてをスライス',
     slicing: 'スライス中…',
+    destination: {
+      label: '出力',
+      bambu: 'Bambu 3MF',
+      klipper: 'Klipper G-code',
+    },
     printer: 'プリンタープロファイル',
     process: 'プロセスプロファイル',
     filament: 'フィラメントプロファイル',

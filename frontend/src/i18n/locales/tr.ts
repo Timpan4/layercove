@@ -3988,6 +3988,11 @@ export default {
     actionAllTitle: 'Her plakayı tek bir çok plakalı çıktıya dilimle (tek arşiv). Filament seçimi projenin tanımladığı her yuvayı kapsar.',
     allPlatesToggle: 'Tüm {{count}} plakayı dilimle',
     slicing: 'Dilimleniyor…',
+    destination: {
+      label: 'Çıktı',
+      bambu: 'Bambu 3MF',
+      klipper: 'Klipper G-code',
+    },
     printer: 'Yazıcı profili',
     process: 'İşlem profili',
     filament: 'Filament profili',

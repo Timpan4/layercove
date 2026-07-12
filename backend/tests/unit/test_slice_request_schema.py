@@ -6,7 +6,7 @@ normalisation that lets the route handler ignore the difference.
 import pytest
 from pydantic import ValidationError
 
-from backend.app.schemas.slicer import PresetRef, SliceRequest
+from backend.app.schemas.slicer import DestinationArtifactKind, PresetRef, SliceRequest
 
 
 class TestLegacyBareIntegerShape:
@@ -26,6 +26,21 @@ class TestLegacyBareIntegerShape:
         assert req.printer_preset_id == 10
         assert req.process_preset_id == 20
         assert req.filament_preset_id == 30
+
+    def test_default_destination_keeps_legacy_bambu_output(self):
+        req = SliceRequest(printer_preset_id=1, process_preset_id=2, filament_preset_id=3)
+        assert req.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
+
+
+class TestDestinationArtifactKind:
+    def test_klipper_gcode_is_explicit_not_inferred_from_profiles(self):
+        req = SliceRequest(
+            printer_preset=PresetRef(source="local", id="voron-custom"),
+            process_preset=PresetRef(source="local", id="voron-process"),
+            filament_preset=PresetRef(source="local", id="pla"),
+            destination_artifact_kind="klipper_gcode",
+        )
+        assert req.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
 
 
 class TestNewSourceAwareShape:
