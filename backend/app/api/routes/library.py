@@ -67,6 +67,7 @@ from backend.app.services.archive import ThreeMFParser
 from backend.app.services.plate_thumbnail import inject_plate_thumbnails_if_missing
 from backend.app.services.stl_thumbnail import MIN_USABLE_STL_BYTES, generate_stl_thumbnail
 from backend.app.utils.filename import InvalidFilenameError, validate_print_filename
+from backend.app.utils.safe_path import safe_join_under
 from backend.app.utils.threemf_tools import (
     extract_embedded_presets_from_3mf,
     extract_nozzle_mapping_from_3mf,
@@ -4093,19 +4094,25 @@ async def slice_and_persist_as_archive(
             used_embedded_settings=used_embedded_settings,
         )
 
-    base_name = model_filename.rsplit(".", 1)[0]
+    safe_source_name = Path(model_filename.replace("\\", "/")).name
+    base_name = safe_source_name.rsplit(".", 1)[0]
     out_filename = f"{base_name}.gcode.3mf"
 
     timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
     printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
-    archive_subdir = f"{timestamp}_{base_name}_sliced"
-    archive_dir = (
-        app_settings.archive_dir / printer_folder / archive_subdir
-    )  # SEC-PATH-OK: printer_folder = str(int|None), archive_subdir = f"{timestamp}_{base_name}_sliced" where base_name went through _safe_filename
-    archive_dir.mkdir(parents=True, exist_ok=True)
-    out_path = (
-        archive_dir / out_filename
-    )  # SEC-PATH-OK: out_filename = f"{base_name}.gcode.3mf" where base_name went through _safe_filename
+    archive_dir: Path | None = None
+    for _ in range(8):
+        archive_subdir = f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}"
+        candidate = safe_join_under(app_settings.archive_dir, printer_folder, archive_subdir)
+        try:
+            candidate.mkdir(parents=True, exist_ok=False)
+        except FileExistsError:
+            continue
+        archive_dir = candidate
+        break
+    if archive_dir is None:
+        raise RuntimeError("Could not allocate a unique sliced archive directory")
+    out_path = safe_join_under(archive_dir, out_filename)
     # See library-slice path: BS/Orca sidecar CLIs don't embed plate_N.png
     # in headless --export-3mf, so the produced 3MF often has no thumbnail
     # at all. Server-side render fills the gap; no-op when the slicer did
@@ -4135,7 +4142,7 @@ async def slice_and_persist_as_archive(
     src_3mf_path = app_settings.base_dir / source_archive.file_path
     source_plate_bytes = _read_3mf_entry(src_3mf_path, f"Metadata/plate_{plate_num}.png")
     if source_plate_bytes:
-        thumb_dest = archive_dir / "thumbnail.png"
+        thumb_dest = safe_join_under(archive_dir, "thumbnail.png")
         thumb_dest.write_bytes(source_plate_bytes)
         thumbnail_path = str(thumb_dest.relative_to(app_settings.base_dir))
 
@@ -4146,7 +4153,7 @@ async def slice_and_persist_as_archive(
             thumb_data = parsed.get("_thumbnail_data")
             thumb_ext = parsed.get("_thumbnail_ext", ".png")
             if thumb_data:
-                thumb_dest = archive_dir / f"thumbnail{thumb_ext}"
+                thumb_dest = safe_join_under(archive_dir, f"thumbnail{thumb_ext}")
                 thumb_dest.write_bytes(thumb_data)
                 thumbnail_path = str(thumb_dest.relative_to(app_settings.base_dir))
         parsed_metadata = {k: v for k, v in parsed.items() if not k.startswith("_")}
@@ -4233,9 +4240,17 @@ async def slice_and_persist_as_archive(
         extra_data=metadata,
         created_by_id=current_user_id,
     )
-    db.add(new_archive)
-    await db.commit()
-    await db.refresh(new_archive)
+    try:
+        db.add(new_archive)
+        await db.flush()
+        await db.refresh(new_archive)
+        await db.commit()
+    except Exception:
+        try:
+            await db.rollback()
+        finally:
+            shutil.rmtree(archive_dir, ignore_errors=True)
+        raise
 
     return SliceArchiveResponse(
         archive_id=new_archive.id,

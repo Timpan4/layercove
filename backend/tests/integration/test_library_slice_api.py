@@ -1144,6 +1144,171 @@ def _make_sliced_3mf(printer_model_id: str, bed_type: str | None = None) -> byte
     return buf.getvalue()
 
 
+def _bambu_source_archive(tmp_path, *, print_name: str = "Display name"):
+    source_path = tmp_path / "source.3mf"
+    with zipfile.ZipFile(source_path, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("3D/3dmodel.model", "<model/>")
+        zf.writestr("Metadata/plate_1.png", b"SOURCE_THUMBNAIL")
+    return SimpleNamespace(
+        id=2000,
+        printer_id=None,
+        project_id=None,
+        file_path=str(source_path.relative_to(tmp_path)),
+        extra_data=None,
+        print_name=print_name,
+        filament_type=None,
+        filament_color=None,
+        layer_height=None,
+        nozzle_diameter=None,
+        sliced_for_model="X1C",
+        bed_type=None,
+        makerworld_url=None,
+        designer=None,
+    )
+
+
+class TestBambuArchivePersistenceSafety:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_model_filename_traversal_stays_inside_archive_root(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+    ):
+        archive_root = slice_test_setup["tmp_path"] / "archive"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=_make_sliced_3mf("X1C")))
+        source = _bambu_source_archive(slice_test_setup["tmp_path"], print_name="../../Visible name")
+
+        response = await slice_and_persist_as_archive(
+            db_session,
+            model_bytes=b"source",
+            model_filename="../../Visible name.3mf",
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+            ),
+            source_archive=source,
+            current_user_id=None,
+        )
+
+        persisted = await db_session.get(PrintArchive, response.archive_id)
+        assert persisted is not None
+        assert persisted.filename == "Visible name.gcode.3mf"
+        assert persisted.print_name == "../../Visible name (re-sliced)"
+        stored_path = (app_settings.base_dir / persisted.file_path).resolve()
+        assert stored_path.is_relative_to(archive_root.resolve())
+        assert not (slice_test_setup["tmp_path"] / "Visible name.gcode.3mf").exists()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_same_timestamp_name_jobs_retry_collision_and_stay_unique(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        archive_root = slice_test_setup["tmp_path"] / "archive"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        fixed_now = datetime(2026, 7, 12, 12, 0, 0, tzinfo=timezone.utc)
+
+        class FixedDateTime:
+            @classmethod
+            def now(cls, tz=None):
+                return fixed_now
+
+        monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
+        generated = iter(("a" * 32, "b" * 32, "c" * 32))
+        monkeypatch.setattr(
+            library_routes.uuid,
+            "uuid4",
+            lambda: SimpleNamespace(hex=next(generated)),
+        )
+        collision_dir = archive_root / "unassigned" / f"20260712_120000_Collision_sliced_{'a' * 32}"
+        collision_dir.mkdir(parents=True)
+        marker = collision_dir / "keep.txt"
+        marker.write_text("keep")
+        _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=_make_sliced_3mf("X1C")))
+        source = _bambu_source_archive(slice_test_setup["tmp_path"], print_name="Collision")
+        request = SliceRequest(
+            printer_preset_id=slice_test_setup["printer_id"],
+            process_preset_id=slice_test_setup["process_id"],
+            filament_preset_id=slice_test_setup["filament_id"],
+        )
+
+        first = await slice_and_persist_as_archive(
+            db_session,
+            model_bytes=b"source",
+            model_filename="Collision.3mf",
+            request=request,
+            source_archive=source,
+            current_user_id=None,
+        )
+        second = await slice_and_persist_as_archive(
+            db_session,
+            model_bytes=b"source",
+            model_filename="Collision.3mf",
+            request=request,
+            source_archive=source,
+            current_user_id=None,
+        )
+
+        rows = [
+            await db_session.get(PrintArchive, first.archive_id),
+            await db_session.get(PrintArchive, second.archive_id),
+        ]
+        assert all(row is not None for row in rows)
+        paths = {row.file_path for row in rows if row is not None}
+        assert len(paths) == 2
+        assert all((app_settings.base_dir / path).is_file() for path in paths)
+        assert marker.read_text() == "keep"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("failure_method", ["commit", "refresh"])
+    async def test_db_failure_removes_job_owned_3mf_thumbnail_and_directory(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+        failure_method,
+    ):
+        archive_root = slice_test_setup["tmp_path"] / "archive"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=_make_sliced_3mf("X1C")))
+        source = _bambu_source_archive(slice_test_setup["tmp_path"], print_name="Failure")
+        monkeypatch.setattr(
+            db_session,
+            failure_method,
+            AsyncMock(side_effect=RuntimeError(f"{failure_method} failed")),
+        )
+
+        with pytest.raises(RuntimeError, match=f"{failure_method} failed"):
+            await slice_and_persist_as_archive(
+                db_session,
+                model_bytes=b"source",
+                model_filename="Failure.3mf",
+                request=SliceRequest(
+                    printer_preset_id=slice_test_setup["printer_id"],
+                    process_preset_id=slice_test_setup["process_id"],
+                    filament_preset_id=slice_test_setup["filament_id"],
+                ),
+                source_archive=source,
+                current_user_id=None,
+            )
+
+        assert not list(archive_root.rglob("Failure.gcode.3mf"))
+        assert not list(archive_root.rglob("thumbnail.png"))
+        assert not list((archive_root / "unassigned").glob("*_Failure_sliced_*"))
+        assert (
+            await db_session.execute(select(PrintArchive).where(PrintArchive.filename == "Failure.gcode.3mf"))
+        ).scalar_one_or_none() is None
+
+
 class TestCrossClassSliceAllLoop:
     """#1493: when the user picks "Slice all plates" on a cross-class source
     (X1C → H2D), Bambuddy must NOT send a single ``--slice 0 --arrange 1``
