@@ -1,5 +1,6 @@
 """Pydantic schemas for slice requests."""
 
+from enum import Enum
 from typing import Literal
 
 from pydantic import BaseModel, Field, model_validator
@@ -22,6 +23,13 @@ class PresetRef(BaseModel):
             "Orca Cloud profile id, Bambu Cloud setting_id, local DB row id (stringified), or standard preset name."
         ),
     )
+
+
+class DestinationArtifactKind(str, Enum):
+    """Explicit slicer output contract; never inferred from profile names."""
+
+    BAMBU_3MF = "bambu_3mf"
+    KLIPPER_GCODE = "klipper_gcode"
 
 
 class SliceRequest(BaseModel):
@@ -80,7 +88,11 @@ class SliceRequest(BaseModel):
     )
     export_3mf: bool = Field(
         default=False,
-        description="If true, request a 3MF response with embedded G-code instead of raw G-code.",
+        description="Legacy sidecar option; new clients use destination_artifact_kind.",
+    )
+    destination_artifact_kind: DestinationArtifactKind = Field(
+        default=DestinationArtifactKind.BAMBU_3MF,
+        description="Explicit destination artifact; defaults to legacy Bambu 3MF output.",
     )
     bed_type: str | None = Field(
         default=None,

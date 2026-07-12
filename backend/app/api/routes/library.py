@@ -62,7 +62,7 @@ from backend.app.schemas.library import (
     ZipExtractResponse,
     ZipExtractResult,
 )
-from backend.app.schemas.slicer import SliceRequest, SliceResponse
+from backend.app.schemas.slicer import DestinationArtifactKind, SliceRequest, SliceResponse
 from backend.app.services.archive import ThreeMFParser
 from backend.app.services.plate_thumbnail import inject_plate_thumbnails_if_missing
 from backend.app.services.stl_thumbnail import MIN_USABLE_STL_BYTES, generate_stl_thumbnail
@@ -3593,7 +3593,8 @@ async def _run_slicer_with_fallback(
     # and merge the per-plate outputs into one multi-plate 3MF instead.
     # Same-class slice-all goes through the regular path below — the
     # sidecar's native ``--slice 0`` produces the right shape directly.
-    use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and request.export_3mf
+    export_3mf = request.export_3mf and request.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
+    use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and export_3mf
 
     try:
         try:
@@ -3684,7 +3685,7 @@ async def _run_slicer_with_fallback(
                     process_profile_json=presets["process"],
                     filament_profile_jsons=filament_jsons,
                     plate=request.plate,
-                    export_3mf=request.export_3mf,
+                    export_3mf=export_3mf,
                     arrange=cross_class_arrange,
                     request_id=progress_request_id,
                     on_progress=progress_callback,
@@ -3699,7 +3700,7 @@ async def _run_slicer_with_fallback(
                 # (e.g. re-slicing an H2D model for an X1C: the object is off
                 # the smaller bed). Surface the slicer's reason instead.
                 raise HTTPException(status_code=400, detail=rejection) from exc
-            if not is_3mf:
+            if not is_3mf or request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE:
                 raise
             logger.warning(
                 "Slicer CLI failed on the --load-settings path for %s (%s); retrying with embedded settings",
@@ -3718,7 +3719,7 @@ async def _run_slicer_with_fallback(
                 model_bytes=primary_bytes,
                 model_filename=model_filename,
                 plate=request.plate,
-                export_3mf=request.export_3mf,
+                export_3mf=export_3mf,
                 request_id=progress_request_id,
                 on_progress=progress_callback,
             )
@@ -3813,13 +3814,13 @@ async def slice_and_persist(
     """Slice a model and save the result as a new ``LibraryFile`` in
     ``folder_id`` (same folder as the source by convention).
 
-    Always exports as ``.gcode.3mf`` so the existing library thumbnail
-    pipeline works on the new file. Plain ``.gcode`` would have no
-    embedded thumbnail to extract.
+    Bambu keeps the existing ``.gcode.3mf`` thumbnail pipeline. Klipper
+    persists raw ``.gcode`` and skips ZIP, thumbnail, and 3MF parsing.
     """
     from backend.app.services.archive import ThreeMFParser
 
-    library_request = request.model_copy(update={"export_3mf": True})
+    is_klipper_gcode = request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
+    library_request = request.model_copy(update={"export_3mf": not is_klipper_gcode})
 
     result, used_embedded_settings = await _run_slicer_with_fallback(
         db,
@@ -3829,6 +3830,49 @@ async def slice_and_persist(
         current_user_id=current_user_id,
         job_id=job_id,
     )
+
+    if is_klipper_gcode:
+        from backend.app.utils.filename import validate_moonraker_gcode_basename
+
+        safe_source_name = Path(model_filename.replace("\\", "/")).name
+        base_name = safe_source_name.rsplit(".", 1)[0]
+        out_filename = f"{base_name}.gcode"
+        try:
+            validate_moonraker_gcode_basename(out_filename)
+        except InvalidFilenameError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        out_path = get_library_files_dir() / f"{uuid.uuid4().hex}.gcode"
+        out_path.write_bytes(result.content)
+        metadata: dict = {
+            "destination_artifact_kind": DestinationArtifactKind.KLIPPER_GCODE.value,
+            "print_time_seconds": result.print_time_seconds,
+            "filament_used_g": result.filament_used_g,
+            "filament_used_mm": result.filament_used_mm,
+        }
+        if extra_metadata:
+            metadata.update(extra_metadata)
+        new_file = LibraryFile(
+            folder_id=folder_id,
+            filename=out_filename,
+            file_path=to_relative_path(out_path),
+            file_type="gcode",
+            file_size=len(result.content),
+            file_hash=hashlib.sha256(result.content).hexdigest(),
+            file_metadata=metadata,
+            source_type="sliced",
+            created_by_id=current_user_id,
+        )
+        db.add(new_file)
+        await db.commit()
+        return SliceResponse(
+            library_file_id=new_file.id,
+            name=new_file.filename,
+            print_time_seconds=result.print_time_seconds,
+            filament_used_g=result.filament_used_g,
+            filament_used_mm=result.filament_used_mm,
+            used_embedded_settings=used_embedded_settings,
+        )
 
     base_name = model_filename.rsplit(".", 1)[0]
     out_filename = f"{base_name}.gcode.3mf"
@@ -3930,17 +3974,15 @@ async def slice_and_persist_as_archive(
 ):
     """Slice a model and save the result as a new ``PrintArchive`` row,
     inheriting printer / project / makerworld metadata from the source
-    archive. Always exports as a `.gcode.3mf` so the existing thumbnail
-    and plates infrastructure (which expects a zip-shaped 3MF) works on
-    the new archive. Returns ``SliceArchiveResponse``.
+    archive. Bambu keeps `.gcode.3mf`; Klipper persists raw `.gcode` without
+    ZIP, thumbnail, or 3MF-metadata processing. Returns ``SliceArchiveResponse``.
     """
     from backend.app.models.archive import PrintArchive
     from backend.app.schemas.slicer import SliceArchiveResponse
     from backend.app.services.archive import ThreeMFParser
 
-    # Archive sinks always want a 3MF. The library route still respects the
-    # caller's `export_3mf` flag; here we override.
-    archive_request = request.model_copy(update={"export_3mf": True})
+    is_klipper_gcode = request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
+    archive_request = request.model_copy(update={"export_3mf": not is_klipper_gcode})
 
     result, used_embedded_settings = await _run_slicer_with_fallback(
         db,
@@ -3950,6 +3992,67 @@ async def slice_and_persist_as_archive(
         job_id=job_id,
         current_user_id=current_user_id,
     )
+
+    if is_klipper_gcode:
+        from backend.app.utils.filename import validate_moonraker_gcode_basename
+
+        safe_source_name = Path(model_filename.replace("\\", "/")).name
+        base_name = safe_source_name.rsplit(".", 1)[0]
+        out_filename = f"{base_name}.gcode"
+        try:
+            validate_moonraker_gcode_basename(out_filename)
+        except InvalidFilenameError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+        timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
+        printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
+        archive_dir = app_settings.archive_dir / printer_folder / f"{timestamp}_{base_name}_sliced"
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        out_path = archive_dir / out_filename
+        out_path.write_bytes(result.content)
+        metadata = dict(source_archive.extra_data) if source_archive.extra_data else {}
+        metadata.update(
+            {
+                "destination_artifact_kind": DestinationArtifactKind.KLIPPER_GCODE.value,
+                "sliced_from_archive_id": source_archive.id,
+                "print_time_seconds": result.print_time_seconds,
+                "filament_used_g": result.filament_used_g,
+                "filament_used_mm": result.filament_used_mm,
+            }
+        )
+        new_archive = PrintArchive(
+            printer_id=source_archive.printer_id,
+            project_id=source_archive.project_id,
+            filename=out_filename,
+            file_path=str(out_path.relative_to(app_settings.base_dir)),
+            file_size=len(result.content),
+            content_hash=hashlib.sha256(result.content).hexdigest(),
+            thumbnail_path=None,
+            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_time_seconds=result.print_time_seconds,
+            filament_used_grams=result.filament_used_g or None,
+            filament_type=source_archive.filament_type,
+            filament_color=source_archive.filament_color,
+            layer_height=source_archive.layer_height,
+            nozzle_diameter=source_archive.nozzle_diameter,
+            sliced_for_model=source_archive.sliced_for_model,
+            bed_type=source_archive.bed_type,
+            makerworld_url=source_archive.makerworld_url,
+            designer=source_archive.designer,
+            extra_data=metadata,
+            created_by_id=current_user_id,
+        )
+        db.add(new_archive)
+        await db.commit()
+        await db.refresh(new_archive)
+        return SliceArchiveResponse(
+            archive_id=new_archive.id,
+            name=new_archive.print_name or out_filename,
+            print_time_seconds=result.print_time_seconds,
+            filament_used_g=result.filament_used_g,
+            filament_used_mm=result.filament_used_mm,
+            used_embedded_settings=used_embedded_settings,
+        )
 
     base_name = model_filename.rsplit(".", 1)[0]
     out_filename = f"{base_name}.gcode.3mf"

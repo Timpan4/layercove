@@ -219,6 +219,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // incompatible with high-temp filaments like ABS / ASA / PC, and the
   // user had no way to switch plates without cloning the preset.
   const [bedType, setBedType] = useState<string | null>(null);
+  const [destinationArtifactKind, setDestinationArtifactKind] = useState<'bambu_3mf' | 'klipper_gcode'>('bambu_3mf');
 
   // Slicer Pipelines (#1425) — apply a saved preset bundle to all four slots
   // with one pick, or save the current selection as a new pipeline.
@@ -470,6 +471,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       throw new Error(t('slice.allPresetsRequired'));
     }
     return {
+      destination_artifact_kind: destinationArtifactKind,
       printer_preset: printerPreset,
       process_preset: processPreset,
       filament_preset: filamentPresets[0] as PresetRef,
@@ -730,6 +732,29 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
                 onChange={setBedType}
                 disabled={isEnqueuing}
               />
+              <fieldset className="space-y-1">
+                <legend className="block text-xs text-bambu-gray">{t('slice.destination', 'Output')}</legend>
+                <label className="flex items-center gap-2 text-sm text-white">
+                  <input
+                    type="radio"
+                    name="slice-destination"
+                    checked={destinationArtifactKind === 'bambu_3mf'}
+                    onChange={() => setDestinationArtifactKind('bambu_3mf')}
+                    disabled={isEnqueuing}
+                  />
+                  {t('slice.destination.bambu', 'Bambu 3MF')}
+                </label>
+                <label className="flex items-center gap-2 text-sm text-white">
+                  <input
+                    type="radio"
+                    name="slice-destination"
+                    checked={destinationArtifactKind === 'klipper_gcode'}
+                    onChange={() => setDestinationArtifactKind('klipper_gcode')}
+                    disabled={isEnqueuing}
+                  />
+                  {t('slice.destination.klipper', 'Klipper G-code')}
+                </label>
+              </fieldset>
               {/* Filament reqs may need a server-side preview-slice for
                   unsliced project files (single-pass, then cached). Show a
                   scoped spinner so the user sees the printer/process

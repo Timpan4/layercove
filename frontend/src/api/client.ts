@@ -1516,6 +1516,7 @@ export interface SliceRequest {
   filament_presets?: PresetRef[];
   plate?: number;
   export_3mf?: boolean;
+  destination_artifact_kind?: 'bambu_3mf' | 'klipper_gcode';
   // Build-plate override (#1337). When omitted, the slicer uses the process
   // preset's curr_bed_type as-is. Canonical values match BambuStudio /
   // OrcaSlicer's enum: "Cool Plate", "Engineering Plate", "High Temp Plate",
