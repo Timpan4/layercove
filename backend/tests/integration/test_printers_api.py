@@ -3,6 +3,7 @@
 Tests the full request/response cycle for /api/v1/printers/ endpoints.
 """
 
+import tempfile
 from unittest.mock import AsyncMock, MagicMock, patch
 from urllib.parse import unquote
 
@@ -4618,6 +4619,14 @@ async def test_moonraker_upload_rejects_invalid_multipart_before_backend(async_c
             ]
         },
         {"files": {"file": ("cube.gcode", b"G1")}, "data": {"start": "yes"}},
+        {
+            "content": b"",
+            "headers": {"Content-Type": "multipart/form-datax; boundary=spoofed"},
+        },
+        {
+            "content": b"",
+            "headers": {"Content-Type": "multipart/form-data"},
+        },
     ]
 
     with patch("backend.app.api.routes.printers._moonraker_backend", new=backend_lookup):
@@ -4627,6 +4636,39 @@ async def test_moonraker_upload_rejects_invalid_multipart_before_backend(async_c
 
     assert [response.status_code for response in responses] == [400] * len(requests)
     assert all(response.json()["detail"]["code"] in {"invalid_multipart", "invalid_start"} for response in responses)
+    backend_lookup.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_moonraker_upload_closes_temp_file_for_truncated_multipart(async_client: AsyncClient):
+    boundary = "truncated-upload"
+    body = (
+        f'--{boundary}\r\nContent-Disposition: form-data; name="file"; filename="cube.gcode"\r\n'
+        "Content-Type: application/octet-stream\r\n\r\nG28"
+    ).encode()
+    temporary_files = []
+
+    def tracked_spooled_file(*args, **kwargs):
+        temporary_file = tempfile.SpooledTemporaryFile(*args, **kwargs)  # noqa: SIM115 - route owns closure
+        temporary_files.append(temporary_file)
+        return temporary_file
+
+    backend_lookup = AsyncMock()
+    with (
+        patch("starlette.formparsers.SpooledTemporaryFile", new=tracked_spooled_file),
+        patch("backend.app.api.routes.printers._moonraker_backend", new=backend_lookup),
+    ):
+        response = await async_client.post(
+            "/api/v1/printers/1/moonraker/upload-gcode",
+            content=body,
+            headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["detail"]["code"] == "invalid_multipart"
+    assert len(temporary_files) == 1
+    assert temporary_files[0].closed
     backend_lookup.assert_not_awaited()
 
 

@@ -6,6 +6,7 @@ import zipfile
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from python_multipart.exceptions import MultipartParseError
+from python_multipart.multipart import parse_options_header
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -2944,6 +2945,24 @@ async def _moonraker_backend(printer_id: int, db: AsyncSession) -> MoonrakerBack
     return backend
 
 
+_MULTIPART_BOUNDARY_CHARS = frozenset(b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz'()+_,-./:=? ")
+
+
+def _valid_multipart_content_type(value: str) -> bool:
+    try:
+        media_type, options = parse_options_header(value)
+    except (TypeError, ValueError):
+        return False
+    boundary = options.get(b"boundary")
+    return (
+        media_type.lower() == b"multipart/form-data"
+        and boundary is not None
+        and 1 <= len(boundary) <= 70
+        and boundary[-1:] != b" "
+        and all(character in _MULTIPART_BOUNDARY_CHARS for character in boundary)
+    )
+
+
 @router.post(
     "/{printer_id}/moonraker/upload-gcode",
     openapi_extra={
@@ -2972,26 +2991,25 @@ async def upload_moonraker_gcode(
     db: AsyncSession = Depends(get_db),
 ):
     """Upload one G-code file to Moonraker's gcodes root, optionally starting it."""
-    if not request.headers.get("content-type", "").lower().startswith("multipart/form-data"):
+    if not _valid_multipart_content_type(request.headers.get("content-type", "")):
         raise HTTPException(
             400,
             detail={"code": "invalid_multipart", "message": "Invalid Moonraker upload form."},
         )
 
     parser = MultiPartParser(request.headers, request.stream(), max_files=1, max_fields=1, max_part_size=16)
+    form = None
     try:
-        form = await parser.parse()
-    except BaseException as exc:
-        for temporary_file in parser._files_to_close_on_error:
-            temporary_file.close()
-        if isinstance(exc, (MultiPartException, MultipartParseError, OSError, ValueError)):
-            raise HTTPException(
-                400,
-                detail={"code": "invalid_multipart", "message": "Invalid Moonraker upload form."},
-            ) from exc
-        raise
+        try:
+            form = await parser.parse()
+        except BaseException as exc:
+            if isinstance(exc, (MultiPartException, MultipartParseError, OSError, ValueError)):
+                raise HTTPException(
+                    400,
+                    detail={"code": "invalid_multipart", "message": "Invalid Moonraker upload form."},
+                ) from exc
+            raise
 
-    try:
         files = [(name, value) for name, value in form.multi_items() if isinstance(value, UploadFile)]
         fields = [(name, value) for name, value in form.multi_items() if not isinstance(value, UploadFile)]
         if len(files) != 1 or files[0][0] != "file" or len(fields) > 1:
@@ -3014,7 +3032,14 @@ async def upload_moonraker_gcode(
             raise _moonraker_command_error(exc) from exc
         return {"success": True, "path": path, "started": start}
     finally:
-        await form.close()
+        parser_files = {id(temporary_file) for temporary_file in parser._files_to_close_on_error}
+        for temporary_file in parser._files_to_close_on_error:
+            if not temporary_file.closed:
+                temporary_file.close()
+        if form is not None:
+            for _, value in form.multi_items():
+                if isinstance(value, UploadFile) and id(value.file) not in parser_files:
+                    await value.close()
 
 
 @router.post("/{printer_id}/emergency-stop")
