@@ -107,6 +107,7 @@ class PrintQueueItem(Base):
     # command; provider_job_id is filled by the matching started event.
     provider_correlation_id: Mapped[str | None] = mapped_column(String(255), nullable=True, index=True)
     provider_job_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    start_reconcile_after: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cancel_requested_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     cancel_dispatched_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 

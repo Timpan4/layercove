@@ -5,7 +5,7 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
@@ -220,6 +220,7 @@ class PrintScheduler:
 
     async def check_queue(self):
         """Check for prints ready to start."""
+        await self._reconcile_persisted_moonraker_starts()
         async with async_session() as db:
             # Check if shortest-job-first scheduling is enabled
             sjf_enabled = await self._get_bool_setting(db, "queue_shortest_first")
@@ -2534,10 +2535,12 @@ class PrintScheduler:
             )
             return
 
+        correlation_id = str(uuid4())
+        upload_name = f"queued-{correlation_id}{file_path.suffix.lower()}"
         try:
             with file_path.open("rb") as source:
                 remote_path = self._safe_moonraker_path(
-                    await upload(source, filename=Path(filename).name, start=False, size=file_path.stat().st_size)
+                    await upload(source, filename=upload_name, start=False, size=file_path.stat().st_size)
                 )
         except Exception as exc:
             logger.warning("Queue item %s: Moonraker upload failed: %s", item.id, exc)
@@ -2547,7 +2550,6 @@ class PrintScheduler:
             return
 
         now = datetime.now(timezone.utc)
-        correlation_id = str(uuid4())
         cas = await db.execute(
             update(PrintQueueItem)
             .where(PrintQueueItem.id == item.id, PrintQueueItem.status == "pending")
@@ -2556,6 +2558,7 @@ class PrintScheduler:
                 started_at=now,
                 provider_correlation_id=correlation_id,
                 provider_job_id=remote_path,
+                start_reconcile_after=now + timedelta(seconds=_MOONRAKER_START_RECONCILE_GRACE_SECONDS),
             )
         )
         await db.commit()
@@ -2567,6 +2570,7 @@ class PrintScheduler:
         item.started_at = now
         item.provider_correlation_id = correlation_id
         item.provider_job_id = remote_path
+        item.start_reconcile_after = now + timedelta(seconds=_MOONRAKER_START_RECONCILE_GRACE_SECONDS)
         for cleanup_path in cleanup_disk_paths:
             try:
                 cleanup_path.unlink(missing_ok=True)
@@ -2619,6 +2623,19 @@ class PrintScheduler:
             await self._run_moonraker_terminal_effects(outcome, terminal_data)
             return
 
+        await db.execute(
+            update(PrintQueueItem)
+            .where(
+                PrintQueueItem.id == item.id,
+                PrintQueueItem.status == "printing",
+                PrintQueueItem.provider_correlation_id == correlation_id,
+                PrintQueueItem.provider_job_id == remote_path,
+            )
+            .values(start_reconcile_after=None)
+        )
+        await db.commit()
+        item.start_reconcile_after = None
+
         estimated_time = (
             archive.print_time_seconds if archive else library_file.print_time_seconds if library_file else None
         )
@@ -2642,6 +2659,37 @@ class PrintScheduler:
             name=f"reconcile-moonraker-start-{item_id}",
         )
 
+    async def _reconcile_persisted_moonraker_starts(self) -> int:
+        """Retry durable ambiguous-start checks after restart or a prior offline observation."""
+        now = datetime.now(timezone.utc)
+        async with async_session() as db:
+            rows = list(
+                (
+                    await db.execute(
+                        select(
+                            PrintQueueItem.id,
+                            PrintQueueItem.printer_id,
+                            PrintQueueItem.provider_correlation_id,
+                            PrintQueueItem.provider_job_id,
+                        )
+                        .join(Printer, Printer.id == PrintQueueItem.printer_id)
+                        .where(
+                            PrintQueueItem.status == "printing",
+                            PrintQueueItem.start_reconcile_after.is_not(None),
+                            PrintQueueItem.start_reconcile_after <= now,
+                            Printer.provider == PrinterProvider.MOONRAKER.value,
+                        )
+                    )
+                ).all()
+            )
+        resolved = 0
+        for item_id, printer_id, correlation_id, remote_path in rows:
+            if printer_id is None or not correlation_id or not remote_path:
+                continue
+            if await self._reconcile_moonraker_start(item_id, printer_id, correlation_id, remote_path, grace_seconds=0):
+                resolved += 1
+        return resolved
+
     async def _reconcile_moonraker_start(
         self,
         item_id: int,
@@ -2661,27 +2709,37 @@ class PrintScheduler:
                     PrintQueueItem.status == "printing",
                     PrintQueueItem.provider_correlation_id == correlation_id,
                     PrintQueueItem.provider_job_id == remote_path,
+                    PrintQueueItem.start_reconcile_after.is_not(None),
                 )
             )
             if item is None:
                 return False
             printer = await db.get(Printer, printer_id)
 
+        if backend is None:
+            return False
         provider_job_id = observed_filename = None
         active = False
-        if backend is not None:
-            snapshot = backend.snapshot()
-            identity = getattr(backend, "current_job_identity", None)
-            provider_job_id, observed_filename = identity() if identity is not None else (None, snapshot.filename)
-            active = snapshot.state in {
-                NormalizedPrinterState.PREPARING,
-                NormalizedPrinterState.PRINTING,
-                NormalizedPrinterState.PAUSED,
-            }
+        authoritative_idle = False
+        snapshot = backend.snapshot()
+        if not snapshot.connected or snapshot.state in {
+            NormalizedPrinterState.OFFLINE,
+            NormalizedPrinterState.CONNECTING,
+            NormalizedPrinterState.UNKNOWN,
+        }:
+            return False
+        identity = getattr(backend, "current_job_identity", None)
+        provider_job_id, observed_filename = identity() if identity is not None else (None, snapshot.filename)
+        active = snapshot.state in {
+            NormalizedPrinterState.PREPARING,
+            NormalizedPrinterState.PRINTING,
+            NormalizedPrinterState.PAUSED,
+        }
+        authoritative_idle = snapshot.state is NormalizedPrinterState.IDLE
         filename_matches = self._same_provider_filename(remote_path, observed_filename)
         job_matches = provider_job_id is not None and provider_job_id == remote_path
         if active and (filename_matches or job_matches):
-            await self.bind_moonraker_observed(
+            return await self.bind_moonraker_observed(
                 printer_id,
                 {
                     "correlation_id": correlation_id,
@@ -2689,9 +2747,10 @@ class PrintScheduler:
                     "filename": observed_filename or remote_path,
                 },
             )
-            return True
 
-        clear_binding = getattr(backend, "clear_queued_job_binding", None) if backend is not None else None
+        if not authoritative_idle and not active:
+            return False
+        clear_binding = getattr(backend, "clear_queued_job_binding", None)
         if clear_binding is not None:
             clear_binding(correlation_id)
         if printer is None:
@@ -2775,8 +2834,6 @@ class PrintScheduler:
         filename = data.get("filename")
         filename = str(filename).strip().lstrip("/") if filename else None
         identities = []
-        if correlation_id:
-            identities.append(PrintQueueItem.provider_correlation_id == correlation_id)
         if provider_job_id:
             identities.append(PrintQueueItem.provider_job_id == provider_job_id)
         if filename:
@@ -2804,6 +2861,7 @@ class PrintScheduler:
                 values["provider_correlation_id"] = correlation_id
             if provider_job_id:
                 values["provider_job_id"] = provider_job_id
+            values["start_reconcile_after"] = None
             result = await db.execute(
                 update(PrintQueueItem)
                 .where(
@@ -2900,7 +2958,7 @@ class PrintScheduler:
 
             printer = await db.get(Printer, printer_id)
             archive = await db.get(PrintArchive, item.archive_id) if item.archive_id else None
-            if item.cancel_requested_at is not None:
+            if item.cancel_requested_at is not None and status != "completed":
                 status = "cancelled"
             terminal_values = {"status": status, "completed_at": completed_at}
             if status == "failed":

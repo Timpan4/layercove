@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -93,14 +93,16 @@ async def test_moonraker_upload_claim_start_has_no_bambu_options(moonraker_queue
         archive = await db.get(PrintArchive, ids.archive)
         assert item.status == "printing"
         assert item.provider_job_id == "queue/cube.gcode"
+        assert item.start_reconcile_after is None
         assert archive.status == "printing"
     handle = backend.upload_gcode.await_args.args[0]
     assert handle.closed
-    assert backend.upload_gcode.await_args.kwargs == {
-        "filename": "cube.gcode",
-        "start": False,
-        "size": source.stat().st_size,
-    }
+    upload_kwargs = backend.upload_gcode.await_args.kwargs
+    assert upload_kwargs["filename"].startswith("queued-")
+    assert upload_kwargs["filename"].endswith(".gcode")
+    assert "cube" not in upload_kwargs["filename"]
+    assert upload_kwargs["start"] is False
+    assert upload_kwargs["size"] == source.stat().st_size
     backend.start_print.assert_awaited_once_with("queue/cube.gcode")
     backend.bind_queued_job.assert_called_once_with(
         item.provider_correlation_id, "queue/cube.gcode", "queue/cube.gcode"
@@ -212,6 +214,7 @@ async def test_moonraker_start_timeout_keeps_bound_printing_state_for_reconcilia
         item = await db.get(PrintQueueItem, ids.item)
         assert item.status == "printing"
         assert item.provider_correlation_id
+        assert item.start_reconcile_after is not None
         assert await db.scalar(select(func.count(PrintLogEntry.id))) == 0
     backend.bind_queued_job.assert_called_once()
     backend.clear_queued_job_binding.assert_not_called()
@@ -353,6 +356,7 @@ async def test_ambiguous_start_reconciles_once_from_exact_observed_job(
         item.status = "printing"
         item.provider_correlation_id = "queue-job"
         item.provider_job_id = "queue/cube.gcode"
+        item.start_reconcile_after = datetime.now(timezone.utc) - timedelta(seconds=1)
         await db.commit()
 
     backend = SimpleNamespace(
@@ -378,6 +382,138 @@ async def test_ambiguous_start_reconciles_once_from_exact_observed_job(
         assert await db.scalar(select(func.count(PrintLogEntry.id))) == (0 if expected_status == "printing" else 1)
     if expected_status == "failed":
         backend.clear_queued_job_binding.assert_called_once_with("queue-job")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("later_state", [NormalizedPrinterState.IDLE, NormalizedPrinterState.PRINTING])
+async def test_persisted_ambiguous_start_retries_after_offline(moonraker_queue, later_state):
+    sessions, _base_dir, _source, ids = moonraker_queue
+    remote_path = "queue/queued-opaque.gcode"
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        item.status = "printing"
+        item.provider_correlation_id = "queue-job"
+        item.provider_job_id = remote_path
+        item.start_reconcile_after = datetime.now(timezone.utc) - timedelta(seconds=1)
+        await db.commit()
+
+    observed = SimpleNamespace(state=NormalizedPrinterState.OFFLINE, connected=False, filename=None)
+    backend = SimpleNamespace(
+        snapshot=lambda: PrinterSnapshot(
+            PrinterProvider.MOONRAKER,
+            observed.connected,
+            observed.state,
+            filename=observed.filename,
+        ),
+        current_job_identity=lambda: ("42", observed.filename),
+        clear_queued_job_binding=MagicMock(),
+    )
+    scheduler = PrintScheduler()
+    with (
+        patch.object(scheduler_module, "async_session", sessions),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
+        patch.object(scheduler_module.printer_manager, "stop_print_async", AsyncMock(return_value=False)),
+    ):
+        assert await scheduler._reconcile_persisted_moonraker_starts() == 0
+        async with sessions() as db:
+            item = await db.get(PrintQueueItem, ids.item)
+            assert item.status == "printing"
+            assert item.start_reconcile_after is not None
+
+        observed.connected = True
+        observed.state = later_state
+        observed.filename = remote_path if later_state is NormalizedPrinterState.PRINTING else None
+        assert await scheduler._reconcile_persisted_moonraker_starts() == 1
+
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        if later_state is NormalizedPrinterState.PRINTING:
+            assert item.status == "printing"
+            assert item.provider_job_id == "42"
+            assert item.start_reconcile_after is None
+        else:
+            assert item.status == "failed"
+            assert await db.scalar(select(func.count(PrintLogEntry.id))) == 1
+
+
+@pytest.mark.asyncio
+async def test_restart_scan_fails_due_start_only_from_connected_idle(moonraker_queue):
+    sessions, _base_dir, _source, ids = moonraker_queue
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        item.status = "printing"
+        item.provider_correlation_id = "queue-job"
+        item.provider_job_id = "queue/queued-opaque.gcode"
+        item.start_reconcile_after = datetime.now(timezone.utc) - timedelta(seconds=1)
+        await db.commit()
+
+    backend = SimpleNamespace(
+        snapshot=lambda: PrinterSnapshot(PrinterProvider.MOONRAKER, True, NormalizedPrinterState.IDLE),
+        current_job_identity=lambda: (None, None),
+        clear_queued_job_binding=MagicMock(),
+    )
+    with (
+        patch.object(scheduler_module, "async_session", sessions),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
+    ):
+        assert await PrintScheduler()._reconcile_persisted_moonraker_starts() == 1
+
+    async with sessions() as db:
+        assert (await db.get(PrintQueueItem, ids.item)).status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_same_original_filename_external_job_cannot_bind_unique_queue_path(moonraker_queue):
+    sessions, _base_dir, _source, ids = moonraker_queue
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        item.status = "printing"
+        item.provider_correlation_id = "queue-job"
+        item.provider_job_id = "queue/queued-opaque.gcode"
+        await db.commit()
+
+    with patch.object(scheduler_module, "async_session", sessions):
+        assert not await PrintScheduler.bind_moonraker_observed(
+            ids.printer,
+            {
+                "correlation_id": "external-correlation",
+                "provider_job_id": "external-job",
+                "filename": "cube.gcode",
+            },
+        )
+
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        assert item.provider_correlation_id == "queue-job"
+        assert item.provider_job_id == "queue/queued-opaque.gcode"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("terminal_status", "expected_status"), [("completed", "completed"), ("failed", "cancelled")])
+async def test_cancel_intent_preserves_definitive_completion(moonraker_queue, terminal_status, expected_status):
+    sessions, _base_dir, _source, ids = moonraker_queue
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        item.status = "printing"
+        item.provider_correlation_id = "queue-job"
+        item.provider_job_id = "42"
+        item.cancel_requested_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    with patch.object(scheduler_module, "async_session", sessions):
+        outcome = await PrintScheduler.finalize_moonraker_job(
+            ids.printer,
+            {
+                "status": terminal_status,
+                "correlation_id": "queue-job",
+                "provider_job_id": "42",
+                "filename": "queue/queued-opaque.gcode",
+            },
+        )
+
+    assert outcome["status"] == expected_status
+    async with sessions() as db:
+        assert (await db.get(PrintQueueItem, ids.item)).status == expected_status
 
 
 @pytest.mark.asyncio
@@ -598,6 +734,7 @@ async def test_provider_identity_migration_is_additive_and_idempotent(tmp_path):
     assert {
         "provider_correlation_id",
         "provider_job_id",
+        "start_reconcile_after",
         "cancel_requested_at",
         "cancel_dispatched_at",
     } <= columns
