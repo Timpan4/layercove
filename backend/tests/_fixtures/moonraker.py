@@ -55,11 +55,11 @@ class FakeMoonraker:
         await self._runner.setup()
         site = web.TCPSite(self._runner, "127.0.0.1", 0)
         await site.start()
-        sockets = site._server.sockets if site._server is not None else []
-        if not sockets:
+        addresses = self._runner.addresses
+        if not addresses:
             await self.close()
             raise RuntimeError("Fake Moonraker failed to bind a test port")
-        self.port = sockets[0].getsockname()[1]
+        self.port = addresses[0][1]
         return self
 
     async def close(self) -> None:
@@ -89,7 +89,7 @@ class FakeMoonraker:
 
     async def send_malformed_notification(self) -> None:
         sockets = list(self._subscribers)
-        await asyncio.gather(*(socket.send_str("{not-json") for socket in sockets))
+        await asyncio.gather(*(socket.send_str("{not-json") for socket in sockets), return_exceptions=True)
 
     async def finish_job(
         self,
@@ -209,7 +209,7 @@ class FakeMoonraker:
                     await websocket.send_str("{not-json")
                     self.malformed_websocket_message = False
                     continue
-                if method == self.malformed_jsonrpc_method:
+                if self.malformed_jsonrpc_method is not None and method == self.malformed_jsonrpc_method:
                     await websocket.send_json({"jsonrpc": "2.0", "id": request_id, "result": "invalid"})
                 elif method in {"printer.objects.query", "printer.objects.subscribe"}:
                     await websocket.send_json({"jsonrpc": "2.0", "id": request_id, "result": {"status": self.status}})

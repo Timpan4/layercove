@@ -90,6 +90,27 @@ async def test_fake_moonraker_contract_uses_isolated_ports_and_cleans_up():
 
 
 @pytest.mark.asyncio
+async def test_fake_websocket_methodless_request_uses_unsupported_method_error(fake_moonraker, monkeypatch):
+    _allow_test_peer(monkeypatch)
+    transport = MoonrakerWebSocketTransport(
+        base_url=fake_moonraker.base_url,
+        resolver=fake_moonraker.resolver,
+        heartbeat=60,
+    )
+    connection = await transport.connect()
+    try:
+        await connection.send_json({"jsonrpc": "2.0", "id": 7})
+        response = await connection.receive_json()
+        assert response == {
+            "jsonrpc": "2.0",
+            "id": 7,
+            "error": {"code": -32601, "message": "unsupported method None"},
+        }
+    finally:
+        await connection.close()
+
+
+@pytest.mark.asyncio
 async def test_real_http_client_covers_upload_and_mvp_commands(fake_moonraker, monkeypatch):
     _allow_test_peer(monkeypatch)
     client = _http_client(fake_moonraker)
@@ -272,10 +293,11 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
     manager = PrinterManager(registry)
     sessions = async_sessionmaker(test_engine, expire_on_commit=False)
     scheduler = PrintScheduler()
+    start_outcomes = []
     terminal_outcomes = []
 
     async def on_started(printer_id, data):
-        await scheduler.bind_moonraker_observed(printer_id, data)
+        start_outcomes.append(await scheduler.bind_moonraker_observed(printer_id, data))
 
     async def on_completed(printer_id, data):
         terminal_outcomes.append(await scheduler.finalize_moonraker_job(printer_id, data))
@@ -320,15 +342,12 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
                 {"print_stats": {"state": "printing", "filename": remote_path, "job_id": "42"}}
             )
             await _wait_for(lambda: manager.get_snapshot(ids.printer).state is NormalizedPrinterState.PRINTING)
+            await _wait_for(lambda: bool(start_outcomes))
+            assert start_outcomes == [True]
 
-            async def queue_bound_to_job():
-                async with sessions() as db:
-                    current = await db.get(PrintQueueItem, ids.item)
-                    return current.provider_job_id == "42"
-
-            async with asyncio.timeout(1):
-                while not await queue_bound_to_job():
-                    await asyncio.sleep(0)
+            async with sessions() as db:
+                current = await db.get(PrintQueueItem, ids.item)
+                assert current.provider_job_id == "42"
 
             await fake_moonraker.finish_job(status="completed", filename=remote_path, job_id="42")
             await _wait_for(lambda: bool(terminal_outcomes))
