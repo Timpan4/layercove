@@ -3,8 +3,10 @@ from ipaddress import ip_address
 from socket import inet_aton
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, SecretStr, ValidationInfo, field_validator
+from pydantic.json_schema import SkipJsonSchema
 
+from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
 from backend.app.services.printer_types import PrinterCapabilities, PrinterProvider, capabilities_for_provider
 
 
@@ -28,8 +30,14 @@ def _normalize_provider_url(value: str, *, websocket: bool) -> str:
         except OSError:
             address = None
     if address is not None:
-        address = getattr(address, "ipv4_mapped", None) or address
-        if address.is_loopback or address.is_link_local or address.is_multicast or address.is_unspecified:
+        address = unwrap_ipv4_mapped(address)
+        if (
+            address in CLOUD_METADATA_IPS
+            or address.is_loopback
+            or address.is_link_local
+            or address.is_multicast
+            or address.is_unspecified
+        ):
             raise ValueError("URL host is not allowed")
 
     host = parsed.hostname.lower()
@@ -41,27 +49,48 @@ def _normalize_provider_url(value: str, *, websocket: bool) -> str:
 
 
 class MoonrakerPrinterConfigInput(BaseModel):
-    base_url: str
-    websocket_url_override: str | None = None
-    api_key: str | None = Field(default=None, min_length=1)
-    authorization: str | None = Field(default=None, min_length=1)
-    tls_verify: bool = True
+    base_url: SecretStr
+    websocket_url_override: SecretStr | None = None
+    api_key: SecretStr | None = Field(default=None, min_length=1)
+    authorization: SecretStr | None = Field(default=None, min_length=1)
+    tls_verify: bool = Field(default=True, validate_default=True)
+    url_fields_valid: SkipJsonSchema[bool] = Field(default=True, exclude=True, validate_default=True)
 
-    @field_validator("base_url")
+    @field_validator("tls_verify")
     @classmethod
-    def _normalize_base_url(cls, value: str) -> str:
-        return _normalize_provider_url(value, websocket=False)
-
-    @field_validator("websocket_url_override")
-    @classmethod
-    def _normalize_websocket_url(cls, value: str | None) -> str | None:
-        return _normalize_provider_url(value, websocket=True) if value is not None else None
-
-    @model_validator(mode="after")
-    def _one_auth_value(self):
-        if self.api_key is not None and self.authorization is not None:
+    def _one_auth_value(cls, value: bool, info: ValidationInfo) -> bool:
+        if info.data.get("api_key") is not None and info.data.get("authorization") is not None:
             raise ValueError("api_key and authorization are mutually exclusive")
-        return self
+        return value
+
+    @field_validator("url_fields_valid")
+    @classmethod
+    def _normalize_urls(cls, value: bool, info: ValidationInfo) -> bool:
+        base_url = info.data.get("base_url")
+        if base_url is not None:
+            info.data["base_url"] = SecretStr(_normalize_provider_url(base_url.get_secret_value(), websocket=False))
+        websocket_url = info.data.get("websocket_url_override")
+        if websocket_url is not None:
+            info.data["websocket_url_override"] = SecretStr(
+                _normalize_provider_url(websocket_url.get_secret_value(), websocket=True)
+            )
+        return value
+
+    @property
+    def base_url_value(self) -> str:
+        return self.base_url.get_secret_value()
+
+    @property
+    def websocket_url_override_value(self) -> str | None:
+        return self.websocket_url_override.get_secret_value() if self.websocket_url_override is not None else None
+
+    @property
+    def api_key_value(self) -> str | None:
+        return self.api_key.get_secret_value() if self.api_key is not None else None
+
+    @property
+    def authorization_value(self) -> str | None:
+        return self.authorization.get_secret_value() if self.authorization is not None else None
 
 
 class MoonrakerPrinterConfigResponse(BaseModel):
@@ -73,6 +102,11 @@ class MoonrakerPrinterConfigResponse(BaseModel):
 
     class Config:
         from_attributes = True
+
+
+class MoonrakerConnectionTestResponse(BaseModel):
+    success: bool
+    message: str
 
 
 class PrinterBase(BaseModel):
@@ -115,28 +149,48 @@ class PrinterBase(BaseModel):
 
 
 class PrinterCreate(PrinterBase):
+    moonraker_config: MoonrakerPrinterConfigInput | None = None
     # access_code lives on the input shapes only — never on the default
     # PrinterResponse. Direct exposure on PRINTERS_READ would let a Viewer
     # connect to the printer's MQTT and bypass Bambuddy's RBAC.
-    access_code: str | None = Field(default=None, min_length=1, max_length=20)
-    moonraker_config: MoonrakerPrinterConfigInput | None = None
+    access_code: SecretStr | None = None
+    provider_configuration_valid: SkipJsonSchema[bool] = Field(default=True, exclude=True, validate_default=True)
 
-    @model_validator(mode="after")
-    def _validate_provider_config(self):
-        if self.provider is PrinterProvider.BAMBU:
+    @field_validator("provider_configuration_valid")
+    @classmethod
+    def _validate_provider_config(cls, value: bool, info: ValidationInfo) -> bool:
+        provider = info.data.get("provider")
+        moonraker_config = info.data.get("moonraker_config")
+        access_code = info.data.get("access_code")
+        if access_code is not None and not 1 <= len(access_code.get_secret_value()) <= 20:
+            raise ValueError("access_code must contain between 1 and 20 characters")
+        if provider is PrinterProvider.BAMBU:
             missing = [
-                field for field in ("serial_number", "ip_address", "access_code") if getattr(self, field) is None
+                field
+                for field, field_value in (
+                    ("serial_number", info.data.get("serial_number")),
+                    ("ip_address", info.data.get("ip_address")),
+                    ("access_code", access_code),
+                )
+                if field_value is None
             ]
             if missing:
                 raise ValueError(f"Bambu printer requires {', '.join(missing)}")
-            if self.moonraker_config is not None:
+            if moonraker_config is not None:
                 raise ValueError("Bambu printer must not include moonraker_config")
         else:
-            if any(value is not None for value in (self.serial_number, self.ip_address, self.access_code)):
+            if any(
+                field_value is not None
+                for field_value in (info.data.get("serial_number"), info.data.get("ip_address"), access_code)
+            ):
                 raise ValueError("Moonraker printer must not include Bambu connection fields")
-            if self.moonraker_config is None:
+            if moonraker_config is None:
                 raise ValueError("Moonraker printer requires moonraker_config")
-        return self
+        return value
+
+    @property
+    def access_code_value(self) -> str | None:
+        return self.access_code.get_secret_value() if self.access_code is not None else None
 
 
 class PlateDetectionROI(BaseModel):
@@ -155,7 +209,8 @@ class PrinterUpdate(BaseModel):
         max_length=253,
         pattern=r"^(\d{1,3}(\.\d{1,3}){3}|[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?)*)$",
     )
-    access_code: str | None = Field(default=None, min_length=1, max_length=20)
+    access_code: SecretStr | None = None
+    access_code_valid: SkipJsonSchema[bool] = Field(default=True, exclude=True, validate_default=True)
     model: str | None = None
     location: str | None = None
     is_active: bool | None = None
@@ -169,6 +224,18 @@ class PrinterUpdate(BaseModel):
     plate_detection_enabled: bool | None = None
     plate_detection_roi: PlateDetectionROI | None = None
     moonraker_config: MoonrakerPrinterConfigInput | None = None
+
+    @field_validator("access_code_valid")
+    @classmethod
+    def _validate_access_code(cls, value: bool, info: ValidationInfo) -> bool:
+        access_code = info.data.get("access_code")
+        if access_code is not None and not 1 <= len(access_code.get_secret_value()) <= 20:
+            raise ValueError("access_code must contain between 1 and 20 characters")
+        return value
+
+    @property
+    def access_code_value(self) -> str | None:
+        return self.access_code.get_secret_value() if self.access_code is not None else None
 
 
 class PrinterResponse(PrinterBase):
@@ -217,9 +284,7 @@ class PrinterResponse(PrinterBase):
             "capabilities": capabilities_for_provider(
                 PrinterProvider(printer.provider),
                 camera_configured=bool(
-                    printer.external_camera_enabled
-                    and printer.external_camera_url
-                    and printer.external_camera_type
+                    printer.external_camera_enabled and printer.external_camera_url and printer.external_camera_type
                 ),
             ),
             "moonraker_config": (

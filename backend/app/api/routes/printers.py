@@ -31,6 +31,7 @@ from backend.app.schemas.printer import (
     FilaSwitchResponse,
     HmsActionBody,
     HMSErrorResponse,
+    MoonrakerConnectionTestResponse,
     NozzleInfoResponse,
     NozzleRackSlot,
     PrinterCreate,
@@ -50,6 +51,7 @@ from backend.app.services.bambu_ftp import (
     get_storage_info_async,
     list_files_async,
 )
+from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
 from backend.app.services.printer_diagnostic import run_connection_diagnostic
 from backend.app.services.printer_manager import (
     get_derived_status_name,
@@ -127,11 +129,8 @@ async def create_printer(
 ):
     """Add a new printer.
 
-    Verifies the MQTT connection succeeds before persisting. A wrong access
-    code or unreachable IP would otherwise create a printer row that shows
-    as an empty / never-connecting card on the dashboard — those reports
-    were turning into support tickets that all traced back to a mistyped
-    access code.
+    Verifies the provider connection before persisting. Wrong credentials or
+    an unreachable target would otherwise create an empty printer card.
     """
     if printer_data.provider is PrinterProvider.BAMBU:
         result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
@@ -141,7 +140,7 @@ async def create_printer(
         test_result = await printer_manager.test_connection(
             ip_address=printer_data.ip_address,
             serial_number=printer_data.serial_number,
-            access_code=printer_data.access_code,
+            access_code=printer_data.access_code_value,
         )
         if not test_result.get("success"):
             raise HTTPException(
@@ -155,19 +154,48 @@ async def create_printer(
                     ),
                 },
             )
+    else:
+        config = printer_data.moonraker_config
+        assert config is not None
+        try:
+            connected = await MoonrakerHTTPClient(
+                base_url=config.base_url_value,
+                api_key=config.api_key_value,
+                authorization=config.authorization_value,
+                tls_verify=config.tls_verify,
+            ).test_connection()
+            if not connected:
+                raise MoonrakerHTTPError("unavailable", "Could not connect to Moonraker.")
+        except MoonrakerHTTPError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": exc.code,
+                    "message": f"{exc.message} The printer was not added.",
+                },
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_configuration",
+                    "message": "Moonraker configuration is invalid. The printer was not added.",
+                },
+            )
 
     printer_values = printer_data.model_dump(exclude={"moonraker_config"})
     printer_values["provider"] = printer_data.provider.value
+    printer_values["access_code"] = printer_data.access_code_value
     printer = Printer(**printer_values)
     if printer_data.moonraker_config is not None:
         config_input = printer_data.moonraker_config
         config = MoonrakerPrinterConfig(
-            base_url=config_input.base_url,
-            websocket_url_override=config_input.websocket_url_override,
+            base_url=config_input.base_url_value,
+            websocket_url_override=config_input.websocket_url_override_value,
             tls_verify=config_input.tls_verify,
         )
-        config.api_key = config_input.api_key
-        config.authorization = config_input.authorization
+        config.api_key = config_input.api_key_value
+        config.authorization = config_input.authorization_value
         printer.moonraker_config = config
     db.add(printer)
     await db.commit()
@@ -180,6 +208,40 @@ async def create_printer(
         await printer_manager.connect_printer(printer)
 
     return _serialize_printer(printer, include_secret=False)
+
+
+@router.post("/{printer_id}/test-connection", response_model=MoonrakerConnectionTestResponse)
+async def test_moonraker_connection(
+    printer_id: int,
+    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
+    db: AsyncSession = Depends(get_db),
+):
+    """Test only the stored Moonraker origin; never accept a request-time URL."""
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+    )
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    if printer.provider != PrinterProvider.MOONRAKER or printer.moonraker_config is None:
+        raise HTTPException(400, "Printer does not have a Moonraker configuration")
+
+    config = printer.moonraker_config
+    try:
+        connected = await MoonrakerHTTPClient(
+            base_url=config.base_url,
+            api_key=config.api_key,
+            authorization=config.authorization,
+            tls_verify=config.tls_verify,
+        ).test_connection()
+    except MoonrakerHTTPError as exc:
+        return MoonrakerConnectionTestResponse(success=False, message=exc.message)
+    except (RuntimeError, ValueError):
+        return MoonrakerConnectionTestResponse(success=False, message="Could not connect to Moonraker.")
+
+    if not connected:
+        return MoonrakerConnectionTestResponse(success=False, message="Moonraker did not accept the connection test.")
+    return MoonrakerConnectionTestResponse(success=True, message="Connected to Moonraker.")
 
 
 @router.get("/usb-cameras")
@@ -366,6 +428,8 @@ async def update_printer(
         raise HTTPException(404, "Printer not found")
 
     update_data = printer_data.model_dump(exclude_unset=True)
+    if "access_code" in update_data:
+        update_data["access_code"] = printer_data.access_code_value
 
     bambu_connection_fields = {"ip_address", "access_code"}
     supplied_bambu_fields = bambu_connection_fields.intersection(update_data)
@@ -378,6 +442,11 @@ async def update_printer(
     if moonraker_data is not None:
         if printer.provider != PrinterProvider.MOONRAKER:
             raise HTTPException(400, "Bambu printer must not include moonraker_config")
+        config_input = printer_data.moonraker_config
+        assert config_input is not None
+        moonraker_data["base_url"] = config_input.base_url_value
+        if "websocket_url_override" in moonraker_data:
+            moonraker_data["websocket_url_override"] = config_input.websocket_url_override_value
         config = printer.moonraker_config
         if config is None:
             config = MoonrakerPrinterConfig(printer=printer)
@@ -387,12 +456,14 @@ async def update_printer(
         if "tls_verify" in moonraker_data:
             config.tls_verify = moonraker_data["tls_verify"]
         if "api_key" in moonraker_data:
-            config.api_key = moonraker_data["api_key"]
-            if moonraker_data["api_key"] is not None:
+            api_key = printer_data.moonraker_config.api_key_value
+            config.api_key = api_key
+            if api_key is not None:
                 config.authorization = None
         if "authorization" in moonraker_data:
-            config.authorization = moonraker_data["authorization"]
-            if moonraker_data["authorization"] is not None:
+            authorization = printer_data.moonraker_config.authorization_value
+            config.authorization = authorization
+            if authorization is not None:
                 config.api_key = None
 
     # Handle nested ROI object - flatten to individual columns

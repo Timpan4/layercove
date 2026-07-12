@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.config import settings
+from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
@@ -24,6 +25,11 @@ logger = logging.getLogger(__name__)
 # The trace_id is left as part of the message group — callers that need it can
 # parse it out; the log-health scanner does not.
 LOG_LINE_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3})\s+(\w+)\s+\[([^\]]+)\]\s+(.*)$")
+
+_SHORT_CREDENTIAL_HEADERS = {
+    "[MOONRAKER_API_KEY]": "X-Api-Key",
+    "[MOONRAKER_AUTHORIZATION]": "Authorization",
+}
 
 
 class LogEntry(BaseModel):
@@ -150,11 +156,23 @@ def sanitize_log_content(content: str, sensitive_strings: dict[str, str] | None 
         # Sort by length descending to avoid partial matches (e.g. "My Printer 1" before "My Printer")
         for value, label in sorted(sensitive_strings.items(), key=lambda x: len(x[0]), reverse=True):
             if len(value) < 3:
-                continue  # Skip very short strings to prevent over-redaction
+                header = _SHORT_CREDENTIAL_HEADERS.get(label)
+                if header:
+                    content = re.sub(
+                        rf"(\b{re.escape(header)}\b[\"']?\s*[:=]\s*[\"']?){re.escape(value)}(?=[\"']?[\s,;}}]|$)",
+                        rf"\1{label}",
+                        content,
+                        flags=re.IGNORECASE,
+                    )
+                continue  # Never replace arbitrary one- or two-character strings globally.
             content = re.sub(re.escape(value), label, content)
 
     # Replace credentials in URLs (e.g. http://user:pass@host, rtsps://bblp:code@host)
     content = re.sub(r"((?:https?|rtsps?)://)[^/:@\s]+:[^/@\s]+@", r"\1[CREDENTIALS]@", content)
+
+    # Fernet values are ciphertext, but still secret material and must never
+    # enter a support bundle or log response.
+    content = re.sub(r"fernet:[A-Za-z0-9_-]+={0,2}", "[SECRET]", content)
 
     # Replace email addresses
     content = re.sub(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b", "[EMAIL]", content)
@@ -197,6 +215,18 @@ async def collect_sensitive_strings(db: AsyncSession) -> dict[str, str]:
             sensitive_strings[ip_address] = "[IP]"
         if access_code:
             sensitive_strings[access_code] = "[ACCESS_CODE]"
+
+    # Moonraker credentials are encrypted at rest. Decrypt only while
+    # assembling this in-memory redaction map; never add ciphertext to it.
+    result = await db.execute(select(MoonrakerPrinterConfig))
+    for config in result.scalars():
+        try:
+            if config.api_key:
+                sensitive_strings[config.api_key] = "[MOONRAKER_API_KEY]"
+            if config.authorization:
+                sensitive_strings[config.authorization] = "[MOONRAKER_AUTHORIZATION]"
+        except RuntimeError:
+            logger.warning("Skipping unreadable Moonraker credential during log redaction")
 
     # Auth usernames
     result = await db.execute(select(User.username))
