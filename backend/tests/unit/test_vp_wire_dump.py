@@ -23,6 +23,15 @@ def test_disabled_by_default_writes_nothing(_isolated_log_dir, monkeypatch):
     assert not (_isolated_log_dir / "vp_wire").exists()
 
 
+def test_layercove_flag_takes_precedence(_isolated_log_dir, monkeypatch):
+    monkeypatch.setenv("BAMBUDDY_VP_DUMP_WIRE", "1")
+    monkeypatch.setenv("LAYERCOVE_VP_DUMP_WIRE", "0")
+
+    _debug.dump_wire("VP1", "out", {"hello": "world"})
+
+    assert not (_isolated_log_dir / "vp_wire").exists()
+
+
 def test_enabled_writes_dict_as_pretty_json(_isolated_log_dir, monkeypatch):
     monkeypatch.setenv("BAMBUDDY_VP_DUMP_WIRE", "1")
     payload = {"print": {"ams": {"ams": [{"id": 0, "tray": [{"id": 0, "tray_type": "PLA"}]}]}}}

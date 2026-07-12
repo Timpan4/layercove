@@ -34,6 +34,7 @@ from backend.app.core.auth import (
     revoke_jti,
     security,
 )
+from backend.app.core.config import get_compat_env
 from backend.app.core.database import async_session, get_db
 from backend.app.core.permissions import ALL_PERMISSIONS
 from backend.app.models.auth_ephemeral import AuthEphemeralToken, AuthRateLimitEvent, EventType, TokenType
@@ -115,14 +116,14 @@ _TRUSTED_PROXY_IPS: frozenset[str] = frozenset(
 # #1589: read at call time, not import time, so tests can monkeypatch os.environ
 # between cases without re-importing the module.
 def _local_login_env_bypass() -> bool:
-    """Return True when ``BAMBUDDY_LOCAL_LOGIN`` env var is set truthy.
+    """Return whether the LayerCove/Bambuddy recovery override is truthy.
 
     Bypasses the ``local_login_enabled`` DB setting on the local-credentials
     code path AND the forgot-password endpoint so a server admin can recover
     an install whose SSO provider is unreachable. Accepted truthy values:
     ``true``, ``1``, ``yes`` (case-insensitive).
     """
-    return os.environ.get("BAMBUDDY_LOCAL_LOGIN", "").strip().lower() in {"true", "1", "yes"}
+    return get_compat_env("LOCAL_LOGIN").strip().lower() in {"true", "1", "yes"}
 
 
 def _get_client_ip(request: Request) -> str:

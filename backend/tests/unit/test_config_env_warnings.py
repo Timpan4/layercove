@@ -36,6 +36,32 @@ def test_unknown_bambuddy_env_var_logs_info(monkeypatch, caplog):
 
 
 @pytest.mark.unit
+def test_unknown_layercove_env_var_logs_info(monkeypatch, caplog):
+    monkeypatch.setenv("LAYERCOVE_NEW_FEATURE", "v1")
+
+    import backend.app.core.config as cfg_mod
+
+    with caplog.at_level(logging.INFO):
+        importlib.reload(cfg_mod)
+
+    assert any("LAYERCOVE_NEW_FEATURE" in rec.message for rec in caplog.records)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("prefix", ["LAYERCOVE", "BAMBUDDY"])
+def test_known_compat_env_var_does_not_log(monkeypatch, caplog, prefix):
+    key = f"{prefix}_LOCAL_LOGIN"
+    monkeypatch.setenv(key, "true")
+
+    import backend.app.core.config as cfg_mod
+
+    with caplog.at_level(logging.INFO):
+        importlib.reload(cfg_mod)
+
+    assert not any(key in rec.message and "typo" in rec.message.lower() for rec in caplog.records)
+
+
+@pytest.mark.unit
 def test_known_intentional_env_var_does_not_log(monkeypatch, caplog):
     """MFA_ENCRYPTION_KEY is declared in _INTENTIONAL_UNSETTINGS — must be silent."""
     monkeypatch.setenv("MFA_ENCRYPTION_KEY", "x" * 44)  # invalid but not a typo

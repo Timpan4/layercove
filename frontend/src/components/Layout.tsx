@@ -491,7 +491,7 @@ export function Layout() {
           </button>
           <img
             src={resolvedMode === 'dark' ? '/img/bambuddy_logo_dark_transparent.png' : '/img/bambuddy_logo_light.png'}
-            alt="Bambuddy"
+            alt="LayerCove"
             className="h-8 ml-3"
           />
         </header>
@@ -517,7 +517,7 @@ export function Layout() {
         <div className={`border-b border-bambu-dark-tertiary flex items-center justify-center ${isSidebarCompact || sidebarExpanded ? 'p-4' : 'p-2'}`}>
           <img
             src={resolvedMode === 'dark' ? '/img/bambuddy_logo_dark_transparent.png' : '/img/bambuddy_logo_light.png'}
-            alt="Bambuddy"
+            alt="LayerCove"
             className={isSidebarCompact || sidebarExpanded ? 'h-16 w-auto' : 'h-8 w-8 object-cover object-left'}
           />
         </div>

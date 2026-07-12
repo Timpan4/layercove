@@ -1,54 +1,36 @@
 <p align="center">
-  <img src="static/img/bambuddy_logo_dark.png" alt="Bambuddy Logo" width="300">
+  <img src="static/img/bambuddy_logo_dark.png" alt="LayerCove" width="300">
 </p>
 
-<h1 align="center">Bambuddy</h1>
+<h1 align="center">LayerCove</h1>
 
 <p align="center">
   <strong>Your printers. No cloud. Your rules.</strong><br>
-  Self-hosted command center for Bambu Lab &mdash; from one A1 to a 40-printer farm.
+  Vendor-neutral, self-hosted slicing, management, and monitoring for Bambu Lab and Klipper/Moonraker printers.
 </p>
 
 <p align="center">
-  <a href="https://github.com/maziggy/bambuddy/releases"><img src="https://img.shields.io/github/v/release/maziggy/bambuddy?style=flat-square&color=blue&cacheSeconds=3600" alt="Release"></a>
-  <img src="https://github.com/maziggy/bambuddy/actions/workflows/ci.yml/badge.svg?branch=main">
-  <img src="https://github.com/maziggy/bambuddy/actions/workflows/github-code-scanning/codeql/badge.svg">
-  <img src="https://github.com/maziggy/bambuddy/actions/workflows/security.yml/badge.svg">
-  <a href="https://github.com/maziggy/bambuddy/blob/main/LICENSE"><img src="https://img.shields.io/github/license/maziggy/bambuddy?style=flat-square&cacheSeconds=3600" alt="License"></a>
-  <a href="https://github.com/maziggy/bambuddy/stargazers"><img src="https://img.shields.io/github/stars/maziggy/bambuddy?style=flat-square&cacheSeconds=3600" alt="Stars"></a>
-  <a href="https://github.com/maziggy/bambuddy/issues"><img src="https://img.shields.io/github/issues/maziggy/bambuddy?style=flat-square&cacheSeconds=3600" alt="Issues"></a>
-  <a href="https://discord.gg/aFS3ZfScHM"><img src="https://img.shields.io/discord/1461241694715645994?style=flat-square&logo=discord&logoColor=white&label=Discord&color=5865F2" alt="Discord"></a>
-  <a href="https://github.com/sponsors/maziggy"><img src="https://img.shields.io/badge/GitHub_Sponsors-Sponsor-ea4aaa?style=flat-square&logo=github-sponsors&logoColor=white" alt="GitHub Sponsors"></a>
-  <a href="https://sponsors.bambuddy.cool"><img src="https://img.shields.io/badge/Sponsors_Portal-sponsors.bambuddy.cool-2dd4bf?style=flat-square&logo=heart&logoColor=white" alt="Sponsors Portal"></a>
-  <a href="https://ko-fi.com/maziggy"><img src="https://img.shields.io/badge/Ko--fi-Support-ff5e5b?style=flat-square&logo=ko-fi&logoColor=white" alt="Ko-fi" target=_blank></a>
+  <a href="https://github.com/Timpan4/layercove/actions/workflows/ci.yml"><img src="https://github.com/Timpan4/layercove/actions/workflows/ci.yml/badge.svg?branch=main" alt="CI"></a>
+  <a href="https://github.com/Timpan4/layercove/blob/main/LICENSE"><img src="https://img.shields.io/github/license/Timpan4/layercove?style=flat-square" alt="License"></a>
+  <a href="https://github.com/Timpan4/layercove/issues"><img src="https://img.shields.io/github/issues/Timpan4/layercove?style=flat-square" alt="Issues"></a>
 </p>
 
-<p align="center">
-  <sub><strong>Backed by</strong></sub><br>
-  <a href="https://northpole3dprinting.com/"><img src="static/img/sponsors/northpole-3d-printing.jpg" alt="North Pole 3D Printing" height="60"></a>
-</p>
+> [!IMPORTANT]
+> LayerCove is an independent modified fork of [Bambuddy](https://github.com/maziggy/bambuddy). It is not affiliated with or endorsed by Bambuddy's maintainer, Bambu Lab, Klipper, Moonraker, or OrcaSlicer. Bambuddy copyright and AGPL-3.0-or-later attribution are preserved in the source history and license.
 
-<p align="center">
-  <a href="https://demo.bambuddy.cool"><strong>🎮 Try the Live Demo</strong></a> •
-  <a href="#-features">Features</a> •
-  <a href="#-screenshots">Screenshots</a> •
-  <a href="#-quick-start">Quick Start</a> •
-  <a href="http://wiki.bambuddy.cool">Documentation</a> •
-  <a href="https://discord.gg/aFS3ZfScHM">Discord</a> •
-  <a href="#-contributing">Contributing</a>
-</p>
+## Project status
 
-<p align="center">
-  <a href="https://demo.bambuddy.cool">
-    <img src="https://img.shields.io/badge/🎮_Live_Demo-demo.bambuddy.cool-00ae42?style=for-the-badge&labelColor=0a0d14" alt="Live Demo">
-  </a>
-  <br>
-  <em>Spin up your own private Bambuddy in ~10 seconds — no install, no signup, 30-minute session.</em>
-</p>
+LayerCove currently supports the inherited Bambu workflows plus a Moonraker MVP: safe onboarding, live status and reconnect, standard `.gcode` upload/start, pause/resume/cancel, camera, queue/history integration, provider-aware slicing, and Spoolman accounting. Automated fake-Moonraker coverage is included. Physical Bambu and Klipper validation remain open and must pass before the multi-provider epic is declared complete.
+
+The primary workflow is: upload STL, STEP, or 3MF from a phone/PWA; select existing OrcaSlicer printer, process, and filament profiles; slice; choose a Bambu or Moonraker destination; upload or upload-and-start; then monitor and control it from the fleet UI.
+
+## Security and deployment boundary
+
+LayerCove is designed for a trusted private network or an authenticated access layer such as Tailscale or Cloudflare Access. Do not expose printers or Moonraker directly to the public internet. LayerCove does not provide a generic URL proxy, shell, or G-code console. Review [SECURITY.md](SECURITY.md) before configuring reverse proxies, trusted headers, self-signed TLS, or remote access.
 
 ---
 
-## 📰 As Featured In
+## 📰 Inherited Bambuddy coverage
 
 > **"Bambuddy is the companion app that Bambu Lab should have built from day one."**
 > — Adam Conway, [XDA-Developers](https://www.xda-developers.com/finally-have-full-control-bambu-lab-printer-ditched-bambu-cloud/)
@@ -505,157 +487,52 @@ Optional but recommended — drop the [`slicer-api/` Compose stack](slicer-api/R
 ## 🚀 Quick Start
 
 ### Requirements
-- Python 3.10+ (3.11/3.12 recommended)
-- Bambu Lab printer with **Developer Mode** enabled (see below)
-- **"Store sent files on external storage"** enabled in Bambu Studio/OrcaSlicer
-- Same local network as printer
 
-### Installation
+- Python 3.10+ for a native development install, or Docker
+- A Bambu Lab printer in Developer Mode and/or a Klipper printer with Moonraker
+- Network access from LayerCove to each configured printer
+- OrcaSlicer profiles for server-side slicing
 
-#### Windows (Native Installer)
+### Docker
 
-Self-contained `.exe` — no Python, Node, Docker, or Git required on the target machine. The installer bundles Python 3.13, the React frontend, ffmpeg, and registers Bambuddy as a Windows service.
-
-Download the latest installer:
-
-> https://github.com/maziggy/bambuddy/releases/latest/download/bambuddy-windows-x64-setup.exe
-
-Run it (one-time UAC prompt — admin install) → Bambuddy starts as a Windows service and the dashboard opens at **http://localhost:8000** automatically. Data lives at `C:\ProgramData\Bambuddy\`, install at `C:\Program Files\Bambuddy\`. To update, just run a newer installer over the existing install — your database and archives are preserved.
-
-> **SmartScreen warning:** until our SignPath OSS code-signing approval lands, you'll see "Windows protected your PC" on first run. Click **More info → Run anyway**.
-
-See the [Windows Installer Guide](https://wiki.bambuddy.cool/getting-started/windows-installer/) for service management, logs, and troubleshooting.
-
-#### Docker (Linux / macOS / Windows via Docker Desktop)
-
-**Option A: Pre-built image (fastest)**
 ```bash
-mkdir bambuddy && cd bambuddy
-curl -O https://raw.githubusercontent.com/maziggy/bambuddy/main/docker-compose.yml
-docker compose up -d
-```
-
-**Option B: Build from source**
-```bash
-git clone https://github.com/maziggy/bambuddy.git
-cd bambuddy
+git clone https://github.com/Timpan4/layercove.git
+cd layercove
 docker compose up -d --build
 ```
 
-Open **http://localhost:8000** in your browser.
+Open **http://localhost:8000**. Linux host networking supports printer discovery; Docker Desktop users should use the documented port mapping and add printers manually by address.
 
-> **Multi-architecture support:** Pre-built images are available for `linux/amd64` and `linux/arm64` (Raspberry Pi 4/5).
+The checked-in Compose file retains `bambuddy_data`, `bambuddy_logs`, and the `bambuddy` service/container name deliberately. Existing installations can upgrade in place without renaming volumes or moving data. Fresh deployment names will be finalized with the deployment work in [issue #17](https://github.com/Timpan4/layercove/issues/17).
 
-> **macOS/Windows users:** Docker Desktop doesn't support `network_mode: host`. Edit docker-compose.yml: comment out `network_mode: host` and uncomment the `ports:` section. Printer discovery won't work - add printers manually by IP.
+### Configuration compatibility
 
-> **Linux users:** If you get "permission denied" errors, either prefix commands with `sudo` (e.g., `sudo docker compose up -d`) or [add your user to the docker group](https://docs.docker.com/engine/install/linux-postinstall/).
+LayerCove-prefixed variables take precedence when both names are present. Existing Bambuddy variables remain supported:
 
-<details>
-<summary><strong>Docker Configuration & Commands</strong></summary>
+| Preferred | Compatibility fallback | Purpose |
+|---|---|---|
+| `LAYERCOVE_LOCAL_LOGIN` | `BAMBUDDY_LOCAL_LOGIN` | Emergency local-login recovery when SSO is unavailable |
+| `LAYERCOVE_EXTERNAL_ROOTS` | `BAMBUDDY_EXTERNAL_ROOTS` | External library root allowlist |
+| `LAYERCOVE_VP_DUMP_WIRE` | `BAMBUDDY_VP_DUMP_WIRE` | Virtual-printer protocol diagnostics |
 
-**Environment Variables:**
+Generic operational variables such as `DATABASE_URL`, `DATA_DIR`, `LOG_DIR`, `PORT`, and `MFA_ENCRYPTION_KEY` are unchanged. The SQLite filename, API paths, database schema, service identifiers, and named volumes remain compatible.
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `TZ` | `UTC` | Your timezone (e.g., `America/New_York`, `Europe/Berlin`) |
-| `PORT` | `8000` | Port BamBuddy runs on (with host networking mode) |
-| `DEBUG` | `false` | Enable debug logging |
-| `LOG_LEVEL` | `INFO` | Log level: `DEBUG`, `INFO`, `WARNING`, `ERROR` |
+### Development
 
-**Data Persistence:**
-
-| Volume | Purpose |
-|--------|---------|
-| `bambuddy.db` | SQLite database with all your print data (not used with PostgreSQL) |
-| `archive/` | Archived 3MF files and thumbnails |
-| `logs/` | Application logs |
-
-**Updating:**
+On Linux/macOS, use the repository-declared environments:
 
 ```bash
-# Pre-built image: just pull the latest
-docker compose pull && docker compose up -d
-
-# From source: rebuild after pulling changes
-cd bambuddy && git pull && docker compose up -d --build
+uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt pytest backend/tests
+cd frontend && bun install && bun run build
 ```
 
-**Daily Beta Builds:**
+Windows development is supported through WSL. See [AGENTS.md](AGENTS.md), [docs/rebranding.md](docs/rebranding.md), and [docs/upstream-sync.md](docs/upstream-sync.md) for repository-specific workflow and compatibility boundaries.
 
-Beta builds with the latest fixes are pushed regularly to the same beta version tag:
+### Bambu setup
 
-```bash
-# Pull the current beta
-docker pull ghcr.io/maziggy/bambuddy:0.2.2b1
-# or from Docker Hub
-docker pull maziggy/bambuddy:0.2.2b1
-```
+Enable LAN/Developer Mode on the printer and enable **Store sent files on external storage** in Bambu Studio or OrcaSlicer when you want LayerCove to retrieve Bambu thumbnails and slicer metadata. Moonraker printers use standard `.gcode` artifacts and do not require AMS fields.
 
-Use [Watchtower](https://containrrr.dev/watchtower/) to automatically update when new daily builds are pushed.
-
-> **Note:** Beta builds use version tags like `0.2.2b1` — they are never tagged as `latest`. Your stable installation won't auto-update to a beta unless you explicitly pull a beta tag.
-
-**Useful Commands:**
-
-```bash
-# View logs
-docker compose logs -f
-
-# Stop/Start
-docker compose down
-docker compose up -d
-
-# Shell access
-docker compose exec bambuddy /bin/bash
-```
-
-**Custom Port:**
-
-```yaml
-ports:
-  - "3000:8000"  # Access on port 3000
-```
-
-**Reverse Proxy (Nginx):**
-
-```nginx
-server {
-    listen 443 ssl http2;
-    server_name bambuddy.yourdomain.com;
-
-    ssl_certificate /path/to/cert.pem;
-    ssl_certificate_key /path/to/key.pem;
-
-    location / {
-        proxy_pass http://localhost:8000;
-        proxy_http_version 1.1;
-        proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection "upgrade";
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-        proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 86400;
-    }
-}
-```
-
-> **Note:** WebSocket support is required for real-time printer updates.
-
-**Network Mode Host** (required for printer discovery and camera streaming):
-
-```yaml
-services:
-  bambuddy:
-    build: .
-    network_mode: host
-```
-
-> **Note:** Docker's default bridge networking cannot receive SSDP multicast packets for automatic printer discovery. When using `network_mode: host`, Bambuddy auto-detects your network subnet and can discover printers via subnet scanning in the Add Printer dialog.
-
-</details>
-
-#### Local development with WSL
+### Local development with WSL
 
 Start the backend and Bun/Vite frontend together from the repository root:
 
@@ -663,157 +540,52 @@ Start the backend and Bun/Vite frontend together from the repository root:
 bash scripts/dev.sh
 ```
 
-Open `http://localhost:5173`. The Vite server proxies API and WebSocket traffic to
-the backend at `http://localhost:8000`. Press `Ctrl+C` to stop both servers. Set
-`BACKEND_PORT` before the command to use another backend port.
+Open `http://localhost:5173`. The Vite server proxies API and WebSocket traffic to the backend at `http://localhost:8000`. Press `Ctrl+C` to stop both servers. Set `BACKEND_PORT` before the command to use another backend port.
 
-#### Manual Installation (Linux/macOS)
-
-```bash
-# Clone and setup
-git clone https://github.com/maziggy/bambuddy.git
-cd bambuddy
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-
-# Run (--loop asyncio avoids a uvloop TLS bug that can truncate VP FTP uploads)
-uvicorn backend.app.main:app --host 0.0.0.0 --port 8000 --loop asyncio
-```
-
-Open **http://localhost:8000** and add your printer!
-
-> **Need detailed instructions?** See the [Installation Guide](http://wiki.bambuddy.cool/getting-started/installation/)
-
-### Windows Native Installation
-
-Windows PowerShell (run as Administrator — the installer self-elevates via UAC if not):
-
-```powershell
-powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/maziggy/bambuddy/main/install/windows-installer.ps1 -OutFile windows-installer.ps1; .\windows-installer.ps1"
-```
-
-> Installs Bambuddy natively on Windows using Git, Python, a virtual environment, separate data/log directories, and optional NSSM Windows Service registration. See the [Windows Installer Guide](http://wiki.bambuddy.cool/getting-started/windows-installer/) for parameters and unattended-install options.
-
-### Enabling Developer Mode
-
-Developer Mode allows third-party software like Bambuddy to control your printer over the local network.
-
-1. On printer: **Settings** → **Network** → **LAN Only Mode** → Enable
-2. Enable **Developer Mode** (appears after LAN Only Mode is enabled)
-3. Note the **Access Code** displayed
-4. Find IP address in network settings
-5. Find Serial Number in device info
-
-> **Note:** Developer Mode disables cloud features but provides full local control. Standard LAN Mode (without Developer Mode) only allows read-only monitoring.
-
-### Slicer Settings
-
-In Bambu Studio or OrcaSlicer, enable **"Store sent files on external storage"** so that print files (3MF) are saved to the printer's SD card. Bambuddy needs these files to extract thumbnails and 3D model previews.
-
-1. Open **Bambu Studio** or **OrcaSlicer**
-2. Go to the **Device** tab for your printer
-3. In **Print Options**, enable **Store Sent Files on External Storage**
 
 ---
 
 ## 📚 Documentation
 
-Full documentation available at **[wiki.bambuddy.cool](http://wiki.bambuddy.cool)**:
+LayerCove-specific architecture, security, deployment, compatibility, and upstream-sync guidance lives in this repository under [`docs/`](docs/). The inherited [Bambuddy wiki](http://wiki.bambuddy.cool) remains useful for unchanged Bambu features, but it describes the upstream product and may not reflect LayerCove's Moonraker behavior.
 
-- [Installation](http://wiki.bambuddy.cool/getting-started/installation/) — All installation methods
-- [Getting Started](http://wiki.bambuddy.cool/getting-started/) — First printer setup
-- [Features](http://wiki.bambuddy.cool/features/) — Detailed feature guides
-- [Troubleshooting](http://wiki.bambuddy.cool/reference/troubleshooting/) — Common issues & solutions
-- [API Reference](http://wiki.bambuddy.cool/reference/api/) — REST API documentation
+## 🖨️ Supported printer scope
 
----
+- **Bambu Lab:** inherited X1/X2/H2/P1/P2/A1/A2 workflows, subject to physical regression validation.
+- **Klipper/Moonraker:** provider-neutral status, camera, standard G-code upload/start, common controls, queue/history, slicing, and Spoolman integration. Advanced macros, configuration editing, and generic G-code consoles are intentionally out of scope.
 
-## 🖨️ Supported Printers
-
-| Series | Models |
-|--------|--------|
-| X1 | X1, X1 Carbon, X1E |
-| X2 | X2D |
-| H2 | H2D, H2D Pro, H2C, H2S |
-| P1 | P1P, P1S |
-| P2 | P2S |
-| A1 | A1, A1 Mini |
-| A2 | A2L |
-
----
-
-## 🛠️ Tech Stack
+## 🛠️ Tech stack
 
 | Component | Technology |
-|-----------|------------|
+|---|---|
 | Backend | Python, FastAPI, SQLAlchemy |
 | Frontend | React, TypeScript, Tailwind CSS |
 | Database | SQLite (default) or PostgreSQL |
-| 3D Viewer | Three.js |
-| Communication | MQTT (TLS), FTPS |
-
----
+| Printer transports | Bambu MQTT/FTP/FTPS; Moonraker HTTP/WebSocket |
+| Slicing | OrcaSlicer API sidecars |
 
 ## 🤝 Contributing
 
-Contributions welcome! Ways to help:
+Open LayerCove bugs, features, and pull requests in [this repository](https://github.com/Timpan4/layercove). Keep provider-specific behavior behind the existing provider contracts, preserve Bambu regression coverage, and do not rename compatibility identifiers without a tested migration. See [CONTRIBUTING.md](CONTRIBUTING.md) and [docs/upstream-sync.md](docs/upstream-sync.md).
 
-1. **📝 Document** — Improve the wiki and guides *(urgently needed!)*
-2. **Test** — Report issues with your printer model
-3. **Translate** — Add new languages
-4. **Code** — Submit PRs for bugs or features
-5. **🔒 Security review** — *(specifically wanted, see below)*
+## 📄 License and attribution
 
-Not sure where to start? Reach out on [Discord](https://discord.gg/aFS3ZfScHM) or email **martin@bambuddy.cool** — I'll help you find something that fits.
+LayerCove is distributed under the GNU Affero General Public License v3.0 or later; see [LICENSE](LICENSE). It is a modified fork of [Bambuddy](https://github.com/maziggy/bambuddy), whose authors and contributors retain copyright in their work. Git history, license notices, inherited code comments, and upstream links are retained for accurate attribution.
 
-### 🔒 Looking for a security-focused contributor
-
-I'm bringing on a contributor whose specific focus is keeping an eye on Bambuddy's security.
-
-Concretely:
-
-Track the `dev` branch and flag changes touching auth, permissions, token handling, or the CI security backstops. Async post-merge — no gating of in-flight PRs.
-
-What matters more than formal qualifications: fail-closed thinking by default, comfortable reading the auth layer (FastAPI + SQLAlchemy on the backend, a small React surface), willing to push back on `except Exception` shapes in security-sensitive code.
-
-No fixed time commitment. If you're interested — or know someone who fits — email `martin@bambuddy.cool` or DM on Discord.
-
-See [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
-
----
-
-## 📄 License
-
-AGPL-3.0 License — see [LICENSE](LICENSE) for details.
-
----
+LayerCove is not affiliated with or endorsed by Bambuddy's maintainer, Bambu Lab, Klipper, Moonraker, or OrcaSlicer. Product and project names belong to their respective owners; no trademark uniqueness or clearance is claimed.
 
 ## 🙏 Acknowledgments
 
-- [SpoolEase](https://github.com/yanshay/SpoolEase) by yanshay — early inspiration for NFC-based spool tracking and AMS inventory concepts
-- [Bambu Lab](https://bambulab.com/) for amazing printers
-- The reverse engineering community for protocol documentation
-- All testers and contributors
-
----
-
-## 💖 Support Bambuddy
-
-Bambuddy stays independent because real people support it directly. If Bambuddy makes your printers more useful, please consider:
-
-- **[GitHub Sponsors](https://github.com/sponsors/maziggy)** — five recurring tiers from $5/mo (Backer) to $300/mo (Corporate). Supporter+ ($15/mo) get access to a private sponsors space with a monthly newsletter and early release notes. Patron+ ($35/mo) vote on the quarterly roadmap. Sustaining Sponsor+ ($150/mo) get a direct async email line for technical questions (~2-3 business days). Corporate ($300/mo) get priority email response (next business day), README header logo, sitewide footer logo on [bambuddy.cool](https://bambuddy.cool), and [Press page](https://bambuddy.cool/press.html) placement.
-- **[Ko-fi](https://ko-fi.com/maziggy)** — one-time tip or recurring.
-
-Sponsors get listed in [BACKERS.md](BACKERS.md). Need commercial support (SLA, multi-printer consulting)? Email `martin@bambuddy.cool`.
+- [Bambuddy](https://github.com/maziggy/bambuddy) and its contributors for the inherited application
+- [Klipper](https://www.klipper3d.org/) and [Moonraker](https://github.com/Arksine/moonraker) for the open printer stack
+- [OrcaSlicer](https://github.com/SoftFever/OrcaSlicer) for cross-vendor slicing
+- [Spoolman](https://github.com/Donkie/Spoolman) for filament inventory integration
+- [SpoolEase](https://github.com/yanshay/SpoolEase) and the printer reverse-engineering community
 
 ---
 
 <p align="center">
   Made with ❤️ for the 3D printing community
   <br><br>
-  <a href="https://discord.gg/aFS3ZfScHM">Join our Discord</a> •
-  <a href="https://github.com/maziggy/bambuddy/issues">Report Bug</a> •
-  <a href="https://github.com/maziggy/bambuddy/issues">Request Feature</a> •
-  <a href="http://wiki.bambuddy.cool">Documentation</a>
+  <a href="https://github.com/Timpan4/layercove/issues">Report a bug or request a feature</a>
 </p>
