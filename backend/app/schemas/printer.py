@@ -1,9 +1,10 @@
 from datetime import datetime
 from ipaddress import ip_address
 from socket import inet_aton
+from typing import Literal
 from urllib.parse import urlsplit, urlunsplit
 
-from pydantic import BaseModel, Field, SecretStr, ValidationInfo, field_validator
+from pydantic import BaseModel, Field, SecretStr, ValidationInfo, field_validator, model_validator
 from pydantic.json_schema import SkipJsonSchema
 
 from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
@@ -54,6 +55,8 @@ class MoonrakerPrinterConfigInput(BaseModel):
     api_key: SecretStr | None = Field(default=None, min_length=1)
     authorization: SecretStr | None = Field(default=None, min_length=1)
     tls_verify: bool = Field(default=True, validate_default=True)
+    spoolman_accounting_owner: Literal["layercove", "moonraker"] = "moonraker"
+    spoolman_spool_id: int | None = Field(default=None, gt=0)
     url_fields_valid: SkipJsonSchema[bool] = Field(default=True, exclude=True, validate_default=True)
 
     @field_validator("tls_verify")
@@ -87,6 +90,14 @@ class MoonrakerPrinterConfigInput(BaseModel):
                 raise ValueError("HTTPS base_url requires a secure WebSocket URL")
         return value
 
+    @model_validator(mode="after")
+    def _selected_spool_requires_layercove_owner(self):
+        if self.spoolman_accounting_owner == "layercove" and self.spoolman_spool_id is None:
+            raise ValueError("LayerCove Spoolman accounting requires a selected spool")
+        if self.spoolman_accounting_owner == "moonraker" and self.spoolman_spool_id is not None:
+            raise ValueError("External Spoolman accounting must not select a LayerCove spool")
+        return self
+
     @property
     def base_url_value(self) -> str:
         return self.base_url.get_secret_value()
@@ -110,6 +121,8 @@ class MoonrakerPrinterConfigResponse(BaseModel):
     tls_verify: bool = True
     api_key_configured: bool = False
     authorization_configured: bool = False
+    spoolman_accounting_owner: Literal["layercove", "moonraker"] = "moonraker"
+    spoolman_spool_id: int | None = None
 
     class Config:
         from_attributes = True

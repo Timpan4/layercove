@@ -75,6 +75,25 @@ from backend.app.utils.http import build_content_disposition
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/printers", tags=["printers"])
 
+
+async def _validate_spoolman_spool(db: AsyncSession, spool_id: int | None) -> None:
+    if spool_id is None:
+        return
+    from backend.app.api.routes.settings import get_setting
+    from backend.app.services.spoolman import get_spoolman_client, init_spoolman_client
+
+    client = await get_spoolman_client()
+    if client is None:
+        url = await get_setting(db, "spoolman_url")
+        if not url:
+            raise HTTPException(409, "Connect Spoolman before selecting a spool")
+        client = await init_spoolman_client(url)
+    try:
+        await client.get_spool(spool_id)
+    except Exception as exc:
+        raise HTTPException(400, "Selected Spoolman spool was not found") from exc
+
+
 # Seconds the /hms/execute-action route waits for a printer status push
 # confirming the command landed before reporting 502 to the UI. Module-level
 # so tests can monkeypatch a near-zero value instead of mocking asyncio.sleep.
@@ -164,6 +183,7 @@ async def create_printer(
     else:
         config = printer_data.moonraker_config
         assert config is not None
+        await _validate_spoolman_spool(db, config.spoolman_spool_id)
         try:
             connected = await MoonrakerHTTPClient(
                 base_url=config.base_url_value,
@@ -200,6 +220,8 @@ async def create_printer(
             base_url=config_input.base_url_value,
             websocket_url_override=config_input.websocket_url_override_value,
             tls_verify=config_input.tls_verify,
+            spoolman_accounting_owner=config_input.spoolman_accounting_owner,
+            spoolman_spool_id=config_input.spoolman_spool_id,
         )
         config.api_key = config_input.api_key_value
         config.authorization = config_input.authorization_value
@@ -462,6 +484,12 @@ async def update_printer(
             config.websocket_url_override = moonraker_data["websocket_url_override"]
         if "tls_verify" in moonraker_data:
             config.tls_verify = moonraker_data["tls_verify"]
+        if "spoolman_accounting_owner" in moonraker_data:
+            config.spoolman_accounting_owner = moonraker_data["spoolman_accounting_owner"]
+        if "spoolman_spool_id" in moonraker_data:
+            spool_id = moonraker_data["spoolman_spool_id"]
+            await _validate_spoolman_spool(db, spool_id)
+            config.spoolman_spool_id = spool_id
         if "api_key" in moonraker_data:
             api_key = printer_data.moonraker_config.api_key_value
             config.api_key = api_key

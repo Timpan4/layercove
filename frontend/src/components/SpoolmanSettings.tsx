@@ -518,7 +518,7 @@ export function SpoolmanSettings() {
                         className="w-full px-3 py-2 pr-8 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"
                       >
                         <option value="all">{t('settings.allPrinters')}</option>
-                        {printers?.map((printer: Printer) => (
+                        {printers?.filter((printer: Printer) => printer.capabilities.ams).map((printer: Printer) => (
                           <option key={printer.id} value={printer.id}>
                             {printer.name}
                           </option>

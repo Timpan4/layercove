@@ -762,6 +762,12 @@ async def run_migrations(conn):
     from sqlalchemy import text
 
     await _migrate_printer_provider_storage(conn)
+    await _safe_execute(
+        conn,
+        "ALTER TABLE moonraker_printer_configs ADD COLUMN spoolman_accounting_owner "
+        "VARCHAR(20) NOT NULL DEFAULT 'moonraker' CHECK (spoolman_accounting_owner IN ('layercove', 'moonraker'))",
+    )
+    await _safe_execute(conn, "ALTER TABLE moonraker_printer_configs ADD COLUMN spoolman_spool_id INTEGER")
 
     # Migration: Add parent_run_id column to pipeline_runs (#1425 PR C).
     # Links a retry-failed run back to its parent so the dashboard can show
@@ -1705,6 +1711,8 @@ async def run_migrations(conn):
     # the original schema: add tray_remain_start, and relax filament_usage's
     # NOT NULL so the no-3MF branch can persist a remain-only tracking row.
     await _safe_execute(conn, "ALTER TABLE active_print_spoolman ADD COLUMN tray_remain_start TEXT")
+    await _safe_execute(conn, "ALTER TABLE active_print_spoolman ADD COLUMN spoolman_spool_id INTEGER")
+    await _safe_execute(conn, "ALTER TABLE active_print_spoolman ADD COLUMN provider VARCHAR(20) DEFAULT 'bambu'")
     if is_sqlite():
         # SQLite can't ALTER COLUMN; patch sqlite_master directly. Mirrors the
         # users.password_hash NULL-relaxation a few hundred lines below — see

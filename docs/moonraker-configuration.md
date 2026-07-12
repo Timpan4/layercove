@@ -76,6 +76,31 @@ It requires `printers:control`, calls only Moonraker's immediate
 `/printer/emergency_stop` endpoint, and never sends `M112` through a generic
 G-code path. Validate this only with a supervised hardware procedure.
 
+## Spoolman usage accounting
+
+Moonraker printers can use an external Spoolman instance configured in LayerCove's
+filament settings. Each Moonraker printer has an explicit accounting owner:
+
+- **Moonraker/external** (default): Moonraker, Klipper macros, or another integration
+  records consumption. LayerCove records queue, history, and archive lifecycle but
+  sends no Spoolman usage writes.
+- **LayerCove**: select one active Spoolman spool in the printer settings. LayerCove
+  records the sliced G-code's estimated grams on completion and scales that estimate
+  by the last known progress for failed or cancelled jobs.
+
+Enable only one writer. If Moonraker-side tracking and LayerCove accounting are both
+enabled, the same job can be charged twice. LayerCove mode currently supports one
+selected spool for a single active tool; ERCF/AFC, multi-extruder attribution, and
+automatic spool switching are not inferred from AMS fields.
+
+To verify ownership, record the selected spool's consumed amount, complete one small
+job, and confirm it changes exactly once. Repeat with a cancelled job and verify only
+the bounded progress-scaled estimate is recorded. In external-owner mode, LayerCove
+must not change the spool.
+
+External Spoolman instances remain supported. An optional bundled deployment is
+tracked in [issue #31](https://github.com/Timpan4/layercove/issues/31).
+
 ## Network policy
 
 - Private and LAN addresses are allowed.

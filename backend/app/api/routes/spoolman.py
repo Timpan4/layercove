@@ -22,6 +22,7 @@ from backend.app.models.spoolman_k_profile import SpoolmanKProfile
 from backend.app.models.spoolman_slot_assignment import SpoolmanSlotAssignment
 from backend.app.models.user import User
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_types import PrinterProvider, capabilities_for_provider
 from backend.app.services.spoolman import (
     SpoolmanClientError,
     SpoolmanNotFoundError,
@@ -201,6 +202,8 @@ async def sync_printer_ams(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
+    if not capabilities_for_provider(PrinterProvider(printer.provider)).ams:
+        raise HTTPException(status_code=400, detail="Printer does not support AMS sync")
 
     # Get current printer state with AMS data
     state = printer_manager.get_status(printer_id)

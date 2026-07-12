@@ -7428,6 +7428,13 @@ function EditPrinterModal({
     base_url: printer.moonraker_config?.base_url || '',
     websocket_url_override: printer.moonraker_config?.websocket_url_override || '',
     api_key: '', authorization: '', tls_verify: printer.moonraker_config?.tls_verify ?? true,
+    spoolman_accounting_owner: printer.moonraker_config?.spoolman_accounting_owner ?? 'moonraker' as 'layercove' | 'moonraker',
+    spoolman_spool_id: printer.moonraker_config?.spoolman_spool_id ?? null as number | null,
+  });
+  const { data: spoolmanSpools = [] } = useQuery({
+    queryKey: ['spoolman-inventory-spools'],
+    queryFn: () => api.getSpoolmanInventorySpools(false),
+    enabled: isMoonraker,
   });
   const [connectionResult, setConnectionResult] = useState<string | null>(null);
 
@@ -7479,6 +7486,8 @@ function EditPrinterModal({
         api_key: moonraker.api_key || undefined,
         authorization: moonraker.authorization || undefined,
         tls_verify: moonraker.tls_verify,
+        spoolman_accounting_owner: moonraker.spoolman_accounting_owner,
+        spoolman_spool_id: moonraker.spoolman_accounting_owner === 'layercove' ? moonraker.spoolman_spool_id : null,
       };
     } else {
       data.ip_address = form.ip_address ?? undefined;
@@ -7568,6 +7577,20 @@ function EditPrinterModal({
               <div><label htmlFor="edit_moonraker_websocket_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerWebsocketUrl')}</label><input id="edit_moonraker_websocket_url" type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.websocket_url_override} onChange={(e) => setMoonraker({ ...moonraker, websocket_url_override: e.target.value })} /></div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label htmlFor="edit_moonraker_api_key" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerApiKey')}</label><input id="edit_moonraker_api_key" type="password" autoComplete="new-password" placeholder={printer.moonraker_config?.api_key_configured ? t('printers.moonrakerSecretRetained') : ''} disabled={!!moonraker.authorization} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.api_key} onChange={(e) => setMoonraker({ ...moonraker, api_key: e.target.value })} /></div><div><label htmlFor="edit_moonraker_authorization" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerAuthorization')}</label><input id="edit_moonraker_authorization" type="password" autoComplete="new-password" placeholder={printer.moonraker_config?.authorization_configured ? t('printers.moonrakerSecretRetained') : ''} disabled={!!moonraker.api_key} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.authorization} onChange={(e) => setMoonraker({ ...moonraker, authorization: e.target.value })} /></div></div>
               <label htmlFor="edit_moonraker_tls_verify" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="edit_moonraker_tls_verify" type="checkbox" checked={moonraker.tls_verify} onChange={(e) => setMoonraker({ ...moonraker, tls_verify: e.target.checked })} />{t('printers.moonrakerTlsVerify')}</label>
+              <div className="space-y-2 rounded-lg border border-bambu-dark-tertiary p-3">
+                <label htmlFor="edit_moonraker_spoolman_owner" className="block text-sm text-bambu-gray">Spoolman usage accounting</label>
+                <select id="edit_moonraker_spoolman_owner" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.spoolman_accounting_owner} onChange={(e) => setMoonraker({ ...moonraker, spoolman_accounting_owner: e.target.value as 'layercove' | 'moonraker' })}>
+                  <option value="moonraker">Moonraker or another external integration</option>
+                  <option value="layercove">LayerCove</option>
+                </select>
+                {moonraker.spoolman_accounting_owner === 'layercove' && <>
+                  <p className="text-xs text-amber-400">Disable Moonraker-side Spoolman usage tracking to avoid duplicate consumption.</p>
+                  <select aria-label="Spoolman spool" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.spoolman_spool_id ?? ''} onChange={(e) => setMoonraker({ ...moonraker, spoolman_spool_id: e.target.value ? Number(e.target.value) : null })}>
+                    <option value="">Select the active spool</option>
+                    {spoolmanSpools.map((spool) => <option key={spool.id} value={spool.id}>{spool.brand ? `${spool.brand} ` : ''}{spool.material}{spool.color_name ? ` — ${spool.color_name}` : ''}</option>)}
+                  </select>
+                </>}
+              </div>
               <button type="button" onClick={testConnection} className="w-full rounded-lg border border-bambu-dark-tertiary px-3 py-2 text-sm text-bambu-gray hover:text-white">{t('printers.moonrakerTestConnection')}</button>
               {connectionResult && <p role="status" className="text-sm text-bambu-gray">{connectionResult}</p>}
               <label htmlFor="edit_moonraker_external_camera_enabled" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="edit_moonraker_external_camera_enabled" type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
