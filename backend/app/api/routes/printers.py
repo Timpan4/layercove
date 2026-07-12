@@ -129,11 +129,8 @@ async def create_printer(
 ):
     """Add a new printer.
 
-    Verifies the MQTT connection succeeds before persisting. A wrong access
-    code or unreachable IP would otherwise create a printer row that shows
-    as an empty / never-connecting card on the dashboard — those reports
-    were turning into support tickets that all traced back to a mistyped
-    access code.
+    Verifies the provider connection before persisting. Wrong credentials or
+    an unreachable target would otherwise create an empty printer card.
     """
     if printer_data.provider is PrinterProvider.BAMBU:
         result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
@@ -155,6 +152,34 @@ async def create_printer(
                         "and access code, and confirm LAN-only mode is enabled. "
                         "The printer was not added."
                     ),
+                },
+            )
+    else:
+        config = printer_data.moonraker_config
+        assert config is not None
+        try:
+            connected = await MoonrakerHTTPClient(
+                base_url=config.base_url,
+                api_key=config.api_key,
+                authorization=config.authorization,
+                tls_verify=config.tls_verify,
+            ).test_connection()
+            if not connected:
+                raise MoonrakerHTTPError("unavailable", "Could not connect to Moonraker.")
+        except MoonrakerHTTPError as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": exc.code,
+                    "message": f"{exc.message} The printer was not added.",
+                },
+            )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "code": "invalid_configuration",
+                    "message": "Moonraker configuration is invalid. The printer was not added.",
                 },
             )
 
@@ -208,7 +233,9 @@ async def test_moonraker_connection(
             authorization=config.authorization,
             tls_verify=config.tls_verify,
         ).test_connection()
-    except (MoonrakerHTTPError, RuntimeError, ValueError):
+    except MoonrakerHTTPError as exc:
+        return MoonrakerConnectionTestResponse(success=False, message=exc.message)
+    except (RuntimeError, ValueError):
         return MoonrakerConnectionTestResponse(success=False, message="Could not connect to Moonraker.")
 
     if not connected:

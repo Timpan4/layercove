@@ -13,7 +13,7 @@ from sqlalchemy import select
 
 @pytest.fixture(autouse=True)
 def _mock_printer_test_connection():
-    """Default mock: connection test returns success.
+    """Default mocks: Bambu and Moonraker onboarding probes return success.
 
     POST /printers/ now refuses to persist a printer when the MQTT
     connection probe fails (would otherwise leave an empty card in the
@@ -21,10 +21,15 @@ def _mock_printer_test_connection():
     save succeeds, so we mock the probe green by default; the failure
     branch is exercised by a dedicated test below.
     """
-    with patch(
-        "backend.app.services.printer_manager.printer_manager.test_connection",
-        new=AsyncMock(return_value={"success": True, "state": "IDLE", "model": "X1C"}),
-    ) as m:
+    with (
+        patch(
+            "backend.app.services.printer_manager.printer_manager.test_connection",
+            new=AsyncMock(return_value={"success": True, "state": "IDLE", "model": "X1C"}),
+        ) as m,
+        patch("backend.app.api.routes.printers.MoonrakerHTTPClient") as moonraker_client_class,
+    ):
+        moonraker_client_class.return_value.test_connection = AsyncMock(return_value=True)
+        m.moonraker_client_class = moonraker_client_class
         yield m
 
 
@@ -116,6 +121,14 @@ class TestPrintersAPI:
         assert result["capabilities"]["emergency_stop"] is False
         assert result["capabilities"]["camera"] is False
         _mock_printer_test_connection.assert_not_awaited()
+        moonraker_client = _mock_printer_test_connection.moonraker_client_class
+        moonraker_client.return_value.test_connection.assert_awaited_once()
+        assert moonraker_client.call_args.kwargs == {
+            "base_url": "https://klipper.local:7125",
+            "api_key": "top-secret",
+            "authorization": None,
+            "tls_verify": False,
+        }
 
         from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 
@@ -127,6 +140,38 @@ class TestPrintersAPI:
         listed_moonraker = next(item for item in listed.json() if item["id"] == result["id"])
         assert "access_code" not in listed_moonraker
         assert "top-secret" not in listed.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_create_moonraker_printer_rejects_failed_probe_without_persisting_secret(
+        self, async_client: AsyncClient, db_session
+    ):
+        from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+        from backend.app.services.moonraker_http import MoonrakerHTTPError
+
+        with patch("backend.app.api.routes.printers.MoonrakerHTTPClient") as client_class:
+            client_class.return_value.test_connection = AsyncMock(
+                side_effect=MoonrakerHTTPError("authentication_failed", "Moonraker rejected configured credentials.")
+            )
+            response = await async_client.post(
+                "/api/v1/printers/",
+                json={
+                    "name": "Klipper Printer",
+                    "provider": "moonraker",
+                    "moonraker_config": {
+                        "base_url": "http://klipper.local:7125",
+                        "api_key": "not-returned",
+                    },
+                },
+            )
+
+        assert response.status_code == 400
+        assert response.json()["detail"] == {
+            "code": "authentication_failed",
+            "message": "Moonraker rejected configured credentials. The printer was not added.",
+        }
+        assert "not-returned" not in response.text
+        assert (await db_session.execute(select(MoonrakerPrinterConfig))).scalar_one_or_none() is None
 
     @pytest.mark.asyncio
     @pytest.mark.integration

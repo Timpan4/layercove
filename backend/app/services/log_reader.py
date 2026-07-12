@@ -26,6 +26,11 @@ logger = logging.getLogger(__name__)
 # parse it out; the log-health scanner does not.
 LOG_LINE_PATTERN = re.compile(r"^(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d{3})\s+(\w+)\s+\[([^\]]+)\]\s+(.*)$")
 
+_SHORT_CREDENTIAL_HEADERS = {
+    "[MOONRAKER_API_KEY]": "X-Api-Key",
+    "[MOONRAKER_AUTHORIZATION]": "Authorization",
+}
+
 
 class LogEntry(BaseModel):
     """A single parsed log entry."""
@@ -151,7 +156,15 @@ def sanitize_log_content(content: str, sensitive_strings: dict[str, str] | None 
         # Sort by length descending to avoid partial matches (e.g. "My Printer 1" before "My Printer")
         for value, label in sorted(sensitive_strings.items(), key=lambda x: len(x[0]), reverse=True):
             if len(value) < 3:
-                continue  # Skip very short strings to prevent over-redaction
+                header = _SHORT_CREDENTIAL_HEADERS.get(label)
+                if header:
+                    content = re.sub(
+                        rf"(\b{re.escape(header)}\b[\"']?\s*[:=]\s*[\"']?){re.escape(value)}(?=[\"']?[\s,;}}]|$)",
+                        rf"\1{label}",
+                        content,
+                        flags=re.IGNORECASE,
+                    )
+                continue  # Never replace arbitrary one- or two-character strings globally.
             content = re.sub(re.escape(value), label, content)
 
     # Replace credentials in URLs (e.g. http://user:pass@host, rtsps://bblp:code@host)

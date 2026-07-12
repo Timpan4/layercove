@@ -3,7 +3,10 @@
 Tests the full request/response cycle for /api/v1/support/ endpoints.
 """
 
+import io
 import tempfile
+import zipfile
+from contextlib import asynccontextmanager
 from pathlib import Path
 from unittest.mock import patch
 
@@ -90,6 +93,84 @@ class TestSupportLogsAPI:
         assert "moonraker-secret" not in response.text
         assert config.api_key_ciphertext not in response.text
         assert "[MOONRAKER_API_KEY]" in response.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_get_logs_scrubs_short_moonraker_secrets_only_at_credential_labels(
+        self, async_client: AsyncClient, db_session
+    ):
+        from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+        from backend.app.models.printer import Printer
+
+        api_config = MoonrakerPrinterConfig(base_url="http://api-printer.local:7125")
+        api_config.api_key = "x"
+        auth_config = MoonrakerPrinterConfig(base_url="http://auth-printer.local:7125")
+        auth_config.authorization = "y"
+        db_session.add_all(
+            [
+                Printer(name="API printer", provider="moonraker", moonraker_config=api_config),
+                Printer(name="Auth printer", provider="moonraker", moonraker_config=auth_config),
+            ]
+        )
+        await db_session.commit()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "bambuddy.log"
+            log_file.write_text(
+                "2024-01-15 10:30:45,123 INFO [moonraker] control x y; "
+                f"X-Api-Key: x; Authorization: y; ciphertext={api_config.api_key_ciphertext}\n"
+            )
+            with patch("backend.app.services.log_reader.settings") as mock_settings:
+                mock_settings.log_dir = Path(tmpdir)
+                response = await async_client.get("/api/v1/support/logs")
+
+        assert response.status_code == 200
+        assert "control x y" in response.text
+        assert "X-Api-Key: x" not in response.text
+        assert "Authorization: y" not in response.text
+        assert api_config.api_key_ciphertext not in response.text
+        assert "[MOONRAKER_API_KEY]" in response.text
+        assert "[MOONRAKER_AUTHORIZATION]" in response.text
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_support_bundle_scrubs_short_moonraker_plaintext_and_ciphertext(
+        self, async_client: AsyncClient, db_session
+    ):
+        from backend.app.api.routes import support
+        from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+        from backend.app.models.printer import Printer
+
+        config = MoonrakerPrinterConfig(base_url="http://klipper.local:7125")
+        config.api_key = "x"
+        db_session.add(Printer(name="Klipper", provider="moonraker", moonraker_config=config))
+        await db_session.commit()
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            log_file = Path(tmpdir) / "bambuddy.log"
+            log_file.write_text(
+                f"2024-01-15 10:30:45,123 INFO [moonraker] X-Api-Key: x ciphertext={config.api_key_ciphertext}\n"
+            )
+
+            @asynccontextmanager
+            async def test_session():
+                yield db_session
+
+            with (
+                patch.object(support, "async_session", test_session),
+                patch.object(support, "_get_debug_setting", return_value=(True, None)),
+                patch.object(support, "_collect_support_info", return_value={}),
+                patch.object(support.settings, "log_dir", Path(tmpdir)),
+                patch.object(support.printer_manager, "get_all_statuses", return_value={}),
+            ):
+                response = await async_client.get("/api/v1/support/bundle")
+
+        assert response.status_code == 200
+        with zipfile.ZipFile(io.BytesIO(response.content)) as bundle:
+            bundled_log = bundle.read("bambuddy.log").decode()
+        assert "X-Api-Key: x" not in bundled_log
+        assert config.api_key_ciphertext not in bundled_log
+        assert "[MOONRAKER_API_KEY]" in bundled_log
 
     @pytest.mark.asyncio
     @pytest.mark.integration
