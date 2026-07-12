@@ -159,7 +159,7 @@ async def create_printer(
         assert config is not None
         try:
             connected = await MoonrakerHTTPClient(
-                base_url=config.base_url,
+                base_url=config.base_url_value,
                 api_key=config.api_key_value,
                 authorization=config.authorization_value,
                 tls_verify=config.tls_verify,
@@ -190,8 +190,8 @@ async def create_printer(
     if printer_data.moonraker_config is not None:
         config_input = printer_data.moonraker_config
         config = MoonrakerPrinterConfig(
-            base_url=config_input.base_url,
-            websocket_url_override=config_input.websocket_url_override,
+            base_url=config_input.base_url_value,
+            websocket_url_override=config_input.websocket_url_override_value,
             tls_verify=config_input.tls_verify,
         )
         config.api_key = config_input.api_key_value
@@ -442,6 +442,11 @@ async def update_printer(
     if moonraker_data is not None:
         if printer.provider != PrinterProvider.MOONRAKER:
             raise HTTPException(400, "Bambu printer must not include moonraker_config")
+        config_input = printer_data.moonraker_config
+        assert config_input is not None
+        moonraker_data["base_url"] = config_input.base_url_value
+        if "websocket_url_override" in moonraker_data:
+            moonraker_data["websocket_url_override"] = config_input.websocket_url_override_value
         config = printer.moonraker_config
         if config is None:
             config = MoonrakerPrinterConfig(printer=printer)

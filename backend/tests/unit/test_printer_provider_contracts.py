@@ -54,6 +54,8 @@ def test_moonraker_create_accepts_only_focused_config_and_normalizes_urls():
     assert printer.serial_number is None
     assert printer.ip_address is None
     assert printer.access_code is None
+    assert printer.moonraker_config.base_url_value == "https://klipper.local:7125"
+    assert printer.moonraker_config.websocket_url_override_value == "wss://klipper.local:7125/websocket"
     assert printer.moonraker_config == MoonrakerPrinterConfigInput(
         base_url="https://klipper.local:7125",
         websocket_url_override="wss://klipper.local:7125/websocket",
@@ -78,7 +80,7 @@ def test_moonraker_create_rejects_bambu_fields_and_multiple_auth_values():
 def test_moonraker_base_url_allows_private_lan_address():
     config = MoonrakerPrinterConfigInput(base_url="http://192.168.1.20:7125")
 
-    assert config.base_url == "http://192.168.1.20:7125"
+    assert config.base_url_value == "http://192.168.1.20:7125"
 
 
 @pytest.mark.parametrize(

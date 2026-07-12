@@ -49,21 +49,12 @@ def _normalize_provider_url(value: str, *, websocket: bool) -> str:
 
 
 class MoonrakerPrinterConfigInput(BaseModel):
-    base_url: str
-    websocket_url_override: str | None = None
+    base_url: SecretStr
+    websocket_url_override: SecretStr | None = None
     api_key: SecretStr | None = Field(default=None, min_length=1)
     authorization: SecretStr | None = Field(default=None, min_length=1)
     tls_verify: bool = Field(default=True, validate_default=True)
-
-    @field_validator("base_url")
-    @classmethod
-    def _normalize_base_url(cls, value: str) -> str:
-        return _normalize_provider_url(value, websocket=False)
-
-    @field_validator("websocket_url_override")
-    @classmethod
-    def _normalize_websocket_url(cls, value: str | None) -> str | None:
-        return _normalize_provider_url(value, websocket=True) if value is not None else None
+    url_fields_valid: SkipJsonSchema[bool] = Field(default=True, exclude=True, validate_default=True)
 
     @field_validator("tls_verify")
     @classmethod
@@ -71,6 +62,27 @@ class MoonrakerPrinterConfigInput(BaseModel):
         if info.data.get("api_key") is not None and info.data.get("authorization") is not None:
             raise ValueError("api_key and authorization are mutually exclusive")
         return value
+
+    @field_validator("url_fields_valid")
+    @classmethod
+    def _normalize_urls(cls, value: bool, info: ValidationInfo) -> bool:
+        base_url = info.data.get("base_url")
+        if base_url is not None:
+            info.data["base_url"] = SecretStr(_normalize_provider_url(base_url.get_secret_value(), websocket=False))
+        websocket_url = info.data.get("websocket_url_override")
+        if websocket_url is not None:
+            info.data["websocket_url_override"] = SecretStr(
+                _normalize_provider_url(websocket_url.get_secret_value(), websocket=True)
+            )
+        return value
+
+    @property
+    def base_url_value(self) -> str:
+        return self.base_url.get_secret_value()
+
+    @property
+    def websocket_url_override_value(self) -> str | None:
+        return self.websocket_url_override.get_secret_value() if self.websocket_url_override is not None else None
 
     @property
     def api_key_value(self) -> str | None:

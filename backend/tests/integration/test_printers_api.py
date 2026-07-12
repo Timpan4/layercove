@@ -108,6 +108,7 @@ class TestPrintersAPI:
             "external_camera_enabled": True,
             "moonraker_config": {
                 "base_url": "HTTPS://KLIPPER.LOCAL:7125/",
+                "websocket_url_override": "WSS://KLIPPER.LOCAL:7125/websocket/",
                 "api_key": "top-secret",
                 "tls_verify": False,
             },
@@ -122,7 +123,7 @@ class TestPrintersAPI:
         assert result["ip_address"] is None
         assert result["moonraker_config"] == {
             "base_url": "https://klipper.local:7125",
-            "websocket_url_override": None,
+            "websocket_url_override": "wss://klipper.local:7125/websocket",
             "tls_verify": False,
             "api_key_configured": True,
             "authorization_configured": False,
@@ -143,6 +144,8 @@ class TestPrintersAPI:
         from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 
         config = (await db_session.execute(select(MoonrakerPrinterConfig))).scalar_one()
+        assert config.base_url == "https://klipper.local:7125"
+        assert config.websocket_url_override == "wss://klipper.local:7125/websocket"
         assert config.api_key_ciphertext.startswith("fernet:")
         assert "top-secret" not in config.api_key_ciphertext
 
@@ -248,7 +251,65 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_update_moonraker_config_keeps_credentials_redacted(self, async_client: AsyncClient):
+    @pytest.mark.parametrize(
+        ("operation", "field", "invalid_url", "secret"),
+        [
+            ("create", "base_url", "http://user:base-userinfo-token@klipper.local:7125", "base-userinfo-token"),
+            (
+                "create",
+                "websocket_url_override",
+                "ws://klipper.local:7125/websocket?token=ws-query-token",
+                "ws-query-token",
+            ),
+            ("update", "base_url", "http://klipper.local:7125#base-fragment-token", "base-fragment-token"),
+            (
+                "update",
+                "websocket_url_override",
+                "ws://user:ws-userinfo-token@klipper.local:7125/websocket",
+                "ws-userinfo-token",
+            ),
+        ],
+    )
+    async def test_invalid_moonraker_urls_never_echo_embedded_secrets(
+        self,
+        async_client: AsyncClient,
+        operation: str,
+        field: str,
+        invalid_url: str,
+        secret: str,
+    ):
+        moonraker_config = {"base_url": "http://klipper.local:7125", field: invalid_url}
+        if operation == "create":
+            response = await async_client.post(
+                "/api/v1/printers/",
+                json={
+                    "name": "Klipper Printer",
+                    "provider": "moonraker",
+                    "moonraker_config": moonraker_config,
+                },
+            )
+        else:
+            created = await async_client.post(
+                "/api/v1/printers/",
+                json={
+                    "name": "Klipper Printer",
+                    "provider": "moonraker",
+                    "moonraker_config": {"base_url": "http://klipper.local:7125"},
+                },
+            )
+            response = await async_client.patch(
+                f"/api/v1/printers/{created.json()['id']}",
+                json={"moonraker_config": moonraker_config},
+            )
+
+        assert response.status_code == 422
+        assert secret not in f"{response!r} {response.text} {response.json()!r}"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_update_moonraker_config_keeps_credentials_redacted(self, async_client: AsyncClient, db_session):
+        from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+
         created = await async_client.post(
             "/api/v1/printers/",
             json={
@@ -272,7 +333,8 @@ class TestPrintersAPI:
             f"/api/v1/printers/{created.json()['id']}",
             json={
                 "moonraker_config": {
-                    "base_url": "https://new-klipper.local",
+                    "base_url": "HTTPS://NEW-KLIPPER.LOCAL/",
+                    "websocket_url_override": "WSS://NEW-KLIPPER.LOCAL/websocket/",
                     "authorization": "Bearer new-secret",
                 }
             },
@@ -281,9 +343,13 @@ class TestPrintersAPI:
         assert response.status_code == 200
         result = response.json()
         assert result["moonraker_config"]["base_url"] == "https://new-klipper.local"
+        assert result["moonraker_config"]["websocket_url_override"] == "wss://new-klipper.local/websocket"
         assert result["moonraker_config"]["api_key_configured"] is False
         assert result["moonraker_config"]["authorization_configured"] is True
         assert "secret" not in response.text
+        stored = (await db_session.execute(select(MoonrakerPrinterConfig))).scalar_one()
+        assert stored.base_url == "https://new-klipper.local"
+        assert stored.websocket_url_override == "wss://new-klipper.local/websocket"
 
         deleted = await async_client.delete(f"/api/v1/printers/{created.json()['id']}")
         assert deleted.status_code == 200
