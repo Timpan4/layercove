@@ -17,6 +17,7 @@ from backend.app.core.tasks import spawn_background_task
 from backend.app.core.websocket import ws_manager
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
+from backend.app.models.print_log import PrintLogEntry
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
@@ -40,6 +41,7 @@ from backend.app.services.printer_manager import (
     supports_drying,
     supports_drying_while_printing,
 )
+from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider
 from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.utils.filename import derive_remote_filename
 from backend.app.utils.printer_models import normalize_printer_model
@@ -626,12 +628,14 @@ class PrintScheduler:
         candidates: list[tuple[int, int]] = []  # (printer_id, color_match_count)
 
         for printer in printers:
+            backend = printer_manager.get_backend(printer.id)
+            has_ams = backend is None or backend.capabilities.ams
             if printer.id in exclude_ids:
                 # Printer is already claimed by another job in this scheduling run.
                 # For force-color jobs, still check if the color would match — if not,
                 # report it as a color mismatch rather than plain "Busy" so the user
                 # knows the job needs a filament change, not just to wait for availability.
-                if force_overrides and not pref_overrides:
+                if force_overrides and not pref_overrides and has_ams:
                     missing_colors = self._get_missing_force_color_slots(printer.id, force_overrides)
                     if missing_colors:
                         printers_missing_filament.append((printer.name, missing_colors))
@@ -651,7 +655,7 @@ class PrintScheduler:
                 # loaded color would satisfy the requirement — if not, surface it as a
                 # color-mismatch reason rather than plain "Busy" so the user understands
                 # that the job is waiting for a filament change, not just printer availability.
-                if force_overrides and not pref_overrides:
+                if force_overrides and not pref_overrides and has_ams:
                     missing_colors = self._get_missing_force_color_slots(printer.id, force_overrides)
                     if missing_colors:
                         printers_missing_filament.append((printer.name, missing_colors))
@@ -666,7 +670,7 @@ class PrintScheduler:
                 continue
 
             # Validate filament compatibility if required types are specified
-            if required_filament_types:
+            if required_filament_types and has_ams:
                 missing = self._get_missing_filament_types(printer.id, required_filament_types)
                 if missing:
                     # When force_overrides are present, enrich missing entries with color info
@@ -687,7 +691,7 @@ class PrintScheduler:
                     continue
 
             # Force color match: ALL flagged slots must have an exact type+color match
-            if force_overrides:
+            if force_overrides and has_ams:
                 missing_colors = self._get_missing_force_color_slots(printer.id, force_overrides)
                 if missing_colors:
                     printers_missing_filament.append((printer.name, missing_colors))
@@ -884,6 +888,10 @@ class PrintScheduler:
         Returns:
             AMS mapping array or None if no mapping needed/possible
         """
+        backend = printer_manager.get_backend(printer_id)
+        if backend is not None and not backend.capabilities.ams:
+            return None
+
         # Get printer status
         status = printer_manager.get_status(printer_id)
         if not status:
@@ -1542,6 +1550,10 @@ class PrintScheduler:
             logger.debug("Printer %d: no status available", printer_id)
             return False
 
+        backend = printer_manager.get_backend(printer_id)
+        if backend is not None and backend.provider is PrinterProvider.MOONRAKER:
+            return state.state == NormalizedPrinterState.IDLE
+
         # Plate-clear gate: if the printer finished/failed a previous print and the user
         # hasn't acknowledged the plate was cleared, the queue must not dispatch the next
         # job — even if the printer currently reports IDLE. After Auto Off cycles the
@@ -1757,6 +1769,10 @@ class PrintScheduler:
         all_printers = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
         for printer in all_printers.scalars():
             pid = printer.id
+
+            backend = printer_manager.get_backend(pid)
+            if backend is not None and not backend.capabilities.ams:
+                continue
 
             # Resolve model+firmware up front — needed to decide whether this printer
             # qualifies for mid-print drying (busy printer on capable hardware).
@@ -2390,6 +2406,10 @@ class PrintScheduler:
         since been swapped to one with enough material clears the flag here
         so the next scheduler tick dispatches it.
         """
+        backend = printer_manager.get_backend(item.printer_id) if item.printer_id else None
+        if backend is not None and not backend.capabilities.ams:
+            return False
+
         # User has explicitly acknowledged the deficit ("Print Anyway") —
         # don't re-flag, don't even compute. Without this short-circuit the
         # scheduler bounces between "user said anyway" (route clears
@@ -2460,6 +2480,206 @@ class PrintScheduler:
         if owner:
             printer_manager.set_current_print_user(item.printer_id, owner.id, owner.username)
 
+    @staticmethod
+    def _artifact_matches_provider(printer: Printer, file_path: Path, metadata: dict | None) -> bool:
+        declared = (metadata or {}).get("destination_artifact_kind")
+        if printer.provider == PrinterProvider.MOONRAKER.value:
+            return file_path.suffix.lower() == ".gcode" and declared in (None, "klipper_gcode")
+        return file_path.suffix.lower() == ".3mf" and declared in (None, "bambu_3mf")
+
+    async def _fail_artifact_mismatch(self, db: AsyncSession, item: PrintQueueItem, printer: Printer) -> None:
+        item.status = "failed"
+        item.error_message = f"Source artifact is not compatible with {printer.provider} printers"
+        item.completed_at = datetime.now(timezone.utc)
+        await db.commit()
+
+    @staticmethod
+    def _safe_moonraker_path(value: object) -> str:
+        from pathlib import PurePosixPath
+
+        path = PurePosixPath(str(value))
+        if "\\" in str(value) or path.is_absolute() or ".." in path.parts or path.suffix.lower() != ".gcode":
+            raise ValueError("Moonraker returned an unsafe G-code path")
+        return path.as_posix()
+
+    async def _start_moonraker_print(
+        self,
+        db: AsyncSession,
+        item: PrintQueueItem,
+        printer: Printer,
+        archive: PrintArchive | None,
+        library_file: LibraryFile | None,
+        file_path: Path,
+        filename: str,
+        cleanup_disk_paths: list[Path],
+    ) -> None:
+        """Upload, claim, then start one Moonraker queue item."""
+        backend = printer_manager.get_backend(item.printer_id)
+        if backend is None or not backend.capabilities.upload_gcode or not backend.capabilities.start_print:
+            await self._record_moonraker_dispatch_failure(
+                db, item, archive, printer, filename, "Moonraker printer is not ready for queued G-code"
+            )
+            return
+
+        upload = getattr(backend, "upload_gcode", None)
+        if upload is None:
+            await self._record_moonraker_dispatch_failure(
+                db, item, archive, printer, filename, "Moonraker printer cannot upload G-code"
+            )
+            return
+
+        try:
+            with file_path.open("rb") as source:
+                remote_path = self._safe_moonraker_path(
+                    await upload(source, filename=Path(filename).name, start=False, size=file_path.stat().st_size)
+                )
+        except Exception as exc:
+            logger.warning("Queue item %s: Moonraker upload failed: %s", item.id, exc)
+            await self._record_moonraker_dispatch_failure(
+                db, item, archive, printer, filename, "Failed to upload G-code to Moonraker"
+            )
+            return
+
+        now = datetime.now(timezone.utc)
+        cas = await db.execute(
+            update(PrintQueueItem)
+            .where(PrintQueueItem.id == item.id, PrintQueueItem.status == "pending")
+            .values(status="printing", started_at=now)
+        )
+        await db.commit()
+        if cas.rowcount == 0:
+            logger.info("Queue item %s cancelled after Moonraker upload; retaining remote G-code", item.id)
+            return
+
+        item.status = "printing"
+        item.started_at = now
+        for cleanup_path in cleanup_disk_paths:
+            try:
+                cleanup_path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Could not remove transient library artifact %s: %s", cleanup_path, exc)
+        if archive is not None:
+            archive.status = "printing"
+            archive.started_at = now
+            await db.commit()
+        await self._propagate_owner_to_printer_manager(db, item)
+
+        try:
+            started = await backend.start_print(remote_path)
+        except Exception as exc:
+            logger.warning("Queue item %s: Moonraker start failed: %s", item.id, exc)
+            started = False
+        if not started:
+            await self.finalize_moonraker_job(
+                item.printer_id,
+                {
+                    "status": "failed",
+                    "filename": remote_path,
+                    "reason": "Moonraker rejected the print start",
+                },
+            )
+            return
+
+        estimated_time = (
+            archive.print_time_seconds if archive else library_file.print_time_seconds if library_file else None
+        )
+        await notification_service.on_queue_job_started(
+            job_name=Path(filename).stem,
+            printer_id=printer.id,
+            printer_name=printer.name,
+            db=db,
+            estimated_time=estimated_time,
+        )
+
+    @staticmethod
+    async def _record_moonraker_dispatch_failure(
+        db: AsyncSession,
+        item: PrintQueueItem,
+        archive: PrintArchive | None,
+        printer: Printer,
+        filename: str,
+        reason: str,
+    ) -> None:
+        completed_at = datetime.now(timezone.utc)
+        item.status = "failed"
+        item.error_message = reason
+        item.completed_at = completed_at
+        if archive is not None:
+            archive.status = "failed"
+            archive.completed_at = completed_at
+        db.add(
+            PrintLogEntry(
+                archive_id=item.archive_id,
+                print_name=(archive.print_name if archive else None) or Path(filename).stem,
+                printer_name=printer.name,
+                printer_id=printer.id,
+                status="failed",
+                started_at=item.started_at,
+                completed_at=completed_at,
+                failure_reason=reason[:100],
+                thumbnail_path=archive.thumbnail_path if archive else None,
+                created_by_id=item.created_by_id,
+            )
+        )
+        await db.commit()
+
+    @staticmethod
+    async def finalize_moonraker_job(printer_id: int, data: dict) -> bool:
+        """Finalize one Moonraker queue row exactly once using its printing-state guard."""
+        raw_status = str(data.get("status") or "failed")
+        status = "cancelled" if raw_status in ("cancelled", "aborted") else raw_status
+        if status not in ("completed", "failed", "cancelled"):
+            status = "failed"
+        completed_at = data.get("occurred_at")
+        if not isinstance(completed_at, datetime):
+            completed_at = datetime.now(timezone.utc)
+
+        async with async_session() as db:
+            result = await db.execute(
+                select(PrintQueueItem)
+                .where(PrintQueueItem.printer_id == printer_id, PrintQueueItem.status == "printing")
+                .order_by(PrintQueueItem.started_at, PrintQueueItem.id)
+                .limit(1)
+            )
+            item = result.scalar_one_or_none()
+            if item is None:
+                return False
+
+            printer = await db.get(Printer, printer_id)
+            archive = await db.get(PrintArchive, item.archive_id) if item.archive_id else None
+            item.status = status
+            item.completed_at = completed_at
+            if status == "failed":
+                item.error_message = str(data.get("reason") or "Moonraker print failed")
+            if archive is not None:
+                archive.status = status
+                archive.completed_at = completed_at
+                archive.printer_id = printer_id
+
+            duration = None
+            if item.started_at is not None:
+                started = item.started_at
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                duration = max(0, int((completed_at - started).total_seconds()))
+            db.add(
+                PrintLogEntry(
+                    archive_id=item.archive_id,
+                    print_name=(archive.print_name if archive else None) or Path(str(data.get("filename") or "")).stem,
+                    printer_name=printer.name if printer else None,
+                    printer_id=printer_id,
+                    status=status,
+                    started_at=item.started_at,
+                    completed_at=completed_at,
+                    duration_seconds=duration,
+                    failure_reason=str(data.get("reason"))[:100] if status == "failed" and data.get("reason") else None,
+                    thumbnail_path=archive.thumbnail_path if archive else None,
+                    created_by_id=item.created_by_id,
+                )
+            )
+            await db.commit()
+        return True
+
     async def _start_print(self, db: AsyncSession, item: PrintQueueItem):
         """Upload file and start print for a queue item.
 
@@ -2529,6 +2749,9 @@ class PrintScheduler:
 
             file_path = settings.base_dir / archive.file_path
             filename = archive.filename
+            if not self._artifact_matches_provider(printer, file_path, archive.extra_data):
+                await self._fail_artifact_mismatch(db, item, printer)
+                return
 
         elif item.library_file_id:
             # Print from library file (file manager)
@@ -2546,6 +2769,9 @@ class PrintScheduler:
             lib_path = Path(library_file.file_path)
             file_path = lib_path if lib_path.is_absolute() else settings.base_dir / library_file.file_path
             filename = library_file.filename
+            if not self._artifact_matches_provider(printer, file_path, library_file.file_metadata):
+                await self._fail_artifact_mismatch(db, item, printer)
+                return
 
             # Create archive from library file so usage tracking has access to the 3MF
             queue_item_id = item.id
@@ -2561,6 +2787,12 @@ class PrintScheduler:
                     project_id=item.project_id,
                 )
                 if archive:
+                    if printer.provider == PrinterProvider.MOONRAKER.value:
+                        archive.extra_data = {
+                            **(archive.extra_data or {}),
+                            **(library_file.file_metadata or {}),
+                            "destination_artifact_kind": "klipper_gcode",
+                        }
                     item.archive_id = archive.id
                     if item.cleanup_library_after_dispatch and not library_file.is_external:
                         item.library_file_id = None
@@ -2629,6 +2861,19 @@ class PrintScheduler:
             await db.commit()
             logger.error("Queue item %s: File not found: %s", item.id, file_path)
             await self._power_off_if_needed(db, item)
+            return
+
+        if printer.provider == PrinterProvider.MOONRAKER.value:
+            await self._start_moonraker_print(
+                db,
+                item,
+                printer,
+                archive,
+                library_file,
+                file_path,
+                filename,
+                cleanup_disk_paths,
+            )
             return
 
         # Preheat / heat-soak (#1468) — fires before upload so the printer's

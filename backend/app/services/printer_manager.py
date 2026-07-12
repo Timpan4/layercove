@@ -650,7 +650,22 @@ class PrinterManager:
                 return
             self._seen_lifecycle_events.add(dedupe_key)
             backend = self._backends.get(printer_id)
-            if backend is None or backend.provider is not PrinterProvider.BAMBU:
+            if backend is None:
+                return
+            if backend.provider is PrinterProvider.MOONRAKER:
+                if event.kind != "started":
+                    await self._call_backend_callback(
+                        self._on_print_complete,
+                        printer_id,
+                        {
+                            **event.data,
+                            "status": event.kind,
+                            "filename": event.filename,
+                            "reason": event.reason,
+                            "occurred_at": event.occurred_at,
+                            "correlation_id": event.correlation_id,
+                        },
+                    )
                 return
             callback = self._on_print_start if event.kind == "started" else self._on_print_complete
             await self._call_backend_callback(callback, printer_id, event.data)

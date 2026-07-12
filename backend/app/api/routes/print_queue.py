@@ -36,6 +36,7 @@ from backend.app.schemas.print_queue import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
+from backend.app.services.printer_types import PrinterProvider
 from backend.app.utils.printer_models import normalize_printer_model, normalize_printer_model_id
 from backend.app.utils.threemf_tools import (
     extract_bed_type_from_3mf,
@@ -1293,6 +1294,21 @@ async def stop_queue_item(
     # Capture values we need for background task
     printer_id = item.printer_id
     auto_off_after = item.auto_off_after
+
+    printer = await db.get(Printer, printer_id)
+
+    # Moonraker cancellation is awaited; its terminal lifecycle event owns
+    # queue/archive/log finalization so command and event cannot race two outcomes.
+    if printer is not None and printer.provider == PrinterProvider.MOONRAKER.value:
+        try:
+            if not await printer_manager.stop_print_async(printer_id):
+                raise HTTPException(502, "Moonraker did not accept the cancel command")
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.warning("Moonraker cancel failed for queue item %s: %s", item_id, exc)
+            raise HTTPException(502, "Moonraker did not accept the cancel command") from exc
+        return {"message": "Print stop requested"}
 
     # Try to send stop command to printer
     stop_sent = False

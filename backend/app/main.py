@@ -109,7 +109,7 @@ from backend.app.services.printer_manager import (
     printer_snapshot_to_dict,
     printer_state_to_dict,
 )
-from backend.app.services.printer_types import PrinterSnapshot
+from backend.app.services.printer_types import PrinterProvider, PrinterSnapshot
 from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.services.spool_assignment_notifications import (
     notify_missing_spool_assignments_on_print_start,
@@ -3998,6 +3998,11 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
 
 async def on_print_complete(printer_id: int, data: dict):
     """Handle print completion - update the archive status."""
+    backend = printer_manager.get_backend(printer_id)
+    if backend is not None and backend.provider is PrinterProvider.MOONRAKER:
+        await print_scheduler.finalize_moonraker_job(printer_id, data)
+        return
+
     import time
 
     logger = logging.getLogger(__name__)
