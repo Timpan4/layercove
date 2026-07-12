@@ -168,7 +168,7 @@ async def test_manager_forwards_events_fifo_and_drops_events_after_disconnect():
 
 
 @pytest.mark.asyncio
-async def test_manager_routes_legacy_lifecycle_callbacks_only_for_bambu():
+async def test_manager_routes_bambu_lifecycle_and_moonraker_terminal_callbacks():
     manager = PrinterManager(registry=PrinterBackendRegistry())
     observed = []
 
@@ -189,7 +189,12 @@ async def test_manager_routes_legacy_lifecycle_callbacks_only_for_bambu():
         await manager._forward_backend_event(printer_id, lifecycle("started", "cube", f"job-{printer_id}"))
         await manager._forward_backend_event(printer_id, lifecycle("completed", "cube", f"job-{printer_id}"))
 
-    assert observed == [(2, "started", "cube"), (2, "completed", "cube")]
+    assert observed == [
+        (1, "started", "cube"),
+        (1, "completed", "cube"),
+        (2, "started", "cube"),
+        (2, "completed", "cube"),
+    ]
     assert manager._seen_lifecycle_events == {
         (1, "job-1", "started"),
         (1, "job-1", "completed"),
@@ -199,7 +204,7 @@ async def test_manager_routes_legacy_lifecycle_callbacks_only_for_bambu():
 
 
 @pytest.mark.asyncio
-async def test_manager_routes_running_observed_callback_only_for_bambu():
+async def test_manager_routes_running_observed_callback_for_lifecycle_backends():
     manager = PrinterManager(registry=PrinterBackendRegistry())
     observed = []
 
@@ -216,7 +221,7 @@ async def test_manager_routes_running_observed_callback_only_for_bambu():
     await manager._forward_backend_event(1, event)
     await manager._forward_backend_event(2, event)
 
-    assert observed == [(2, "cube.gcode")]
+    assert observed == [(1, "cube.gcode"), (2, "cube.gcode")]
 
 
 @pytest.mark.asyncio

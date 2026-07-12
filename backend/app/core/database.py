@@ -3416,6 +3416,8 @@ async def run_migrations(conn):
     else:
         await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN gate_acknowledged BOOLEAN DEFAULT false")
 
+    await _migrate_print_queue_provider_identity(conn)
+
     # Migration: Add is_autologin column to oidc_providers (#1589). Postgres
     # rejects ``DEFAULT 0`` for BOOLEAN columns.
     if is_sqlite():
@@ -3426,6 +3428,19 @@ async def run_migrations(conn):
     # Migration: Disambiguate the four ``user_print_*`` notification template
     # names by appending " Email" (#1792). See ``_migrate_rename_user_print_template_names``.
     await _migrate_rename_user_print_template_names(conn)
+
+
+async def _migrate_print_queue_provider_identity(conn) -> None:
+    """Add durable provider lifecycle identity for queued prints."""
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN provider_correlation_id VARCHAR(255)")
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN provider_job_id VARCHAR(255)")
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN start_reconcile_after TIMESTAMP")
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN cancel_requested_at TIMESTAMP")
+    await _safe_execute(conn, "ALTER TABLE print_queue ADD COLUMN cancel_dispatched_at TIMESTAMP")
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_print_queue_provider_correlation_id ON print_queue (provider_correlation_id)",
+    )
 
 
 _USER_PRINT_TEMPLATE_RENAMES: tuple[tuple[str, str, str], ...] = (

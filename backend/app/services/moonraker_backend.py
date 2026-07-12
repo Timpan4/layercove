@@ -149,6 +149,9 @@ class MoonrakerBackend:
         self._active_correlation_id: str | None = None
         self._active_provider_job_id: str | None = None
         self._active_filename: str | None = None
+        self._pending_correlation_id: str | None = None
+        self._pending_filename: str | None = None
+        self._pending_provider_job_id: str | None = None
 
     @property
     def capabilities(self) -> PrinterCapabilities:
@@ -178,6 +181,21 @@ class MoonrakerBackend:
 
     def snapshot(self) -> PrinterSnapshot:
         return self._snapshot
+
+    def bind_queued_job(self, correlation_id: str, filename: str, provider_job_id: str | None = None) -> None:
+        self._pending_correlation_id = correlation_id
+        self._pending_filename = filename
+        self._pending_provider_job_id = provider_job_id or filename
+
+    def clear_queued_job_binding(self, correlation_id: str) -> None:
+        if self._pending_correlation_id == correlation_id:
+            self._pending_correlation_id = None
+            self._pending_filename = None
+            self._pending_provider_job_id = None
+
+    def current_job_identity(self) -> tuple[str | None, str | None]:
+        """Return the exact provider job id and filename in the latest snapshot."""
+        return self._provider_job_id(), self._snapshot.filename
 
     async def start_print(self, filename: str, *args: object, **options: object) -> bool:
         self._require_command("start_print", {NormalizedPrinterState.IDLE})
@@ -389,9 +407,20 @@ class MoonrakerBackend:
             self._active_provider_job_id = None
             self._active_filename = None
         if is_active and not was_active and self._active_correlation_id is None:
+            pending_matches = (
+                self._pending_provider_job_id is not None and self._pending_provider_job_id == provider_job_id
+            ) or (
+                self._pending_filename is not None
+                and self._same_filename(self._pending_filename, self._snapshot.filename)
+            )
             self._active_provider_job_id = provider_job_id
-            self._active_correlation_id = f"moonraker:{provider_job_id}" if provider_job_id else str(uuid4())
-            self._active_filename = self._snapshot.filename
+            self._active_correlation_id = (self._pending_correlation_id if pending_matches else None) or (
+                f"moonraker:{provider_job_id}" if provider_job_id else str(uuid4())
+            )
+            self._active_filename = self._pending_filename if pending_matches else self._snapshot.filename
+            self._pending_correlation_id = None
+            self._pending_filename = None
+            self._pending_provider_job_id = None
             data = self._lifecycle_data("printing")
             if bootstrap:
                 self._emit(ProviderEvent("print_running_observed", data))
@@ -425,6 +454,12 @@ class MoonrakerBackend:
             self._active_filename = None
         self._last_state = state
 
+    @staticmethod
+    def _same_filename(expected: str, observed: str | None) -> bool:
+        if not observed:
+            return False
+        return expected.strip().lstrip("/") == observed.strip().lstrip("/")
+
     def _lifecycle_data(self, status: str) -> dict[str, str | None]:
         filename = self._active_filename or self._snapshot.filename
         return {
@@ -432,6 +467,7 @@ class MoonrakerBackend:
             "filename": filename,
             "subtask_name": filename,
             "provider_job_id": self._active_provider_job_id or self._provider_job_id(),
+            "correlation_id": self._active_correlation_id,
         }
 
     def _emit_offline(self) -> None:

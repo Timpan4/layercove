@@ -4,10 +4,12 @@ import asyncio
 import json
 import logging
 import time
-from datetime import datetime, timezone
+from collections.abc import Awaitable, Callable
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from uuid import uuid4
 
-from sqlalchemy import func, select, update
+from sqlalchemy import func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -17,6 +19,7 @@ from backend.app.core.tasks import spawn_background_task
 from backend.app.core.websocket import ws_manager
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
+from backend.app.models.print_log import PrintLogEntry
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
@@ -32,6 +35,7 @@ from backend.app.services.bambu_ftp import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
+from backend.app.services.printer_backend import BackendError
 from backend.app.services.printer_manager import (
     printer_manager,
     supports_airduct,
@@ -40,6 +44,7 @@ from backend.app.services.printer_manager import (
     supports_drying,
     supports_drying_while_printing,
 )
+from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider
 from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.utils.filename import derive_remote_filename
 from backend.app.utils.printer_models import normalize_printer_model
@@ -55,6 +60,7 @@ logger = logging.getLogger(__name__)
 # sub-200 ms files.
 _DISPATCH_PROGRESS_BYTE_STEP = 256 * 1024
 _DISPATCH_PROGRESS_MIN_INTERVAL_SECS = 0.2
+_MOONRAKER_START_RECONCILE_GRACE_SECONDS = 5.0
 
 
 class _UploadProgressBridge:
@@ -167,6 +173,7 @@ class PrintScheduler:
         self._power_on_check_interval = 10  # seconds between connection checks
         # Track which printers are currently auto-drying (printer_id -> start timestamp)
         self._drying_in_progress: dict[int, float] = {}
+        self._moonraker_terminal_effects: Callable[[dict, dict], Awaitable[None]] | None = None
         # Defensive in-memory dispatch hold (#1157): a printer that just received
         # a project_file command must not get a second dispatch until either it
         # transitions out of pre_state OR the hard timeout expires. The H2D Pro
@@ -185,6 +192,13 @@ class PrintScheduler:
         # Matches the watchdog timeout (90 s) plus a safety margin so the
         # watchdog runs first on the unhappy path.
         self._dispatch_max_hold = 180.0
+
+    def set_moonraker_terminal_effects(self, callback: Callable[[dict, dict], Awaitable[None]]) -> None:
+        self._moonraker_terminal_effects = callback
+
+    async def _run_moonraker_terminal_effects(self, outcome: dict | None, data: dict) -> None:
+        if outcome is not None and self._moonraker_terminal_effects is not None:
+            await self._moonraker_terminal_effects(outcome, data)
 
     async def run(self):
         """Main loop - check queue every interval."""
@@ -206,6 +220,7 @@ class PrintScheduler:
 
     async def check_queue(self):
         """Check for prints ready to start."""
+        await self._reconcile_persisted_moonraker_starts()
         async with async_session() as db:
             # Check if shortest-job-first scheduling is enabled
             sjf_enabled = await self._get_bool_setting(db, "queue_shortest_first")
@@ -626,12 +641,14 @@ class PrintScheduler:
         candidates: list[tuple[int, int]] = []  # (printer_id, color_match_count)
 
         for printer in printers:
+            backend = printer_manager.get_backend(printer.id)
+            has_ams = backend is None or backend.capabilities.ams
             if printer.id in exclude_ids:
                 # Printer is already claimed by another job in this scheduling run.
                 # For force-color jobs, still check if the color would match — if not,
                 # report it as a color mismatch rather than plain "Busy" so the user
                 # knows the job needs a filament change, not just to wait for availability.
-                if force_overrides and not pref_overrides:
+                if force_overrides and not pref_overrides and has_ams:
                     missing_colors = self._get_missing_force_color_slots(printer.id, force_overrides)
                     if missing_colors:
                         printers_missing_filament.append((printer.name, missing_colors))
@@ -651,7 +668,7 @@ class PrintScheduler:
                 # loaded color would satisfy the requirement — if not, surface it as a
                 # color-mismatch reason rather than plain "Busy" so the user understands
                 # that the job is waiting for a filament change, not just printer availability.
-                if force_overrides and not pref_overrides:
+                if force_overrides and not pref_overrides and has_ams:
                     missing_colors = self._get_missing_force_color_slots(printer.id, force_overrides)
                     if missing_colors:
                         printers_missing_filament.append((printer.name, missing_colors))
@@ -666,7 +683,7 @@ class PrintScheduler:
                 continue
 
             # Validate filament compatibility if required types are specified
-            if required_filament_types:
+            if required_filament_types and has_ams:
                 missing = self._get_missing_filament_types(printer.id, required_filament_types)
                 if missing:
                     # When force_overrides are present, enrich missing entries with color info
@@ -687,7 +704,7 @@ class PrintScheduler:
                     continue
 
             # Force color match: ALL flagged slots must have an exact type+color match
-            if force_overrides:
+            if force_overrides and has_ams:
                 missing_colors = self._get_missing_force_color_slots(printer.id, force_overrides)
                 if missing_colors:
                     printers_missing_filament.append((printer.name, missing_colors))
@@ -884,6 +901,10 @@ class PrintScheduler:
         Returns:
             AMS mapping array or None if no mapping needed/possible
         """
+        backend = printer_manager.get_backend(printer_id)
+        if backend is not None and not backend.capabilities.ams:
+            return None
+
         # Get printer status
         status = printer_manager.get_status(printer_id)
         if not status:
@@ -1542,6 +1563,10 @@ class PrintScheduler:
             logger.debug("Printer %d: no status available", printer_id)
             return False
 
+        backend = printer_manager.get_backend(printer_id)
+        if backend is not None and backend.provider is PrinterProvider.MOONRAKER:
+            return state.state == NormalizedPrinterState.IDLE
+
         # Plate-clear gate: if the printer finished/failed a previous print and the user
         # hasn't acknowledged the plate was cleared, the queue must not dispatch the next
         # job — even if the printer currently reports IDLE. After Auto Off cycles the
@@ -1757,6 +1782,10 @@ class PrintScheduler:
         all_printers = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
         for printer in all_printers.scalars():
             pid = printer.id
+
+            backend = printer_manager.get_backend(pid)
+            if backend is not None and not backend.capabilities.ams:
+                continue
 
             # Resolve model+firmware up front — needed to decide whether this printer
             # qualifies for mid-print drying (busy printer on capable hardware).
@@ -2390,6 +2419,10 @@ class PrintScheduler:
         since been swapped to one with enough material clears the flag here
         so the next scheduler tick dispatches it.
         """
+        backend = printer_manager.get_backend(item.printer_id) if item.printer_id else None
+        if backend is not None and not backend.capabilities.ams:
+            return False
+
         # User has explicitly acknowledged the deficit ("Print Anyway") —
         # don't re-flag, don't even compute. Without this short-circuit the
         # scheduler bounces between "user said anyway" (route clears
@@ -2460,6 +2493,523 @@ class PrintScheduler:
         if owner:
             printer_manager.set_current_print_user(item.printer_id, owner.id, owner.username)
 
+    @staticmethod
+    def _artifact_matches_provider(printer: Printer, file_path: Path, metadata: dict | None) -> bool:
+        declared = (metadata or {}).get("destination_artifact_kind")
+        if printer.provider == PrinterProvider.MOONRAKER.value:
+            return file_path.suffix.lower() == ".gcode" and declared in (None, "klipper_gcode")
+        return file_path.suffix.lower() == ".3mf" and declared in (None, "bambu_3mf")
+
+    @staticmethod
+    def _safe_moonraker_path(value: object) -> str:
+        from pathlib import PurePosixPath
+
+        path = PurePosixPath(str(value))
+        if "\\" in str(value) or path.is_absolute() or ".." in path.parts or path.suffix.lower() != ".gcode":
+            raise ValueError("Moonraker returned an unsafe G-code path")
+        return path.as_posix()
+
+    async def _start_moonraker_print(
+        self,
+        db: AsyncSession,
+        item: PrintQueueItem,
+        printer: Printer,
+        archive: PrintArchive | None,
+        library_file: LibraryFile | None,
+        file_path: Path,
+        filename: str,
+        cleanup_disk_paths: list[Path],
+    ) -> None:
+        """Upload, claim, then start one Moonraker queue item."""
+        backend = printer_manager.get_backend(item.printer_id)
+        if backend is None or not backend.capabilities.upload_gcode or not backend.capabilities.start_print:
+            await self._record_moonraker_dispatch_failure(
+                db, item, archive, printer, filename, "Moonraker printer is not ready for queued G-code"
+            )
+            return
+
+        upload = getattr(backend, "upload_gcode", None)
+        if upload is None:
+            await self._record_moonraker_dispatch_failure(
+                db, item, archive, printer, filename, "Moonraker printer cannot upload G-code"
+            )
+            return
+
+        correlation_id = str(uuid4())
+        upload_name = f"queued-{correlation_id}{file_path.suffix.lower()}"
+        try:
+            with file_path.open("rb") as source:
+                remote_path = self._safe_moonraker_path(
+                    await upload(source, filename=upload_name, start=False, size=file_path.stat().st_size)
+                )
+        except Exception as exc:
+            logger.warning("Queue item %s: Moonraker upload failed: %s", item.id, exc)
+            await self._record_moonraker_dispatch_failure(
+                db, item, archive, printer, filename, "Failed to upload G-code to Moonraker"
+            )
+            return
+
+        now = datetime.now(timezone.utc)
+        cas = await db.execute(
+            update(PrintQueueItem)
+            .where(PrintQueueItem.id == item.id, PrintQueueItem.status == "pending")
+            .values(
+                status="printing",
+                started_at=now,
+                provider_correlation_id=correlation_id,
+                provider_job_id=remote_path,
+                start_reconcile_after=now + timedelta(seconds=_MOONRAKER_START_RECONCILE_GRACE_SECONDS),
+            )
+        )
+        await db.commit()
+        if cas.rowcount == 0:
+            logger.info("Queue item %s cancelled after Moonraker upload; retaining remote G-code", item.id)
+            return
+
+        item.status = "printing"
+        item.started_at = now
+        item.provider_correlation_id = correlation_id
+        item.provider_job_id = remote_path
+        item.start_reconcile_after = now + timedelta(seconds=_MOONRAKER_START_RECONCILE_GRACE_SECONDS)
+        for cleanup_path in cleanup_disk_paths:
+            try:
+                cleanup_path.unlink(missing_ok=True)
+            except OSError as exc:
+                logger.warning("Could not remove transient library artifact %s: %s", cleanup_path, exc)
+        if archive is not None:
+            archive.status = "printing"
+            archive.started_at = now
+            await db.commit()
+        await self._propagate_owner_to_printer_manager(db, item)
+
+        bind_job = getattr(backend, "bind_queued_job", None)
+        if bind_job is not None:
+            bind_job(correlation_id, remote_path, remote_path)
+
+        try:
+            started = await backend.start_print(remote_path)
+        except BackendError as exc:
+            logger.warning("Queue item %s: Moonraker start failed: %s", item.id, exc)
+            if exc.code in {"timeout", "unavailable"}:
+                logger.warning(
+                    "Queue item %s: Moonraker start outcome is ambiguous; retaining printing state for reconciliation",
+                    item.id,
+                )
+                self._schedule_moonraker_start_reconciliation(item.id, item.printer_id, correlation_id, remote_path)
+                return
+            started = False
+        except Exception:
+            logger.exception(
+                "Queue item %s: unexpected Moonraker start error; retaining printing state for reconciliation",
+                item.id,
+            )
+            self._schedule_moonraker_start_reconciliation(item.id, item.printer_id, correlation_id, remote_path)
+            return
+        if not started:
+            clear_binding = getattr(backend, "clear_queued_job_binding", None)
+            if clear_binding is not None:
+                clear_binding(correlation_id)
+            terminal_data = {
+                "status": "failed",
+                "filename": remote_path,
+                "reason": "Moonraker rejected the print start",
+                "correlation_id": correlation_id,
+                "provider_job_id": remote_path,
+            }
+            outcome = await self.finalize_moonraker_job(
+                item.printer_id,
+                terminal_data,
+            )
+            await self._run_moonraker_terminal_effects(outcome, terminal_data)
+            return
+
+        await db.execute(
+            update(PrintQueueItem)
+            .where(
+                PrintQueueItem.id == item.id,
+                PrintQueueItem.status == "printing",
+                PrintQueueItem.provider_correlation_id == correlation_id,
+                PrintQueueItem.provider_job_id == remote_path,
+            )
+            .values(start_reconcile_after=None)
+        )
+        await db.commit()
+        item.start_reconcile_after = None
+
+        estimated_time = (
+            archive.print_time_seconds if archive else library_file.print_time_seconds if library_file else None
+        )
+        await notification_service.on_queue_job_started(
+            job_name=Path(filename).stem,
+            printer_id=printer.id,
+            printer_name=printer.name,
+            db=db,
+            estimated_time=estimated_time,
+        )
+
+    def _schedule_moonraker_start_reconciliation(
+        self,
+        item_id: int,
+        printer_id: int,
+        correlation_id: str,
+        remote_path: str,
+    ) -> None:
+        spawn_background_task(
+            self._reconcile_moonraker_start(item_id, printer_id, correlation_id, remote_path),
+            name=f"reconcile-moonraker-start-{item_id}",
+        )
+
+    async def _reconcile_persisted_moonraker_starts(self) -> int:
+        """Retry durable ambiguous-start checks after restart or a prior offline observation."""
+        now = datetime.now(timezone.utc)
+        async with async_session() as db:
+            rows = list(
+                (
+                    await db.execute(
+                        select(
+                            PrintQueueItem.id,
+                            PrintQueueItem.printer_id,
+                            PrintQueueItem.provider_correlation_id,
+                            PrintQueueItem.provider_job_id,
+                        )
+                        .join(Printer, Printer.id == PrintQueueItem.printer_id)
+                        .where(
+                            PrintQueueItem.status == "printing",
+                            PrintQueueItem.start_reconcile_after.is_not(None),
+                            PrintQueueItem.start_reconcile_after <= now,
+                            Printer.provider == PrinterProvider.MOONRAKER.value,
+                        )
+                    )
+                ).all()
+            )
+        resolved = 0
+        for item_id, printer_id, correlation_id, remote_path in rows:
+            if printer_id is None or not correlation_id or not remote_path:
+                continue
+            if await self._reconcile_moonraker_start(item_id, printer_id, correlation_id, remote_path, grace_seconds=0):
+                resolved += 1
+        return resolved
+
+    async def _reconcile_moonraker_start(
+        self,
+        item_id: int,
+        printer_id: int,
+        correlation_id: str,
+        remote_path: str,
+        *,
+        grace_seconds: float = _MOONRAKER_START_RECONCILE_GRACE_SECONDS,
+    ) -> bool:
+        """Resolve one ambiguous start from observed state without retrying the command."""
+        await asyncio.sleep(grace_seconds)
+        backend = printer_manager.get_backend(printer_id)
+        async with async_session() as db:
+            item = await db.scalar(
+                select(PrintQueueItem).where(
+                    PrintQueueItem.id == item_id,
+                    PrintQueueItem.status == "printing",
+                    PrintQueueItem.provider_correlation_id == correlation_id,
+                    PrintQueueItem.provider_job_id == remote_path,
+                    PrintQueueItem.start_reconcile_after.is_not(None),
+                )
+            )
+            if item is None:
+                return False
+            printer = await db.get(Printer, printer_id)
+
+        if backend is None:
+            return False
+        provider_job_id = observed_filename = None
+        active = False
+        authoritative_idle = False
+        snapshot = backend.snapshot()
+        if not snapshot.connected or snapshot.state in {
+            NormalizedPrinterState.OFFLINE,
+            NormalizedPrinterState.CONNECTING,
+            NormalizedPrinterState.UNKNOWN,
+        }:
+            return False
+        identity = getattr(backend, "current_job_identity", None)
+        provider_job_id, observed_filename = identity() if identity is not None else (None, snapshot.filename)
+        active = snapshot.state in {
+            NormalizedPrinterState.PREPARING,
+            NormalizedPrinterState.PRINTING,
+            NormalizedPrinterState.PAUSED,
+        }
+        authoritative_idle = snapshot.state is NormalizedPrinterState.IDLE
+        filename_matches = self._same_provider_filename(remote_path, observed_filename)
+        job_matches = provider_job_id is not None and provider_job_id == remote_path
+        if active and (filename_matches or job_matches):
+            return await self.bind_moonraker_observed(
+                printer_id,
+                {
+                    "correlation_id": correlation_id,
+                    "provider_job_id": provider_job_id or remote_path,
+                    "filename": observed_filename or remote_path,
+                },
+            )
+
+        if not authoritative_idle and not active:
+            return False
+        clear_binding = getattr(backend, "clear_queued_job_binding", None)
+        if clear_binding is not None:
+            clear_binding(correlation_id)
+        if printer is None:
+            return False
+        terminal_data = {
+            "status": "failed",
+            "filename": remote_path,
+            "reason": "Moonraker start could not be confirmed",
+            "correlation_id": correlation_id,
+            "provider_job_id": remote_path,
+        }
+        outcome = await self.finalize_moonraker_job(
+            printer_id,
+            terminal_data,
+        )
+        await self._run_moonraker_terminal_effects(outcome, terminal_data)
+        return outcome is not None
+
+    @staticmethod
+    def _same_provider_filename(expected: str, observed: str | None) -> bool:
+        return bool(observed) and expected.strip().lstrip("/") == observed.strip().lstrip("/")
+
+    async def _record_moonraker_dispatch_failure(
+        self,
+        db: AsyncSession,
+        item: PrintQueueItem,
+        archive: PrintArchive | None,
+        printer: Printer,
+        filename: str,
+        reason: str,
+    ) -> dict | None:
+        completed_at = datetime.now(timezone.utc)
+        cas = await db.execute(
+            update(PrintQueueItem)
+            .where(PrintQueueItem.id == item.id, PrintQueueItem.status == "pending")
+            .values(status="failed", error_message=reason, completed_at=completed_at)
+        )
+        if cas.rowcount == 0:
+            await db.rollback()
+            return None
+        if archive is not None:
+            archive.status = "failed"
+            archive.completed_at = completed_at
+        db.add(
+            PrintLogEntry(
+                archive_id=item.archive_id,
+                print_name=(archive.print_name if archive else None) or Path(filename).stem,
+                printer_name=printer.name,
+                printer_id=printer.id,
+                status="failed",
+                started_at=item.started_at,
+                completed_at=completed_at,
+                failure_reason=reason[:100],
+                thumbnail_path=archive.thumbnail_path if archive else None,
+                created_by_id=item.created_by_id,
+            )
+        )
+        await db.commit()
+        outcome = {
+            "queue_item_id": item.id,
+            "archive_id": item.archive_id,
+            "library_file_id": item.library_file_id,
+            "created_by_id": item.created_by_id,
+            "auto_off_after": item.auto_off_after,
+            "status": "failed",
+            "printer_name": printer.name,
+            "filename": filename,
+        }
+        await self._run_moonraker_terminal_effects(
+            outcome, {"status": "failed", "filename": filename, "reason": reason}
+        )
+        return outcome
+
+    @staticmethod
+    async def bind_moonraker_observed(printer_id: int, data: dict) -> bool:
+        """Bind a started/bootstrap observation to exactly one durable queue identity."""
+        correlation_id = data.get("correlation_id")
+        correlation_id = correlation_id if isinstance(correlation_id, str) and correlation_id else None
+        provider_job_id = data.get("provider_job_id")
+        provider_job_id = str(provider_job_id) if provider_job_id is not None else None
+        filename = data.get("filename")
+        filename = str(filename).strip().lstrip("/") if filename else None
+        identities = []
+        if provider_job_id:
+            identities.append(PrintQueueItem.provider_job_id == provider_job_id)
+        if filename:
+            identities.append(PrintQueueItem.provider_job_id == filename)
+        if not identities:
+            return False
+
+        async with async_session() as db:
+            matches = list(
+                (
+                    await db.scalars(
+                        select(PrintQueueItem).where(
+                            PrintQueueItem.printer_id == printer_id,
+                            PrintQueueItem.status == "printing",
+                            or_(*identities),
+                        )
+                    )
+                ).all()
+            )
+            if len(matches) != 1:
+                return False
+            item = matches[0]
+            values = {}
+            if correlation_id:
+                values["provider_correlation_id"] = correlation_id
+            if provider_job_id:
+                values["provider_job_id"] = provider_job_id
+            values["start_reconcile_after"] = None
+            result = await db.execute(
+                update(PrintQueueItem)
+                .where(
+                    PrintQueueItem.id == item.id,
+                    PrintQueueItem.status == "printing",
+                    or_(*identities),
+                )
+                .values(**values)
+            )
+            await db.commit()
+            bound = result.rowcount == 1
+            item_id = item.id
+        if bound:
+            await PrintScheduler.dispatch_moonraker_cancel_intent(item_id, printer_id)
+        return bound
+
+    bind_moonraker_started = bind_moonraker_observed
+
+    @staticmethod
+    async def dispatch_moonraker_cancel_intent(item_id: int, printer_id: int) -> bool:
+        """Atomically claim and send one persisted Moonraker cancel request."""
+        dispatched_at = datetime.now(timezone.utc)
+        async with async_session() as db:
+            claim = await db.execute(
+                update(PrintQueueItem)
+                .where(
+                    PrintQueueItem.id == item_id,
+                    PrintQueueItem.printer_id == printer_id,
+                    PrintQueueItem.status == "printing",
+                    PrintQueueItem.cancel_requested_at.is_not(None),
+                    PrintQueueItem.cancel_dispatched_at.is_(None),
+                )
+                .values(cancel_dispatched_at=dispatched_at)
+            )
+            await db.commit()
+            if claim.rowcount != 1:
+                return False
+        try:
+            accepted = await printer_manager.stop_print_async(printer_id)
+        except BackendError as exc:
+            if exc.code not in {"invalid_state", "command_unavailable", "unavailable"}:
+                return True
+            accepted = False
+        except Exception:
+            # The cancel may have reached Moonraker. Keep the durable claim so
+            # a later started observation cannot send a duplicate command.
+            return True
+        if accepted:
+            return True
+        async with async_session() as db:
+            await db.execute(
+                update(PrintQueueItem)
+                .where(
+                    PrintQueueItem.id == item_id,
+                    PrintQueueItem.status == "printing",
+                    PrintQueueItem.cancel_dispatched_at == dispatched_at,
+                )
+                .values(cancel_dispatched_at=None)
+            )
+            await db.commit()
+        return False
+
+    @staticmethod
+    async def finalize_moonraker_job(printer_id: int, data: dict) -> dict | None:
+        """Atomically finalize only the queue row bound to this provider job."""
+        raw_status = str(data.get("status") or "failed")
+        status = "cancelled" if raw_status in ("cancelled", "aborted") else raw_status
+        if status not in ("completed", "failed", "cancelled"):
+            status = "failed"
+        completed_at = data.get("occurred_at")
+        if not isinstance(completed_at, datetime):
+            completed_at = datetime.now(timezone.utc)
+        correlation_id = data.get("correlation_id")
+        if not isinstance(correlation_id, str) or not correlation_id:
+            return None
+        provider_job_id = data.get("provider_job_id")
+        provider_job_id = str(provider_job_id) if provider_job_id is not None else None
+
+        async with async_session() as db:
+            identities = [
+                PrintQueueItem.provider_job_id == provider_job_id
+                if provider_job_id is not None
+                else PrintQueueItem.provider_correlation_id == correlation_id
+            ]
+            query = select(PrintQueueItem).where(
+                PrintQueueItem.printer_id == printer_id,
+                PrintQueueItem.status == "printing",
+                or_(*identities),
+            )
+            matches = list((await db.scalars(query.order_by(PrintQueueItem.started_at, PrintQueueItem.id))).all())
+            if len(matches) != 1:
+                return None
+            item = matches[0]
+
+            printer = await db.get(Printer, printer_id)
+            archive = await db.get(PrintArchive, item.archive_id) if item.archive_id else None
+            if item.cancel_requested_at is not None and status != "completed":
+                status = "cancelled"
+            terminal_values = {"status": status, "completed_at": completed_at}
+            if status == "failed":
+                terminal_values["error_message"] = str(data.get("reason") or "Moonraker print failed")
+            terminal_query = update(PrintQueueItem).where(
+                PrintQueueItem.id == item.id,
+                PrintQueueItem.status == "printing",
+                or_(*identities),
+            )
+            terminal = await db.execute(terminal_query.values(**terminal_values))
+            if terminal.rowcount != 1:
+                await db.rollback()
+                return None
+            if archive is not None:
+                archive.status = status
+                archive.completed_at = completed_at
+                archive.printer_id = printer_id
+
+            duration = None
+            if item.started_at is not None:
+                started = item.started_at
+                if started.tzinfo is None:
+                    started = started.replace(tzinfo=timezone.utc)
+                duration = max(0, int((completed_at - started).total_seconds()))
+            db.add(
+                PrintLogEntry(
+                    archive_id=item.archive_id,
+                    print_name=(archive.print_name if archive else None) or Path(str(data.get("filename") or "")).stem,
+                    printer_name=printer.name if printer else None,
+                    printer_id=printer_id,
+                    status=status,
+                    started_at=item.started_at,
+                    completed_at=completed_at,
+                    duration_seconds=duration,
+                    failure_reason=str(data.get("reason"))[:100] if status == "failed" and data.get("reason") else None,
+                    thumbnail_path=archive.thumbnail_path if archive else None,
+                    created_by_id=item.created_by_id,
+                )
+            )
+            await db.commit()
+        return {
+            "queue_item_id": item.id,
+            "archive_id": item.archive_id,
+            "library_file_id": item.library_file_id,
+            "created_by_id": item.created_by_id,
+            "auto_off_after": item.auto_off_after,
+            "status": status,
+            "printer_name": printer.name if printer else f"Printer {printer_id}",
+            "filename": str(data.get("filename") or ""),
+        }
+
     async def _start_print(self, db: AsyncSession, item: PrintQueueItem):
         """Upload file and start print for a queue item.
 
@@ -2529,6 +3079,16 @@ class PrintScheduler:
 
             file_path = settings.base_dir / archive.file_path
             filename = archive.filename
+            if not self._artifact_matches_provider(printer, file_path, archive.extra_data):
+                await self._record_moonraker_dispatch_failure(
+                    db,
+                    item,
+                    archive,
+                    printer,
+                    filename,
+                    f"Source artifact is not compatible with {printer.provider} printers",
+                )
+                return
 
         elif item.library_file_id:
             # Print from library file (file manager)
@@ -2546,6 +3106,16 @@ class PrintScheduler:
             lib_path = Path(library_file.file_path)
             file_path = lib_path if lib_path.is_absolute() else settings.base_dir / library_file.file_path
             filename = library_file.filename
+            if not self._artifact_matches_provider(printer, file_path, library_file.file_metadata):
+                await self._record_moonraker_dispatch_failure(
+                    db,
+                    item,
+                    None,
+                    printer,
+                    filename,
+                    f"Source artifact is not compatible with {printer.provider} printers",
+                )
+                return
 
             # Create archive from library file so usage tracking has access to the 3MF
             queue_item_id = item.id
@@ -2561,6 +3131,12 @@ class PrintScheduler:
                     project_id=item.project_id,
                 )
                 if archive:
+                    if printer.provider == PrinterProvider.MOONRAKER.value:
+                        archive.extra_data = {
+                            **(archive.extra_data or {}),
+                            **(library_file.file_metadata or {}),
+                            "destination_artifact_kind": "klipper_gcode",
+                        }
                     item.archive_id = archive.id
                     if item.cleanup_library_after_dispatch and not library_file.is_external:
                         item.library_file_id = None
@@ -2629,6 +3205,19 @@ class PrintScheduler:
             await db.commit()
             logger.error("Queue item %s: File not found: %s", item.id, file_path)
             await self._power_off_if_needed(db, item)
+            return
+
+        if printer.provider == PrinterProvider.MOONRAKER.value:
+            await self._start_moonraker_print(
+                db,
+                item,
+                printer,
+                archive,
+                library_file,
+                file_path,
+                filename,
+                cleanup_disk_paths,
+            )
             return
 
         # Preheat / heat-soak (#1468) — fires before upload so the printer's
