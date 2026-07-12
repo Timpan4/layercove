@@ -1825,6 +1825,11 @@ function PrinterCard({
     chamber_temperature: true, ams: true, plate_selection: true, speed_control: true,
     firmware_information: true, object_cancellation: true,
   };
+  const unsupportedArtifactMessage = capabilities.upload_gcode
+    ? capabilities.upload_3mf
+      ? t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed')
+      : t('printers.dropNotPrintableGcode', 'Only .gcode files can be printed on this printer')
+    : t('printers.dropNotPrintable3mf', 'Only .gcode.3mf files can be printed on this printer');
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const { showToast } = useToast();
@@ -2912,7 +2917,7 @@ function PrinterCard({
 
     // Only accept sliced/printable files (.gcode, .gcode.3mf, etc.)
     if (!isPrintableArtifact(file.name, capabilities)) {
-      showToast(t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed'), 'error');
+      showToast(unsupportedArtifactMessage, 'error');
       return;
     }
 
@@ -5726,7 +5731,7 @@ function PrinterCard({
           accept={printableArtifactAccept(capabilities)}
           validateFile={(file) => {
             if (!isPrintableArtifact(file.name, capabilities)) {
-              return t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed');
+              return unsupportedArtifactMessage;
             }
           }}
           onFileUploaded={(uploadedFile) => {

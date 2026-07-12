@@ -723,6 +723,8 @@ export default {
     howToEnable: 'Comment activer',
     incompatibleFile: 'Ce fichier a été tranché pour {{slicedFor}}, mais cette imprimante est une {{printerModel}}',
     dropNotPrintable: 'Seuls les fichiers .gcode et .gcode.3mf peuvent être imprimés',
+    dropNotPrintableGcode: 'Seuls les fichiers .gcode peuvent être imprimés sur cette imprimante',
+    dropNotPrintable3mf: 'Seuls les fichiers .gcode.3mf peuvent être imprimés sur cette imprimante',
     dropToPrint: 'Déposer pour imprimer',
     cannotPrint: 'Imprimante occupée',
   },

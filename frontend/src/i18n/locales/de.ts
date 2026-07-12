@@ -723,6 +723,8 @@ export default {
     howToEnable: 'Aktivieren',
     incompatibleFile: 'Diese Datei wurde für {{slicedFor}} geslicet, aber dieser Drucker ist ein {{printerModel}}',
     dropNotPrintable: 'Nur .gcode- und .gcode.3mf-Dateien können gedruckt werden',
+    dropNotPrintableGcode: 'Auf diesem Drucker können nur .gcode-Dateien gedruckt werden',
+    dropNotPrintable3mf: 'Auf diesem Drucker können nur .gcode.3mf-Dateien gedruckt werden',
     dropToPrint: 'Zum Drucken ablegen',
     cannotPrint: 'Drucker beschäftigt',
   },

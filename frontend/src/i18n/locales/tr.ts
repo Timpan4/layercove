@@ -723,6 +723,8 @@ export default {
     howToEnable: 'Nasıl etkinleştirilir',
     incompatibleFile: 'Bu dosya {{slicedFor}} için dilimlendi, ancak bu yazıcı bir {{printerModel}}',
     dropNotPrintable: 'Yalnızca .gcode ve .gcode.3mf dosyaları yazdırılabilir',
+    dropNotPrintableGcode: 'Bu yazıcıda yalnızca .gcode dosyaları yazdırılabilir',
+    dropNotPrintable3mf: 'Bu yazıcıda yalnızca .gcode.3mf dosyaları yazdırılabilir',
     dropToPrint: 'Yazdırmak için bırakın',
     cannotPrint: 'Yazıcı meşgul',
   },

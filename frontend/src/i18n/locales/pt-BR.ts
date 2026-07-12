@@ -723,6 +723,8 @@ export default {
     howToEnable: 'Como ativar',
     incompatibleFile: 'Este arquivo foi fatiado para {{slicedFor}}, mas esta impressora é uma {{printerModel}}',
     dropNotPrintable: 'Apenas arquivos .gcode e .gcode.3mf podem ser impressos',
+    dropNotPrintableGcode: 'Somente arquivos .gcode podem ser impressos nesta impressora',
+    dropNotPrintable3mf: 'Somente arquivos .gcode.3mf podem ser impressos nesta impressora',
     dropToPrint: 'Solte para imprimir',
     cannotPrint: 'Impressora ocupada',
   },

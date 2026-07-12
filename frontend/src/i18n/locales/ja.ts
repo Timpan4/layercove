@@ -722,6 +722,8 @@ export default {
     howToEnable: '有効化方法',
     incompatibleFile: 'このファイルは{{slicedFor}}用にスライスされていますが、このプリンターは{{printerModel}}です',
     dropNotPrintable: '.gcodeおよび.gcode.3mfファイルのみ印刷できます',
+    dropNotPrintableGcode: 'このプリンターでは.gcodeファイルのみ印刷できます',
+    dropNotPrintable3mf: 'このプリンターでは.gcode.3mfファイルのみ印刷できます',
     dropToPrint: 'ドロップして印刷',
     cannotPrint: 'プリンター使用中',
   },

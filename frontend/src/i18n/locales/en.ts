@@ -727,6 +727,8 @@ export default {
     howToEnable: 'How to enable',
     incompatibleFile: 'This file was sliced for {{slicedFor}}, but this printer is a {{printerModel}}',
     dropNotPrintable: 'Only .gcode and .gcode.3mf files can be printed',
+    dropNotPrintableGcode: 'Only .gcode files can be printed on this printer',
+    dropNotPrintable3mf: 'Only .gcode.3mf files can be printed on this printer',
     dropToPrint: 'Drop to print',
     cannotPrint: 'Printer busy',
   },

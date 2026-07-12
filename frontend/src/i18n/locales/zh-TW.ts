@@ -723,6 +723,8 @@ export default {
     howToEnable: '如何啟用',
     incompatibleFile: '此檔案是為 {{slicedFor}} 切片的，但該印表機是 {{printerModel}}',
     dropNotPrintable: '只能列印 .gcode 和 .gcode.3mf 檔案',
+    dropNotPrintableGcode: '此印表機只能列印 .gcode 檔案',
+    dropNotPrintable3mf: '此印表機只能列印 .gcode.3mf 檔案',
     dropToPrint: '拖放以列印',
     cannotPrint: '印表機忙碌',
   },

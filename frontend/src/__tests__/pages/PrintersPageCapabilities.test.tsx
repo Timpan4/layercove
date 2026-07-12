@@ -158,12 +158,15 @@ describe('provider capability UI', () => {
     const picker = document.querySelector<HTMLInputElement>('input[type="file"]')!;
     expect(picker).toHaveAttribute('accept', '.3mf');
     fireEvent.change(picker, { target: { files: [new File(['gcode'], 'cube.gcode')] } });
-    expect(await screen.findByText(/only \.gcode and \.gcode\.3mf files/i)).toBeInTheDocument();
+    const rejection = 'Only .gcode.3mf files can be printed on this printer';
+    expect(await screen.findByText(rejection)).toBeInTheDocument();
     expect(uploadRequested).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
     const card = document.getElementById('printer-card-41')!;
     fireEvent.dragEnter(card, { dataTransfer: { files: [] } });
     expect(screen.getByText(/drop to print/i)).toBeInTheDocument();
     fireEvent.drop(card, { dataTransfer: { files: [new File(['gcode'], 'cube.gcode')] } });
+    expect(await screen.findByText(rejection)).toBeInTheDocument();
     expect(uploadRequested).not.toHaveBeenCalled();
     fireEvent.drop(card, { dataTransfer: { files: [new File(['3mf'], 'cube.gcode.3mf')] } });
     await waitFor(() => expect(uploadRequested).toHaveBeenCalledOnce());
@@ -243,7 +246,7 @@ describe('provider capability UI', () => {
     expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
   });
 
-  it('derives gcode-only picker accept and rejects 3MF selection', async () => {
+  it('derives gcode-only picker accept and rejects 3MF selection and drop', async () => {
     const uploadRequested = vi.fn();
     server.use(http.post('/api/v1/library/files', () => {
       uploadRequested();
@@ -255,8 +258,26 @@ describe('provider capability UI', () => {
     const picker = document.querySelector<HTMLInputElement>('input[type="file"]')!;
     expect(picker).toHaveAttribute('accept', '.gcode');
     fireEvent.change(picker, { target: { files: [new File(['3mf'], 'cube.gcode.3mf')] } });
-    expect(await screen.findByText(/only \.gcode and \.gcode\.3mf files/i)).toBeInTheDocument();
+    const rejection = 'Only .gcode files can be printed on this printer';
+    expect(await screen.findByText(rejection)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
+    const card = document.getElementById('printer-card-41')!;
+    fireEvent.drop(card, { dataTransfer: { files: [new File(['3mf'], 'cube.gcode.3mf')] } });
+    expect(await screen.findByText(rejection)).toBeInTheDocument();
     expect(uploadRequested).not.toHaveBeenCalled();
+  });
+
+  it('names both accepted formats when both upload capabilities are enabled', async () => {
+    setupPage(
+      printer('bambu', { ...bambuCapabilities, upload_gcode: true }),
+      { ...status, state: 'IDLE', current_print: null },
+    );
+
+    await userEvent.click(await screen.findByRole('button', { name: /^print$/i }));
+    const picker = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    expect(picker).toHaveAttribute('accept', '.gcode,.3mf');
+    fireEvent.change(picker, { target: { files: [new File(['stl'], 'cube.stl')] } });
+    expect(await screen.findByText('Only .gcode and .gcode.3mf files can be printed')).toBeInTheDocument();
   });
 
   it('treats preparing as busy while keeping cancel available', async () => {

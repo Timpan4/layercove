@@ -676,6 +676,8 @@ export default {
     howToEnable: '활성화 방법',
     incompatibleFile: '이 파일은 {{slicedFor}}용으로 슬라이싱되었지만, 이 프린터는 {{printerModel}}입니다',
     dropNotPrintable: '.gcode 및 .gcode.3mf 파일만 인쇄할 수 있습니다',
+    dropNotPrintableGcode: '이 프린터에서는 .gcode 파일만 출력할 수 있습니다',
+    dropNotPrintable3mf: '이 프린터에서는 .gcode.3mf 파일만 출력할 수 있습니다',
     dropToPrint: '놓아서 인쇄',
     cannotPrint: '프린터 사용 중',
     addPreflight: {
