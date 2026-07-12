@@ -111,6 +111,11 @@ class TestPrintersAPI:
         backend._snapshot = replace(backend.snapshot(), connected=True, state=NormalizedPrinterState.IDLE)
 
         with patch("backend.app.api.routes.printers.printer_manager.get_backend", return_value=backend):
+            upload_only = await async_client.post(
+                f"/api/v1/printers/{printer.id}/moonraker/upload-gcode",
+                files={"file": ("upload-only.gcode", b"G1")},
+                data={"start": "false"},
+            )
             upload = await async_client.post(
                 f"/api/v1/printers/{printer.id}/moonraker/upload-gcode",
                 files={"file": ("cube.gcode", b"G28")},
@@ -118,10 +123,17 @@ class TestPrintersAPI:
             )
             stop = await async_client.post(f"/api/v1/printers/{printer.id}/emergency-stop", json={"confirmed": True})
 
+        assert upload_only.status_code == 200, upload_only.text
+        assert upload_only.json() == {"success": True, "path": "moonraker-name.gcode", "started": False}
         assert upload.status_code == 200, upload.text
         assert upload.json() == {"success": True, "path": "moonraker-name.gcode", "started": True}
         assert stop.status_code == 200, stop.text
-        assert calls == [("upload", "cube.gcode", 3), ("start", "moonraker-name.gcode"), ("emergency_stop",)]
+        assert calls == [
+            ("upload", "upload-only.gcode", 2),
+            ("upload", "cube.gcode", 3),
+            ("start", "moonraker-name.gcode"),
+            ("emergency_stop",),
+        ]
 
     # ========================================================================
     # Create endpoints
@@ -190,7 +202,7 @@ class TestPrintersAPI:
             "authorization_configured": False,
         }
         assert "top-secret" not in response.text
-        assert result["capabilities"]["emergency_stop"] is False
+        assert result["capabilities"]["emergency_stop"] is True
         assert result["capabilities"]["camera"] is False
         _mock_printer_test_connection.assert_not_awaited()
         moonraker_client = _mock_printer_test_connection.moonraker_client_class
@@ -1317,6 +1329,35 @@ class TestPrintControlAPI:
             assert response.status_code == 200
             assert response.json()["success"] is True
             mock_pm.stop_print_async.assert_awaited_once_with(printer.id)
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("path", "manager_method", "code", "expected_status"),
+        [
+            ("stop", "stop_print_async", "invalid_state", 400),
+            ("pause", "pause_print_async", "authentication_failed", 502),
+            ("resume", "resume_print_async", "timeout", 502),
+        ],
+    )
+    async def test_moonraker_control_errors_are_safely_mapped(
+        self, async_client, printer_factory, path, manager_method, code, expected_status
+    ):
+        from backend.app.services.printer_backend import BackendError
+
+        printer = await printer_factory(name="Moonraker Command", provider="moonraker")
+        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+            mock_pm.is_connected.return_value = True
+            setattr(
+                mock_pm,
+                manager_method,
+                AsyncMock(side_effect=BackendError("Safe Moonraker command failure.", code=code)),
+            )
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/print/{path}")
+
+        assert response.status_code == expected_status
+        assert response.json()["detail"] == {"code": code, "message": "Safe Moonraker command failure."}
+        assert "secret" not in response.text.lower()
 
     # ========================================================================
     # Pause print endpoint
@@ -4476,3 +4517,31 @@ async def test_emergency_stop_requires_control_permission_and_confirmation(async
 
     assert denied.status_code == 403
     assert unconfirmed.status_code == 400
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_moonraker_upload_limits_map_to_413(async_client: AsyncClient):
+    from backend.app.core.moonraker_upload_limit import MOONRAKER_MAX_UPLOAD_BODY_BYTES
+    from backend.app.services.printer_backend import BackendError
+
+    declared = await async_client.post(
+        "/api/v1/printers/1/moonraker/upload-gcode",
+        content=b"",
+        headers={"Content-Length": str(MOONRAKER_MAX_UPLOAD_BODY_BYTES + 1)},
+    )
+
+    backend = MagicMock()
+    backend.upload_gcode = AsyncMock(
+        side_effect=BackendError("G-code upload exceeds size limit.", code="upload_too_large")
+    )
+    with patch("backend.app.api.routes.printers._moonraker_backend", new=AsyncMock(return_value=backend)):
+        second_hop = await async_client.post(
+            "/api/v1/printers/1/moonraker/upload-gcode",
+            files={"file": ("cube.gcode", b"G28")},
+        )
+
+    assert declared.status_code == 413
+    assert declared.json()["detail"]["code"] == "upload_too_large"
+    assert second_hop.status_code == 413
+    assert second_hop.json()["detail"]["code"] == "upload_too_large"

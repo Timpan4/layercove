@@ -2919,8 +2919,14 @@ async def debug_simulate_print_complete(
 
 
 def _moonraker_command_error(error: BackendError) -> HTTPException:
+    if error.code == "upload_too_large":
+        status_code = 413
+    elif error.code in {"invalid_filename", "invalid_state", "command_unavailable"}:
+        status_code = 400
+    else:
+        status_code = 502
     return HTTPException(
-        status_code=400 if error.code in {"invalid_filename", "invalid_state", "command_unavailable"} else 502,
+        status_code=status_code,
         detail={"code": error.code, "message": error.safe_message},
     )
 
@@ -2985,7 +2991,10 @@ async def stop_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = await printer_manager.stop_print_async(printer_id)
+    try:
+        success = await printer_manager.stop_print_async(printer_id)
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
     if not success:
         raise HTTPException(500, "Failed to stop print")
 
@@ -3054,7 +3063,10 @@ async def pause_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = await printer_manager.pause_print_async(printer_id)
+    try:
+        success = await printer_manager.pause_print_async(printer_id)
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
     if not success:
         raise HTTPException(500, "Failed to pause print")
 
@@ -3076,7 +3088,10 @@ async def resume_print(
     if not printer_manager.is_connected(printer_id):
         raise HTTPException(400, "Printer not connected")
 
-    success = await printer_manager.resume_print_async(printer_id)
+    try:
+        success = await printer_manager.resume_print_async(printer_id)
+    except BackendError as exc:
+        raise _moonraker_command_error(exc) from exc
     if not success:
         raise HTTPException(500, "Failed to resume print")
 

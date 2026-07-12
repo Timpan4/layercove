@@ -235,6 +235,99 @@ async def test_moonraker_upload_streaming_bound_rejects_unknown_oversize_file(mo
 
 
 @pytest.mark.asyncio
+async def test_moonraker_upload_uses_separate_bounded_transfer_deadline(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    monkeypatch.setattr(moonraker_http, "_TOTAL_TIMEOUT_SECONDS", 0.001)
+    monkeypatch.setattr(moonraker_http, "_UPLOAD_TOTAL_TIMEOUT_SECONDS", 0.1)
+
+    async def resolver(host: str, port: int):
+        await asyncio.sleep(0.01)
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(
+            lambda request: httpx.Response(201, json={"item": {"path": "cube.gcode"}})
+        ),
+    )
+
+    assert await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3) == "cube.gcode"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_upload_transfer_deadline_is_bounded(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    monkeypatch.setattr(moonraker_http, "_UPLOAD_TOTAL_TIMEOUT_SECONDS", 0.01)
+
+    async def resolver(host: str, port: int):
+        await asyncio.Event().wait()
+
+    client = MoonrakerHTTPClient(base_url="http://printer.lan:7125", resolver=resolver)
+
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
+
+    assert error.value.code == "timeout"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_ingress_rejects_declared_and_chunked_oversize_bodies():
+    from backend.app.core.moonraker_upload_limit import MoonrakerUploadBodyLimitMiddleware
+
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/v1/printers/1/moonraker/upload-gcode",
+        "headers": [],
+    }
+
+    async def run(headers, chunks):
+        messages = iter(chunks)
+        sent = []
+        reached_app = False
+
+        async def receive():
+            return next(messages)
+
+        async def send(message):
+            sent.append(message)
+
+        async def app(_scope, receive, send):
+            nonlocal reached_app
+            reached_app = True
+            while (await receive()).get("more_body", False):
+                pass
+            await send({"type": "http.response.start", "status": 204, "headers": []})
+            await send({"type": "http.response.body", "body": b""})
+
+        limited_scope = {**scope, "headers": headers}
+        await MoonrakerUploadBodyLimitMiddleware(app, max_body_bytes=5)(limited_scope, receive, send)
+        return reached_app, sent
+
+    declared_reached, declared = await run(
+        [(b"content-length", b"6")],
+        [{"type": "http.request", "body": b"", "more_body": False}],
+    )
+    chunked_reached, chunked = await run(
+        [],
+        [
+            {"type": "http.request", "body": b"123", "more_body": True},
+            {"type": "http.request", "body": b"456", "more_body": False},
+        ],
+    )
+
+    assert declared_reached is False
+    assert declared[0]["status"] == 413
+    assert chunked_reached is True
+    assert chunked[0]["status"] == 413
+
+
+@pytest.mark.asyncio
 async def test_moonraker_commands_map_auth_timeout_and_never_retry_mutating_posts():
     from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
 

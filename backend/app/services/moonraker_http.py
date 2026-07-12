@@ -21,8 +21,10 @@ from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_m
 from backend.app.utils.filename import InvalidFilenameError, validate_moonraker_gcode_basename
 
 _MAX_RESPONSE_BYTES = 64 * 1024
-_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
+MOONRAKER_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
+_MAX_UPLOAD_BYTES = MOONRAKER_MAX_UPLOAD_BYTES
 _TOTAL_TIMEOUT_SECONDS = 10.0
+_UPLOAD_TOTAL_TIMEOUT_SECONDS = 4 * 60 * 60
 _TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 
 Resolver = Callable[[str, int], Awaitable[Iterable[str | ipaddress.IPv4Address | ipaddress.IPv6Address]]]
@@ -377,6 +379,7 @@ class MoonrakerHTTPClient:
         response = await self._request(
             "POST",
             "/server/files/upload",
+            total_timeout=_UPLOAD_TOTAL_TIMEOUT_SECONDS,
             data={"root": "gcodes"},
             files={"file": (filename, _BoundedUpload(file, size), "application/octet-stream")},
         )
@@ -408,9 +411,18 @@ class MoonrakerHTTPClient:
     async def emergency_stop(self) -> None:
         await self._request("POST", "/printer/emergency_stop")
 
-    async def _request(self, method: str, path: str, **request_options: Any) -> MoonrakerHTTPResponse:
+    async def _request(
+        self,
+        method: str,
+        path: str,
+        *,
+        total_timeout: float | None = None,
+        **request_options: Any,
+    ) -> MoonrakerHTTPResponse:
+        if total_timeout is None:
+            total_timeout = _TOTAL_TIMEOUT_SECONDS
         try:
-            async with asyncio.timeout(_TOTAL_TIMEOUT_SECONDS):
+            async with asyncio.timeout(total_timeout):
                 return await self._request_within_deadline(method, path, **request_options)
         except MoonrakerHTTPError:
             raise

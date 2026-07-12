@@ -305,6 +305,7 @@ async def test_moonraker_commands_follow_state_and_map_safe_errors():
     backend._snapshot = backend._snapshot.__class__(backend.provider, True, NormalizedPrinterState.IDLE)
 
     assert await backend.start_print("cube.gcode") is True
+    assert await backend.upload_gcode(None, filename="upload-only.gcode", start=False, size=0) == "server-name.gcode"
     assert await backend.upload_gcode(None, filename="cube.gcode", start=True, size=0) == "server-name.gcode"
     with pytest.raises(BackendError, match="current printer state"):
         await backend.pause()
@@ -313,13 +314,32 @@ async def test_moonraker_commands_follow_state_and_map_safe_errors():
     with pytest.raises(BackendError) as error:
         await backend.cancel()
     assert error.value.code == "authentication_failed"
+    backend._snapshot = backend._snapshot.__class__(backend.provider, False, NormalizedPrinterState.OFFLINE)
     assert await backend.emergency_stop() is True
     assert calls == [
         ("start", "cube.gcode"),
+        ("upload", "upload-only.gcode"),
         ("upload", "cube.gcode"),
         ("start", "server-name.gcode"),
         ("emergency", None),
     ]
+
+
+@pytest.mark.asyncio
+async def test_disconnected_emergency_stop_failure_comes_from_http_result():
+    class HTTP:
+        async def emergency_stop(self):
+            raise MoonrakerHTTPError("timeout", "Moonraker did not respond before timeout.")
+
+    backend = MoonrakerBackend(
+        printer(), emit=lambda _: None, transport_factory=lambda **_: None, http_client_factory=lambda **_: HTTP()
+    )
+    assert backend.snapshot().connected is False
+
+    with pytest.raises(BackendError) as error:
+        await backend.emergency_stop()
+
+    assert error.value.code == "timeout"
 
 
 def test_moonraker_active_bootstrap_observation_does_not_invent_started_event():

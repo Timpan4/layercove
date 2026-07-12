@@ -209,10 +209,6 @@ class MoonrakerBackend:
         return path
 
     async def emergency_stop(self) -> bool:
-        if not self.capabilities.emergency_stop or not self._snapshot.connected:
-            raise BackendError(
-                "Emergency stop is unavailable while Moonraker is disconnected.", code="command_unavailable"
-            )
         await self._run_command(self._http.emergency_stop())
         return True
 
