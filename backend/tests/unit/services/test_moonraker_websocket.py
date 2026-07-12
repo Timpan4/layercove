@@ -135,7 +135,7 @@ async def test_websocket_transport_rejects_redirect_before_forwarding_auth(monke
     redirected_port = redirected_site._server.sockets[0].getsockname()[1]
 
     async def approved_handler(_request):
-        raise web.HTTPFound(location=f"ws://printer.test:{redirected_port}/websocket")
+        raise web.HTTPFound(location=f"http://printer.test:{redirected_port}/websocket")
 
     approved_app = web.Application()
     approved_app.router.add_get("/websocket", approved_handler)
