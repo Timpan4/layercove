@@ -322,10 +322,27 @@ def test_reconnect_idle_discards_stale_job_before_next_start_and_completion():
     events = []
     backend = MoonrakerBackend(printer(), emit=events.append, transport_factory=lambda **_: None)
     backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)
-    backend._merge_status({"print_stats": {"state": "printing", "filename": "a.gcode"}}, bootstrap=False)
+    backend._merge_status(
+        {
+            "print_stats": {
+                "state": "printing",
+                "filename": "a.gcode",
+                "job_id": "job-a",
+                "print_duration": 12,
+                "info": {"current_layer": 3, "total_layer": 10},
+            },
+            "virtual_sdcard": {"progress": 0.3, "file_path": "a.gcode"},
+        },
+        bootstrap=False,
+    )
     backend._emit_offline()
 
-    backend._merge_status({"print_stats": {"state": "standby", "filename": ""}}, bootstrap=True)
+    backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)
+    idle = backend.snapshot()
+    assert idle.filename is None
+    assert idle.progress is None
+    assert idle.elapsed_seconds is None
+    assert idle.current_layer is None
     backend._merge_status({"print_stats": {"state": "printing", "filename": "b.gcode"}}, bootstrap=False)
     backend._merge_status({"print_stats": {"state": "completed", "filename": "b.gcode"}}, bootstrap=False)
 
@@ -335,7 +352,9 @@ def test_reconnect_idle_discards_stale_job_before_next_start_and_completion():
         ("started", "b.gcode"),
         ("completed", "b.gcode"),
     ]
+    assert lifecycle[0].correlation_id == "moonraker:job-a"
     assert lifecycle[1].correlation_id != lifecycle[0].correlation_id
+    assert lifecycle[1].provider_job_id is None
     assert lifecycle[2].correlation_id == lifecycle[1].correlation_id
 
 

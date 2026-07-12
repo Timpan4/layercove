@@ -264,8 +264,37 @@ class MoonrakerBackend:
             if isinstance(name, str) and isinstance(value, dict):
                 self._objects.setdefault(name, {}).update(value)
         self._snapshot = self._snapshot_from_objects(connected=True)
+        if (
+            bootstrap
+            and self._snapshot.state is NormalizedPrinterState.IDLE
+            and self._last_state in _ACTIVE_STATES
+            and self._active_correlation_id is not None
+        ):
+            self._clear_stale_job_data()
+            self._snapshot = self._snapshot_from_objects(connected=True)
         self._emit(StatusChanged(self._snapshot))
         self._emit_lifecycle(bootstrap=bootstrap)
+
+    def _clear_stale_job_data(self) -> None:
+        fields = {
+            "print_stats": {
+                "filename",
+                "filament_used",
+                "info",
+                "job_id",
+                "message",
+                "print_duration",
+                "total_duration",
+                "uid",
+            },
+            "virtual_sdcard": {"file_path", "progress"},
+            "display_status": {"message", "progress"},
+        }
+        for object_name, names in fields.items():
+            values = self._objects.get(object_name)
+            if values is not None:
+                for name in names:
+                    values.pop(name, None)
 
     def _snapshot_from_objects(self, *, connected: bool) -> PrinterSnapshot:
         stats = self._objects.get("print_stats", {})
