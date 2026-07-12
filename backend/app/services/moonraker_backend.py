@@ -343,12 +343,7 @@ class MoonrakerBackend:
         was_active = self._last_state in _ACTIVE_STATES
         is_active = state in _ACTIVE_STATES
         provider_job_id = self._provider_job_id()
-        if (
-            bootstrap
-            and state is NormalizedPrinterState.IDLE
-            and was_active
-            and self._active_correlation_id is not None
-        ):
+        if state is NormalizedPrinterState.IDLE and was_active and self._active_correlation_id is not None:
             self._active_correlation_id = None
             self._active_provider_job_id = None
             self._active_filename = None

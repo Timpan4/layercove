@@ -4,7 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from backend.app.services.printer_backend import JobLifecycle, StatusChanged
+from backend.app.services.printer_backend import JobLifecycle, ProviderEvent, StatusChanged
 from backend.app.services.printer_backend_registry import PrinterBackendRegistry
 from backend.app.services.printer_manager import PrinterManager, printer_status_to_dict
 from backend.app.services.printer_types import (
@@ -196,6 +196,27 @@ async def test_manager_routes_legacy_lifecycle_callbacks_only_for_bambu():
         (2, "job-2", "started"),
         (2, "job-2", "completed"),
     }
+
+
+@pytest.mark.asyncio
+async def test_manager_routes_running_observed_callback_only_for_bambu():
+    manager = PrinterManager(registry=PrinterBackendRegistry())
+    observed = []
+
+    async def on_running(printer_id, data):
+        observed.append((printer_id, data["filename"]))
+
+    manager.set_print_running_observed_callback(on_running)
+    manager._backends = {
+        1: SimpleNamespace(provider=PrinterProvider.MOONRAKER),
+        2: SimpleNamespace(provider=PrinterProvider.BAMBU),
+    }
+    event = ProviderEvent("print_running_observed", {"filename": "cube.gcode"})
+
+    await manager._forward_backend_event(1, event)
+    await manager._forward_backend_event(2, event)
+
+    assert observed == [(2, "cube.gcode")]
 
 
 @pytest.mark.asyncio

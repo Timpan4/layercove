@@ -655,6 +655,10 @@ class PrinterManager:
             callback = self._on_print_start if event.kind == "started" else self._on_print_complete
             await self._call_backend_callback(callback, printer_id, event.data)
         elif isinstance(event, ProviderEvent):
+            if event.kind == "print_running_observed":
+                backend = self._backends.get(printer_id)
+                if backend is None or backend.provider is not PrinterProvider.BAMBU:
+                    return
             callbacks = {
                 "ams_changed": self._on_ams_change,
                 "layer_changed": self._on_layer_change,

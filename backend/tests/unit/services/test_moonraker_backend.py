@@ -358,6 +358,30 @@ def test_reconnect_idle_discards_stale_job_before_next_start_and_completion():
     assert lifecycle[2].correlation_id == lifecycle[1].correlation_id
 
 
+def test_live_idle_transition_discards_active_identity_before_partial_next_job():
+    events = []
+    backend = MoonrakerBackend(printer(), emit=events.append, transport_factory=lambda **_: None)
+    backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)
+    backend._merge_status(
+        {"print_stats": {"state": "printing", "filename": "a.gcode", "job_id": "job-a"}},
+        bootstrap=False,
+    )
+    backend._merge_status({"print_stats": {"state": "standby"}}, bootstrap=False)
+    backend._merge_status({"print_stats": {"state": "printing", "filename": "b.gcode"}}, bootstrap=False)
+    backend._merge_status({"print_stats": {"state": "completed", "filename": "b.gcode"}}, bootstrap=False)
+
+    lifecycle = [event for event in events if isinstance(event, JobLifecycle)]
+    assert [(event.kind, event.filename) for event in lifecycle] == [
+        ("started", "a.gcode"),
+        ("started", "b.gcode"),
+        ("completed", "b.gcode"),
+    ]
+    assert lifecycle[0].correlation_id == "moonraker:job-a"
+    assert lifecycle[1].correlation_id != lifecycle[0].correlation_id
+    assert lifecycle[1].provider_job_id is None
+    assert lifecycle[2].correlation_id == lifecycle[1].correlation_id
+
+
 @pytest.mark.parametrize("disconnect_before_idle", [False, True])
 def test_idle_after_terminal_scrubs_job_cache_before_partial_next_job(disconnect_before_idle):
     events = []
