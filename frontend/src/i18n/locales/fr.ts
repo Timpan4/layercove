@@ -134,6 +134,8 @@ export default {
     moonrakerAuthorization: 'Autorisation',
     moonrakerTlsVerify: 'Vérifier le certificat TLS',
     moonrakerExternalCamera: 'Activer la caméra externe',
+    moonrakerExternalCameraUrl: 'URL de la caméra externe',
+    moonrakerExternalCameraType: 'Type de caméra externe',
     moonrakerSecretRetained: 'Le secret enregistré est conservé si le champ est vide',
     moonrakerTestConnection: 'Tester la connexion enregistrée',
     moonrakerConnectionFailed: 'Connexion à Moonraker impossible.',

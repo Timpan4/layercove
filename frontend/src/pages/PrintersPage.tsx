@@ -1411,6 +1411,20 @@ const STATUS_GROUP_META: Record<string, { labelKey: string; dot: string }> = {
   offline:  { labelKey: 'printers.status.offline',   dot: 'bg-gray-400' },
 };
 
+function isPrintableArtifact(
+  filename: string,
+  capabilities: Pick<Printer['capabilities'], 'upload_gcode' | 'upload_3mf'>,
+): boolean {
+  const lower = filename.toLowerCase();
+  if (lower.endsWith('.3mf')) return lower.includes('.gcode.') && capabilities.upload_3mf;
+  if (lower.endsWith('.gcode')) return capabilities.upload_gcode;
+  return false;
+}
+
+function printableArtifactAccept(capabilities: Pick<Printer['capabilities'], 'upload_gcode' | 'upload_3mf'>): string {
+  return [capabilities.upload_gcode && '.gcode', capabilities.upload_3mf && '.3mf'].filter(Boolean).join(',');
+}
+
 /** Classify a printer into one of the UI status buckets. */
 function classifyPrinterStatus(
   status: { connected: boolean; state: string | null; hms_errors?: HMSError[] } | undefined,
@@ -2897,10 +2911,7 @@ function PrinterCard({
     if (!file) return;
 
     // Only accept sliced/printable files (.gcode, .gcode.3mf, etc.)
-    const lower = file.name.toLowerCase();
-    const is3mf = lower.endsWith('.3mf');
-    if ((!lower.endsWith('.gcode') && !lower.includes('.gcode.'))
-      || (is3mf ? !capabilities.upload_3mf : !capabilities.upload_gcode)) {
+    if (!isPrintableArtifact(file.name, capabilities)) {
       showToast(t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed'), 'error');
       return;
     }
@@ -5712,10 +5723,9 @@ function PrinterCard({
           onClose={() => setShowUploadForPrint(false)}
           onUploadComplete={() => {}}
           autoUpload
-          accept=".gcode,.3mf"
+          accept={printableArtifactAccept(capabilities)}
           validateFile={(file) => {
-            const lower = file.name.toLowerCase();
-            if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
+            if (!isPrintableArtifact(file.name, capabilities)) {
               return t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed');
             }
           }}
@@ -6974,7 +6984,7 @@ export function AddPrinterModal({
             <label htmlFor="add_moonraker_tls_verify" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="add_moonraker_tls_verify" type="checkbox" checked={moonraker.tls_verify} onChange={(e) => setMoonraker({ ...moonraker, tls_verify: e.target.checked })} />{t('printers.moonrakerTlsVerify')}</label>
             <div className="space-y-2 rounded-lg border border-bambu-dark-tertiary p-3">
               <label htmlFor="add_moonraker_external_camera_enabled" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="add_moonraker_external_camera_enabled" type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
-              {form.external_camera_enabled && <><input id="add_moonraker_external_camera_url" type="url" aria-label="External camera URL" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="add_moonraker_external_camera_type" aria-label="External camera type" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
+              {form.external_camera_enabled && <><input id="add_moonraker_external_camera_url" type="url" aria-label={t('printers.moonrakerExternalCameraUrl')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="add_moonraker_external_camera_type" aria-label={t('printers.moonrakerExternalCameraType')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
             </div>
             </>}
             {!isMoonraker && <div>
@@ -7556,7 +7566,7 @@ function EditPrinterModal({
               <button type="button" onClick={testConnection} className="w-full rounded-lg border border-bambu-dark-tertiary px-3 py-2 text-sm text-bambu-gray hover:text-white">{t('printers.moonrakerTestConnection')}</button>
               {connectionResult && <p role="status" className="text-sm text-bambu-gray">{connectionResult}</p>}
               <label htmlFor="edit_moonraker_external_camera_enabled" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="edit_moonraker_external_camera_enabled" type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
-              {form.external_camera_enabled && <><input id="edit_moonraker_external_camera_url" type="url" aria-label="External camera URL" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="edit_moonraker_external_camera_type" aria-label="External camera type" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
+              {form.external_camera_enabled && <><input id="edit_moonraker_external_camera_url" type="url" aria-label={t('printers.moonrakerExternalCameraUrl')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="edit_moonraker_external_camera_type" aria-label={t('printers.moonrakerExternalCameraType')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
             </>}
             {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>

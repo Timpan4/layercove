@@ -133,6 +133,8 @@ export default {
     moonrakerAuthorization: '認証',
     moonrakerTlsVerify: 'TLS 証明書を検証',
     moonrakerExternalCamera: '外部カメラを有効化',
+    moonrakerExternalCameraUrl: '外部カメラURL',
+    moonrakerExternalCameraType: '外部カメラの種類',
     moonrakerSecretRetained: '空欄の場合、保存済みシークレットを保持します',
     moonrakerTestConnection: '保存済み接続をテスト',
     moonrakerConnectionFailed: 'Moonraker に接続できませんでした。',

@@ -154,7 +154,12 @@ describe('provider capability UI', () => {
     expect(await screen.findByTestId('speed-control')).toBeInTheDocument();
     expect(screen.getAllByTitle(/view heater history/i)).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: 'OK' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^print$/i })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: /^print$/i }));
+    const picker = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    expect(picker).toHaveAttribute('accept', '.3mf');
+    fireEvent.change(picker, { target: { files: [new File(['gcode'], 'cube.gcode')] } });
+    expect(await screen.findByText(/only \.gcode and \.gcode\.3mf files/i)).toBeInTheDocument();
+    expect(uploadRequested).not.toHaveBeenCalled();
     const card = document.getElementById('printer-card-41')!;
     fireEvent.dragEnter(card, { dataTransfer: { files: [] } });
     expect(screen.getByText(/drop to print/i)).toBeInTheDocument();
@@ -236,6 +241,22 @@ describe('provider capability UI', () => {
     expect(await screen.findByText('Klipper One')).toBeInTheDocument();
     await screen.findAllByText('Idle');
     expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
+  });
+
+  it('derives gcode-only picker accept and rejects 3MF selection', async () => {
+    const uploadRequested = vi.fn();
+    server.use(http.post('/api/v1/library/files', () => {
+      uploadRequested();
+      return HttpResponse.json({ id: 10, filename: 'cube.gcode.3mf', metadata: {} });
+    }));
+    setupPage(printer('moonraker'), { ...status, state: 'IDLE', current_print: null });
+
+    await userEvent.click(await screen.findByRole('button', { name: /^print$/i }));
+    const picker = document.querySelector<HTMLInputElement>('input[type="file"]')!;
+    expect(picker).toHaveAttribute('accept', '.gcode');
+    fireEvent.change(picker, { target: { files: [new File(['3mf'], 'cube.gcode.3mf')] } });
+    expect(await screen.findByText(/only \.gcode and \.gcode\.3mf files/i)).toBeInTheDocument();
+    expect(uploadRequested).not.toHaveBeenCalled();
   });
 
   it('treats preparing as busy while keeping cancel available', async () => {

@@ -134,6 +134,8 @@ export default {
     moonrakerAuthorization: '授權',
     moonrakerTlsVerify: '驗證 TLS 憑證',
     moonrakerExternalCamera: '啟用外部攝影機',
+    moonrakerExternalCameraUrl: '外部攝影機 URL',
+    moonrakerExternalCameraType: '外部攝影機類型',
     moonrakerSecretRetained: '留白時保留已儲存的密鑰',
     moonrakerTestConnection: '測試已儲存的連線',
     moonrakerConnectionFailed: '無法連線至 Moonraker。',

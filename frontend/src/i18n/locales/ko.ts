@@ -129,6 +129,8 @@ export default {
     moonrakerAuthorization: '인증',
     moonrakerTlsVerify: 'TLS 인증서 확인',
     moonrakerExternalCamera: '외부 카메라 활성화',
+    moonrakerExternalCameraUrl: '외부 카메라 URL',
+    moonrakerExternalCameraType: '외부 카메라 유형',
     moonrakerSecretRetained: '비워 두면 저장된 비밀 값을 유지합니다',
     moonrakerTestConnection: '저장된 연결 테스트',
     moonrakerConnectionFailed: 'Moonraker에 연결할 수 없습니다.',

@@ -134,6 +134,8 @@ export default {
     moonrakerAuthorization: 'Yetkilendirme',
     moonrakerTlsVerify: 'TLS sertifikasını doğrula',
     moonrakerExternalCamera: 'Harici kamerayı etkinleştir',
+    moonrakerExternalCameraUrl: 'Harici kamera URL\'si',
+    moonrakerExternalCameraType: 'Harici kamera türü',
     moonrakerSecretRetained: 'Boş bırakılırsa kayıtlı gizli bilgi korunur',
     moonrakerTestConnection: 'Kayıtlı bağlantıyı test et',
     moonrakerConnectionFailed: 'Moonraker’a bağlanılamadı.',
