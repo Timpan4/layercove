@@ -1000,6 +1000,7 @@ function StatusSummaryBar({ printers }: { printers: Printer[] | undefined }) {
           error++;
         }
         switch (normalizePrintState(status.state)) {
+          case 'preparing':
           case 'printing':
             printing++;
             if (status.remaining_time != null && status.remaining_time > 0) {
@@ -1419,6 +1420,7 @@ function classifyPrinterStatus(
   const hmsErrors = supportsHms && status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
   if (hmsErrors.length > 0) return 'error';
   switch (normalizePrintState(status.state)) {
+    case 'preparing': return 'printing';
     case 'printing': return 'printing';
     case 'paused':   return 'paused';
     case 'finished': return 'finished';
@@ -1444,6 +1446,8 @@ function getStatusDisplay(state: string | null | undefined, stg_cur_name: string
 
   // Format the gcode_state nicely
   switch (normalizePrintState(state)) {
+    case 'preparing':
+      return 'Preparing';
     case 'printing':
       return 'Printing';
     case 'paused':
@@ -1910,8 +1914,6 @@ function PrinterCard({
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
   const printState = normalizePrintState(status?.state);
-  const isPrinting = printState === 'printing';
-  const isPaused = printState === 'paused';
 
   // Check for firmware updates (cached for 5 minutes, can be disabled in settings)
   const { data: firmwareInfo } = useQuery({
@@ -2006,7 +2008,7 @@ function PrinterCard({
   // Only queried when there's a running print backed by an archive; shared
   // React Query cache with the Queue / Archives pages keeps it cheap.
   const activeArchiveId =
-    (isPrinting || isPaused) ? status?.current_archive_id ?? null : null;
+    isActivePrintState(status?.state) ? status?.current_archive_id ?? null : null;
   const { data: activeArchivePlates } = useQuery({
     queryKey: ['archive-plates', activeArchiveId],
     queryFn: () => api.getArchivePlates(activeArchiveId!),
@@ -2117,14 +2119,14 @@ function PrinterCard({
   const { data: printingQueueItems } = useQuery({
     queryKey: ['queue', printer.id, 'printing'],
     queryFn: () => api.getQueue(printer.id, 'printing'),
-    enabled: isPrinting,
+    enabled: isActivePrintState(status?.state),
   });
 
   // Fetch reprint user info (for prints started via Reprint, not queue - Issue #206)
   const { data: reprintUser } = useQuery({
     queryKey: ['currentPrintUser', printer.id],
     queryFn: () => api.getCurrentPrintUser(printer.id),
-    enabled: isPrinting,
+    enabled: isActivePrintState(status?.state),
   });
 
   // Combine both sources: queue item user takes precedence, then reprint user
@@ -2134,10 +2136,10 @@ function PrinterCard({
   const { data: lastPrints } = useQuery({
     queryKey: ['archives', printer.id, 'last'],
     queryFn: () => api.getArchives(printer.id, 1, 0),
-    enabled: status?.connected && !isPrinting,
+    enabled: status?.connected && !isActivePrintState(status?.state),
   });
   const lastPrint = lastPrints?.[0];
-  const isPrintingOrPaused = isPrinting || isPaused;
+  const isPrintingOrPaused = isActivePrintState(status?.state);
   const needsPlateClear = requirePlateClear && status?.awaiting_plate_clear === true;
   const showClearPlateButton = status?.connected && needsPlateClear && !isPrintingOrPaused;
   const activePrintName = status?.current_print && isPrintingOrPaused
@@ -2863,7 +2865,7 @@ function PrinterCard({
     }
   };
 
-  const canStartPrint = capabilities.start_print && capabilities.upload_gcode;
+  const canStartPrint = capabilities.start_print && (capabilities.upload_gcode || capabilities.upload_3mf);
   const canDrop = isConnected && !isActivePrintState(status?.state) && canStartPrint && hasPermission('printers:control');
 
   const handleCardDragEnter = (e: React.DragEvent) => {
@@ -2896,7 +2898,9 @@ function PrinterCard({
 
     // Only accept sliced/printable files (.gcode, .gcode.3mf, etc.)
     const lower = file.name.toLowerCase();
-    if (!lower.endsWith('.gcode') && !lower.includes('.gcode.')) {
+    const is3mf = lower.endsWith('.3mf');
+    if ((!lower.endsWith('.gcode') && !lower.includes('.gcode.'))
+      || (is3mf ? !capabilities.upload_3mf : !capabilities.upload_gcode)) {
       showToast(t('printers.dropNotPrintable', 'Only .gcode and .gcode.3mf files can be printed'), 'error');
       return;
     }
@@ -4044,6 +4048,7 @@ function PrinterCard({
               // Determine print state for control buttons
               const isPaused = printState === 'paused';
               const isPrinting = isActivePrintState(status.state);
+              const canPause = printState === 'printing';
               const isControlBusy = stopPrintMutation.isPending || pausePrintMutation.isPending || resumePrintMutation.isPending;
               const unavailablePrintActionClass = 'bg-bambu-dark text-bambu-gray/50 cursor-not-allowed opacity-50';
               const iconControlClass = 'flex h-8 w-8 items-center justify-center rounded-lg text-xs font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed';
@@ -4380,7 +4385,7 @@ function PrinterCard({
                     <div className="ml-auto flex items-center justify-end gap-2 flex-shrink-0">
                       {/* Pause/Resume button */}
                       {(isPaused ? capabilities.resume : capabilities.pause) && (() => {
-                        const pauseUnavailable = (!isPrinting && !isPaused) || isControlBusy || !hasPermission('printers:control');
+                        const pauseUnavailable = (!canPause && !isPaused) || isControlBusy || !hasPermission('printers:control');
                         return (
                       <button
                         onClick={() => isPaused ? setShowResumeConfirm(true) : setShowPauseConfirm(true)}
@@ -5660,7 +5665,7 @@ function PrinterCard({
                 >
                   <HardDrive className="w-4 h-4" />
                 </Button>
-                {isConnected && !isActivePrintState(status?.state) && capabilities.start_print && capabilities.upload_gcode && (
+                {isConnected && !isActivePrintState(status?.state) && capabilities.start_print && (capabilities.upload_gcode || capabilities.upload_3mf) && (
                   <Button
                     size="sm"
                     onClick={() => setShowUploadForPrint(true)}
@@ -6969,7 +6974,7 @@ export function AddPrinterModal({
             <label htmlFor="add_moonraker_tls_verify" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="add_moonraker_tls_verify" type="checkbox" checked={moonraker.tls_verify} onChange={(e) => setMoonraker({ ...moonraker, tls_verify: e.target.checked })} />{t('printers.moonrakerTlsVerify')}</label>
             <div className="space-y-2 rounded-lg border border-bambu-dark-tertiary p-3">
               <label htmlFor="add_moonraker_external_camera_enabled" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="add_moonraker_external_camera_enabled" type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
-              {form.external_camera_enabled && <><input id="add_moonraker_external_camera_url" type="url" aria-label={t('printers.moonrakerExternalCamera')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="add_moonraker_external_camera_type" aria-label={t('printers.moonrakerExternalCamera')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
+              {form.external_camera_enabled && <><input id="add_moonraker_external_camera_url" type="url" aria-label="External camera URL" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="add_moonraker_external_camera_type" aria-label="External camera type" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
             </div>
             </>}
             {!isMoonraker && <div>
@@ -7551,7 +7556,7 @@ function EditPrinterModal({
               <button type="button" onClick={testConnection} className="w-full rounded-lg border border-bambu-dark-tertiary px-3 py-2 text-sm text-bambu-gray hover:text-white">{t('printers.moonrakerTestConnection')}</button>
               {connectionResult && <p role="status" className="text-sm text-bambu-gray">{connectionResult}</p>}
               <label htmlFor="edit_moonraker_external_camera_enabled" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="edit_moonraker_external_camera_enabled" type="checkbox" checked={!!form.external_camera_enabled} onChange={(e) => setForm({ ...form, external_camera_enabled: e.target.checked })} />{t('printers.moonrakerExternalCamera')}</label>
-              {form.external_camera_enabled && <><input id="edit_moonraker_external_camera_url" type="url" aria-label={t('printers.moonrakerExternalCamera')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="edit_moonraker_external_camera_type" aria-label={t('printers.moonrakerExternalCamera')} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
+              {form.external_camera_enabled && <><input id="edit_moonraker_external_camera_url" type="url" aria-label="External camera URL" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_url || ''} onChange={(e) => setForm({ ...form, external_camera_url: e.target.value })} placeholder="https://camera.local/stream" /><select id="edit_moonraker_external_camera_type" aria-label="External camera type" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={form.external_camera_type || 'mjpeg'} onChange={(e) => setForm({ ...form, external_camera_type: e.target.value })}><option value="mjpeg">MJPEG</option><option value="snapshot">Snapshot</option></select></>}
             </>}
             {!isMoonraker && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.accessCode')}</label>

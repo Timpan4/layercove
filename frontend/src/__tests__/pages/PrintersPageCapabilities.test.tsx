@@ -7,7 +7,7 @@ import { server } from '../mocks/server';
 import { PrintersPage } from '../../pages/PrintersPage';
 
 const bambuCapabilities = {
-  upload_gcode: true, upload_3mf: true, start_print: true, pause: true, resume: true, cancel: true,
+  upload_gcode: false, upload_3mf: true, start_print: true, pause: true, resume: true, cancel: true,
   emergency_stop: false, camera: true, bed_temperature: true, extruder_temperature: true,
   chamber_temperature: true, ams: true, plate_selection: true, speed_control: true,
   firmware_information: true, object_cancellation: true,
@@ -132,6 +132,7 @@ describe('provider capability UI', () => {
     const firmwareRequested = vi.fn();
     const slotPresetsRequested = vi.fn();
     const labelsRequested = vi.fn();
+    const uploadRequested = vi.fn();
     server.use(
       http.get('/api/v1/firmware/updates/41', () => {
         firmwareRequested();
@@ -142,6 +143,10 @@ describe('provider capability UI', () => {
         return HttpResponse.json({});
       }),
       http.get('/api/v1/printers/41/ams-labels', () => { labelsRequested(); return HttpResponse.json({}); }),
+      http.post('/api/v1/library/files', () => {
+        uploadRequested();
+        return HttpResponse.json({ id: 9, filename: 'cube.gcode.3mf', metadata: {} });
+      }),
     );
     setupPage(printer('bambu'), { ...status, state: 'IDLE', current_print: null });
 
@@ -150,6 +155,13 @@ describe('provider capability UI', () => {
     expect(screen.getAllByTitle(/view heater history/i)).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: 'OK' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^print$/i })).toBeInTheDocument();
+    const card = document.getElementById('printer-card-41')!;
+    fireEvent.dragEnter(card, { dataTransfer: { files: [] } });
+    expect(screen.getByText(/drop to print/i)).toBeInTheDocument();
+    fireEvent.drop(card, { dataTransfer: { files: [new File(['gcode'], 'cube.gcode')] } });
+    expect(uploadRequested).not.toHaveBeenCalled();
+    fireEvent.drop(card, { dataTransfer: { files: [new File(['3mf'], 'cube.gcode.3mf')] } });
+    await waitFor(() => expect(uploadRequested).toHaveBeenCalledOnce());
     await waitFor(() => expect(firmwareRequested).toHaveBeenCalledOnce());
     await waitFor(() => expect(slotPresetsRequested).toHaveBeenCalledOnce());
     await waitFor(() => expect(labelsRequested).toHaveBeenCalledOnce());
@@ -226,6 +238,17 @@ describe('provider capability UI', () => {
     expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
   });
 
+  it('treats preparing as busy while keeping cancel available', async () => {
+    setupPage(printer('moonraker'), { ...status, state: 'PREPARING' });
+
+    expect(await screen.findByRole('button', { name: /^stop$/i })).toBeInTheDocument();
+    expect(screen.getAllByText('cube.gcode').length).toBeGreaterThan(0);
+    expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
+    const card = document.getElementById('printer-card-41')!;
+    fireEvent.dragEnter(card, { dataTransfer: { files: [] } });
+    expect(screen.getByText(/printer busy/i)).toBeInTheDocument();
+  });
+
   it('uses only same-origin camera route when camera capability is enabled', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
     setupPage(printer('moonraker', { ...moonrakerCapabilities, camera: true }));
@@ -275,6 +298,9 @@ describe('Moonraker onboarding and guarded stop', () => {
     await user.click(screen.getByRole('radio', { name: /moonraker/i }));
     await user.type(screen.getByPlaceholderText('My Printer'), 'Moon');
     await user.type(screen.getByLabelText(/moonraker base url/i), 'https://klipper.local:7125');
+    await user.click(screen.getByLabelText(/enable external camera/i));
+    expect(screen.getByLabelText('External camera URL')).toBeInTheDocument();
+    expect(screen.getByLabelText('External camera type')).toBeInTheDocument();
     const apiKey = screen.getByLabelText(/api key/i);
     const authorization = screen.getByLabelText(/^authorization$/i);
     await user.type(apiKey, 'key');
@@ -310,6 +336,9 @@ describe('Moonraker onboarding and guarded stop', () => {
     expect(document.body.textContent).not.toContain('api-key-value');
     expect(screen.getByLabelText(/moonraker base url/i)).toHaveValue('https://klipper.local:7125');
     expect(screen.getByLabelText(/api key/i)).toHaveValue('');
+    await user.click(screen.getByLabelText(/enable external camera/i));
+    expect(screen.getByLabelText('External camera URL')).toBeInTheDocument();
+    expect(screen.getByLabelText('External camera type')).toBeInTheDocument();
     expect(screen.getByPlaceholderText(/secret retained/i)).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: /test.*connection/i }));
     expect(await screen.findByRole('status')).toHaveTextContent('Stored connection works.');

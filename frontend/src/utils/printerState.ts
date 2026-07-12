@@ -1,10 +1,14 @@
-export type NormalizedPrintState = 'printing' | 'paused' | 'finished' | 'failed' | 'idle';
+export type NormalizedPrintState = 'preparing' | 'printing' | 'paused' | 'finished' | 'failed' | 'idle';
 
 export function normalizePrintState(state: string | null | undefined): NormalizedPrintState {
   switch (state?.toUpperCase()) {
     case 'RUNNING':
     case 'PRINTING':
       return 'printing';
+    case 'PREPARING':
+    case 'PREPARE':
+    case 'SLICING':
+      return 'preparing';
     case 'PAUSE':
     case 'PAUSED':
       return 'paused';
@@ -12,6 +16,9 @@ export function normalizePrintState(state: string | null | undefined): Normalize
     case 'FINISHED':
     case 'COMPLETE':
     case 'COMPLETED':
+    case 'CANCELLED':
+    case 'CANCELED':
+    case 'STOPPED':
       return 'finished';
     case 'FAILED':
     case 'ERROR':
@@ -23,5 +30,5 @@ export function normalizePrintState(state: string | null | undefined): Normalize
 
 export function isActivePrintState(state: string | null | undefined): boolean {
   const normalized = normalizePrintState(state);
-  return normalized === 'printing' || normalized === 'paused';
+  return normalized === 'preparing' || normalized === 'printing' || normalized === 'paused';
 }

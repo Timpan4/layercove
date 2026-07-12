@@ -101,6 +101,7 @@ export function BulkPrinterToolbar({
     const hasKnownHms = p.provider !== 'moonraker' && status.hms_errors ? filterKnownHMSErrors(status.hms_errors).length > 0 : false;
     if (hasKnownHms) stateCounts.error++;
     switch (normalizePrintState(status.state)) {
+      case 'preparing': stateCounts.printing++; break;
       case 'printing': stateCounts.printing++; break;
       case 'paused': stateCounts.paused++; break;
       case 'finished': stateCounts.finished++; break;
