@@ -3788,6 +3788,11 @@ export default {
     title: '모델 슬라이싱',
     action: '슬라이싱',
     slicing: '슬라이싱 중…',
+    destination: {
+      label: '출력',
+      bambu: 'Bambu 3MF',
+      klipper: 'Klipper G-code',
+    },
     printer: '프린터 프로필',
     process: '프로세스 프로필',
     filament: '필라멘트 프로필',

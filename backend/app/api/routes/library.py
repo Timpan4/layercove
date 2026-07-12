@@ -3844,7 +3844,23 @@ async def slice_and_persist(
         except InvalidFilenameError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-        out_path = get_library_files_dir() / f"{uuid.uuid4().hex}.gcode"
+        files_dir = get_library_files_dir()
+        out_path: Path | None = None
+        for _ in range(8):
+            candidate = files_dir / f"{uuid.uuid4().hex}.gcode"
+            try:
+                with candidate.open("xb") as output:
+                    output.write(result.content)
+            except FileExistsError:
+                continue
+            except Exception:
+                candidate.unlink(missing_ok=True)
+                raise
+            out_path = candidate
+            break
+        if out_path is None:
+            raise RuntimeError("Could not allocate a unique library G-code path")
+
         metadata: dict = {
             "destination_artifact_kind": DestinationArtifactKind.KLIPPER_GCODE.value,
             "print_time_seconds": result.print_time_seconds,
@@ -3865,7 +3881,6 @@ async def slice_and_persist(
             created_by_id=current_user_id,
         )
         try:
-            out_path.write_bytes(result.content)
             db.add(new_file)
             await db.commit()
         except Exception:

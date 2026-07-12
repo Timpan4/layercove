@@ -3986,6 +3986,11 @@ export default {
     actionAllTitle: '将所有盘面切片为单个多盘面输出（一个归档）。耗材选择覆盖项目定义的每个槽位。',
     allPlatesToggle: '切片全部 {{count}} 个盘面',
     slicing: '切片中…',
+    destination: {
+      label: '输出',
+      bambu: 'Bambu 3MF',
+      klipper: 'Klipper G-code',
+    },
     printer: '打印机配置',
     process: '工艺配置',
     filament: '耗材配置',

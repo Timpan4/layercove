@@ -3998,6 +3998,11 @@ export default {
     actionAllTitle: 'Alle Plates in eine einzelne Multi-Plate-Ausgabe slicen (ein Archiv). Die Filamentauswahl gilt für jeden Slot des Projekts.',
     allPlatesToggle: 'Alle {{count}} Plates slicen',
     slicing: 'Slicen…',
+    destination: {
+      label: 'Ausgabe',
+      bambu: 'Bambu 3MF',
+      klipper: 'Klipper-G-Code',
+    },
     printer: 'Drucker-Profil',
     process: 'Prozess-Profil',
     filament: 'Filament-Profil',

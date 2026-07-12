@@ -435,6 +435,53 @@ class TestSliceLibraryFile:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_klipper_library_uuid_collision_preserves_existing_file(
+        self,
+        db_session,
+        slice_test_setup,
+        monkeypatch,
+    ):
+        from backend.app.api.routes import library as library_routes
+
+        _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=b"new artifact\n"))
+        collision_hex = "a" * 32
+        unique_hex = "b" * 32
+        generated = iter((collision_hex, unique_hex))
+        monkeypatch.setattr(
+            library_routes.uuid,
+            "uuid4",
+            lambda: SimpleNamespace(hex=next(generated)),
+        )
+        archive_root = slice_test_setup["tmp_path"] / "archive"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        files_dir = archive_root / "library" / "files"
+        files_dir.mkdir(parents=True)
+        existing_path = files_dir / f"{collision_hex}.gcode"
+        existing_path.write_bytes(b"existing artifact\n")
+
+        response = await slice_and_persist(
+            db_session,
+            model_bytes=b"solid collision\n",
+            model_filename="Collision.stl",
+            folder_id=None,
+            extra_metadata=None,
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+                destination_artifact_kind="klipper_gcode",
+            ),
+            current_user_id=None,
+        )
+
+        persisted = await db_session.get(LibraryFile, response.library_file_id)
+        assert persisted is not None
+        assert existing_path.read_bytes() == b"existing artifact\n"
+        assert persisted.file_path.endswith(f"{unique_hex}.gcode")
+        assert (app_settings.base_dir / persisted.file_path).read_bytes() == b"new artifact\n"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_klipper_archive_persistence_skips_3mf_artifacts(self, db_session, slice_test_setup, monkeypatch):
         archive_dir = slice_test_setup["tmp_path"] / "archives"
         monkeypatch.setattr(app_settings, "archive_dir", archive_dir)
@@ -498,7 +545,10 @@ class TestSliceLibraryFile:
         monkeypatch,
     ):
         _install_mock_sidecar(lambda _request: httpx.Response(status_code=200, content=b"G28\n"))
-        files_dir = slice_test_setup["tmp_path"] / "library" / "files"
+        archive_root = slice_test_setup["tmp_path"] / "archive"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        files_dir = archive_root / "library" / "files"
+        files_dir.mkdir(parents=True)
         before = set(files_dir.iterdir())
         monkeypatch.setattr(db_session, "commit", AsyncMock(side_effect=RuntimeError("commit failed")))
 

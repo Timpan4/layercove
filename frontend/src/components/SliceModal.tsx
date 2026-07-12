@@ -733,7 +733,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
                 disabled={isEnqueuing}
               />
               <fieldset className="space-y-1">
-                <legend className="block text-xs text-bambu-gray">{t('slice.destination', 'Output')}</legend>
+                <legend className="block text-xs text-bambu-gray">{t('slice.destination.label', 'Output')}</legend>
                 <label className="flex items-center gap-2 text-sm text-white">
                   <input
                     type="radio"
