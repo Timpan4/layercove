@@ -408,7 +408,7 @@ async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue):
         "queue_item_id": ids.item,
         "archive_id": ids.archive,
         "library_file_id": library_id,
-        "created_by_id": None,
+        "created_by_id": 17,
         "auto_off_after": True,
         "status": "completed",
         "printer_name": "Klipper",
@@ -427,6 +427,7 @@ async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue):
         patch.object(main_module.mqtt_relay, "on_print_complete", AsyncMock()) as relay_complete,
         patch.object(main_module.mqtt_relay, "on_queue_job_completed", AsyncMock()) as relay_queue,
         patch.object(main_module.notification_service, "on_print_complete", AsyncMock()) as notify_print,
+        patch.object(main_module, "_dispatch_user_print_email", AsyncMock()) as notify_user,
         patch.object(main_module.notification_service, "on_queue_completed", AsyncMock()) as notify_queue,
         patch.object(main_module.smart_plug_manager, "schedule_off_after_queue_job", AsyncMock()) as auto_off,
     ):
@@ -437,6 +438,7 @@ async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue):
     relay_complete.assert_awaited_once()
     relay_queue.assert_awaited_once()
     notify_print.assert_awaited_once()
+    assert notify_user.await_args.args[:4] == ("completed", 17, "Klipper", "queue/cube.gcode")
     notify_queue.assert_awaited_once()
     auto_off.assert_awaited_once()
     async with sessions() as db:

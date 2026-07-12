@@ -4077,6 +4077,16 @@ async def _on_moonraker_print_complete(printer_id: int, data: dict) -> None:
             )
         except Exception:
             logger.warning("Moonraker print notification failed for printer %s", printer_id)
+        try:
+            await _dispatch_user_print_email(
+                outcome["status"],
+                outcome["created_by_id"],
+                outcome["printer_name"],
+                outcome["filename"],
+                db,
+            )
+        except Exception:
+            logger.warning("Moonraker user print notification failed for printer %s", printer_id)
 
         pending_count = await db.scalar(select(func.count(PrintQueueItem.id)).where(PrintQueueItem.status == "pending"))
         if not pending_count:
