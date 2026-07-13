@@ -12,7 +12,8 @@ on:
       - 'Dockerfile'
       - 'docker-compose*.yml'
       - 'requirements.txt'
-      - 'frontend/package*.json'
+      - 'frontend/package.json'
+      - 'frontend/bun.lock'
       - '.github/workflows/security.yml'
   pull_request:
     paths:
@@ -22,14 +23,15 @@ on:
       - 'Dockerfile'
       - 'docker-compose*.yml'
       - 'requirements.txt'
-      - 'frontend/package*.json'
+      - 'frontend/package.json'
+      - 'frontend/bun.lock'
       - '.github/workflows/security.yml'
   workflow_dispatch:
     # Allow manual trigger
 
 env:
   PYTHON_VERSION: '3.11'
-  NODE_VERSION: '22'
+  BUN_VERSION: '1.3.14'
 
 # Default permissions for all jobs
 permissions:
@@ -273,149 +275,140 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: bun install --frozen-lockfile
 
-      - name: Run npm audit
-        id: npm-audit
+      - name: Run Bun audit
+        id: bun-audit
         working-directory: frontend
         run: |
-          npm audit --omit=dev --json > npm-audit-raw.json 2>/dev/null || true
-          # Filter audit results to only include actual project dependencies.
-          # npm 10.x audit/ls reports vulns in its own bundled deps (npm, tar, minimatch)
-          # so we parse package-lock.json directly to get the real prod dep list.
-          node -e "
-            const fs = require('fs');
-            const raw = fs.readFileSync('npm-audit-raw.json', 'utf8');
-            let results;
-            try { results = JSON.parse(raw); } catch { results = { vulnerabilities: {} }; }
-            const lock = JSON.parse(fs.readFileSync('package-lock.json', 'utf8'));
-            const prodDeps = new Set();
-            for (const [path, info] of Object.entries(lock.packages || {})) {
-              if (path && !info.dev && !info.devOptional) {
-                prodDeps.add(path.split('node_modules/').pop());
-              }
-            }
-            const vulns = results.vulnerabilities || {};
-            const filtered = {};
-            for (const [name, info] of Object.entries(vulns)) {
-              if (prodDeps.has(name)) filtered[name] = info;
-            }
-            results.vulnerabilities = filtered;
-            fs.writeFileSync('npm-audit-results.json', JSON.stringify(results, null, 2));
-            const count = Object.keys(filtered).length;
-            console.log(count > 0
-              ? count + ' production vulnerabilities found'
-              : 'No production vulnerabilities (filtered ' + Object.keys(vulns).length + ' npm-internal entries)');
-            if (count > 0) process.exit(1);
-          " || echo "vulnerabilities_found=true" >> $GITHUB_OUTPUT
-          npm audit --omit=dev --audit-level=high || true
+          set +e
+          bun audit --prod --audit-level=high --json > bun-audit-results.json
+          audit_exit=$?
+          set -e
+
+          vulnerability_count=$(bun -e "
+            const results = JSON.parse(await Bun.file('bun-audit-results.json').text());
+            const count = Object.values(results).reduce(
+              (total, advisories) => total + (Array.isArray(advisories) ? advisories.length : 0),
+              0,
+            );
+            process.stdout.write(String(count));
+          ")
+
+          if [ "$vulnerability_count" -gt 0 ]; then
+            echo "vulnerabilities_found=true" >> "$GITHUB_OUTPUT"
+            echo "$vulnerability_count high or critical production advisories found"
+          elif [ "$audit_exit" -ne 0 ]; then
+            echo "Bun audit failed without returning any advisories" >&2
+            exit "$audit_exit"
+          else
+            echo "No high or critical production advisories found"
+          fi
+
+          echo "audit_succeeded=true" >> "$GITHUB_OUTPUT"
+          bun audit --prod --audit-level=high || true
 
       - name: Upload audit results
-        if: always()
+        if: always() && hashFiles('frontend/bun-audit-results.json') != ''
         uses: actions/upload-artifact@v7
         with:
-          name: npm-audit-results
-          path: frontend/npm-audit-results.json
+          name: bun-audit-results
+          path: frontend/bun-audit-results.json
           retention-days: 30
 
-      - name: Create or close npm security issue
+      - name: Create or close Bun security issue
         if: always() && (github.event_name == 'schedule' || github.event_name == 'workflow_dispatch')
         uses: actions/github-script@v9
         with:
           script: |
             const fs = require('fs');
 
-            // Check for existing open issue
             const existingIssues = await github.rest.issues.listForRepo({
               owner: context.repo.owner,
               repo: context.repo.repo,
               state: 'open',
               labels: 'security,automated'
             });
-            const existingIssue = existingIssues.data.find(i => i.title.startsWith('Security Alert:') && i.title.includes('npm'));
+            const existingIssue = existingIssues.data.find(issue => {
+              const title = issue.title.toLowerCase();
+              return title.startsWith('security alert:') && (title.includes('bun') || title.includes('npm'));
+            });
 
-            // If filter didn't flag vulnerabilities, auto-close any stale issue
-            if ('${{ steps.npm-audit.outputs.vulnerabilities_found }}' !== 'true') {
-              if (existingIssue) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: existingIssue.number,
-                  body: 'All npm production vulnerabilities have been resolved. Closing automatically.'
-                });
-                await github.rest.issues.update({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: existingIssue.number,
-                  state: 'closed'
-                });
-                console.log(`Auto-closed resolved issue #${existingIssue.number}`);
-              }
+            const closeResolvedIssue = async () => {
+              if (!existingIssue) return;
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                body: 'All high and critical Bun production advisories have been resolved. Closing automatically.'
+              });
+              await github.rest.issues.update({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: existingIssue.number,
+                state: 'closed'
+              });
+              console.log(`Auto-closed resolved issue #${existingIssue.number}`);
+            };
+
+            if ('${{ steps.bun-audit.outputs.audit_succeeded }}' !== 'true') {
+              console.log('Bun audit did not complete successfully; leaving any existing security issue unchanged');
+              return;
+            }
+
+            if ('${{ steps.bun-audit.outputs.vulnerabilities_found }}' !== 'true') {
+              await closeResolvedIssue();
               return;
             }
 
             let results;
             try {
-              results = JSON.parse(fs.readFileSync('frontend/npm-audit-results.json', 'utf8'));
+              results = JSON.parse(fs.readFileSync('frontend/bun-audit-results.json', 'utf8'));
             } catch {
-              console.log('Could not read filtered audit results');
+              console.log('Could not read Bun audit results');
               return;
             }
 
-            const vulns = results.vulnerabilities || {};
-            const vulnCount = Object.keys(vulns).length;
+            const advisories = Object.entries(results).flatMap(([name, packageAdvisories]) =>
+              (Array.isArray(packageAdvisories) ? packageAdvisories : []).map(advisory => ({ name, ...advisory }))
+            );
 
-            if (vulnCount === 0) {
-              console.log('No vulnerabilities to report');
-              if (existingIssue) {
-                await github.rest.issues.createComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: existingIssue.number,
-                  body: 'All npm production vulnerabilities have been resolved. Closing automatically.'
-                });
-                await github.rest.issues.update({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  issue_number: existingIssue.number,
-                  state: 'closed'
-                });
-                console.log(`Auto-closed resolved issue #${existingIssue.number}`);
-              }
+            if (advisories.length === 0) {
+              console.log('No advisories to report');
+              await closeResolvedIssue();
               return;
             }
 
-            // Build vulnerability table
-            let table = '| Package | Severity | Via | Fix |\n';
-            table += '|---------|----------|-----|-----|\n';
+            const escapeCell = value => String(value ?? 'N/A').replaceAll('|', '\\|').replaceAll('\n', ' ');
+            let table = '| Package | Severity | Advisory | Vulnerable Versions |\n';
+            table += '|---------|----------|----------|---------------------|\n';
 
-            for (const [name, info] of Object.entries(vulns)) {
-              const via = Array.isArray(info.via) ? info.via.map(v => typeof v === 'string' ? v : v.name).join(', ') : info.via;
-              table += `| ${name} | ${info.severity} | ${via} | ${info.fixAvailable ? 'Yes' : 'No'} |\n`;
+            for (const advisory of advisories) {
+              const title = escapeCell(advisory.title);
+              const reference = advisory.url ? `[${title}](${advisory.url})` : title;
+              table += `| ${escapeCell(advisory.name)} | ${escapeCell(advisory.severity)} | ${reference} | ${escapeCell(advisory.vulnerable_versions)} |\n`;
             }
 
-            const title = `Security Alert: ${vulnCount} npm vulnerabilities found`;
-
+            const title = `Security Alert: ${advisories.length} Bun production advisories found`;
             const body = `## Automated Security Audit Results
 
-            The weekly security audit found vulnerabilities in npm dependencies.
+            The weekly security audit found high or critical advisories in Bun production dependencies.
 
             ${table}
 
             ### Recommended Actions
 
-            1. Review each vulnerability: \`npm audit\`
-            2. Auto-fix if possible: \`npm audit fix\`
-            3. Manual fix for breaking changes: \`npm audit fix --force\` (review changes!)
+            1. Review each advisory: \`bun audit --prod --audit-level=high\`
+            2. Update affected dependencies in \`package.json\` and regenerate \`bun.lock\` with \`bun install\`
+            3. Re-run the audit locally to verify the updates
 
             ---
             *This issue was automatically created by the security audit workflow.*`;
@@ -425,15 +418,16 @@ jobs:
                 owner: context.repo.owner,
                 repo: context.repo.repo,
                 issue_number: existingIssue.number,
-                body: body
+                title,
+                body
               });
               console.log(`Updated existing issue #${existingIssue.number}`);
             } else {
               await github.rest.issues.create({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                title: title,
-                body: body,
+                title,
+                body,
                 labels: ['security', 'automated', 'dependencies']
               });
               console.log('Created new security issue');

@@ -60,14 +60,14 @@ Read [`../UPDATING.md`](../UPDATING.md) before changing an existing deployment. 
 Linux native updater:
 
 ```bash
-sudo /path/to/layercove/install/update.sh
+sudo bash /path/to/layercove/install/update.sh
 ```
 
 Useful compatibility overrides remain available:
 
 ```bash
-INSTALL_DIR=/opt/bambuddy SERVICE_NAME=bambuddy sudo /opt/bambuddy/install/update.sh
-BACKUP_MODE=require BAMBUDDY_API_KEY=bb_xxx sudo /opt/bambuddy/install/update.sh
+INSTALL_DIR=/opt/bambuddy SERVICE_NAME=bambuddy sudo --preserve-env=INSTALL_DIR,SERVICE_NAME bash /opt/bambuddy/install/update.sh
+BACKUP_MODE=require BAMBUDDY_API_KEY=bb_xxx sudo --preserve-env=BACKUP_MODE,BAMBUDDY_API_KEY bash /opt/bambuddy/install/update.sh
 ```
 
 The `BAMBUDDY_API_KEY` name and `bambuddy-backup-*.zip` files are retained interfaces, not stale product text.

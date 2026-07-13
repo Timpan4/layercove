@@ -61,7 +61,7 @@ Linux host networking enables printer discovery. Docker Desktop users must comme
 Run the updater already stored in the installation. It derives the install root from its own location, so both existing `/opt/bambuddy` installs and fresh `/opt/layercove` installs work:
 
 ```bash
-sudo /path/to/install/install/update.sh
+sudo bash /path/to/install/install/update.sh
 ```
 
 The updater records the current commit, creates a backup, stops the compatible `bambuddy` service, resets the checkout to its configured `origin/main`, updates Python dependencies, rebuilds the frontend, and restarts the service. It attempts to reset to the recorded commit and restart the service if a later step fails.
@@ -73,7 +73,7 @@ cd /opt/bambuddy
 git remote -v
 git remote set-url origin https://github.com/Timpan4/layercove.git
 git fetch origin
-sudo install/update.sh
+sudo bash install/update.sh
 ```
 
 These are operator commands for a deployed clone, not development commands for a GitButler workspace.
