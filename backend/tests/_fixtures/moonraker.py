@@ -118,8 +118,11 @@ class FakeMoonraker:
         )
 
     async def disconnect_websockets(self) -> None:
-        sockets = list(self._websockets)
-        await asyncio.gather(*(socket.close() for socket in sockets), return_exceptions=True)
+        for socket in list(self._websockets):
+            request = socket._req
+            if request is not None and request.transport is not None:
+                request.transport.abort()
+        await asyncio.sleep(0)
 
     def require_api_key(self, value: str) -> None:
         self.api_key = value

@@ -168,13 +168,15 @@ class MoonrakerBackend:
     async def disconnect(self, timeout: float = 0) -> None:
         self._stopping = True
         task, self._task = self._task, None
+        connection, self._connection = self._connection, None
+        if connection is not None:
+            await connection.close()
         if task is not None:
             task.cancel()
             try:
                 await task
             except asyncio.CancelledError:
                 pass
-        self._connection = None
         if self._snapshot.connected or self._snapshot.state is not NormalizedPrinterState.OFFLINE:
             self._snapshot = replace(self._snapshot, connected=False, state=NormalizedPrinterState.OFFLINE)
             self._emit(StatusChanged(self._snapshot))
