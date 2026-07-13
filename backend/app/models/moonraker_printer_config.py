@@ -24,9 +24,7 @@ class MoonrakerPrinterConfig(Base):
     api_key_ciphertext: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     authorization_ciphertext: Mapped[str | None] = mapped_column(String(1000), nullable=True)
     tls_verify: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
-    spoolman_accounting_owner: Mapped[str] = mapped_column(
-        String(20), default="moonraker", server_default="moonraker"
-    )
+    spoolman_accounting_owner: Mapped[str] = mapped_column(String(20), default="moonraker", server_default="moonraker")
     spoolman_spool_id: Mapped[int | None] = mapped_column(Integer, nullable=True)
 
     printer: Mapped["Printer"] = relationship(back_populates="moonraker_config")

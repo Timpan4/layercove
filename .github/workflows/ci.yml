@@ -6,14 +6,10 @@ on:
   pull_request:
     branches: [main]
   workflow_dispatch:
-    # Run on PRs targeting main, but skip for repo owner (runs local tests)
-
-# Skip CI for PRs authored by repo owner (they run tests locally)
-# Uses PR author instead of triggering actor so rebasing by owner doesn't skip CI
 
 env:
   PYTHON_VERSION: '3.11'
-  NODE_VERSION: '22'
+  BUN_VERSION: '1.3.14'
 
 # Cancel in-progress runs for the same branch
 concurrency:
@@ -32,7 +28,6 @@ jobs:
   backend-lint:
     name: Backend Lint
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     steps:
       - uses: actions/checkout@v6
 
@@ -53,7 +48,6 @@ jobs:
   backend-security:
     name: Backend Security
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
@@ -86,7 +80,6 @@ jobs:
   backend-tests:
     name: Backend Tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     needs: backend-lint
     strategy:
       # Don't cancel sibling shards if one fails — we want every shard's
@@ -141,139 +134,101 @@ jobs:
   frontend-lint:
     name: Frontend Lint
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: bun install --frozen-lockfile
 
-      - name: Run ESLint
+      - name: Run Oxlint
         working-directory: frontend
-        run: npm run lint
+        run: bun run lint
 
   frontend-security:
     name: Frontend Security
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     continue-on-error: true
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: bun install --frozen-lockfile
 
-      - name: Run npm audit
+      - name: Run Bun audit
         working-directory: frontend
-        run: |
-          # Only audit production dependencies and filter out npm-internal packages.
-          # npm 10.x audit/ls reports vulns in its own bundled deps (npm, tar, minimatch)
-          # so we parse package-lock.json directly to get the real prod dep list.
-          npm audit --omit=dev --json > /tmp/audit.json 2>/dev/null || true
-          python3 -c "
-          import json, sys
-          data = json.load(open('/tmp/audit.json'))
-          lock = json.load(open('package-lock.json'))
-          prod = set()
-          for path, info in lock.get('packages', {}).items():
-              if path and not info.get('dev') and not info.get('devOptional'):
-                  prod.add(path.split('node_modules/')[-1])
-          vulns = data.get('vulnerabilities', {})
-          fixable = {n: v for n, v in vulns.items()
-                     if n in prod and v.get('severity') in ('high', 'critical') and v.get('fixAvailable')}
-          skipped = len(vulns) - len({n: v for n, v in vulns.items() if n in prod})
-          if fixable:
-              for name, v in fixable.items():
-                  print(f'FIXABLE {v[\"severity\"].upper()}: {name}')
-              sys.exit(1)
-          total = sum(1 for n, v in vulns.items() if n in prod and v.get('severity') in ('high', 'critical'))
-          print(f'npm audit: {total} high/critical (0 fixable), {len(vulns)} total ({skipped} npm-internal filtered)')
-          "
+        run: bun audit --prod --audit-level=high
 
   frontend-typecheck:
     name: Frontend Type Check
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Run TypeScript check
         working-directory: frontend
-        run: npx tsc --noEmit
+        run: bun x tsc --noEmit
 
   frontend-tests:
     name: Frontend Tests
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     needs: [frontend-lint, frontend-typecheck]
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Run tests
         timeout-minutes: 10
         working-directory: frontend
-        run: npm run test:run
+        run: bun run test:run
 
   frontend-build:
     name: Frontend Build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     needs: [frontend-tests]
     steps:
       - uses: actions/checkout@v6
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v6
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
         with:
-          node-version: ${{ env.NODE_VERSION }}
-          cache: 'npm'
-          cache-dependency-path: frontend/package-lock.json
+          bun-version: ${{ env.BUN_VERSION }}
 
       - name: Install dependencies
         working-directory: frontend
-        run: npm ci
+        run: bun install --frozen-lockfile
 
       - name: Build
         working-directory: frontend
-        run: npm run build
+        run: bun run build
 
   # ============================================================================
   # Docker Tests (matches test_docker.sh)
@@ -289,7 +244,6 @@ jobs:
   docker-backend-tests:
     name: Docker Backend Tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -321,6 +275,8 @@ jobs:
           docker run --rm \
             -e TESTING=1 \
             -e PYTHONUNBUFFERED=1 \
+            -e TEST_REPOSITORY_ROOT=/workspace \
+            -v "$PWD:/workspace:ro" \
             bambuddy-backend-test:latest \
             pytest backend/tests/ \
               --tb=short \
@@ -332,7 +288,6 @@ jobs:
   docker-test:
     name: Docker Build
     runs-on: ubuntu-latest
-    if: github.event_name == 'push' || github.event.pull_request.user.login != github.repository_owner
     timeout-minutes: 20
     needs: [backend-tests, frontend-build]
     steps:

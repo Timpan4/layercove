@@ -167,10 +167,7 @@ async def test_sqlite_interrupted_swap_rolls_back_to_authoritative_table():
 
     async with engine.connect() as conn:
         assert (await conn.execute(text("SELECT serial_number FROM printers"))).scalar_one() == "SERIAL"
-        tables = {
-            row[0]
-            for row in await conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))
-        }
+        tables = {row[0] for row in await conn.execute(text("SELECT name FROM sqlite_master WHERE type = 'table'"))}
         assert "printers_provider_new" not in tables
 
     await engine.dispose()

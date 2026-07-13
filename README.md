@@ -496,6 +496,15 @@ Optional but recommended — drop the [`slicer-api/` Compose stack](slicer-api/R
 ### Docker
 
 ```bash
+mkdir layercove && cd layercove
+curl -fsSLO https://raw.githubusercontent.com/Timpan4/layercove/main/docker-compose.yml
+docker compose pull
+docker compose up -d
+```
+
+To build the current source instead of pulling GHCR:
+
+```bash
 git clone https://github.com/Timpan4/layercove.git
 cd layercove
 docker compose up -d --build
@@ -503,7 +512,7 @@ docker compose up -d --build
 
 Open **http://localhost:8000**. Linux host networking supports printer discovery; Docker Desktop users should use the documented port mapping and add printers manually by address.
 
-The checked-in Compose file retains `bambuddy_data`, `bambuddy_logs`, and the `bambuddy` service/container name deliberately. Existing installations can upgrade in place without renaming volumes or moving data. Fresh deployment names will be finalized with the deployment work in [issue #17](https://github.com/Timpan4/layercove/issues/17).
+The checked-in Compose file intentionally retains the `bambuddy` service/container name and the `bambuddy_data` and `bambuddy_logs` volumes. Existing Bambuddy and LayerCove deployments therefore upgrade in place without renaming volumes or moving data; fresh deployments use the LayerCove image and repository while keeping those storage-compatible identifiers. See [UPDATING.md](UPDATING.md) before replacing an existing Compose file.
 
 ### Configuration compatibility
 

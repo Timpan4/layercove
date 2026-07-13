@@ -1,0 +1,37 @@
+{
+  "$schema": "./node_modules/oxlint/configuration_schema.json",
+  "plugins": ["typescript", "react", "oxc"],
+  "categories": {
+    "correctness": "error"
+  },
+  "rules": {
+    "react/rules-of-hooks": "error",
+    "react/exhaustive-deps": "warn",
+    "react/only-export-components": ["error", { "allowConstantExport": true }],
+    "typescript/no-explicit-any": "error",
+    "no-unused-vars": ["error", { "argsIgnorePattern": "^_", "varsIgnorePattern": "^_" }]
+  },
+  "overrides": [
+    {
+      "files": ["**/__tests__/**/*.{ts,tsx}", "**/*.test.{ts,tsx}", "**/*.spec.{ts,tsx}"],
+      "rules": {
+        "react/only-export-components": "off",
+        "typescript/no-explicit-any": "off"
+      }
+    },
+    {
+      "files": [
+        "**/contexts/**/*.{ts,tsx}",
+        "**/hooks/**/*.{ts,tsx}",
+        "**/components/IconPicker.tsx",
+        "**/components/Layout.tsx",
+        "**/components/HMSErrorModal.tsx",
+        "**/components/EditArchiveModal.tsx"
+      ],
+      "rules": {
+        "react/only-export-components": "off"
+      }
+    }
+  ],
+  "ignorePatterns": ["dist", "coverage"]
+}

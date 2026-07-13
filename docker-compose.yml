@@ -2,7 +2,7 @@ services:
   # Compatibility identifier: keep this service/container and the named volumes
   # below when upgrading an existing Bambuddy installation.
   bambuddy:
-    image: ghcr.io/maziggy/bambuddy:latest
+    image: ghcr.io/timpan4/layercove:latest
     build: .
     # Usage:
     #   docker compose up -d          → pulls pre-built image from ghcr.io

@@ -1,17 +1,13 @@
 # Build frontend
-FROM node:22-bookworm-slim AS frontend-builder
+FROM oven/bun:1.3.14-debian AS frontend-builder
 
 WORKDIR /app/frontend
 
-# Copy package files first for better caching
-COPY frontend/package*.json ./
-
-# Use cache mount for npm
-RUN --mount=type=cache,target=/root/.npm \
-    npm ci
+COPY frontend/package.json frontend/bun.lock ./
+RUN bun install --frozen-lockfile
 
 COPY frontend/ ./
-RUN npm run build
+RUN bun run build
 
 # Production image
 FROM python:3.13-slim-trixie

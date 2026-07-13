@@ -1,99 +1,106 @@
-# Updating Bambuddy
+# Updating LayerCove
 
-> **0.2.3 note:** the in-app **Update** button is unreliable when upgrading from
-> older releases. Use the commands below instead — they cover every supported
-> install path and are safe to run repeatedly.
+Choose the section that matches the current installation. Take a backup first: **Settings → Backup → Create Backup** downloads the database and stateful files. Native `install/update.sh` also calls the backup API before changing code unless `BACKUP_MODE=skip` is set.
 
-Pick the section that matches how Bambuddy was installed.
+Compatibility identifiers are intentional. The Compose service/container remains `bambuddy`, the named volumes remain `bambuddy_data` and `bambuddy_logs`, the native service remains `bambuddy`, and the default SQLite filename remains `bambuddy.db`. Do not rename them during an upgrade.
 
----
+## Existing Docker deployment
 
-## Docker
+1. Record the image currently running so it can be used for rollback:
+
+   ```bash
+   docker compose images
+   docker compose config > compose.before.yml
+   ```
+
+2. Download the LayerCove Compose file beside the existing one and review it. Do not replace the file until the diff shows the same service and volume names and any local ports, bind mounts, environment values, or database settings have been carried forward.
+
+   ```bash
+   curl -fsSL https://raw.githubusercontent.com/Timpan4/layercove/main/docker-compose.yml \
+     -o docker-compose.yml.layercove
+   diff -u docker-compose.yml docker-compose.yml.layercove
+   docker compose -f docker-compose.yml.layercove config >/dev/null
+   ```
+
+3. Merge the reviewed changes into `docker-compose.yml`, then pull and recreate without `down -v`:
+
+   ```bash
+   docker compose pull
+   docker compose up -d
+   docker compose ps
+   curl --fail http://localhost:8000/health
+   ```
+
+The LayerCove image is `ghcr.io/timpan4/layercove:latest`. Pin a release tag or digest for reproducible production updates. The first LayerCove start runs database migrations in place; no Alembic command is required.
+
+### Docker rollback
+
+Set the `image:` line to the previously recorded tag or digest, then recreate the application container:
 
 ```bash
-# 1. Make sure your compose file isn't pinned to an old version.
-#    The image line should read one of:
-#      image: ghcr.io/maziggy/bambuddy:latest
-#      image: ghcr.io/maziggy/bambuddy:0.2.3
-#    If it pins an older tag (e.g. :0.2.2.2), edit it first.
-
-# 2. Pull and restart
 docker compose pull
 docker compose up -d
 ```
 
-**If your `docker-compose.yml` is older than 0.2.3,** also refresh it from the
-repo — recent releases added `cap_add: NET_BIND_SERVICE`, extra virtual-printer
-ports for bridge mode, and an optional Postgres block:
+Do not run `docker compose down -v`: `-v` deletes the named data volumes. If a migration makes the prior image incompatible, restore the backup before starting it and record the failure as an issue.
+
+## Fresh Docker deployment
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maziggy/bambuddy/main/docker-compose.yml \
-  -o docker-compose.yml.new
-# Diff against yours, merge by hand, then:
+mkdir layercove && cd layercove
+curl -fsSLO https://raw.githubusercontent.com/Timpan4/layercove/main/docker-compose.yml
+docker compose config
+docker compose pull
 docker compose up -d
 ```
 
----
+Linux host networking enables printer discovery. Docker Desktop users must comment `network_mode: host`, enable the documented port mapping, and add printers manually by address. The platform installers in [`install/`](install/) automate this setup.
 
-## Native install (`install.sh` or manual `git clone`)
+## Native Git installation
 
-Both paths produce a git working tree at the install directory, so the update
-is the same. Preferred:
+Run the updater already stored in the installation. It derives the install root from its own location, so both existing `/opt/bambuddy` installs and fresh `/opt/layercove` installs work:
 
 ```bash
-sudo /opt/bambuddy/install/update.sh
+sudo bash /path/to/install/install/update.sh
 ```
 
-`update.sh` stops the service, snapshots the database via the built-in backup
-API, fast-forwards to `origin/main`, installs Python deps, rebuilds the
-frontend, and restarts the service. It rolls back automatically if any step
-fails.
+The updater records the current commit, creates a backup, stops the compatible `bambuddy` service, resets the checkout to its configured `origin/main`, updates Python dependencies, rebuilds the frontend, and restarts the service. It attempts to reset to the recorded commit and restart the service if a later step fails.
 
-### Manual equivalent
-
-If you'd rather run the steps yourself:
+Before switching an existing Bambuddy checkout to LayerCove, verify and replace only its Git remote; leave the install path, data directories, service, and environment file in place:
 
 ```bash
 cd /opt/bambuddy
+git remote -v
+git remote set-url origin https://github.com/Timpan4/layercove.git
+git fetch origin
+sudo bash install/update.sh
+```
+
+These are operator commands for a deployed clone, not development commands for a GitButler workspace.
+
+### Native rollback
+
+The updater prints the old and new commit IDs. To roll back after an application-level failure:
+
+```bash
+cd /path/to/install
 sudo systemctl stop bambuddy
-sudo -u bambuddy git fetch origin
-sudo -u bambuddy git reset --hard origin/main
+sudo -u bambuddy git reset --hard OLD_COMMIT
 sudo -u bambuddy venv/bin/pip install -r requirements.txt
 sudo systemctl start bambuddy
 ```
 
-Replace `/opt/bambuddy` with your install path if different. Database schema
-migrations run automatically on startup — no Alembic step is required.
+Restore the pre-upgrade backup if the database migration cannot run on the old revision. macOS installations use `install/update_macos.sh` and the retained `com.bambuddy.app` launchd label.
 
----
+## ZIP or tarball installation
 
-## Installed from a GitHub ZIP or tarball download
+Archive downloads have no `.git` metadata and cannot use the native updater. Back up the stateful directories, install LayerCove into a new directory, stop both services, restore the backup into the new data directory, and start only the new installation. Do not delete the old tree until the health endpoint and printer list are verified.
 
-These installs have no `.git` directory, so neither `update.sh` nor a plain
-`git pull` will work. Reinstall cleanly:
+## Post-update checks
 
-```bash
-# 1. Back up your stateful data
-sudo systemctl stop bambuddy
-sudo tar czf ~/bambuddy-backup.tgz -C /opt/bambuddy \
-  data bambuddy.db bambuddy.db-shm bambuddy.db-wal \
-  virtual_printer archive projects icons .env 2>/dev/null || true
+- Open `/health` and the frontend.
+- Confirm existing Bambu and Moonraker printers, queue/history, archive, and Spoolman settings are present.
+- Verify no credentials were copied into logs or support output.
+- Keep the previous image/revision and backup until a representative upload/dispatch workflow succeeds.
 
-# 2. Remove the old install and reinstall via install.sh
-sudo rm -rf /opt/bambuddy
-curl -fsSL https://raw.githubusercontent.com/maziggy/bambuddy/main/install/install.sh \
-  -o /tmp/install.sh && sudo bash /tmp/install.sh --path /opt/bambuddy
-
-# 3. Restore your data
-sudo systemctl stop bambuddy
-sudo tar xzf ~/bambuddy-backup.tgz -C /opt/bambuddy
-sudo systemctl start bambuddy
-```
-
----
-
-## Before you upgrade
-
-Take a backup. Settings → Backup → **Create Backup** downloads a ZIP containing
-the database and all stateful directories. Any bare-metal update via
-`update.sh` does this automatically; Docker and manual upgrades do not.
+For source-maintainer synchronization with upstream Bambuddy, use [`docs/upstream-sync.md`](docs/upstream-sync.md); do not apply deployment update commands to `gitbutler/workspace`.

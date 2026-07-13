@@ -241,11 +241,7 @@ async def store_moonraker_print_data(printer_id: int, data: dict) -> None:
         if (await get_setting(db, "spoolman_enabled") or "").lower() != "true":
             return
         config = await db.get(MoonrakerPrinterConfig, printer_id)
-        if (
-            config is None
-            or config.spoolman_accounting_owner != "layercove"
-            or config.spoolman_spool_id is None
-        ):
+        if config is None or config.spoolman_accounting_owner != "layercove" or config.spoolman_spool_id is None:
             return
 
         provider_job_id = str(data.get("provider_job_id") or data.get("filename") or "").lstrip("/")

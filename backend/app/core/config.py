@@ -18,6 +18,7 @@ def get_compat_env(suffix: str, default: str = "") -> str:
         return os.environ[layercove_key]
     return os.environ.get(f"BAMBUDDY_{suffix}", default)
 
+
 # App directory - where the application is installed (for static files)
 _app_dir = Path(__file__).resolve().parent.parent.parent.parent
 
