@@ -19,13 +19,12 @@ import fs from 'node:fs';
 import path from 'node:path';
 import url from 'node:url';
 
+import * as ts from 'typescript/unstable/ast';
+import { API } from 'typescript/unstable/sync';
+
 const scriptDir = path.dirname(url.fileURLToPath(import.meta.url));
 const frontendDir = path.resolve(scriptDir, '..');
 const localesDir = path.join(frontendDir, 'src/i18n/locales');
-const tsPath = path.join(frontendDir, 'node_modules/typescript/lib/typescript.js');
-
-const tsModule = await import(url.pathToFileURL(tsPath).href);
-const ts = tsModule.default ?? tsModule;
 
 function collectLeaves(node, prefix, leaves) {
   if (!ts.isObjectLiteralExpression(node)) return;
@@ -74,12 +73,16 @@ function extractStringValue(node, keyPath) {
   process.exit(1);
 }
 
-function loadLocale(filePath) {
-  const src = fs.readFileSync(filePath, 'utf8');
-  const sf = ts.createSourceFile(filePath, src, ts.ScriptTarget.Latest, true);
-  if (sf.parseDiagnostics && sf.parseDiagnostics.length > 0) {
-    console.error(`${filePath}: ${sf.parseDiagnostics.length} parse error(s):`);
-    for (const d of sf.parseDiagnostics.slice(0, 10)) {
+function loadLocale(program, filePath) {
+  const sf = program.getSourceFile(filePath);
+  if (!sf) {
+    console.error(`${filePath}: TypeScript did not load the locale source file`);
+    process.exit(1);
+  }
+  const diagnostics = program.getSyntacticDiagnostics(filePath);
+  if (diagnostics.length > 0) {
+    console.error(`${filePath}: ${diagnostics.length} parse error(s):`);
+    for (const d of diagnostics.slice(0, 10)) {
       const msg = typeof d.messageText === 'string' ? d.messageText : d.messageText.messageText;
       const { line, character } = sf.getLineAndCharacterOfPosition(d.start ?? 0);
       console.error(`  ${line + 1}:${character + 1} ${msg}`);
@@ -88,7 +91,7 @@ function loadLocale(filePath) {
   }
   const leaves = new Map();
   let foundExport = false;
-  ts.forEachChild(sf, (n) => {
+  sf.forEachChild((n) => {
     if (ts.isExportAssignment(n)) {
       foundExport = true;
       collectLeaves(n.expression, '', leaves);
@@ -125,6 +128,7 @@ function isAlwaysAllowedIdentical(value) {
   if (/^https?:\/\//.test(value)) return true;          // URL
   if (/^ON,\s+true,\s+1$/.test(value)) return true;     // literal example "ON, true, 1"
   // Brand / technical names that ship verbatim everywhere.
+  if (/^(LayerCove|LayerCove URL|LayerCove Backend URL)$/.test(value)) return true;
   if (/^(Bambuddy|BamBuddy|SpoolBuddy|Bambu Lab|Bambu Studio|Bambu 3MF|Bambu Studio 2\.6\+|Bambu Studio sidecar URL|OrcaSlicer|Klipper G-code|OrcaSlicer sidecar URL|MakerWorld|Spoolman|\(Spoolman\)|Spoolman URL|Tailscale|GitHub|GitLab|Gitea|Forgejo|Discord|MQTT|FTP|HTTPS?|JSON|YAML|RTSP|TLS|SSL|CSRF|OIDC|SSO|SSO \/ OIDC|LDAP|TOTP|2FA|MFA|API|AMS|CRC|SHA256|SHA-256|kWh|MB|GB|KB|RGBA?|HSL|RGB|UTC|ISO|UI|HTTP|HTTP Method|H2D|H2D Pro|X1C|X1E|P1S|P1P|A1|A1 Mini|H2C|N3F|N3S|PETG|PLA|ABS|PA|TPU|PEI|PA-CF|PVA|HIPS|ASA|PC|PETG-HF|G\.code|G-code|gcode|cm³|°C|°F|GCODE|SOURCE|ntfy|Pushover|Telegram|Webhook|Webhook URL|Home Assistant|Home Assistant URL|CallMeBot\/WhatsApp|Bambuddy URL|Cool Plate|Cool Plate SuperTack|Engineering Plate|High Temp Plate|Smooth PEI Plate|Textured PEI Plate|Ext-L|Ext-R|ISO \(YYYY-MM-DD\))$/.test(value)) return true;
   return false;
 }
@@ -486,9 +490,21 @@ if (isMainModule) {
     process.exit(1);
   }
   const codes = ['en', ...discovered.filter((c) => c !== 'en')];
+  const localePaths = codes.map((code) => path.join(localesDir, `${code}.ts`));
+  const api = new API({ cwd: frontendDir });
+  const snapshot = api.updateSnapshot({ openFiles: localePaths });
+  const project = snapshot.getDefaultProjectForFile(localePaths[0]);
+  if (!project) {
+    snapshot.dispose();
+    api.close();
+    console.error(`TypeScript did not resolve a project for ${localePaths[0]}`);
+    process.exit(1);
+  }
   const locales = Object.fromEntries(
-    codes.map((c) => [c, loadLocale(path.join(localesDir, `${c}.ts`))]),
+    codes.map((code, index) => [code, loadLocale(project.program, localePaths[index])]),
   );
+  snapshot.dispose();
+  api.close();
 
   const MAX_REPORT = 20;
   const { reports } = compareLocales(locales);

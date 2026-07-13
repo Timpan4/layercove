@@ -146,7 +146,7 @@ jobs:
         working-directory: frontend
         run: bun install --frozen-lockfile
 
-      - name: Run ESLint
+      - name: Run Oxlint
         working-directory: frontend
         run: bun run lint
 
@@ -275,6 +275,8 @@ jobs:
           docker run --rm \
             -e TESTING=1 \
             -e PYTHONUNBUFFERED=1 \
+            -e LAYERCOVE_REPOSITORY_ROOT=/workspace \
+            -v "$PWD:/workspace:ro" \
             bambuddy-backend-test:latest \
             pytest backend/tests/ \
               --tb=short \

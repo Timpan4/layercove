@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import importlib
 import json
+import os
 import re
 from pathlib import Path
 
 import pytest
 
 from backend.app.core.config import get_compat_env
+
+REPOSITORY_ROOT = Path(os.environ.get("LAYERCOVE_REPOSITORY_ROOT", Path(__file__).resolve().parents[3]))
 
 
 @pytest.mark.unit
@@ -48,7 +51,7 @@ def test_layercove_metadata_is_active_product_identity():
     assert app.title == "LayerCove"
     assert "Klipper" in app.description
 
-    root = Path(__file__).resolve().parents[3]
+    root = REPOSITORY_ROOT
     index = (root / "frontend" / "index.html").read_text(encoding="utf-8")
     manifest = json.loads((root / "frontend" / "public" / "manifest.json").read_text(encoding="utf-8"))
     assert "<title>LayerCove</title>" in index
@@ -59,7 +62,7 @@ def test_layercove_metadata_is_active_product_identity():
 
 @pytest.mark.unit
 def test_generated_frontend_identity_matches_sources():
-    root = Path(__file__).resolve().parents[3]
+    root = REPOSITORY_ROOT
     source_index = (root / "frontend" / "index.html").read_text(encoding="utf-8")
     generated_index = (root / "static" / "index.html").read_text(encoding="utf-8")
     source_manifest = json.loads((root / "frontend" / "public" / "manifest.json").read_text(encoding="utf-8"))
@@ -80,7 +83,7 @@ def test_generated_frontend_identity_matches_sources():
 
 @pytest.mark.unit
 def test_readme_local_links_and_assets_resolve():
-    root = Path(__file__).resolve().parents[3]
+    root = REPOSITORY_ROOT
     readme = (root / "README.md").read_text(encoding="utf-8")
     targets = re.findall(r"(?:\[[^]]*\]\(([^)]+)\)|(?:src|href)=\"([^\"]+)\")", readme)
     local_targets = {
@@ -101,7 +104,7 @@ def test_bambu_storage_and_runtime_compatibility_identifiers_remain():
     assert Path(config.settings.database_url.removeprefix("sqlite+aiosqlite:///")).name == "bambuddy.db"
     assert config.settings.archive_dir.name == "archive"
 
-    root = Path(__file__).resolve().parents[3]
+    root = REPOSITORY_ROOT
     compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
     assert "  bambuddy:" in compose
     assert "image: ghcr.io/timpan4/layercove:latest" in compose
@@ -112,7 +115,7 @@ def test_bambu_storage_and_runtime_compatibility_identifiers_remain():
 
 @pytest.mark.unit
 def test_fresh_deployment_sources_target_layercove_and_keep_runtime_compatibility():
-    root = Path(__file__).resolve().parents[3]
+    root = REPOSITORY_ROOT
     installers = {
         path: (root / path).read_text(encoding="utf-8")
         for path in (
@@ -139,7 +142,7 @@ def test_fresh_deployment_sources_target_layercove_and_keep_runtime_compatibilit
 
 @pytest.mark.unit
 def test_container_publish_workflow_matches_documented_image():
-    root = Path(__file__).resolve().parents[3]
+    root = REPOSITORY_ROOT
     workflow = (root / ".github" / "workflows" / "publish-container.yml").read_text(encoding="utf-8")
 
     assert "packages: write" in workflow
@@ -149,7 +152,7 @@ def test_container_publish_workflow_matches_documented_image():
 
 @pytest.mark.unit
 def test_production_image_uses_declared_frontend_toolchain():
-    root = Path(__file__).resolve().parents[3]
+    root = REPOSITORY_ROOT
     dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
 
     assert "FROM oven/bun:1.3.14-debian AS frontend-builder" in dockerfile
@@ -161,7 +164,7 @@ def test_production_image_uses_declared_frontend_toolchain():
 
 @pytest.mark.unit
 def test_remaining_frontend_bambuddy_strings_are_classified():
-    root = Path(__file__).resolve().parents[3]
+    root = REPOSITORY_ROOT
     allowed_fragments = (
         "BAMBUDDY_LOCAL_LOGIN",
         "configureBambuddy:",
