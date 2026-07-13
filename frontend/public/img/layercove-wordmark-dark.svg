@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 64" role="img" aria-labelledby="title desc" color="#0d2430">
+  <title id="title">LayerCove wordmark, dark</title>
+  <desc id="desc">Dark LayerCove name beside its stacked print-layer mark for light backgrounds.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="6">
+    <path d="M9 18h30l8 8-8 8H17L9 26l8-8zM9 30h30l8 8-8 8H17L9 38l8-8zM9 42h30l8 8-8 8H17L9 50l8-8z"/>
+  </g>
+  <path fill="none" stroke="currentColor" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" d="M64 17v30h14M82 35a7 7 0 0 1 14 0v12H82v-6h14M102 31v16h10V31M102 47l5 7 5-7M120 39h14v-8h-14v16h14M140 47V31h9l3 4M170 22h-10v24h10M176 39a8 8 0 0 1 16 0v8h-16v-8M198 31l6 16 6-16M218 39h14v-8h-14v16h14"/>
+</svg>
