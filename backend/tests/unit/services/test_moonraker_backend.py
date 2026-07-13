@@ -30,6 +30,7 @@ class FakeConnection:
 
     async def close(self):
         self.closed = True
+        self.messages.put_nowait(RuntimeError("closed"))
 
 
 class FakeTransport:
@@ -180,6 +181,7 @@ async def test_moonraker_connect_owns_one_task_and_disconnect_cancels_its_socket
     await backend.connect()
     task = backend._task
     await backend.connect()
+    await wait_for(lambda: len(connection.sent) == 2)
     await wait_for(lambda: backend.snapshot().connected)
 
     assert backend._task is task
