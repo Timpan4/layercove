@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/bambuddy}"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+DEFAULT_INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+INSTALL_DIR="${INSTALL_DIR:-$DEFAULT_INSTALL_DIR}"
 SERVICE_NAME="${SERVICE_NAME:-com.bambuddy.app}"
 PLIST_PATH="${PLIST_PATH:-$HOME/Library/LaunchAgents/com.bambuddy.app.plist}"
 BRANCH="${BRANCH:-}"
@@ -19,15 +21,15 @@ CODE_UPDATED=0
 old_commit=""
 
 log() {
-  printf '[bambuddy-update] %s\n' "$*"
+  printf '[layercove-update] %s\n' "$*"
 }
 
 warn() {
-  printf '[bambuddy-update] WARNING: %s\n' "$*" >&2
+  printf '[layercove-update] WARNING: %s\n' "$*" >&2
 }
 
 die() {
-  printf '[bambuddy-update] ERROR: %s\n' "$*" >&2
+  printf '[layercove-update] ERROR: %s\n' "$*" >&2
   exit 1
 }
 
@@ -153,14 +155,14 @@ log "Current commit: ${old_commit:-unknown}"
 log "Remote commit: ${remote_commit:-unknown}"
 
 if git diff --quiet HEAD "origin/$BRANCH"; then
-  log "You are already running the latest version of Bambuddy."
+  log "You are already running the latest version of LayerCove."
   read -r -p "Do you want to run the update process anyway? [y/N]: " run_anyway
   case "${run_anyway:-}" in
     y|Y|yes|YES) ;;
     *) exit 0 ;;
   esac
 else
-  read -r -p "An update for Bambuddy is available. Install now? [y/N]: " install_now
+  read -r -p "An update for LayerCove is available. Install now? [y/N]: " install_now
   case "${install_now:-}" in
     y|Y|yes|YES) ;;
     *) exit 0 ;;

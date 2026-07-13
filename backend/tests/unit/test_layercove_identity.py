@@ -98,15 +98,65 @@ def test_readme_local_links_and_assets_resolve():
 def test_bambu_storage_and_runtime_compatibility_identifiers_remain():
     import backend.app.core.config as config
 
-    assert Path(config.settings.database_url.removeprefix("sqlite+aiosqlite:///" )).name == "bambuddy.db"
+    assert Path(config.settings.database_url.removeprefix("sqlite+aiosqlite:///")).name == "bambuddy.db"
     assert config.settings.archive_dir.name == "archive"
 
     root = Path(__file__).resolve().parents[3]
     compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
     assert "  bambuddy:" in compose
+    assert "image: ghcr.io/timpan4/layercove:latest" in compose
     assert "container_name: bambuddy" in compose
     assert "bambuddy_data:/app/data" in compose
     assert "bambuddy_logs:/app/logs" in compose
+
+
+@pytest.mark.unit
+def test_fresh_deployment_sources_target_layercove_and_keep_runtime_compatibility():
+    root = Path(__file__).resolve().parents[3]
+    installers = {
+        path: (root / path).read_text(encoding="utf-8")
+        for path in (
+            "install/install.sh",
+            "install/docker-install.sh",
+            "install/docker-install.ps1",
+        )
+    }
+
+    for path, content in installers.items():
+        assert "Timpan4/layercove" in content, path
+        assert "maziggy/bambuddy" not in content, path
+
+    assert 'DEFAULT_INSTALL_PATH="/opt/layercove"' in installers["install/install.sh"]
+    assert 'DEFAULT_INSTALL_PATH="/opt/layercove"' in installers["install/docker-install.sh"]
+    assert "Join-Path $env:USERPROFILE 'layercove'" in installers["install/docker-install.ps1"]
+    assert 'SERVICE_USER="bambuddy"' in installers["install/install.sh"]
+    assert "/etc/systemd/system/bambuddy.service" in installers["install/install.sh"]
+
+    for path in ("install/update.sh", "install/update_macos.sh"):
+        content = (root / path).read_text(encoding="utf-8")
+        assert 'DEFAULT_INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"' in content
+
+
+@pytest.mark.unit
+def test_container_publish_workflow_matches_documented_image():
+    root = Path(__file__).resolve().parents[3]
+    workflow = (root / ".github" / "workflows" / "publish-container.yml").read_text(encoding="utf-8")
+
+    assert "packages: write" in workflow
+    assert "ghcr.io/${{ github.repository_owner }}/layercove" in workflow
+    assert "linux/amd64,linux/arm64" in workflow
+
+
+@pytest.mark.unit
+def test_production_image_uses_declared_frontend_toolchain():
+    root = Path(__file__).resolve().parents[3]
+    dockerfile = (root / "Dockerfile").read_text(encoding="utf-8")
+
+    assert "FROM oven/bun:1.3.14-debian AS frontend-builder" in dockerfile
+    assert "COPY frontend/package.json frontend/bun.lock ./" in dockerfile
+    assert "RUN bun install --frozen-lockfile" in dockerfile
+    assert "RUN bun run build" in dockerfile
+    assert "npm ci" not in dockerfile
 
 
 @pytest.mark.unit
@@ -128,4 +178,3 @@ def test_remaining_frontend_bambuddy_strings_are_classified():
                 unclassified.append(f"{locale.name}:{line_number}: {line.strip()}")
 
     assert unclassified == []
-

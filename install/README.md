@@ -1,373 +1,104 @@
-# BamBuddy Installation Scripts
+# LayerCove installation scripts
 
-Interactive installation scripts for BamBuddy with support for both native and Docker deployments.
+These scripts install LayerCove from `Timpan4/layercove`. Runtime identifiers inherited from Bambuddy remain unchanged where renaming would disconnect existing services or data: the Compose service/container and volumes, native `bambuddy` service account/service, launchd label, database filename, and backup filenames are compatibility interfaces.
 
-## Quick Start
+## Docker installation (recommended)
 
-### Docker Installation (Recommended)
+Linux/macOS:
 
-**Linux/macOS:**
 ```bash
-curl -fsSL https://raw.githubusercontent.com/maziggy/bambuddy/main/install/docker-install.sh -o docker-install.sh && chmod +x docker-install.sh && ./docker-install.sh
-```
-
-**Windows (Command Prompt or PowerShell):**
-```cmd
-powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/maziggy/bambuddy/main/install/docker-install.ps1 -OutFile docker-install.ps1; .\docker-install.ps1"
-```
-
-> Requires Docker Desktop running. Printer auto-discovery is unavailable in Docker Desktop — add printers manually by IP.
-
-### Native Installation
-
-**Linux/macOS:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/maziggy/bambuddy/main/install/install.sh -o install.sh && chmod +x install.sh && ./install.sh
-```
-
-### Windows Native Installation
-
-**Windows PowerShell:**
-
-```powershell
-powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/maziggy/bambuddy/main/install/windows-installer.ps1 -OutFile windows-installer.ps1; .\windows-installer.ps1"
-```
-
-**Unattended:**
-```powershell
-.\windows-installer.ps1 -InstallDir C:\Bambuddy -Port 8000 -Yes
-```
----
-
-## Scripts Overview
-
-| Script | Platform | Method |
-|--------|----------|--------|
-| `install.sh` | Linux, macOS | Native (Python venv) |
-| `docker-install.sh` | Linux, macOS | Docker |
-| `docker-install.ps1` | Windows (Docker Desktop) | Docker |
-| `windows-installer.ps1` | Windows (Native) | Windows Service |
-| `update.sh` | Linux (systemd) | Native update helper |
-
----
-
-## Native Installation Scripts
-
-### `install.sh` (Linux/macOS)
-
-Installs BamBuddy with Python virtual environment and optional systemd/launchd service.
-
-**Supported Systems:**
-- Debian/Ubuntu (apt)
-- RHEL/Fedora/CentOS (dnf/yum)
-- Arch Linux (pacman)
-- openSUSE (zypper)
-- macOS (Homebrew)
-
-**Options:**
-```
---path PATH        Installation directory (default: /opt/bambuddy)
---port PORT        Port to listen on (default: 8000)
---tz TIMEZONE      Timezone (default: system timezone)
---data-dir PATH    Data directory (default: INSTALL_PATH/data)
---log-dir PATH     Log directory (default: INSTALL_PATH/logs)
---debug            Enable debug mode
---log-level LEVEL  Log level: DEBUG, INFO, WARNING, ERROR (default: INFO)
---no-service       Skip systemd/launchd service setup
---yes, -y          Non-interactive mode, accept defaults
-```
-
-**Examples:**
-```bash
-# Interactive installation
-./install.sh
-
-# Unattended with custom settings
-./install.sh --path /srv/bambuddy --port 3000 --tz America/New_York --yes
-
-# Minimal unattended
-./install.sh -y
-
-# Skip service setup
-./install.sh --no-service -y
-```
-### `windows-installer.ps1` (Windows)
-
-Windows PowerShell (run as Administrator — the installer self-elevates via UAC if not):
-
-```powershell
-powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/maziggy/bambuddy/main/install/windows-installer.ps1 -OutFile windows-installer.ps1; .\windows-installer.ps1"
-```
-
-> Installs Bambuddy natively on Windows using Git, Python, a virtual environment, and optional NSSM Windows Service registration. See the [Windows Installer Guide](https://wiki.bambuddy.cool/getting-started/windows-installer/) for full parameter reference.
-
-**Parameters:**
-```powershell
--InstallDir PATH  Installation directory (default: C:\Bambuddy)
--Port PORT        Port to listen on (default: 8000)
--Yes              Non-interactive mode, accept defaults
--Silent           Non-interactive mode with reduced console output
--NoService        Skip Windows Service setup
--NoStart          Do not start Bambuddy at the end
--LocalOnly        Bind to 127.0.0.1 instead of all LAN interfaces
-```
-
-The installer stores the Git checkout in `INSTALL_DIR\bambuddy`, user data in
-`INSTALL_DIR\data`, and application logs in `INSTALL_DIR\logs` so updates and
-re-clones do not delete runtime data. If an earlier Windows installer run left
-runtime data in the Git checkout, the installer moves known data and log paths
-to the new locations before starting Bambuddy.
-
----
-
-## Docker Installation Scripts
-
-### `docker-install.sh` (Linux/macOS)
-
-Installs BamBuddy using Docker containers.
-
-**Options:**
-```
---path PATH        Installation directory (default: ~/bambuddy)
---port PORT        Port to expose (default: 8000)
---tz TIMEZONE      Timezone (default: system timezone)
---build            Build from source instead of using pre-built image
---yes, -y          Non-interactive mode, accept defaults
-```
-
-**Examples:**
-```bash
-# Interactive installation
+curl -fsSL https://raw.githubusercontent.com/Timpan4/layercove/main/install/docker-install.sh -o docker-install.sh
+chmod +x docker-install.sh
 ./docker-install.sh
-
-# Unattended with custom settings
-./docker-install.sh --path /srv/bambuddy --port 3000 --tz Europe/Berlin --yes
-
-# Build from source
-./docker-install.sh --build --yes
 ```
 
-### `docker-install.ps1` (Windows)
-
-PowerShell mirror of `docker-install.sh` for Windows + Docker Desktop. Verifies
-Docker Desktop is running, downloads `docker-compose.yml`, rewrites it to use
-port mappings instead of host networking (Docker Desktop doesn't support host
-networking), and starts the container.
-
-**Requirements:**
-- Docker Desktop installed and running ([download](https://www.docker.com/products/docker-desktop))
-- PowerShell 5.1+ (ships with Windows 10/11) or PowerShell 7+
-
-**Parameters:**
-```
--InstallPath PATH    Installation directory (default: %USERPROFILE%\bambuddy)
--Port PORT           Port to expose (default: 8000)
--TimeZone TZ         IANA timezone (default: derived from Get-TimeZone or UTC)
--Build               Build from source instead of pulling pre-built image
--Yes                 Non-interactive mode, accept defaults
--Help                Show full help (Get-Help)
-```
-
-**Examples:**
-```powershell
-# Interactive
-.\docker-install.ps1
-
-# Unattended
-.\docker-install.ps1 -InstallPath C:\bambuddy -Port 8080 -TimeZone Europe/Berlin -Yes
-
-# Build from source
-.\docker-install.ps1 -Build -Yes
-```
-
-> **Limitations on Windows / Docker Desktop:** Printer auto-discovery (SSDP)
-> does not work — add printers manually by IP. The Virtual Printer feature
-> requires manually uncommenting the relevant port mappings in
-> `docker-compose.yml` (the script leaves them commented because most users
-> don't need them).
-
----
-
-## Configuration Options
-
-All scripts support these configuration options:
-
-| Option | Description | Default |
-|--------|-------------|---------|
-| Install Path | Where BamBuddy is installed | `/opt/bambuddy` (Linux/Docker) |
-| Port | HTTP port for web interface | `8000` |
-| Timezone | Server timezone | System timezone or `UTC` |
-| Data Directory | Database and archives | `INSTALL_PATH/data` |
-| Log Directory | Application logs | `INSTALL_PATH/logs` |
-| Debug Mode | Enable verbose logging | `false` |
-| Log Level | INFO, WARNING, ERROR, DEBUG | `INFO` |
-
----
-
-## Post-Installation
-
-### Accessing BamBuddy
-
-After installation, open your browser to:
-```
-http://localhost:8000
-```
-
-Or use the port you specified during installation.
-
-### Service Management
-
-**Linux (systemd):**
-```bash
-sudo systemctl status bambuddy    # Check status
-sudo systemctl start bambuddy     # Start
-sudo systemctl stop bambuddy      # Stop
-sudo systemctl restart bambuddy   # Restart
-sudo journalctl -u bambuddy -f    # View logs
-```
-
-**macOS (launchd):**
-```bash
-launchctl list | grep bambuddy                              # Check status
-launchctl load ~/Library/LaunchAgents/com.bambuddy.app.plist    # Start
-launchctl unload ~/Library/LaunchAgents/com.bambuddy.app.plist  # Stop
-```
-
-**Windows (NSSM service):**
-```powershell
-Get-Service Bambuddy        # Check status
-Start-Service Bambuddy      # Start
-Stop-Service Bambuddy       # Stop
-Restart-Service Bambuddy    # Restart
-Get-Content "C:\Bambuddy\bambuddy-runtime.log" -Tail 100 -Wait  # View logs
-```
-
-**Docker:**
-```bash
-docker compose ps           # Check status
-docker compose up -d        # Start
-docker compose down         # Stop
-docker compose restart      # Restart
-docker compose logs -f      # View logs
-```
-
-### Updating
-
-**Native installation:**
-```bash
-curl -fsSL https://raw.githubusercontent.com/maziggy/bambuddy/main/install/update.sh -o update.sh
-chmod +x update.sh
-sudo ./update.sh
-```
-
-The updater performs:
-- Root permission check (fails fast before any work)
-- Optional built-in backup API call (`/api/v1/settings/backup`) before update
-- Keeps only the newest 5 local backup ZIP files
-- Local-change warning + confirmation before `git reset --hard`
-- If remote has no new commits, updater exits early without stopping the service
-- Service stop/start with code rollback + service restart attempt if update fails
-
-Useful environment overrides:
-```bash
-# Typical native install defaults
-INSTALL_DIR=/opt/bambuddy SERVICE_NAME=bambuddy sudo ./update.sh
-
-# Require backup to succeed (abort update if backup fails)
-BACKUP_MODE=require sudo ./update.sh
-
-# Skip backup API call
-BACKUP_MODE=skip sudo ./update.sh
-
-# Auth-enabled instances: provide API key for backup endpoint
-BAMBUDDY_API_KEY=bb_xxx BACKUP_MODE=require sudo ./update.sh
-```
-
-**Docker (pre-built image):**
-```bash
-cd ~/bambuddy
-docker compose pull
-docker compose up -d
-```
-
-**Docker (from source):**
-```bash
-cd ~/bambuddy
-git pull
-docker compose up -d --build
-```
-
-**Windows (native):** rerun the installer; it detects the existing checkout and offers `git pull`, leaving `INSTALL_DIR\data` and `INSTALL_DIR\logs` untouched. Stop the service first if it is registered:
-```powershell
-Stop-Service Bambuddy
-.\windows-installer.ps1 -Yes
-Start-Service Bambuddy
-```
-
----
-
-## Troubleshooting
-
-### Permission Denied (Linux)
-Run with `sudo` or ensure your user has appropriate permissions:
-```bash
-sudo ./install.sh
-```
-
-### Docker: Printer Discovery Not Working
-Docker Desktop for macOS doesn't support host networking. Add printers manually by IP address in the BamBuddy web interface.
-
-### Service Won't Start
-Check logs for errors:
-```bash
-# Linux
-sudo journalctl -u bambuddy -n 50
-
-# Docker
-docker compose logs bambuddy
-```
-
-### Port Already in Use
-Choose a different port during installation or stop the conflicting service:
-```bash
-# Find what's using port 8000
-sudo lsof -i :8000  # Linux/macOS
-```
+Windows with Docker Desktop:
 
 ```powershell
-# Windows
-Get-NetTCPConnection -LocalPort 8000 -State Listen
+powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/Timpan4/layercove/main/install/docker-install.ps1 -OutFile docker-install.ps1; .\docker-install.ps1"
 ```
 
-### Windows: Service Won't Start
-Test the start script manually first:
-```powershell
-powershell.exe -ExecutionPolicy Bypass -File "C:\Bambuddy\Start-Bambuddy.ps1"
+The Docker installers default to a fresh `layercove` directory, download the LayerCove Compose file, and pull `ghcr.io/timpan4/layercove:latest`. `--build`/`-Build` clones this repository and builds the image locally instead.
+
+| Script | Platform | Important options |
+|---|---|---|
+| `docker-install.sh` | Linux, macOS | `--path`, `--port`, `--tz`, `--build`, `--yes` |
+| `docker-install.ps1` | Windows Docker Desktop | `-InstallPath`, `-Port`, `-TimeZone`, `-Build`, `-Yes` |
+
+Docker Desktop does not provide the Linux host networking used for automatic discovery. The installers enable the HTTP port mapping; add printers manually by address and explicitly enable any virtual-printer ports you require.
+
+## Native installation
+
+Linux/macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/Timpan4/layercove/main/install/install.sh -o install.sh
+chmod +x install.sh
+./install.sh
 ```
 
-Then check the NSSM runtime logs:
-```powershell
-Get-Content "C:\Bambuddy\bambuddy-runtime-error.log" -Tail 100
+`install.sh` defaults to `/opt/layercove` on Linux and `$HOME/layercove` on macOS. It supports `--path`, `--port`, `--bind`, `--tz`, `--data-dir`, `--log-dir`, `--debug`, `--log-level`, `--branch`, `--no-service`, and `--yes`.
+
+The service account and service name remain `bambuddy`. This is deliberate: an existing `/opt/bambuddy` installation can point `origin` to LayerCove and update without creating a second service or moving its data. Fresh installations show LayerCove in service descriptions and UI while using the compatible runtime identifiers.
+
+Examples:
+
+```bash
+./install.sh --path /srv/layercove --port 3000 --tz Europe/Stockholm --yes
+./install.sh --no-service --yes
 ```
 
----
+## Updating
 
-## Requirements
+Read [`../UPDATING.md`](../UPDATING.md) before changing an existing deployment. In summary:
 
-### Native Installation
-- Python 3.10+ (automatically installed if missing)
-- Node.js 18+ (automatically installed if missing)
-- Git (automatically installed if missing)
-- ~500MB disk space
+- Docker: back up, download the LayerCove Compose file separately, review/merge local settings, run `docker compose config`, then `docker compose pull && docker compose up -d`.
+- Native: run the updater inside the installed checkout. It derives the install root from its own path and retains the compatible service name.
+- Never use `docker compose down -v` during an upgrade; it deletes the named volumes.
+- Keep the previous image digest or Git commit and the backup until health and representative printer workflows pass.
 
-### Docker Installation
-- Docker Engine 20+ or Docker Desktop
-- ~1GB disk space (includes image)
+Linux native updater:
 
----
+```bash
+sudo /path/to/layercove/install/update.sh
+```
 
-## Support
+Useful compatibility overrides remain available:
 
-- **Documentation:** https://wiki.bambuddy.cool
-- **Discord:** https://discord.gg/aFS3ZfScHM
-- **Issues:** https://github.com/maziggy/bambuddy/issues
+```bash
+INSTALL_DIR=/opt/bambuddy SERVICE_NAME=bambuddy sudo /opt/bambuddy/install/update.sh
+BACKUP_MODE=require BAMBUDDY_API_KEY=bb_xxx sudo /opt/bambuddy/install/update.sh
+```
+
+The `BAMBUDDY_API_KEY` name and `bambuddy-backup-*.zip` files are retained interfaces, not stale product text.
+
+## Service management
+
+Linux:
+
+```bash
+sudo systemctl status bambuddy
+sudo journalctl -u bambuddy -f
+```
+
+macOS:
+
+```bash
+launchctl list | grep com.bambuddy.app
+```
+
+Docker:
+
+```bash
+docker compose ps
+docker compose logs -f bambuddy
+```
+
+## Requirements and boundaries
+
+- Native: Python 3.10+, Node.js 20+, Git, and FFmpeg.
+- Docker: Docker Engine with Compose v2, or Docker Desktop.
+- LayerCove is intended for a trusted private network or authenticated access layer. Do not publish Moonraker or printer endpoints directly.
+- LayerCove-specific behavior and deployment guidance lives in this repository. The Bambuddy wiki can describe inherited Bambu features but is not authoritative for LayerCove releases, Moonraker behavior, or upgrade destinations.
+
+Report LayerCove installation issues at <https://github.com/Timpan4/layercove/issues>.
