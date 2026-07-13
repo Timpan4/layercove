@@ -100,7 +100,7 @@ Use repository-declared tooling. On Windows, run Python/frontend tooling through
 
 | Area | Minimum automated check | When mandatory |
 |---|---|---|
-| Backend style | `uv run --with-requirements requirements-dev.txt ruff check backend/` and `ruff format --check backend/` | Every sync touching Python |
+| Backend style | `uv run --with-requirements requirements-dev.txt ruff check backend/` and `uv run --with-requirements requirements-dev.txt ruff format --check backend/` | Every sync touching Python |
 | Backend baseline | `uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt pytest backend/tests/` | Every sync |
 | Bambu regression | Focused manager, MQTT, FTP/FTPS, queue/scheduler, archive/history tests | Bambu, shared state, dispatch, migration, or lifecycle changes |
 | Moonraker | Client/security/fake-server integration suites | Provider, status, camera, dispatch, queue, or shared state changes |
