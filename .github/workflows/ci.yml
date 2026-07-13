@@ -275,7 +275,7 @@ jobs:
           docker run --rm \
             -e TESTING=1 \
             -e PYTHONUNBUFFERED=1 \
-            -e LAYERCOVE_REPOSITORY_ROOT=/workspace \
+            -e TEST_REPOSITORY_ROOT=/workspace \
             -v "$PWD:/workspace:ro" \
             bambuddy-backend-test:latest \
             pytest backend/tests/ \

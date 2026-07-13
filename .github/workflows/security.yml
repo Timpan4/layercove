@@ -86,7 +86,7 @@ jobs:
             -v "$RUNNER_TEMP:/scan" \
             -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
             -v "$PWD:/workspace" \
-            docker.io/aquasec/trivy:0.69.1 image \
+            docker.io/aquasec/trivy:0.72.0 image \
             --skip-version-check \
             --timeout 15m \
             --input /scan/bambuddy-security-scan.tar \
@@ -106,7 +106,7 @@ jobs:
           docker run --rm \
             -v "$RUNNER_TEMP/trivy-cache:/root/.cache/trivy" \
             -v "$PWD:/workspace" \
-            docker.io/aquasec/trivy:0.69.1 config \
+            docker.io/aquasec/trivy:0.72.0 config \
             --skip-version-check \
             --timeout 15m \
             --skip-dirs /workspace/.git \

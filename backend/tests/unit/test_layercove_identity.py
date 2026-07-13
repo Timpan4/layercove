@@ -10,7 +10,7 @@ import pytest
 
 from backend.app.core.config import get_compat_env
 
-REPOSITORY_ROOT = Path(os.environ.get("LAYERCOVE_REPOSITORY_ROOT", Path(__file__).resolve().parents[3]))
+REPOSITORY_ROOT = Path(os.environ.get("TEST_REPOSITORY_ROOT", Path(__file__).resolve().parents[3]))
 
 
 @pytest.mark.unit
