@@ -26,7 +26,7 @@ from backend.app.core.auth import (
     require_ownership_permission,
     require_permission_if_auth_enabled,
 )
-from backend.app.core.config import settings as app_settings
+from backend.app.core.config import get_compat_env, settings as app_settings
 from backend.app.core.database import async_session, get_db
 from backend.app.core.permissions import Permission
 from backend.app.core.tasks import spawn_background_task
@@ -1309,7 +1309,7 @@ def _allowed_external_roots() -> tuple[Path, ...]:
     resolve to absolute paths are silently dropped (operator error, not
     a security boundary). Resolved lazily so tests can monkeypatch.
     """
-    raw = os.environ.get("BAMBUDDY_EXTERNAL_ROOTS", "")
+    raw = get_compat_env("EXTERNAL_ROOTS")
     roots: list[Path] = []
     for entry in raw.split(":"):
         entry = entry.strip()

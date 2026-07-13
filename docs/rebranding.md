@@ -1,72 +1,48 @@
-# LayerCove rebranding inventory and compatibility plan
+# LayerCove identity and compatibility policy
 
-**Status:** Phase 1 inventory; user-facing changes not yet applied
+LayerCove is an independent modified fork of [Bambuddy](https://github.com/maziggy/bambuddy). It is not affiliated with or endorsed by Bambuddy's maintainer, Bambu Lab, Klipper, Moonraker, or OrcaSlicer. Upstream copyright, source history, and AGPL-3.0-or-later obligations remain intact.
 
-LayerCove is a modified fork of Bambuddy. Rebranding is user-facing and must
-preserve upstream copyright, AGPL-3.0-or-later obligations, source history, and
-accurate attribution. LayerCove is not an official continuation and is not
-affiliated with Bambu Lab, Klipper, Moonraker, OrcaSlicer, or Bambuddy's
-maintainer.
+## Active product identity
 
-## Change in product-identity phase
+User-facing application, API, browser/PWA, repository, support, and current documentation text uses **LayerCove**. Fresh source and image examples use `Timpan4/layercove`. Original logo and icon replacement is tracked separately because it requires visual approval; inherited asset filenames may therefore remain while their accessible product name is LayerCove.
 
-- README opening, disclaimer, status, deployment examples, security warning,
-  contribution/upstream guidance, license, and attribution.
-- Browser title and metadata, PWA name/description/screenshot labels, login and
-  navigation identity, API/OpenAPI title, support/bug-report identity, and safe
-  notification sender text.
-- Original isolated LayerCove SVG mark/wordmark and generated favicon/app icons.
-- Documentation examples should prefer `ghcr.io/timpan4/layercove`, container
-  `layercove`, and `LAYERCOVE_*` configuration aliases.
+## Environment aliases
 
-## Intentionally retain unless a tested migration requires change
+For renamed project-specific settings, LayerCove reads `LAYERCOVE_<SUFFIX>` first and falls back to `BAMBUDDY_<SUFFIX>`. If both are set, the LayerCove value wins, including an explicitly empty value.
 
-- Python package/import paths and database table names.
-- Existing migration SQL/history and migration identifiers.
-- `bambuddy.db`, persistent volume names, data/log paths, system-service names,
-  installer compatibility, frontend storage keys, API paths, and protocol IDs.
-- Existing `BAMBUDDY_*` variables. Add `LAYERCOVE_*` aliases with documented
-  precedence; do not remove or warn noisily in the initial fork.
-- SpoolBuddy names: this is a distinct inherited subsystem/product identity,
-  not a stale Bambuddy spelling.
-- `maziggy/bambuddy` links in attribution, upstream-sync commands, license/source
-  history, and code comments describing inherited behavior.
-- Bambu MQTT client IDs or other on-wire compatibility identifiers unless a
-  protocol test proves changing them is safe.
+| Preferred name | Compatibility fallback |
+|---|---|
+| `LAYERCOVE_LOCAL_LOGIN` | `BAMBUDDY_LOCAL_LOGIN` |
+| `LAYERCOVE_EXTERNAL_ROOTS` | `BAMBUDDY_EXTERNAL_ROOTS` |
+| `LAYERCOVE_VP_DUMP_WIRE` | `BAMBUDDY_VP_DUMP_WIRE` |
 
-## Classification hotspots
+The fallback names are supported interfaces, not deprecated typos. Generic variables such as `DATABASE_URL`, `DATA_DIR`, `LOG_DIR`, `PORT`, and `MFA_ENCRYPTION_KEY` are unchanged.
 
-- `README.md`, `CONTRIBUTING.md`, install/update docs, Docker docs, and
-  `slicer-api/README.md`: mixed public identity and required attribution.
-- `frontend/index.html`, `frontend/public/manifest.json`, frontend locale files,
-  login/layout/settings pages: user-facing identity.
-- `backend/app/core/config.py` and `backend/app/main.py`: mixed API title,
-  bug-report destination, filenames, environment compatibility, and comments.
-- `docker-compose.yml`, installers, deploy scripts, update services, CI image
-  names: mixed examples and compatibility identifiers.
-- `static/`: generated frontend output; regenerate through normal frontend build,
-  never hand-edit.
-- `CHANGELOG.md`: historical identity; retain history and add LayerCove changes
-  prospectively.
+## Intentionally retained Bambuddy identifiers
 
-## Alias policy
+These names remain because replacing them would break upgrades, stored data, integrations, or protocol compatibility:
 
-For each new `LAYERCOVE_*` setting, prefer it when present and fall back to the
-existing `BAMBUDDY_*` name. If both are set, document deterministic LayerCove
-precedence. Add focused tests for old-only, new-only, and both-set cases.
+- Python package/import paths, database tables, migration files, and historical migration identifiers.
+- `bambuddy.db`, existing named volumes, data/log paths, system-service and installer identifiers.
+- Frontend storage keys, custom DOM event names, backup/export filenames, API paths, and MQTT topic defaults.
+- Bambu MQTT client IDs, virtual-printer certificates, discovery names, and other on-wire identifiers unless protocol tests prove a migration safe.
+- Historical changelog entries, source comments describing inherited behavior, upstream-sync commands, license/source references, press coverage, and attribution links.
+- `SpoolBuddy`, which is a distinct inherited subsystem rather than a stale spelling of LayerCove.
 
-Persistent storage remains readable in place. Documentation may show new
-LayerCove names for fresh installs but must give explicit upgrade examples that
-reuse existing volumes and data directories.
+Fresh deployment naming may improve without migrating existing installations. Any future rename of a retained identifier requires an explicit compatibility migration, rollback path, and regression tests.
+
+## External destinations
+
+LayerCove release checks target `Timpan4/layercove`. The inherited Bambuddy bug-report relay is disabled by default; operators may set `BUG_REPORT_RELAY_URL` explicitly. This prevents LayerCove diagnostics from being submitted to an unrelated upstream service.
 
 ## Verification
 
-- Build frontend and confirm manifest/icon paths resolve.
-- Search stale identity strings and classify remaining matches rather than
-  demanding zero matches.
-- Test environment aliases and current database/storage paths.
-- Run Bambu regression checks after cosmetic/config changes.
-- Visually inspect logo in light/dark, favicon, 192px, 512px, and phone PWA use.
+Identity changes must keep:
 
-Name, package, domain, and trademark availability require separate legal and
-registry verification; this document makes no uniqueness claim.
+- old-only, new-only, and both-set environment tests;
+- Bambu configuration and dispatch regression coverage;
+- frontend production build and valid manifest assets;
+- Compose parsing with existing volume names;
+- a classified, non-zero set of legacy `Bambuddy` strings rather than an unsafe global replacement.
+
+Name, package, domain, and trademark availability require separate legal and registry review; this policy makes no uniqueness claim.

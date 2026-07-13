@@ -1,6 +1,7 @@
 """Env-flagged wire-payload dump for VP MQTT debug (gated; off by default).
 
-Set ``BAMBUDDY_VP_DUMP_WIRE=1`` to enable two complementary capture modes:
+Set ``LAYERCOVE_VP_DUMP_WIRE=1`` to enable two complementary capture modes.
+The inherited ``BAMBUDDY_VP_DUMP_WIRE`` name remains supported as a fallback:
 
 1. ``dump_wire``: most recent inbound (bridge cache input) and outbound
    (slicer-facing 1Hz push) MQTT payloads, one file per VP per direction,
@@ -35,20 +36,18 @@ from __future__ import annotations
 
 import json
 import logging
-import os
 import re
 from datetime import datetime, timezone
 
-from backend.app.core.config import settings as app_settings
+from backend.app.core.config import get_compat_env, settings as app_settings
 
 logger = logging.getLogger(__name__)
 
-_ENV_FLAG = "BAMBUDDY_VP_DUMP_WIRE"
 _NAME_SAFE = re.compile(r"[^A-Za-z0-9._-]+")
 
 
 def _enabled() -> bool:
-    return os.environ.get(_ENV_FLAG, "").strip().lower() in ("1", "true", "yes", "on")
+    return get_compat_env("VP_DUMP_WIRE").strip().lower() in ("1", "true", "yes", "on")
 
 
 def _sanitize(name: str) -> str:

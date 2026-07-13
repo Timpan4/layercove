@@ -21,6 +21,20 @@ def _enable_external_roots(monkeypatch, tmp_path):
     don't have to know the env var exists.
     """
     monkeypatch.setenv("BAMBUDDY_EXTERNAL_ROOTS", str(tmp_path.parent))
+    monkeypatch.delenv("LAYERCOVE_EXTERNAL_ROOTS", raising=False)
+
+
+def test_layercove_external_roots_take_precedence(monkeypatch, tmp_path):
+    from backend.app.api.routes.library import _allowed_external_roots
+
+    legacy = tmp_path / "legacy"
+    preferred = tmp_path / "preferred"
+    legacy.mkdir()
+    preferred.mkdir()
+    monkeypatch.setenv("BAMBUDDY_EXTERNAL_ROOTS", str(legacy))
+    monkeypatch.setenv("LAYERCOVE_EXTERNAL_ROOTS", str(preferred))
+
+    assert _allowed_external_roots() == (preferred.resolve(),)
 
 
 class TestExternalFolderCreation:

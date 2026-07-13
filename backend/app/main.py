@@ -138,7 +138,7 @@ def _start_error_server(missing_packages: list):
     html = f"""<!DOCTYPE html>
 <html>
 <head>
-    <title>Bambuddy - Setup Required</title>
+    <title>LayerCove - Setup Required</title>
     <style>
         body {{
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
@@ -6516,7 +6516,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title=app_settings.app_name,
-    description="Archive and manage Bambu Lab 3MF files",
+    description="Slice, manage, and monitor Bambu Lab and Klipper 3D printers",
     version=APP_VERSION,
     lifespan=lifespan,
 )
@@ -7014,7 +7014,7 @@ async def serve_frontend():
     if index_file.exists():
         return FileResponse(index_file, headers=_HTML_CACHE_HEADERS)
     return {
-        "message": "Bambuddy API",
+        "message": "LayerCove API",
         "docs": "/docs",
         "frontend": "Build and place React app in /static directory",
     }

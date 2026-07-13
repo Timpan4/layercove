@@ -98,6 +98,22 @@ class TestLocalLoginGate:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_layercove_env_var_takes_precedence(
+        self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
+    ):
+        await _enable_auth(async_client, "gateprecedence")
+        await _set_setting(db_session, "local_login_enabled", "false")
+        monkeypatch.setenv("BAMBUDDY_LOCAL_LOGIN", "true")
+        monkeypatch.setenv("LAYERCOVE_LOCAL_LOGIN", "false")
+
+        response = await async_client.post(
+            "/api/v1/auth/login",
+            json={"username": "gateprecedence", "password": "GatePass1!"},
+        )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_forgot_password_rejected_when_local_disabled(
         self, async_client: AsyncClient, db_session: AsyncSession, monkeypatch: pytest.MonkeyPatch
     ):

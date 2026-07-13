@@ -28,7 +28,7 @@ export default {
     smartSwitches: 'Interruptores inteligentes',
     logout: 'Sair',
     installApp: 'Instalar app',
-    installAppSuccess: 'Bambuddy foi instalado',
+    installAppSuccess: 'LayerCove foi instalado',
   },
 
   // Common
@@ -296,7 +296,7 @@ export default {
       confirmMidPrintTitle: 'Entrar em modo manutenção durante uma impressão?',
       confirmMidPrintMessage: '{{name}} está imprimindo no momento. Entrar em modo manutenção desconectará o MQTT e interromperá o acompanhamento do progresso e as notificações de conclusão para este trabalho. Continuar?',
       editFieldLabel: 'Modo manutenção',
-      editFieldHelp: 'Quando ativado, esta impressora é pausada do MQTT, despacho de fila e notificações — útil para reparos, instalações paralelas do Bambuddy ou suspensão temporária.',
+      editFieldHelp: 'Quando ativado, esta impressora é pausada do MQTT, despacho de fila e notificações — útil para reparos, instalações paralelas do LayerCove ou suspensão temporária.',
     },
     // Chamber light
     chamberLightOn: 'Ligar luz da câmara',
@@ -734,7 +734,7 @@ export default {
     title: 'Arquivos de Impressão',
     no3mfBanner: {
       title: 'Algumas impressões recentes não puderam ser arquivadas com miniaturas',
-      body: 'O fatiador não deixou o arquivo .gcode.3mf no cartão SD da impressora, então o Bambuddy não conseguiu obter nem a miniatura nem os metadados do fatiador. Normalmente isso acontece porque "Armazenar arquivos enviados no armazenamento externo" está desligado no fatiador (aba Dispositivo do Bambu Studio / OrcaSlicer).',
+      body: 'O fatiador não deixou o arquivo .gcode.3mf no cartão SD da impressora, então o LayerCove não conseguiu obter nem a miniatura nem os metadados do fatiador. Normalmente isso acontece porque "Armazenar arquivos enviados no armazenamento externo" está desligado no fatiador (aba Dispositivo do Bambu Studio / OrcaSlicer).',
       docsLink: 'Ver passo 4 da instalação',
       dismissLabel: 'Dispensar este aviso',
     },
@@ -1654,7 +1654,7 @@ export default {
       disabled: 'Autenticação LDAP desativada',
       feature1: 'Usuários podem fazer login com credenciais LDAP',
       feature2: 'A conta de administrador local permanece como fallback',
-      feature3: 'Grupos LDAP são mapeados para grupos BamBuddy no login',
+      feature3: 'Grupos LDAP são mapeados para grupos LayerCove no login',
       serverConfig: 'Configuração do Servidor LDAP',
       serverUrl: 'URL do servidor',
       serverUrlHint: 'Use ldap:// para padrão ou ldaps:// para conexões SSL',
@@ -1667,12 +1667,12 @@ export default {
       userFilterHint: '{username} é substituído pelo nome de usuário. Use (uid={username}) para OpenLDAP.',
       advanced: 'Avançado',
       autoProvision: 'Provisionamento automático de usuários',
-      autoProvisionHint: 'Criar automaticamente uma conta BamBuddy no primeiro login LDAP',
+      autoProvisionHint: 'Criar automaticamente uma conta LayerCove no primeiro login LDAP',
       defaultGroup: 'Grupo padrão',
       defaultGroupNone: '— Nenhum (sem fallback) —',
       defaultGroupHint: 'Grupo de fallback atribuído quando um usuário LDAP se autentica mas não está em nenhum grupo LDAP mapeado. Deixe vazio para manter usuários não mapeados sem permissões.',
       groupMapping: 'Mapeamento de grupos (JSON)',
-      groupMappingHint: 'Mapear DNs de grupos LDAP para grupos BamBuddy. Grupos disponíveis: ',
+      groupMappingHint: 'Mapear DNs de grupos LDAP para grupos LayerCove. Grupos disponíveis: ',
       testConnection: 'Testar conexão',
       settingsSaved: 'Configurações LDAP salvas',
       errors: {
@@ -2048,7 +2048,7 @@ export default {
     preheatEnabled: 'Ativar pré-aquecimento & soak',
     preheatEnabledDesc: 'Quando desligado, as impressões na fila iniciam imediatamente. Cada item pode sobrescrever por impressão.',
     preheatFilamentTargetsLabel: 'Alvo da câmara por filamento (°C)',
-    preheatFilamentTargetsHint: 'Bambuddy escolhe o alvo mais alto entre os slots AMS carregados; impressões apenas com PLA derivam 0 e pulam a fase da câmara automaticamente.',
+    preheatFilamentTargetsHint: 'LayerCove escolhe o alvo mais alto entre os slots AMS carregados; impressões apenas com PLA derivam 0 e pulam a fase da câmara automaticamente.',
     preheatFilamentTargetsReset: 'Redefinir para padrões',
     preheatFilamentTargetsDefaultRow: 'Outro / sem mapeamento',
     preheatMaxWait: 'Espera máx. (segundos)',
@@ -2100,7 +2100,7 @@ export default {
     authentication: 'Autenticação',
     authEnabledDescription: 'Sua instância está protegida com autenticação de usuário',
     authDisabledDescription: 'Ative para exigir login e gerenciar o acesso dos usuários',
-    authDisabledMessage: 'Ative a autenticação para criar contas de usuário, gerenciar permissões e proteger sua instância do Bambuddy.',
+    authDisabledMessage: 'Ative a autenticação para criar contas de usuário, gerenciar permissões e proteger sua instância do LayerCove.',
     enableAuthentication: 'Ativar Autenticação',
     currentUser: 'Usuário Atual',
     changePassword: 'Alterar Senha',
@@ -2139,10 +2139,10 @@ export default {
     deleteGroup: 'Excluir Grupo',
     // Modal: Disable auth
     disableAuthenticationTitle: 'Desativar Autenticação',
-    disableAuthenticationMessage: 'Tem certeza de que deseja desativar a autenticação? Isso tornará sua instância do Bambuddy acessível sem login. Todos os usuários permanecerão no banco de dados, mas a autenticação será desativada.',
+    disableAuthenticationMessage: 'Tem certeza de que deseja desativar a autenticação? Isso tornará sua instância do LayerCove acessível sem login. Todos os usuários permanecerão no banco de dados, mas a autenticação será desativada.',
     disableAuthentication: 'Desativar Autenticação',
     // Additional settings
-    configureBambuddy: 'Configurar Bambuddy',
+    configureBambuddy: 'Configurar LayerCove',
     systemDefault: 'Padrão do Sistema',
     archiveSettings: 'Configurações de Arquivo',
     newWindow: 'Nova Janela',
@@ -2366,7 +2366,7 @@ export default {
     autoArchivePrints: 'Arquivar impressões automaticamente',
     autoArchiveDescription: 'Salvar automaticamente arquivos 3MF quando impressões forem concluídas',
     saveThumbnailsDescription: 'Extrair e salvar imagens de pré-visualização dos arquivos 3MF',
-    captureFinishPhotoDescription: 'Tirar foto da câmera da impressora quando a impressão for concluída. Bambuddy grava um timelapse curto durante a impressão para que a foto possa ser obtida do momento antes da mesa descer; o arquivo do timelapse é mantido se você habilitou o timelapse para esta impressão, caso contrário ele é excluído automaticamente após a captura da foto.',
+    captureFinishPhotoDescription: 'Tirar foto da câmera da impressora quando a impressão for concluída. LayerCove grava um timelapse curto durante a impressão para que a foto possa ser obtida do momento antes da mesa descer; o arquivo do timelapse é mantido se você habilitou o timelapse para esta impressão, caso contrário ele é excluído automaticamente após a captura da foto.',
     ffmpegNotInstalled: 'ffmpeg não instalado',
     ffmpegRequired: 'A captura de câmera requer ffmpeg. Instale via <brew>brew install ffmpeg</brew> (macOS) ou <apt>apt install ffmpeg</apt> (Linux).',
     camera: 'Câmera',
@@ -2400,13 +2400,13 @@ export default {
     lowDiskSpaceDescription: 'Mostrar aviso quando o espaço livre em disco ficar abaixo deste limite',
     printerFirmware: 'Firmware da impressora',
     checkFirmwareDescription: 'Verificar atualizações de firmware da Bambu Lab',
-    bambuddySoftware: 'Software Bambuddy',
+    bambuddySoftware: 'Software LayerCove',
     autoCheckDescription: 'Verificar automaticamente novas versões ao iniciar',
     checkNow: 'Verificar agora',
     updateAvailableVersion: 'Atualização disponível: v{{version}}',
     releaseNotes: 'Notas da versão',
     updateViaDocker: 'Atualizar via Docker Compose:',
-    updateViaHomeAssistant: 'As atualizações são gerenciadas pelo Supervisor do Home Assistant. Abra Configurações → Complementos → Bambuddy no Home Assistant para instalar a nova versão.',
+    updateViaHomeAssistant: 'As atualizações são gerenciadas pelo Supervisor do Home Assistant. Abra Configurações → Complementos → LayerCove no Home Assistant para instalar a nova versão.',
     updateViaWindowsInstaller: 'Instalações no Windows são atualizadas executando o instalador novamente. Baixe a nova versão abaixo — seus dados, configurações e impressoras são preservados.',
     downloadWindowsInstaller: 'Baixar instalador da v{{version}}',
     installUpdate: 'Instalar atualização',
@@ -2416,8 +2416,8 @@ export default {
     backupRestoreDescription: 'Exportar/importar configurações e configurar backup do GitHub',
     goToBackup: 'Ir para backup',
     externalUrl: 'URL externa',
-    externalUrlDescription: 'A URL externa onde o Bambuddy está acessível. Usada para imagens de notificação e integrações externas.',
-    bambuddyUrl: 'URL do Bambuddy',
+    externalUrlDescription: 'A URL externa onde o LayerCove está acessível. Usada para imagens de notificação e integrações externas.',
+    bambuddyUrl: 'URL do LayerCove',
     externalUrlHint: 'Inclua protocolo e porta (ex: http://192.168.1.100:8000)',
     ftpRetry: 'Tentativa FTP',
     ftpRetryDescription: 'Tentar novamente operações FTP quando o WiFi da impressora é instável. Aplica-se a downloads 3MF, uploads de impressão, downloads de timelapse e atualizações de firmware.',
@@ -2441,7 +2441,7 @@ export default {
     haConnectionSuccess: 'Conectado com sucesso ao Home Assistant.',
     haConnectionFailed: 'Falha ao conectar ao Home Assistant.',
     mqttPublishing: 'Publicação MQTT',
-    mqttDescription: 'Publique eventos do BamBuddy para um broker MQTT externo para integração com Node-RED, Home Assistant e outros sistemas de automação.',
+    mqttDescription: 'Publique eventos do LayerCove para um broker MQTT externo para integração com Node-RED, Home Assistant e outros sistemas de automação.',
     mqttEnableDescription: 'Publicar eventos no broker MQTT externo',
     brokerHostname: 'Hostname do broker',
     port: 'Porta',
@@ -2584,7 +2584,7 @@ export default {
       enabledFromFile: 'Criptografia em repouso ativa (chave do diretório de dados)',
       enabledGenerated: 'Criptografia em repouso ativa com chave auto-gerada',
       notConfigured: 'Criptografia em repouso não configurada',
-      notConfiguredDesc: 'Os segredos TOTP e client_secrets OIDC são armazenados em texto plano. Defina MFA_ENCRYPTION_KEY ou reinicie o Bambuddy com um diretório de dados gravável para gerar automaticamente.',
+      notConfiguredDesc: 'Os segredos TOTP e client_secrets OIDC são armazenados em texto plano. Defina MFA_ENCRYPTION_KEY ou reinicie o LayerCove com um diretório de dados gravável para gerar automaticamente.',
       allEncrypted: 'Todos os segredos MFA são criptografados em repouso.',
       legacyRowsLabel: 'Linhas legadas em texto plano',
       encryptedRowsLabel: 'Linhas criptografadas',
@@ -2592,7 +2592,7 @@ export default {
       backupHint: 'A chave auto-gerada é armazenada em DATA_DIR/.mfa_encryption_key e incluída em ZIPs de backup locais. Mantenha seus backups seguros ou defina MFA_ENCRYPTION_KEY explicitamente.',
       decryptionBrokenTitle: 'Chave de criptografia ausente',
       decryptionBrokenError: '{{count}} registro(s) criptografado(s) não podem ser descriptografados pois a chave de criptografia não está mais disponível. Restaure o MFA_ENCRYPTION_KEY anterior ou DATA_DIR/.mfa_encryption_key para recuperar.',
-      migrationErrorWarning: '{{count}} linha(s) antiga(s) não puderam ser recriptografadas na inicialização. Verifique os logs do servidor e reinicie o Bambuddy para tentar novamente.',
+      migrationErrorWarning: '{{count}} linha(s) antiga(s) não puderam ser recriptografadas na inicialização. Verifique os logs do servidor e reinicie o LayerCove para tentar novamente.',
     },
 
 
@@ -2883,7 +2883,7 @@ export default {
 
   // Login page
   login: {
-    title: 'Login Bambuddy',
+    title: 'Login LayerCove',
     subtitle: 'Faça login na sua conta',
     username: 'Nome de usuário',
     usernamePlaceholder: 'Digite seu nome de usuário',
@@ -2931,7 +2931,7 @@ export default {
     sending: 'Enviando...',
     sendResetEmail: 'Enviar Email de Redefinição',
     howToReset: 'Como redefinir sua senha:',
-    resetStep1: 'Entre em contato com o administrador do Bambuddy',
+    resetStep1: 'Entre em contato com o administrador do LayerCove',
     resetStep2: 'Peça para redefinir sua senha na Gestão de Usuários',
     resetStep3: 'Eles podem definir uma nova senha temporária para você',
     resetStep4: 'Faça login com a nova senha e altere-a nas Configurações',
@@ -2956,7 +2956,7 @@ export default {
       methodAuthenticator: 'Aplicativo autenticador',
       methodEmail: 'Código por e-mail',
       methodBackup: 'Código de recuperação',
-      instructionsTotp: 'Abra seu aplicativo autenticador e insira o código de 6 dígitos gerado para o Bambuddy.',
+      instructionsTotp: 'Abra seu aplicativo autenticador e insira o código de 6 dígitos gerado para o LayerCove.',
       instructionsEmail: 'Um código de 6 dígitos foi enviado para o seu e-mail. Ele é válido por 10 minutos.',
       instructionsEmailNotSent: 'Clique no botão abaixo para receber um código de verificação por e-mail.',
       instructionsBackup: 'Insira um dos seus códigos de recuperação de 8 caracteres. Cada código só pode ser utilizado uma vez.',
@@ -2981,8 +2981,8 @@ export default {
 
   // Setup page
   setup: {
-    title: 'Bambuddy Configuração',
-    subtitle: 'Configure a autenticação para sua instância do Bambuddy',
+    title: 'LayerCove Configuração',
+    subtitle: 'Configure a autenticação para sua instância do LayerCove',
     enableAuth: 'Ativar Autenticação',
     adminAccount: 'Conta de Administrador',
     adminAccountDesc: 'Se usuários administradores já existirem, a autenticação será ativada usando as contas de administrador existentes. Deixe os campos abaixo vazios para usar os administradores existentes ou insira novas credenciais para criar um novo usuário administrador.',
@@ -3139,7 +3139,7 @@ export default {
   // Users management
   users: {
     title: 'Gerenciamento de Usuários',
-    subtitle: 'Gerenciar usuários e seu acesso à sua instância do Bambuddy',
+    subtitle: 'Gerenciar usuários e seu acesso à sua instância do LayerCove',
     backToSettings: 'Voltar para Configurações',
     createUser: 'Criar Usuário',
     noPermission: 'Você não tem permissão para acessar esta página.',
@@ -3255,7 +3255,7 @@ export default {
       back: 'Usar outro método de login',
       connect: {
         title: 'Conectar ao Orca Cloud',
-        description: 'Entre na sua conta Orca Cloud para sincronizar seus perfis de slicer no Bambuddy.',
+        description: 'Entre na sua conta Orca Cloud para sincronizar seus perfis de slicer no LayerCove.',
       },
       providers: {
         google: 'Entrar com Google',
@@ -3937,13 +3937,13 @@ export default {
   // Sponsor surface (System page)
   sponsors: {
     sectionTitle: 'Independente e financiado pela comunidade',
-    tagline: 'O Bambuddy é gratuito e continua assim porque há quem escolha apoiá-lo. Sem VC, sem dependência de nuvem.',
+    tagline: 'O LayerCove é gratuito e continua assim porque há quem escolha apoiá-lo. Sem VC, sem dependência de nuvem.',
     viewSupporters: 'Ver apoiadores',
-    toastPrints: 'Você concluiu {{count}} impressões com o Bambuddy. O Bambuddy continua gratuito graças a quem o apoia.',
-    toastCost: 'Você acompanhou {{total}} de filamento com o Bambuddy. Veja quem mantém o projeto independente.',
-    toastArchives: '{{count}} impressões arquivadas com o Bambuddy. Veja quem o mantém independente.',
-    toastAnniversary: 'Um ano com o Bambuddy! Veja quem mantém o projeto independente.',
-    toastVersionUpdate: 'Atualizado para v{{version}}. O Bambuddy continua gratuito graças a quem o apoia.',
+    toastPrints: 'Você concluiu {{count}} impressões com o LayerCove. O LayerCove continua gratuito graças a quem o apoia.',
+    toastCost: 'Você acompanhou {{total}} de filamento com o LayerCove. Veja quem mantém o projeto independente.',
+    toastArchives: '{{count}} impressões arquivadas com o LayerCove. Veja quem o mantém independente.',
+    toastAnniversary: 'Um ano com o LayerCove! Veja quem mantém o projeto independente.',
+    toastVersionUpdate: 'Atualizado para v{{version}}. O LayerCove continua gratuito graças a quem o apoia.',
   },
 
   // Library (K Profiles)
@@ -4196,8 +4196,8 @@ export default {
       invalidHex: 'Digite 6 caracteres hex (RRGGBB) ou 8 (RRGGBBAA). Caso contrário o campo não será aplicado.',
     },
     spoolmanMixedContentTitle: 'Spoolman não pode carregar em HTTPS — conteúdo misto bloqueado pelo navegador',
-    spoolmanMixedContentBody: 'O Bambuddy é servido via HTTPS (pelo seu reverse proxy), mas a URL do Spoolman ainda é HTTP. Os navegadores bloqueiam conteúdo misto por segurança, então a interface embutida do Spoolman não consegue carregar. O Spoolman também precisa estar acessível via HTTPS.',
-    spoolmanMixedContentFixReverseProxy: 'Coloque o Spoolman atrás do mesmo reverse proxy do Bambuddy (Traefik / Nginx / Caddy) com HTTPS e atualize a URL do Spoolman em Configurações com o novo endereço HTTPS.',
+    spoolmanMixedContentBody: 'O LayerCove é servido via HTTPS (pelo seu reverse proxy), mas a URL do Spoolman ainda é HTTP. Os navegadores bloqueiam conteúdo misto por segurança, então a interface embutida do Spoolman não consegue carregar. O Spoolman também precisa estar acessível via HTTPS.',
+    spoolmanMixedContentFixReverseProxy: 'Coloque o Spoolman atrás do mesmo reverse proxy do LayerCove (Traefik / Nginx / Caddy) com HTTPS e atualize a URL do Spoolman em Configurações com o novo endereço HTTPS.',
     spoolmanMixedContentFixOpenNewTab: 'Como alternativa, abra o Spoolman em uma nova aba via HTTP — as regras de conteúdo misto só se aplicam a frames embutidos, uma aba independente funciona normalmente.',
     spoolmanOpenInNewTab: 'Abrir Spoolman em nova aba',
     labels: {
@@ -4642,8 +4642,8 @@ export default {
     cloudLoginRequiredShort: 'Login Cloud necessário',
     githubDescription: 'Sincronize automaticamente seus perfis com um repositório GitHub privado para backup e histórico de versões.',
     repoIsPrivate: 'O repositório é privado — seguro para backup.',
-    repoIsPublicWarning: 'O repositório está PÚBLICO. Os backups do Bambuddy incluem credenciais MQTT, tokens do Home Assistant, tokens do Prometheus, seu e-mail do Bambu Cloud e os códigos de acesso das impressoras via K-profiles. Salvar está bloqueado até que você torne o repositório privado nas configurações do seu provedor.',
-    repoVisibilityUnknown: 'Não foi possível determinar a visibilidade do repositório. O Bambuddy se recusa a fazer backup em qualquer destino não confirmado como privado; salvar será bloqueado.',
+    repoIsPublicWarning: 'O repositório está PÚBLICO. Os backups do LayerCove incluem credenciais MQTT, tokens do Home Assistant, tokens do Prometheus, seu e-mail do Bambu Cloud e os códigos de acesso das impressoras via K-profiles. Salvar está bloqueado até que você torne o repositório privado nas configurações do seu provedor.',
+    repoVisibilityUnknown: 'Não foi possível determinar a visibilidade do repositório. O LayerCove se recusa a fazer backup em qualquer destino não confirmado como privado; salvar será bloqueado.',
     repositoryUrl: 'URL do repositório',
     repoUrlPlaceholderGitHub: 'https://github.com/username/repo-name',
 	repoUrlPlaceholderGitea: 'https://gitea.example.com/username/repo-name',
@@ -4673,7 +4673,7 @@ export default {
     cloudProfiles: 'Perfis Cloud',
     cloudProfilesDescription: 'Predefinições de filamento, impressora e processo do Bambu Cloud',
     appSettings: 'Configurações do App',
-    appSettingsDescription: 'Configuração do Bambuddy (banco de dados completo)',
+    appSettingsDescription: 'Configuração do LayerCove (banco de dados completo)',
     spoolInventory: 'Inventário de bobinas',
     spoolInventoryDescription: 'Bobinas de filamento, histórico de uso e rastreamento de custos',
     printArchives: 'Arquivos de impressão',
@@ -4708,7 +4708,7 @@ export default {
 
     // Local Backup
     localBackup: 'Backup local',
-    localBackupDescription: 'Crie um backup completo dos seus dados do Bambuddy incluindo banco de dados, arquivos, uploads e todos os ficheiros.',
+    localBackupDescription: 'Crie um backup completo dos seus dados do LayerCove incluindo banco de dados, arquivos, uploads e todos os ficheiros.',
     downloadBackupLabel: 'Baixar backup',
     completeBackupZip: 'Backup completo: banco de dados + todos os arquivos (ZIP)',
     download: 'Baixar',
@@ -4724,7 +4724,7 @@ export default {
     restoreConfirmMessage: 'Tem certeza de que deseja restaurar de "{{filename}}"? Isso substituirá completamente seu banco de dados e todos os arquivos. O aplicativo precisará ser reiniciado após a restauração.',
     restoreConfirmButton: 'Restaurar backup',
     uploadingFile: 'Enviando arquivo de backup...',
-    backupRestoredRestart: 'Backup restaurado. Por favor, reinicie o Bambuddy.',
+    backupRestoredRestart: 'Backup restaurado. Por favor, reinicie o LayerCove.',
     failedToRestore: 'Falha ao restaurar backup. Verifique o formato do arquivo.',
     reloadNow: 'Recarregar agora',
     creatingBackup: 'Criando backup',
@@ -4956,7 +4956,7 @@ export default {
       right: 'Direito',
       notes: 'Notas (armazenadas localmente)',
       notesPlaceholder: 'Adicione notas sobre este perfil...',
-      notesHelp: 'As notas são salvas no Bambuddy, não na impressora',
+      notesHelp: 'As notas são salvas no LayerCove, não na impressora',
       syncing: 'Sincronizando com a impressora...',
       savingExtruder: 'Salvando no extrusor {{current}}/{{total}}...',
       pleaseWait: 'Por favor, aguarde',
@@ -5011,7 +5011,7 @@ export default {
     },
     enable: {
       title: 'Ativar Impressora Virtual',
-      visibleInSlicer: 'Visível como "Bambuddy" na descoberta do slicer',
+      visibleInSlicer: 'Visível como "LayerCove" na descoberta do slicer',
       proxyingTo: 'Proxy para {{name}}',
       notActive: 'Não ativo',
     },
@@ -5046,7 +5046,7 @@ export default {
       configured: 'Substituição da interface ativa',
       optional: 'Opcional - use se o IP detectado automaticamente estiver errado (por exemplo, várias NICs, Docker, VPN)',
       placeholder: 'Detecção automática (padrão)...',
-      hint: 'Substitua o endereço IP anunciado via SSDP e usado no certificado TLS. Útil quando o Bambuddy possui várias interfaces de rede.',
+      hint: 'Substitua o endereço IP anunciado via SSDP e usado no certificado TLS. Útil quando o LayerCove possui várias interfaces de rede.',
     },
     mode: {
       title: 'Modo',
@@ -5146,7 +5146,7 @@ export default {
     },
     caCert: {
       title: 'Certificado do slicer',
-      description: 'As impressoras virtuais usam um certificado TLS assinado pela CA do Bambuddy. Importe este certificado CA para o armazenamento de confiança do seu slicer uma única vez para que ele aceite a conexão — sem precisar copiá-lo pela linha de comando.',
+      description: 'As impressoras virtuais usam um certificado TLS assinado pela CA do LayerCove. Importe este certificado CA para o armazenamento de confiança do seu slicer uma única vez para que ele aceite a conexão — sem precisar copiá-lo pela linha de comando.',
       copy: 'Copiar',
       copied: 'Copiado',
       download: 'Baixar',
@@ -5640,7 +5640,7 @@ export default {
     title: 'Links da barra lateral',
     sidebarLayout: 'Barra lateral',
     sidebarLayoutDescription: 'Mostre ou oculte páginas integradas, adicione links externos e arraste itens para reordenar a navegação lateral.',
-    systemPages: 'Páginas do Bambuddy',
+    systemPages: 'Páginas do LayerCove',
     externalLinks: 'Links externos',
     visibleInSidebar: 'Visível na barra lateral',
     hiddenFromSidebar: 'Oculto na barra lateral',
@@ -5855,7 +5855,7 @@ export default {
   // Email Settings
   emailSettings: {
     placeholders: {
-      fromName: 'Bambuddy',
+      fromName: 'LayerCove',
     },
   },
 
@@ -6151,7 +6151,7 @@ export default {
       upToDate: 'Atualizado',
       includeBeta: 'Incluir versões beta',
       systemConfig: 'Backend e autenticação',
-      backendUrl: 'URL do backend Bambuddy',
+      backendUrl: 'URL do backend LayerCove',
       apiToken: 'Token de API',
       apiTokenPlaceholder: 'Insira o token de API',
       saveConfig: 'Salvar configuração',
@@ -6258,13 +6258,13 @@ export default {
       network_mode: {
         title: 'Modo de rede Docker',
         pass: 'Executando no modo de rede host.',
-        warn: 'O Bambuddy está sendo executado em rede Docker bridge. A descoberta de impressoras e a impressora virtual precisam do modo de rede host — recrie o contêiner com "network_mode: host".',
+        warn: 'O LayerCove está sendo executado em rede Docker bridge. A descoberta de impressoras e a impressora virtual precisam do modo de rede host — recrie o contêiner com "network_mode: host".',
         skip: 'Não está sendo executado no Docker — não aplicável.',
       },
       subnet: {
         title: 'Sub-rede',
-        pass: 'A impressora e o Bambuddy estão na mesma sub-rede.',
-        warn: 'A impressora ({{printer_ip}}) e o Bambuddy ({{host_ip}}) estão em sub-redes diferentes. Eles podem não se alcançar, a menos que o roteamento entre as sub-redes esteja configurado.',
+        pass: 'A impressora e o LayerCove estão na mesma sub-rede.',
+        warn: 'A impressora ({{printer_ip}}) e o LayerCove ({{host_ip}}) estão em sub-redes diferentes. Eles podem não se alcançar, a menos que o roteamento entre as sub-redes esteja configurado.',
         skip: 'Não foi possível determinar a sub-rede — ignorado.',
       },
       mqtt_auth: {
@@ -6306,12 +6306,12 @@ export default {
       'ftp-auth-rejected': {
         name: 'A impressora rejeitou o código de acesso',
         cause: 'A impressora recusou o login de transferência de arquivos. O código de acesso está errado ou mudou após alternar o Modo Desenvolvedor.',
-        fix: 'Copie novamente o código de acesso da tela da impressora (configurações de LAN) e atualize-o nas configurações da impressora no Bambuddy.',
+        fix: 'Copie novamente o código de acesso da tela da impressora (configurações de LAN) e atualize-o nas configurações da impressora no LayerCove.',
       },
       'ftp-connection-timeout': {
         name: 'Tempo limite da conexão de transferência de arquivos',
-        cause: 'O Bambuddy não conseguiu acessar a porta de transferência de arquivos da impressora (FTPS 990). A porta está bloqueada, ou a impressora está desligada ou em outra sub-rede.',
-        fix: 'Verifique se nada bloqueia a porta 990 entre o Bambuddy e a impressora e se ambos estão na mesma rede.',
+        cause: 'O LayerCove não conseguiu acessar a porta de transferência de arquivos da impressora (FTPS 990). A porta está bloqueada, ou a impressora está desligada ou em outra sub-rede.',
+        fix: 'Verifique se nada bloqueia a porta 990 entre o LayerCove e a impressora e se ambos estão na mesma rede.',
       },
       'ftp-ssl-error': {
         name: 'Falha no handshake seguro de transferência de arquivos',
@@ -6331,7 +6331,7 @@ export default {
       'database-locked': {
         name: 'Conflitos de gravação no banco de dados',
         cause: 'O banco de dados SQLite apresenta erros "database is locked" sob carga — comum ao usar várias impressoras ao mesmo tempo.',
-        fix: 'Migre o Bambuddy para um banco de dados PostgreSQL externo. Consulte o guia do PostgreSQL na documentação.',
+        fix: 'Migre o LayerCove para um banco de dados PostgreSQL externo. Consulte o guia do PostgreSQL na documentação.',
       },
     },
   },
@@ -6354,7 +6354,7 @@ export default {
       },
       running: {
         title: 'Serviços em execução',
-        fail: 'A impressora virtual está habilitada, mas seus serviços não estão em execução. Verifique o log do Bambuddy — geralmente um conflito de IP de vínculo ou um erro de permissão os interrompe.',
+        fail: 'A impressora virtual está habilitada, mas seus serviços não estão em execução. Verifique o log do LayerCove — geralmente um conflito de IP de vínculo ou um erro de permissão os interrompe.',
       },
       bind_interface: {
         title: 'Interface de rede de vínculo',
@@ -6383,8 +6383,8 @@ export default {
       },
       certificate: {
         title: 'Certificado TLS',
-        pass: 'Certificado pronto. Verifique se o certificado CA do Bambuddy (acima) está importado no armazenamento de confiança do seu slicer.',
-        fail: 'O certificado TLS desta impressora virtual está ausente. Verifique se o diretório de dados do Bambuddy tem permissão de escrita.',
+        pass: 'Certificado pronto. Verifique se o certificado CA do LayerCove (acima) está importado no armazenamento de confiança do seu slicer.',
+        fail: 'O certificado TLS desta impressora virtual está ausente. Verifique se o diretório de dados do LayerCove tem permissão de escrita.',
       },
     },
   },
@@ -6449,7 +6449,7 @@ export default {
     pollInterval: 'Intervalo de verificação (segundos)',
     pollIntervalHint: 'Frequência de verificação de cada impressora durante a impressão. Mínimo 5s, máximo 120s.',
     externalUrlMissing: 'URL externa não definida.',
-    externalUrlHint: 'A API ML busca a captura da câmera por URL. Defina a URL externa nas configurações gerais para que o contêiner da API ML possa alcançar o Bambuddy.',
+    externalUrlHint: 'A API ML busca a captura da câmera por URL. Defina a URL externa nas configurações gerais para que o contêiner da API ML possa alcançar o LayerCove.',
     perPrinterTitle: 'Impressoras monitoradas',
     perPrinterHint: 'Escolha quais impressoras o serviço de detecção monitora.',
     monitorAll: 'Monitorar todas as impressoras conectadas',
@@ -6463,7 +6463,7 @@ export default {
   },
   makerworld: {
     title: 'MakerWorld',
-    description: 'Cole uma URL de modelo do MakerWorld para importar e imprimir diretamente do Bambuddy — sem precisar abrir o app Bambu Handy.',
+    description: 'Cole uma URL de modelo do MakerWorld para importar e imprimir diretamente do LayerCove — sem precisar abrir o app Bambu Handy.',
     pasteUrlHeader: 'Importar do MakerWorld',
     pasteUrlPlaceholder: 'https://makerworld.com/en/models/… ou cole qualquer link do MakerWorld',
     resolveButton: 'Resolver',
@@ -6486,7 +6486,7 @@ export default {
     alsoCompatible: 'Também marcado como compatível: {{printers}}',
     importToLibrary: 'Salvar',
     sliceIn: 'Salvar e fatiar no {{slicer}}',
-    disclaimer: 'A integração com o MakerWorld usa endpoints de API documentados pela comunidade. Bambuddy não é afiliado nem endossado pelo MakerWorld ou pela Bambu Lab.',
+    disclaimer: 'A integração com o MakerWorld usa endpoints de API documentados pela comunidade. LayerCove não é afiliado nem endossado pelo MakerWorld ou pela Bambu Lab.',
     lastImportSuccess: 'Importado para sua biblioteca',
     lastImportAlreadyInLibrary: 'Já na sua biblioteca',
     viewInLibrary: 'Ver no Gerenciador de Arquivos',
@@ -6582,7 +6582,7 @@ export default {
     effect1: 'Os arquivos correspondentes são movidos para a Lixeira — ainda não são excluídos do disco.',
     effect2: 'Você pode restaurá-los da Lixeira a qualquer momento até o fim do período de retenção.',
     effect3: 'Após o período de retenção, o coletor da lixeira os remove permanentemente.',
-    effect4: 'Arquivos em pastas externas (vinculadas) são ignorados — Bambuddy nunca exclui bytes que não possui.',    previewLoading: 'Verificando quantos arquivos correspondem…',
+    effect4: 'Arquivos em pastas externas (vinculadas) são ignorados — LayerCove nunca exclui bytes que não possui.',    previewLoading: 'Verificando quantos arquivos correspondem…',
     previewFailed: 'Não foi possível pré-visualizar a limpeza.',
     previewSummary: '{{count}} arquivos · {{size}} seriam movidos para a lixeira',
     andMore: '…e mais {{count}}',

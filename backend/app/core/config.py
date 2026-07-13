@@ -7,8 +7,16 @@ from pydantic_settings import BaseSettings
 
 # Application version - single source of truth
 APP_VERSION = "0.2.4.9"
-GITHUB_REPO = "maziggy/bambuddy"
-BUG_REPORT_RELAY_URL = os.environ.get("BUG_REPORT_RELAY_URL", "https://bambuddy.cool/api/bug-report")
+GITHUB_REPO = "Timpan4/layercove"
+BUG_REPORT_RELAY_URL = os.environ.get("BUG_REPORT_RELAY_URL", "")
+
+
+def get_compat_env(suffix: str, default: str = "") -> str:
+    """Read a LayerCove setting with its inherited Bambuddy fallback."""
+    layercove_key = f"LAYERCOVE_{suffix}"
+    if layercove_key in os.environ:
+        return os.environ[layercove_key]
+    return os.environ.get(f"BAMBUDDY_{suffix}", default)
 
 # App directory - where the application is installed (for static files)
 _app_dir = Path(__file__).resolve().parent.parent.parent.parent
@@ -56,7 +64,7 @@ _db_path = _migrate_database() if not _external_db_url else None
 
 
 class Settings(BaseSettings):
-    app_name: str = "Bambuddy"
+    app_name: str = "LayerCove"
     debug: bool = False  # Default to production mode
 
     # Paths
@@ -100,10 +108,9 @@ class Settings(BaseSettings):
 
 settings = Settings()
 
-# S6: Warn on unknown MFA_*/BAMBUDDY_* env vars so typos like MFA_ENCYPTION_KEY
-# are not silently swallowed by ``extra = "ignore"``. The original Pydantic
-# behaviour rejected them outright and broke startup (#1219); we now accept
-# them but log every unrecognised one at INFO so operators can spot mistakes.
+# Warn on unknown MFA_*/LAYERCOVE_*/BAMBUDDY_* env vars so typos are not
+# silently swallowed by ``extra = "ignore"``. Existing BAMBUDDY_* names remain
+# accepted compatibility aliases.
 _INTENTIONAL_UNSETTINGS = {
     "MFA_ENCRYPTION_KEY",  # encryption.py reads this directly
     "DATA_DIR",  # paths.py / config.py
@@ -113,12 +120,23 @@ _INTENTIONAL_UNSETTINGS = {
     "BUG_REPORT_RELAY_URL",  # config.py (above)
 }
 
+_COMPAT_ENV_SUFFIXES = {
+    "EXTERNAL_ROOTS",
+    "LOCAL_LOGIN",
+    "VP_DUMP_WIRE",
+}
+
 _known_settings_fields = {f.upper() for f in settings.model_fields}
 
 for _env_key in os.environ:
-    if _re.match(r"^(MFA_|BAMBUDDY_)", _env_key, _re.IGNORECASE):
+    if _re.match(r"^(MFA_|LAYERCOVE_|BAMBUDDY_)", _env_key, _re.IGNORECASE):
         _norm = _env_key.upper()
-        if _norm not in _known_settings_fields and _norm not in _INTENTIONAL_UNSETTINGS:
+        _compat_suffix = _norm.removeprefix("LAYERCOVE_").removeprefix("BAMBUDDY_")
+        if (
+            _norm not in _known_settings_fields
+            and _norm not in _INTENTIONAL_UNSETTINGS
+            and _compat_suffix not in _COMPAT_ENV_SUFFIXES
+        ):
             logging.info(
                 "Unknown env var %r — not a declared Settings field. Possible typo? Recognised operational vars: %s",
                 _env_key,
