@@ -2,6 +2,7 @@ import asyncio
 import logging
 import re
 import zipfile
+from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
@@ -24,9 +25,11 @@ from backend.app.core.permissions import Permission
 from backend.app.core.tasks import spawn_background_task
 from backend.app.models.ams_label import AmsLabel
 from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
+from backend.app.models.network_site import NetworkSite
 from backend.app.models.printer import Printer
 from backend.app.models.slot_preset import SlotPresetMapping
 from backend.app.models.user import User
+from backend.app.schemas.network_site import magic_dns_hostname
 from backend.app.schemas.printer import (
     AmsLabelBody,
     AMSTray,
@@ -130,6 +133,28 @@ def _serialize_printer(printer: Printer, *, include_secret: bool):
     return response
 
 
+async def _network_site_target(
+    db: AsyncSession, network_site_id: int | None, lan_ip: str | None
+) -> tuple[NetworkSite | None, str | None]:
+    if network_site_id is None and lan_ip is None:
+        return None, None
+    if network_site_id is None or lan_ip is None:
+        raise HTTPException(400, "Network site and LAN IP must be provided together")
+    site = await db.get(NetworkSite, network_site_id)
+    if site is None:
+        raise HTTPException(400, "Network site not found")
+    try:
+        return site, magic_dns_hostname(site.site_number, site.ipv4_cidr, lan_ip)
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
+
+
+def _replace_url_host(value: str, host: str) -> str:
+    parsed = urlsplit(value)
+    netloc = f"{host}:{parsed.port}" if parsed.port is not None else host
+    return urlunsplit((parsed.scheme, netloc, parsed.path, parsed.query, parsed.fragment))
+
+
 @router.get("/")
 async def list_printers(
     user: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
@@ -141,7 +166,11 @@ async def list_printers(
     to see it (Admin / Operator JWT, or auth-disabled mode). Viewers and
     API keys never receive it.
     """
-    result = await db.execute(select(Printer).options(selectinload(Printer.moonraker_config)).order_by(Printer.name))
+    result = await db.execute(
+        select(Printer)
+        .options(selectinload(Printer.moonraker_config), selectinload(Printer.network_site))
+        .order_by(Printer.name)
+    )
     printers = list(result.scalars().all())
     include_secret = await _caller_can_view_printer_secrets(user, db)
     return [_serialize_printer(p, include_secret=include_secret) for p in printers]
@@ -158,13 +187,17 @@ async def create_printer(
     Verifies the provider connection before persisting. Wrong credentials or
     an unreachable target would otherwise create an empty printer card.
     """
+    network_site, generated_host = await _network_site_target(
+        db, printer_data.network_site_id, printer_data.network_site_lan_ip
+    )
+    connection_ip = generated_host or printer_data.ip_address
     if printer_data.provider is PrinterProvider.BAMBU:
         result = await db.execute(select(Printer).where(Printer.serial_number == printer_data.serial_number))
         if result.scalar_one_or_none():
             raise HTTPException(400, "Printer with this serial number already exists")
 
         test_result = await printer_manager.test_connection(
-            ip_address=printer_data.ip_address,
+            ip_address=connection_ip,
             serial_number=printer_data.serial_number,
             access_code=printer_data.access_code_value,
         )
@@ -183,10 +216,13 @@ async def create_printer(
     else:
         config = printer_data.moonraker_config
         assert config is not None
+        moonraker_base_url = (
+            _replace_url_host(config.base_url_value, generated_host) if generated_host else config.base_url_value
+        )
         await _validate_spoolman_spool(db, config.spoolman_spool_id)
         try:
             connected = await MoonrakerHTTPClient(
-                base_url=config.base_url_value,
+                base_url=moonraker_base_url,
                 api_key=config.api_key_value,
                 authorization=config.authorization_value,
                 tls_verify=config.tls_verify,
@@ -213,12 +249,24 @@ async def create_printer(
     printer_values = printer_data.model_dump(exclude={"moonraker_config"})
     printer_values["provider"] = printer_data.provider.value
     printer_values["access_code"] = printer_data.access_code_value
+    if generated_host is not None:
+        printer_values["ip_address"] = generated_host
     printer = Printer(**printer_values)
+    if network_site is not None:
+        printer.network_site = network_site
     if printer_data.moonraker_config is not None:
         config_input = printer_data.moonraker_config
         config = MoonrakerPrinterConfig(
-            base_url=config_input.base_url_value,
-            websocket_url_override=config_input.websocket_url_override_value,
+            base_url=(
+                _replace_url_host(config_input.base_url_value, generated_host)
+                if generated_host
+                else config_input.base_url_value
+            ),
+            websocket_url_override=(
+                _replace_url_host(config_input.websocket_url_override_value, generated_host)
+                if generated_host and config_input.websocket_url_override_value
+                else config_input.websocket_url_override_value
+            ),
             tls_verify=config_input.tls_verify,
             spoolman_accounting_owner=config_input.spoolman_accounting_owner,
             spoolman_spool_id=config_input.spoolman_spool_id,
@@ -247,7 +295,9 @@ async def test_moonraker_connection(
 ):
     """Test only the stored Moonraker origin; never accept a request-time URL."""
     result = await db.execute(
-        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+        select(Printer)
+        .options(selectinload(Printer.moonraker_config), selectinload(Printer.network_site))
+        .where(Printer.id == printer_id)
     )
     printer = result.scalar_one_or_none()
     if not printer:
@@ -432,7 +482,9 @@ async def get_printer(
     never receive it.
     """
     result = await db.execute(
-        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+        select(Printer)
+        .options(selectinload(Printer.moonraker_config), selectinload(Printer.network_site))
+        .where(Printer.id == printer_id)
     )
     printer = result.scalar_one_or_none()
     if not printer:
@@ -450,7 +502,9 @@ async def update_printer(
 ):
     """Update a printer."""
     result = await db.execute(
-        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+        select(Printer)
+        .options(selectinload(Printer.moonraker_config), selectinload(Printer.network_site))
+        .where(Printer.id == printer_id)
     )
     printer = result.scalar_one_or_none()
     if not printer:
@@ -468,14 +522,38 @@ async def update_printer(
         raise HTTPException(400, "Bambu connection fields must not be cleared")
 
     moonraker_data = update_data.pop("moonraker_config", None)
+    site_fields_touched = "network_site_id" in update_data or "network_site_lan_ip" in update_data
+    selected_site = printer.network_site
+    generated_host = None
+    if site_fields_touched:
+        effective_site_id = update_data.get("network_site_id", printer.network_site_id)
+        effective_lan_ip = update_data.get("network_site_lan_ip", printer.network_site_lan_ip)
+        selected_site, generated_host = await _network_site_target(db, effective_site_id, effective_lan_ip)
+    elif printer.network_site_id is not None:
+        selected_site, generated_host = await _network_site_target(
+            db,
+            printer.network_site_id,
+            printer.network_site_lan_ip,
+        )
+    if printer.provider == PrinterProvider.BAMBU and generated_host is not None:
+        if site_fields_touched or "ip_address" in update_data:
+            update_data["ip_address"] = generated_host
+
     if moonraker_data is not None:
         if printer.provider != PrinterProvider.MOONRAKER:
             raise HTTPException(400, "Bambu printer must not include moonraker_config")
         config_input = printer_data.moonraker_config
         assert config_input is not None
-        moonraker_data["base_url"] = config_input.base_url_value
+        moonraker_data["base_url"] = (
+            _replace_url_host(config_input.base_url_value, generated_host)
+            if generated_host
+            else config_input.base_url_value
+        )
         if "websocket_url_override" in moonraker_data:
-            moonraker_data["websocket_url_override"] = config_input.websocket_url_override_value
+            websocket_url = config_input.websocket_url_override_value
+            moonraker_data["websocket_url_override"] = (
+                _replace_url_host(websocket_url, generated_host) if generated_host and websocket_url else websocket_url
+            )
         config = printer.moonraker_config
         if config is None:
             config = MoonrakerPrinterConfig(printer=printer)
@@ -500,6 +578,14 @@ async def update_printer(
             config.authorization = authorization
             if authorization is not None:
                 config.api_key = None
+    elif printer.provider == PrinterProvider.MOONRAKER and generated_host is not None:
+        if printer.moonraker_config is None:
+            raise HTTPException(400, "Moonraker printer does not have connection settings")
+        printer.moonraker_config.base_url = _replace_url_host(printer.moonraker_config.base_url, generated_host)
+        if printer.moonraker_config.websocket_url_override:
+            printer.moonraker_config.websocket_url_override = _replace_url_host(
+                printer.moonraker_config.websocket_url_override, generated_host
+            )
 
     # Handle nested ROI object - flatten to individual columns
     if "plate_detection_roi" in update_data:
@@ -518,6 +604,8 @@ async def update_printer(
 
     for field, value in update_data.items():
         setattr(printer, field, value)
+    if site_fields_touched:
+        printer.network_site = selected_site
 
     await db.commit()
     await db.refresh(printer)
@@ -528,7 +616,10 @@ async def update_printer(
     connection_changed = (
         printer.provider == PrinterProvider.BAMBU
         and any(k in update_data for k in ["ip_address", "access_code", "is_active"])
-    ) or (printer.provider == PrinterProvider.MOONRAKER and (moonraker_data is not None or "is_active" in update_data))
+    ) or (
+        printer.provider == PrinterProvider.MOONRAKER
+        and (moonraker_data is not None or site_fields_touched or "is_active" in update_data)
+    )
     if connection_changed:
         await printer_manager.disconnect_printer_async(printer_id)
         if printer.is_active:
@@ -1024,7 +1115,9 @@ async def connect_printer(
 ):
     """Manually connect to a printer."""
     result = await db.execute(
-        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+        select(Printer)
+        .options(selectinload(Printer.moonraker_config), selectinload(Printer.network_site))
+        .where(Printer.id == printer_id)
     )
     printer = result.scalar_one_or_none()
     if not printer:

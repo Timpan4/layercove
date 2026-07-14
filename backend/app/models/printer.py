@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, String, func
+from sqlalchemy import Boolean, CheckConstraint, DateTime, Float, ForeignKey, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.database import Base
@@ -18,6 +18,10 @@ class Printer(Base):
     access_code: Mapped[str | None] = mapped_column(String(20), nullable=True)
     model: Mapped[str | None] = mapped_column(String(50))
     location: Mapped[str | None] = mapped_column(String(100))  # Group/location name
+    network_site_id: Mapped[int | None] = mapped_column(
+        ForeignKey("network_sites.id", ondelete="RESTRICT"), nullable=True
+    )
+    network_site_lan_ip: Mapped[str | None] = mapped_column(String(15), nullable=True)
     nozzle_count: Mapped[int] = mapped_column(default=1)  # 1 or 2, auto-detected from MQTT
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     auto_archive: Mapped[bool] = mapped_column(Boolean, default=True)
@@ -66,6 +70,7 @@ class Printer(Base):
     moonraker_config: Mapped["MoonrakerPrinterConfig | None"] = relationship(
         back_populates="printer", cascade="all, delete-orphan", uselist=False
     )
+    network_site: Mapped["NetworkSite | None"] = relationship(back_populates="printers")
 
 
 from backend.app.models.ams_history import AMSSensorHistory  # noqa: E402
@@ -73,6 +78,7 @@ from backend.app.models.archive import PrintArchive  # noqa: E402
 from backend.app.models.kprofile_note import KProfileNote  # noqa: E402
 from backend.app.models.maintenance import PrinterMaintenance  # noqa: E402
 from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig  # noqa: E402
+from backend.app.models.network_site import NetworkSite  # noqa: E402
 from backend.app.models.notification import NotificationProvider  # noqa: E402
 from backend.app.models.printer_sensor_history import PrinterSensorHistory  # noqa: E402
 from backend.app.models.smart_plug import SmartPlug  # noqa: E402

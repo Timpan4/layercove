@@ -303,6 +303,24 @@ export interface LongLivedCameraToken {
 }
 
 // Printer types
+export interface NetworkSiteSummary {
+  id: number;
+  name: string;
+  site_number: number;
+}
+
+export interface NetworkSite extends NetworkSiteSummary {
+  ipv4_cidr: string;
+  four_via_six_cidr: string;
+  printer_count: number;
+}
+
+export interface NetworkSiteInput {
+  name: string;
+  site_number: number;
+  ipv4_cidr: string;
+}
+
 export interface Printer {
   id: number;
   name: string;
@@ -315,6 +333,9 @@ export interface Printer {
   access_code?: string;
   model: string | null;
   location: string | null;  // Group/location name
+  network_site_id: number | null;
+  network_site_lan_ip: string | null;
+  network_site: NetworkSiteSummary | null;
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
   is_active: boolean;
   auto_archive: boolean;
@@ -585,6 +606,8 @@ export interface PrinterCreate {
   moonraker_config?: MoonrakerPrinterConfigInput;
   model?: string;
   location?: string;
+  network_site_id?: number | null;
+  network_site_lan_ip?: string | null;
   auto_archive?: boolean;
   // Maintenance Mode flag (#1476). Backend already gates MQTT, queue dispatch,
   // scheduler, metrics and the print picker on this; toggling via PATCH
@@ -3746,6 +3769,13 @@ export const api = {
     }),
 
   // Printers
+  getNetworkSites: () => request<NetworkSite[]>('/network-sites'),
+  createNetworkSite: (data: NetworkSiteInput) =>
+    request<NetworkSite>('/network-sites', { method: 'POST', body: JSON.stringify(data) }),
+  updateNetworkSite: (id: number, data: Partial<NetworkSiteInput>) =>
+    request<NetworkSite>(`/network-sites/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteNetworkSite: (id: number) =>
+    request<void>(`/network-sites/${id}`, { method: 'DELETE' }),
   getPrinters: () => request<Printer[]>('/printers/'),
   getPrinter: (id: number) => request<Printer>(`/printers/${id}`),
   createPrinter: (data: PrinterCreate) =>

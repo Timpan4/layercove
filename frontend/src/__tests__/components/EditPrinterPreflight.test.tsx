@@ -61,6 +61,7 @@ describe('EditPrinterModal pre-flight', () => {
       http.get('/api/v1/printers/', () => HttpResponse.json([mockPrinter])),
       http.get('/api/v1/printers/:id/status', () => HttpResponse.json(mockStatus)),
       http.get('/api/v1/queue/', () => HttpResponse.json([])),
+      http.get('/api/v1/network-sites', () => HttpResponse.json([])),
     );
   });
 
@@ -105,5 +106,69 @@ describe('EditPrinterModal pre-flight', () => {
 
     await waitFor(() => expect(updated).toBe(true));
     expect(screen.queryByText(/Some connection checks failed/i)).not.toBeInTheDocument();
+  });
+
+  it('reassigns a printer to a named site', async () => {
+    let diagnosticTarget = '';
+    let updateBody: Record<string, unknown> = {};
+    server.use(
+      http.get('/api/v1/network-sites', () =>
+        HttpResponse.json([
+          {
+            id: 2,
+            name: 'Dogge Home',
+            site_number: 2,
+            ipv4_cidr: '192.168.50.0/24',
+            four_via_six_cidr: 'fd7a:115c:a1e0:b1a:0:2:c0a8:3200/120',
+            printer_count: 0,
+          },
+        ]),
+      ),
+      http.post('/api/v1/printers/diagnostic', async ({ request }) => {
+        diagnosticTarget = ((await request.json()) as { ip_address: string }).ip_address;
+        return HttpResponse.json({ overall: 'ok', checks: [] });
+      }),
+      http.patch('/api/v1/printers/:id', async ({ request }) => {
+        updateBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ ...mockPrinter, ...updateBody });
+      }),
+    );
+
+    await openEditModal();
+    await userEvent.selectOptions(screen.getByLabelText('Connection'), '2');
+    await userEvent.type(screen.getByLabelText('Printer LAN IPv4 address'), '192.168.50.22');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(updateBody.network_site_id).toBe(2));
+    expect(updateBody.network_site_lan_ip).toBe('192.168.50.22');
+    expect(diagnosticTarget).toBe('192-168-50-22-via-2');
+  });
+
+  it('does not detach an existing site when the site query fails', async () => {
+    let updated = false;
+    server.use(
+      http.get('/api/v1/printers/', () =>
+        HttpResponse.json([
+          {
+            ...mockPrinter,
+            network_site_id: 1,
+            network_site_lan_ip: '192.168.1.87',
+            network_site: { id: 1, name: 'Timpa Home', site_number: 1 },
+          },
+        ]),
+      ),
+      http.get('/api/v1/network-sites', () => HttpResponse.json({ detail: 'failed' }, { status: 500 })),
+      http.patch('/api/v1/printers/:id', () => {
+        updated = true;
+        return HttpResponse.json(mockPrinter);
+      }),
+    );
+
+    await openEditModal();
+    const save = screen.getByRole('button', { name: /save changes/i });
+    await waitFor(() => expect(save).toBeDisabled());
+    await userEvent.click(save);
+
+    expect(updated).toBe(false);
   });
 });
