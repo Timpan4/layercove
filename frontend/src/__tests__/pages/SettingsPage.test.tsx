@@ -39,6 +39,10 @@ const mockSettings = {
 
 describe('SettingsPage', () => {
   beforeEach(() => {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
     // BrowserRouter shares window.location across tests; reset it so a tab
     // switch in one test (e.g. clicking "Workflow") doesn't carry into
     // sibling tests that expect to land on the default General tab.
