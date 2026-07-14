@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="static/img/bambuddy_logo_dark.png" alt="LayerCove" width="300">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="static/img/layercove-wordmark-light.svg">
+    <img src="static/img/layercove-wordmark-dark.svg" alt="LayerCove" width="300">
+  </picture>
 </p>
 
 <h1 align="center">LayerCove</h1>

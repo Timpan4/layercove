@@ -1,6 +1,6 @@
-// Bambuddy Service Worker
-const CACHE_NAME = 'bambuddy-v30';
-const STATIC_CACHE = 'bambuddy-static-v29';
+// LayerCove Service Worker
+const CACHE_NAME = 'layercove-v1';
+const STATIC_CACHE = 'layercove-static-v1';
 
 // Static assets to cache on install
 const STATIC_ASSETS = [
@@ -9,10 +9,16 @@ const STATIC_ASSETS = [
   '/img/favicon.png',
   '/img/favicon-16x16.png',
   '/img/favicon-32x32.png',
-  '/img/android-chrome-192x192.png',
-  '/img/android-chrome-512x512.png',
+  '/img/layercove-icon-192.png',
+  '/img/layercove-icon-512.png',
+  '/img/layercove-icon-maskable-192.png',
+  '/img/layercove-icon-maskable-512.png',
   '/img/apple-touch-icon.png',
-  '/img/bambuddy_logo_dark.png',
+  '/img/layercove-mark.svg',
+  '/img/layercove-mark-light.svg',
+  '/img/layercove-mark-dark.svg',
+  '/img/layercove-wordmark-light.svg',
+  '/img/layercove-wordmark-dark.svg',
   // Self-hosted Inter font (#1460) - cached so the UI renders offline.
   '/fonts/inter-latin.woff2',
   '/fonts/inter-latin-ext.woff2',
@@ -191,8 +197,8 @@ self.addEventListener('push', (event) => {
 
   const data = event.data.json();
   const options = {
-    body: data.body || 'New notification from Bambuddy',
-    icon: '/img/android-chrome-192x192.png',
+    body: data.body || 'New notification from LayerCove',
+    icon: '/img/layercove-icon-192.png',
     badge: '/img/favicon-32x32.png',
     vibrate: [100, 50, 100],
     data: {
@@ -201,7 +207,7 @@ self.addEventListener('push', (event) => {
   };
 
   event.waitUntil(
-    self.registration.showNotification(data.title || 'Bambuddy', options)
+    self.registration.showNotification(data.title || 'LayerCove', options)
   );
 });
 

@@ -12,7 +12,7 @@ export function SetupPage() {
   const navigate = useNavigate();
   const { t } = useTranslation();
   const { showToast } = useToast();
-  const { mode } = useTheme();
+  const { resolvedMode } = useTheme();
   const { refreshAuth } = useAuth();
   const [authEnabled, setAuthEnabled] = useState(false);
   const [adminUsername, setAdminUsername] = useState('');
@@ -79,7 +79,7 @@ export function SetupPage() {
         <div className="text-center">
           <div className="flex items-center justify-center mb-6">
             <img
-              src={mode === 'dark' ? '/img/bambuddy_logo_dark_transparent.png' : '/img/bambuddy_logo_light.png'}
+              src={resolvedMode === 'dark' ? '/img/layercove-wordmark-light.svg' : '/img/layercove-wordmark-dark.svg'}
               alt="LayerCove"
               className="h-16"
             />
