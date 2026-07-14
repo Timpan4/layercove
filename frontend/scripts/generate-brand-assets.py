@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate LayerCove PNG application icons from the original layer-mark geometry."""
+"""Generate LayerCove PNG application icons from the Cove Stack mark."""
 
 from __future__ import annotations
 
@@ -24,16 +24,37 @@ def distance_to_segment(px: float, py: float, start: tuple[float, float], end: t
     return ((px - nearest_x) ** 2 + (py - nearest_y) ** 2) ** 0.5
 
 
+def mark_segments(scale: float, offset: float) -> list[tuple[tuple[float, float], tuple[float, float]]]:
+    segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
+
+    outer = [
+        (48, 16), (28, 16), (25, 16.3), (22, 17.5), (19.5, 19.5), (17.5, 22),
+        (15.5, 26), (14, 32), (15.5, 38), (17.5, 42), (19.5, 44.5), (22, 46.5),
+        (25, 47.7), (28, 48), (48, 48),
+    ]
+    shelves = (
+        [(18, 24), (42, 24)],
+        [(14, 32), (47, 32)],
+        [(18, 40), (42, 40)],
+    )
+
+    def transform(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+        return [(offset + x * scale, offset + y * scale) for x, y in points]
+
+    transformed_outer = transform(outer)
+    segments.extend(zip(transformed_outer, transformed_outer[1:]))
+    for shelf in shelves:
+        start, end = transform(shelf)
+        segments.append((start, end))
+    return segments
+
+
 def render_icon(size: int, inset: float) -> bytes:
     """Render a safe-area-friendly icon with four-sample antialiasing."""
     scale = size * inset / 64
     offset = (size - 64 * scale) / 2
     stroke = 6 * scale
-    segments: list[tuple[tuple[float, float], tuple[float, float]]] = []
-    for y in (18, 30, 42):
-        points = [(13, y), (43, y), (51, y + 8), (43, y + 16), (21, y + 16), (13, y + 8), (21, y)]
-        points = [(offset + x * scale, offset + point_y * scale) for x, point_y in points]
-        segments.extend(zip(points, points[1:] + points[:1]))
+    segments = mark_segments(scale, offset)
 
     pixels = bytearray()
     samples = ((0.25, 0.25), (0.75, 0.25), (0.25, 0.75), (0.75, 0.75))

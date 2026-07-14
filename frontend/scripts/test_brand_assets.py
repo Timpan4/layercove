@@ -4,6 +4,9 @@ from __future__ import annotations
 import json
 import re
 import struct
+import subprocess
+import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 import zlib
@@ -66,6 +69,21 @@ class BrandAssetsTest(unittest.TestCase):
         for name, expected_dimensions in EXPECTED_PNGS.items():
             with self.subTest(name=name):
                 self.assertEqual(png_dimensions(IMAGE / name), expected_dimensions)
+
+    def test_png_generator_reproduces_checked_in_icons(self) -> None:
+        generator = FRONTEND / "scripts" / "generate-brand-assets.py"
+        with tempfile.TemporaryDirectory() as directory:
+            generated = Path(directory)
+            source = generator.read_text(encoding="utf-8").replace(
+                'OUTPUT = Path(__file__).resolve().parents[1] / "public" / "img"',
+                f"OUTPUT = Path({str(generated)!r})",
+            )
+            isolated_generator = generated / generator.name
+            isolated_generator.write_text(source, encoding="utf-8")
+            subprocess.run([sys.executable, str(isolated_generator)], check=True)
+            for name in {*EXPECTED_PNGS, "favicon.png"}:
+                with self.subTest(name=name):
+                    self.assertEqual((generated / name).read_bytes(), (IMAGE / name).read_bytes())
 
     def test_manifest_assets_exist_and_match_declared_dimensions(self) -> None:
         manifest = json.loads((PUBLIC / "manifest.json").read_text(encoding="utf-8"))
