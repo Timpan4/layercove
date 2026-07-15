@@ -6825,6 +6825,20 @@ async def auth_middleware(request, call_next):
         if pattern in path:
             return await call_next(request)
 
+    # Browser camera-wall requests cannot send bearer headers. Keep this
+    # exception to the two selected-camera media routes; their route-level
+    # dependency validates the required stream token.
+    path_parts = path.split("/")
+    if (
+        len(path_parts) == 8
+        and path_parts[:4] == ["", "api", "v1", "printers"]
+        and path_parts[4].isdigit()
+        and path_parts[5] == "cameras"
+        and path_parts[6].isdigit()
+        and path_parts[7] in {"stream", "snapshot"}
+    ):
+        return await call_next(request)
+
     # Check if auth is enabled. Fail CLOSED on any exception during the
     # probe — GHSA-6mf4-q26m-47pv: the previous fail-open path here let
     # an attacker who could force a DB exception (e.g. file-descriptor
