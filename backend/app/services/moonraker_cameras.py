@@ -161,9 +161,7 @@ async def sync_moonraker_cameras(
             logger.warning("Moonraker webcam test failed for printer %s camera %s", printer.id, uid)
             tested[uid] = {}
 
-    rows = list(
-        (await db.execute(select(PrinterCamera).where(PrinterCamera.printer_id == printer.id))).scalars().all()
-    )
+    rows = list((await db.execute(select(PrinterCamera).where(PrinterCamera.printer_id == printer.id))).scalars().all())
     by_uid = {(row.source, row.source_uid): row for row in rows}
     now = _utcnow()
     seen: set[str] = set()
@@ -175,9 +173,7 @@ async def sync_moonraker_cameras(
         seen.add(uid)
         probe = tested[uid]
         stream_url = resolve_webcam_url(webcam.get("stream_url"), probe.get("stream_url"), config.base_url)
-        snapshot_url = resolve_webcam_url(
-            webcam.get("snapshot_url"), probe.get("snapshot_url"), config.base_url
-        )
+        snapshot_url = resolve_webcam_url(webcam.get("snapshot_url"), probe.get("snapshot_url"), config.base_url)
         service = str(webcam.get("service") or "").lower()
         row = by_uid.get(("moonraker", uid))
         if row is None:
@@ -288,9 +284,7 @@ async def get_effective_camera(db: AsyncSession, printer_id: int) -> PrinterCame
     )
 
 
-async def get_effective_capture_settings(
-    db: AsyncSession, printer: Printer
-) -> CameraCaptureSettings:
+async def get_effective_capture_settings(db: AsyncSession, printer: Printer) -> CameraCaptureSettings:
     """Return effective capture fields without changing Bambu behavior."""
     if getattr(printer, "provider", "bambulab") != "moonraker":
         return CameraCaptureSettings(

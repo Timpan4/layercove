@@ -2423,9 +2423,13 @@ async def on_print_start(printer_id: int, data: dict):
                 logger.info("[PLATE CHECK] Running plate detection for printer %s", printer_id)
                 from backend.app.services.moonraker_cameras import get_effective_capture_settings
 
-                external_enabled, external_url, external_type, external_snapshot_url, _rotation = (
-                    await get_effective_capture_settings(db, printer)
-                )
+                (
+                    external_enabled,
+                    external_url,
+                    external_type,
+                    external_snapshot_url,
+                    _rotation,
+                ) = await get_effective_capture_settings(db, printer)
                 plate_result = await check_plate_empty(
                     printer_id=printer_id,
                     ip_address=printer.ip_address,
@@ -3993,9 +3997,13 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
 
             from backend.app.services.moonraker_cameras import get_effective_capture_settings
 
-            external_enabled, external_url, external_type, external_snapshot_url, _rotation = (
-                await get_effective_capture_settings(db, printer)
-            )
+            (
+                external_enabled,
+                external_url,
+                external_type,
+                external_snapshot_url,
+                _rotation,
+            ) = await get_effective_capture_settings(db, printer)
 
         frame_bytes: bytes | None = None
 
@@ -5016,9 +5024,13 @@ async def on_print_complete(printer_id: int, data: dict):
                         from backend.app.models.archive import PrintArchive
                         from backend.app.services.moonraker_cameras import get_effective_capture_settings
 
-                        external_enabled, external_url, external_type, external_snapshot_url, _rotation = (
-                            await get_effective_capture_settings(db, printer)
-                        )
+                        (
+                            external_enabled,
+                            external_url,
+                            external_type,
+                            external_snapshot_url,
+                            _rotation,
+                        ) = await get_effective_capture_settings(db, printer)
 
                         result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
                         archive = result.scalar_one_or_none()

@@ -657,11 +657,7 @@ class PrinterManager:
                 self._forced_offline.add(printer_id)
                 self._moonraker_cameras_synced.discard(printer_id)
             backend = self._backends.get(printer_id)
-            if (
-                event.snapshot.connected
-                and backend is not None
-                and backend.provider is PrinterProvider.MOONRAKER
-            ):
+            if event.snapshot.connected and backend is not None and backend.provider is PrinterProvider.MOONRAKER:
                 await self._sync_moonraker_cameras_once(printer_id)
             await self._call_backend_callback(
                 self._on_status_change,

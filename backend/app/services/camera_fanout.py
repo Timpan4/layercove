@@ -261,11 +261,7 @@ def get_subscriber_count(key: str) -> int:
 
 def get_subscriber_count_with_prefix(prefix: str) -> int:
     """Return subscribers across every live broadcaster matching ``prefix``."""
-    return sum(
-        bc.subscriber_count
-        for key, bc in _broadcasters.items()
-        if key.startswith(prefix) and not bc.stopped
-    )
+    return sum(bc.subscriber_count for key, bc in _broadcasters.items() if key.startswith(prefix) and not bc.stopped)
 
 
 # ---------------------------------------------------------------------------

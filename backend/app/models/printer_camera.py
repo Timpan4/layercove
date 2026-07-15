@@ -22,9 +22,7 @@ class PrinterCamera(Base):
     __table_args__ = (
         UniqueConstraint("printer_id", "source", "source_uid", name="uq_printer_camera_source_uid"),
         CheckConstraint("source IN ('moonraker', 'manual')", name="ck_printer_camera_source"),
-        CheckConstraint(
-            "camera_type IN ('mjpeg', 'rtsp', 'snapshot', 'unsupported')", name="ck_printer_camera_type"
-        ),
+        CheckConstraint("camera_type IN ('mjpeg', 'rtsp', 'snapshot', 'unsupported')", name="ck_printer_camera_type"),
         CheckConstraint("rotation IN (0, 90, 180, 270)", name="ck_printer_camera_rotation"),
         Index(
             "uq_printer_camera_primary",

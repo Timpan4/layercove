@@ -1098,9 +1098,7 @@ async def stop_camera_stream(
     """
     broadcaster_key = f"printer-{printer_id}"
     camera_key_prefix = f"printer-{printer_id}-camera-"
-    remaining_subscribers = get_subscriber_count(broadcaster_key) + get_subscriber_count_with_prefix(
-        camera_key_prefix
-    )
+    remaining_subscribers = get_subscriber_count(broadcaster_key) + get_subscriber_count_with_prefix(camera_key_prefix)
     if remaining_subscribers >= 1:
         logger.info(
             "Skipping force-shutdown for printer %s: %d subscriber(s) still attached; "
@@ -1466,9 +1464,13 @@ async def check_plate_empty(
 
     # Check printer exists first (before OpenCV check)
     printer = await get_printer_or_404(printer_id, db)
-    external_enabled, external_url, external_type, external_snapshot_url, _rotation = (
-        await get_effective_capture_settings(db, printer)
-    )
+    (
+        external_enabled,
+        external_url,
+        external_type,
+        external_snapshot_url,
+        _rotation,
+    ) = await get_effective_capture_settings(db, printer)
 
     if use_external is None:
         use_external = bool(external_enabled and external_url and external_type)
@@ -1583,9 +1585,13 @@ async def calibrate_plate_detection(
 
     # Check printer exists first (before OpenCV check)
     printer = await get_printer_or_404(printer_id, db)
-    external_enabled, external_url, external_type, external_snapshot_url, _rotation = (
-        await get_effective_capture_settings(db, printer)
-    )
+    (
+        external_enabled,
+        external_url,
+        external_type,
+        external_snapshot_url,
+        _rotation,
+    ) = await get_effective_capture_settings(db, printer)
 
     if use_external is None:
         use_external = bool(external_enabled and external_url and external_type)

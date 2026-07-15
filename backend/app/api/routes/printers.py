@@ -631,18 +631,13 @@ async def update_printer(
         await printer_manager.disconnect_printer_async(printer_id)
         if printer.is_active:
             await printer_manager.connect_printer(printer)
-        elif (
-            printer.provider == PrinterProvider.MOONRAKER
-            and (moonraker_data is not None or site_fields_touched)
-        ):
+        elif printer.provider == PrinterProvider.MOONRAKER and (moonraker_data is not None or site_fields_touched):
             try:
                 from backend.app.services.moonraker_cameras import sync_moonraker_cameras_for_printer
 
                 await sync_moonraker_cameras_for_printer(printer.id)
             except Exception:
-                logger.warning(
-                    "Moonraker camera sync failed after updating printer %s", printer.id, exc_info=True
-                )
+                logger.warning("Moonraker camera sync failed after updating printer %s", printer.id, exc_info=True)
 
     return _serialize_printer(printer, include_secret=False)
 

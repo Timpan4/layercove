@@ -191,9 +191,13 @@ class ObicoDetectionService:
         async with async_session() as db:
             printer = await db.get(Printer, printer_id)
             if printer is not None:
-                external_enabled, external_url, external_type, external_snapshot_url, _rotation = (
-                    await get_effective_capture_settings(db, printer)
-                )
+                (
+                    external_enabled,
+                    external_url,
+                    external_type,
+                    external_snapshot_url,
+                    _rotation,
+                ) = await get_effective_capture_settings(db, printer)
         if printer is None:
             self._last_error = f"Printer {printer_id} not found"
             return None

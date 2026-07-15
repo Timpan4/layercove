@@ -160,15 +160,17 @@ async def test_sync_clears_missing_state_when_uid_returns(db_session, printer_fa
     await sync_moonraker_cameras(
         db_session,
         printer,
-        client=FakeWebcamClient([
-            {
-                "uid": "returning",
-                "name": "Returning",
-                "service": "mjpegstreamer",
-                "enabled": True,
-                "stream_url": "/webcam/stream",
-            }
-        ]),
+        client=FakeWebcamClient(
+            [
+                {
+                    "uid": "returning",
+                    "name": "Returning",
+                    "service": "mjpegstreamer",
+                    "enabled": True,
+                    "stream_url": "/webcam/stream",
+                }
+            ]
+        ),
     )
 
     assert camera.missing_since is None
@@ -176,9 +178,7 @@ async def test_sync_clears_missing_state_when_uid_returns(db_session, printer_fa
 
 
 @pytest.mark.asyncio
-async def test_unsupported_camera_keeps_protocol_and_uses_snapshot_fallback(
-    async_client, db_session, printer_factory
-):
+async def test_unsupported_camera_keeps_protocol_and_uses_snapshot_fallback(async_client, db_session, printer_factory):
     from backend.app.services.moonraker_cameras import get_effective_camera, sync_moonraker_cameras
 
     printer = await printer_factory(provider="moonraker")
@@ -187,16 +187,18 @@ async def test_unsupported_camera_keeps_protocol_and_uses_snapshot_fallback(
     cameras = await sync_moonraker_cameras(
         db_session,
         printer,
-        client=FakeWebcamClient([
-            {
-                "uid": "webrtc-1",
-                "name": "WebRTC camera",
-                "service": "webrtc-go2rtc",
-                "enabled": True,
-                "stream_url": "/webcam/webrtc",
-                "snapshot_url": "/webcam/snapshot.jpg",
-            }
-        ]),
+        client=FakeWebcamClient(
+            [
+                {
+                    "uid": "webrtc-1",
+                    "name": "WebRTC camera",
+                    "service": "webrtc-go2rtc",
+                    "enabled": True,
+                    "stream_url": "/webcam/webrtc",
+                    "snapshot_url": "/webcam/snapshot.jpg",
+                }
+            ]
+        ),
     )
     await db_session.commit()
 
@@ -208,9 +210,7 @@ async def test_unsupported_camera_keeps_protocol_and_uses_snapshot_fallback(
     with patch(
         "backend.app.services.external_camera.capture_frame", new_callable=AsyncMock, return_value=fake_jpeg
     ) as capture:
-        response = await async_client.get(
-            f"/api/v1/printers/{printer.id}/cameras/{camera.id}/snapshot"
-        )
+        response = await async_client.get(f"/api/v1/printers/{printer.id}/cameras/{camera.id}/snapshot")
 
     assert response.status_code == 200
     capture.assert_awaited_once_with(
@@ -222,9 +222,7 @@ async def test_unsupported_camera_keeps_protocol_and_uses_snapshot_fallback(
 
 
 @pytest.mark.asyncio
-async def test_camera_api_lists_safe_history_and_restores_manual(
-    async_client, db_session, printer_factory
-):
+async def test_camera_api_lists_safe_history_and_restores_manual(async_client, db_session, printer_factory):
     printer = await printer_factory(provider="moonraker")
     camera = PrinterCamera(
         printer_id=printer.id,
@@ -248,9 +246,7 @@ async def test_camera_api_lists_safe_history_and_restores_manual(
     assert listed.json()[0]["history"] is True
     assert "stream_url" not in listed.json()[0]
 
-    restored = await async_client.post(
-        f"/api/v1/printers/{printer.id}/cameras/{camera.id}/restore-as-manual"
-    )
+    restored = await async_client.post(f"/api/v1/printers/{printer.id}/cameras/{camera.id}/restore-as-manual")
 
     assert restored.status_code == 200
     assert restored.json()["source"] == "manual"
@@ -261,9 +257,7 @@ async def test_camera_api_lists_safe_history_and_restores_manual(
 
 
 @pytest.mark.asyncio
-async def test_restore_deduplicates_equivalent_manual_camera_path(
-    async_client, db_session, printer_factory
-):
+async def test_restore_deduplicates_equivalent_manual_camera_path(async_client, db_session, printer_factory):
     printer = await printer_factory(provider="moonraker")
     history = PrinterCamera(
         printer_id=printer.id,
@@ -285,9 +279,7 @@ async def test_restore_deduplicates_equivalent_manual_camera_path(
     db_session.add_all([history, manual])
     await db_session.commit()
 
-    restored = await async_client.post(
-        f"/api/v1/printers/{printer.id}/cameras/{history.id}/restore-as-manual"
-    )
+    restored = await async_client.post(f"/api/v1/printers/{printer.id}/cameras/{history.id}/restore-as-manual")
 
     assert restored.status_code == 200
     assert restored.json()["id"] == manual.id
@@ -320,9 +312,7 @@ async def test_camera_snapshot_routes_use_selected_moonraker_camera(async_client
     with patch(
         "backend.app.services.external_camera.capture_frame", new_callable=AsyncMock, return_value=fake_jpeg
     ) as capture:
-        selected = await async_client.get(
-            f"/api/v1/printers/{printer.id}/cameras/{camera.id}/snapshot"
-        )
+        selected = await async_client.get(f"/api/v1/printers/{printer.id}/cameras/{camera.id}/snapshot")
         primary = await async_client.get(f"/api/v1/printers/{printer.id}/camera/snapshot")
 
     assert selected.status_code == 200
