@@ -2,6 +2,8 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { render } from '../utils';
 import { CameraTile } from '../../components/CameraTile';
+import { setAuthToken, setStreamToken } from '../../api/client';
+import { rewriteMediaSrcWithToken } from '../../hooks/useCameraStreamToken';
 
 // The shared render() util mounts AuthProvider, which fires an async
 // /auth/me probe on mount. Each test absorbs that settle with a single
@@ -16,10 +18,14 @@ async function flushMicrotasks() {
 describe('CameraTile', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    setAuthToken(null);
+    setStreamToken(null);
     vi.spyOn(global, 'fetch').mockResolvedValue(new Response(null, { status: 200 }));
   });
 
   afterEach(() => {
+    setAuthToken(null);
+    setStreamToken(null);
     vi.useRealTimers();
     vi.restoreAllMocks();
   });
@@ -38,6 +44,103 @@ describe('CameraTile', () => {
     const img = screen.getByAltText('X1C-Lab') as HTMLImageElement;
     expect(img.src).toContain('/api/v1/printers/42/camera/stream');
     expect(img.src).toContain('fps=8');
+  });
+
+  it('keeps authenticated media mounted until the stream token arrives', async () => {
+    setAuthToken('auth-token');
+
+    render(
+      <CameraTile
+        printerId={42}
+        printerName="X1C-Token-Race"
+        mode="live"
+        snapshotIntervalMs={5000}
+        connected
+      />,
+    );
+    await flushMicrotasks();
+
+    const img = screen.getByAltText('X1C-Token-Race') as HTMLImageElement;
+    fireEvent.error(img);
+
+    expect(screen.getByAltText('X1C-Token-Race')).toBe(img);
+    expect(rewriteMediaSrcWithToken(document, 'stream-token')).toBeGreaterThan(0);
+    expect(img.src).toContain('token=stream-token');
+    fireEvent.load(img);
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    expect(screen.getByAltText('X1C-Token-Race')).toBe(img);
+  });
+
+  it('shows no signal when an authenticated stream token stays unavailable', async () => {
+    setAuthToken('auth-token');
+
+    render(
+      <CameraTile
+        printerId={42}
+        printerName="X1C-Missing-Token"
+        mode="live"
+        snapshotIntervalMs={5000}
+        connected
+      />,
+    );
+    await flushMicrotasks();
+
+    const img = screen.getByAltText('X1C-Missing-Token');
+    fireEvent.error(img);
+
+    await act(async () => {
+      vi.advanceTimersByTime(4999);
+    });
+    expect(screen.getByAltText('X1C-Missing-Token')).toBe(img);
+
+    await act(async () => {
+      vi.advanceTimersByTime(1);
+    });
+    expect(screen.queryByAltText('X1C-Missing-Token')).toBeNull();
+  });
+
+  it('clears the token grace error when a live printer disconnects and reconnects', async () => {
+    setAuthToken('auth-token');
+
+    const { rerender } = render(
+      <CameraTile
+        printerId={42}
+        printerName="X1C-Reconnect"
+        mode="live"
+        snapshotIntervalMs={5000}
+        connected
+      />,
+    );
+    await flushMicrotasks();
+
+    fireEvent.error(screen.getByAltText('X1C-Reconnect'));
+    rerender(
+      <CameraTile
+        printerId={42}
+        printerName="X1C-Reconnect"
+        mode="live"
+        snapshotIntervalMs={5000}
+        connected={false}
+      />,
+    );
+
+    await act(async () => {
+      vi.advanceTimersByTime(5000);
+    });
+    rerender(
+      <CameraTile
+        printerId={42}
+        printerName="X1C-Reconnect"
+        mode="live"
+        snapshotIntervalMs={5000}
+        connected
+      />,
+    );
+
+    expect(screen.getByAltText('X1C-Reconnect')).toBeInTheDocument();
   });
 
   it('renders the snapshot URL and refreshes on the interval', async () => {

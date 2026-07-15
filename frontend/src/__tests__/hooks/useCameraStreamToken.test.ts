@@ -4,8 +4,25 @@
  * token arrived (regression guard for the post-login blank-thumbnails bug).
  */
 
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { rewriteMediaSrcWithToken } from '../../hooks/useCameraStreamToken';
+import { createElement } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { api, setAuthToken, setStreamToken } from '../../api/client';
+import { CameraTile } from '../../components/CameraTile';
+import {
+  rewriteMediaSrcWithToken,
+  useStreamTokenSync,
+} from '../../hooks/useCameraStreamToken';
+
+vi.mock('../../contexts/AuthContext', () => ({
+  useAuth: () => ({ authEnabled: true, user: { id: 1 }, loading: false }),
+}));
+
+function StreamTokenSync() {
+  useStreamTokenSync();
+  return null;
+}
 
 describe('rewriteMediaSrcWithToken', () => {
   let root: HTMLDivElement;
@@ -82,5 +99,57 @@ describe('rewriteMediaSrcWithToken', () => {
     const img = addImg('/api/v1/library/files/42/thumbnail');
     rewriteMediaSrcWithToken(root, 'a b/c=d');
     expect(img.getAttribute('src')).toBe('/api/v1/library/files/42/thumbnail?token=a%20b%2Fc%3Dd');
+  });
+});
+
+describe('useStreamTokenSync', () => {
+  afterEach(() => {
+    setAuthToken(null);
+    setStreamToken(null);
+    vi.restoreAllMocks();
+  });
+
+  it('keeps failed media mounted while replacing a stale stream token', async () => {
+    let resolveFreshToken!: (value: { token: string }) => void;
+    const freshToken = new Promise<{ token: string }>((resolve) => {
+      resolveFreshToken = resolve;
+    });
+    vi.spyOn(api, 'getCameraStreamToken')
+      .mockResolvedValueOnce({ token: 'stale-token' })
+      .mockReturnValueOnce(freshToken);
+    setAuthToken('auth-token');
+
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    render(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(StreamTokenSync),
+        createElement(CameraTile, {
+          printerId: 42,
+          printerName: 'Stale token camera',
+          mode: 'live',
+          snapshotIntervalMs: 5000,
+          connected: true,
+        }),
+      ),
+    );
+
+    const image = screen.getByAltText('Stale token camera') as HTMLImageElement;
+    await waitFor(() => expect(image.src).toContain('token=stale-token'));
+
+    fireEvent.error(image);
+
+    expect(screen.getByAltText('Stale token camera')).toBe(image);
+    await waitFor(() => expect(api.getCameraStreamToken).toHaveBeenCalledTimes(2));
+
+    await act(async () => resolveFreshToken({ token: 'fresh-token' }));
+    await waitFor(() => expect(image.src).toContain('token=fresh-token'));
+    expect(screen.getByAltText('Stale token camera')).toBe(image);
+
+    fireEvent.error(image);
+    expect(screen.queryByAltText('Stale token camera')).toBeNull();
   });
 });

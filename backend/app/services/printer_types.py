@@ -89,3 +89,4 @@ class PrinterSnapshot:
     total_layers: int | None = None
     temperatures: dict[str, float | None] = field(default_factory=dict)
     provider_detail: dict[str, Any] = field(default_factory=dict, repr=False)
+    developer_mode: bool | None = None

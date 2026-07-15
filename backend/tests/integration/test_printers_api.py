@@ -80,6 +80,27 @@ class TestPrintersAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_developer_mode_warnings_ignores_moonraker_snapshot(self, async_client, printer_factory):
+        from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
+
+        printer = await printer_factory(name="Moonraker", provider="moonraker")
+        snapshot = PrinterSnapshot(
+            provider=PrinterProvider.MOONRAKER,
+            connected=True,
+            state=NormalizedPrinterState.IDLE,
+        )
+
+        with patch(
+            "backend.app.api.routes.printers.printer_manager.get_all_statuses",
+            return_value={printer.id: snapshot},
+        ):
+            response = await async_client.get("/api/v1/printers/developer-mode-warnings")
+
+        assert response.status_code == 200
+        assert response.json() == []
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_moonraker_upload_starts_returned_path_and_emergency_stop_is_dedicated(
         self, async_client, db_session
     ):
