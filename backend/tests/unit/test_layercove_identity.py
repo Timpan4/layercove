@@ -114,7 +114,48 @@ def test_bambu_storage_and_runtime_compatibility_identifiers_remain():
 
 
 @pytest.mark.unit
-def test_fresh_deployment_sources_target_layercove_and_keep_runtime_compatibility():
+def test_optional_bundled_spoolman_is_private_and_does_not_gate_layercove():
+    root = REPOSITORY_ROOT
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+
+    assert "  spoolman:" in compose
+    assert "image: ghcr.io/donkie/spoolman:0.21.0" in compose
+    assert 'profiles: ["spoolman"]' in compose
+    assert '"127.0.0.1:7912:8000"' in compose
+    assert "spoolman_data:/home/app/.local/share/spoolman" in compose
+    assert (
+        'test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen(\'http://localhost:8000/api/v1/health\')"]'
+        in compose
+    )
+    assert "    depends_on:" not in compose
+
+    test_dockerfile = (root / "Dockerfile.test").read_text(encoding="utf-8")
+    assert "COPY scripts/spoolman_volume.py ./scripts/spoolman_volume.py" in test_dockerfile
+
+
+@pytest.mark.unit
+def test_bundled_spoolman_operations_preserve_external_instances_and_data():
+    root = REPOSITORY_ROOT
+    updating = (root / "UPDATING.md").read_text(encoding="utf-8")
+
+    assert "does not change existing external Spoolman settings" in updating
+    assert "docker compose --profile spoolman up -d" in updating
+    assert "mkdir -p scripts" in updating
+    assert "https://raw.githubusercontent.com/Timpan4/layercove/main/scripts/spoolman_volume.py" in updating
+    assert '--user "$(id -u):1000" --entrypoint python' in updating
+    assert updating.count("--user 1000:1000 --entrypoint python") == 1
+    assert "docker compose --profile spoolman run --rm --no-deps" in updating
+    assert "scripts/spoolman_volume.py backup" in updating
+    assert "scripts/spoolman_volume.py restore" in updating
+    assert "http://127.0.0.1:7912" in updating
+    assert "http://spoolman:8000" in updating
+    assert "http://host.docker.internal:7912" not in updating
+    assert "spoolman-data-backup.tgz &&" in updating
+    assert "leave Spoolman stopped" in updating
+    assert "docker compose --profile spoolman config --volumes" not in updating
+    assert "restore the pre-upgrade archive first" in updating
+    assert "Never use `docker compose down -v`" in updating
+
     root = REPOSITORY_ROOT
     installers = {
         path: (root / path).read_text(encoding="utf-8")
