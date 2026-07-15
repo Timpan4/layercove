@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, VideoOff, WifiOff } from 'lucide-react';
-import { api, getAuthToken, withStreamToken } from '../api/client';
+import { api, getAuthToken, getStreamToken, withStreamToken } from '../api/client';
 import { formatDuration } from '../utils/date';
 import { resolveMoonrakerCameraId } from '../utils/moonrakerCameras';
 
@@ -83,6 +83,7 @@ export function CameraTile({
   const [errored, setErrored] = useState(false);
   const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const lastModeRef = useRef<CameraTileMode>(mode);
+  const tokenGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { data: cameras = [] } = useQuery({
     queryKey: ['printerCameras', printerId],
     queryFn: () => api.listPrinterCameras(printerId),
@@ -100,6 +101,10 @@ export function CameraTile({
   // being live — either by unmounting or by transitioning to snapshot/paused.
   // EmbeddedCameraViewer uses the same /camera/stop with keepalive on unmount.
   useEffect(() => {
+    if (tokenGraceTimerRef.current !== null) {
+      clearTimeout(tokenGraceTimerRef.current);
+      tokenGraceTimerRef.current = null;
+    }
     const wasLive = lastModeRef.current === 'live';
     const isLive = mode === 'live';
     lastModeRef.current = mode;
@@ -115,10 +120,13 @@ export function CameraTile({
     }
     setErrored(false);
     setBust((b) => b + 1);
-  }, [mode, printerId]);
+  }, [connected, mode, printerId]);
 
   useEffect(() => {
     return () => {
+      if (tokenGraceTimerRef.current !== null) {
+        clearTimeout(tokenGraceTimerRef.current);
+      }
       if (lastModeRef.current === 'live') {
         const headers: Record<string, string> = {};
         const token = getAuthToken();
@@ -148,6 +156,30 @@ export function CameraTile({
 
   const handleClick = () => {
     if (onClick) onClick();
+  };
+
+  const handleMediaError = () => {
+    if (getAuthToken() && !getStreamToken()) {
+      if (tokenGraceTimerRef.current === null) {
+        tokenGraceTimerRef.current = setTimeout(() => {
+          tokenGraceTimerRef.current = null;
+          setErrored(true);
+        }, 5000);
+      }
+      return;
+    }
+    if (tokenGraceTimerRef.current !== null) {
+      clearTimeout(tokenGraceTimerRef.current);
+      tokenGraceTimerRef.current = null;
+    }
+    setErrored(true);
+  };
+
+  const handleMediaLoad = () => {
+    if (tokenGraceTimerRef.current !== null) {
+      clearTimeout(tokenGraceTimerRef.current);
+      tokenGraceTimerRef.current = null;
+    }
   };
 
   const effectiveRotation = selectedCamera?.rotation ?? cameraRotation;
@@ -194,7 +226,8 @@ export function CameraTile({
           loading="lazy"
           className="h-full w-full select-none object-contain"
           style={{ transform }}
-          onError={() => setErrored(true)}
+          onError={handleMediaError}
+          onLoad={handleMediaLoad}
         />
       )}
 
