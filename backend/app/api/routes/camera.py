@@ -6,6 +6,7 @@ import os
 import subprocess
 import sys
 from collections.abc import AsyncGenerator
+from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response, StreamingResponse
@@ -16,11 +17,14 @@ from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
     create_camera_stream_token,
+    is_auth_enabled,
 )
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.printer import Printer
+from backend.app.models.printer_camera import PrinterCamera
 from backend.app.models.user import User
+from backend.app.schemas.printer_camera import PrinterCameraResponse, PrinterCameraUpdate
 from backend.app.services.camera import (
     capture_camera_frame,
     create_tls_proxy,
@@ -36,10 +40,22 @@ from backend.app.services.camera_fanout import (
     MjpegBroadcaster,
     get_or_create_broadcaster,
     get_subscriber_count,
+    get_subscriber_count_with_prefix,
     iter_subscriber,
     shutdown_broadcaster,
+    shutdown_broadcasters_with_prefix,
 )
 from backend.app.services.camera_profiles import get_camera_profile
+from backend.app.services.external_camera import _sanitize_camera_url
+from backend.app.services.moonraker_cameras import (
+    camera_capture_type,
+    camera_is_history,
+    camera_urls_equivalent,
+    get_effective_camera,
+    get_effective_capture_settings,
+    sync_moonraker_cameras,
+)
+from backend.app.services.moonraker_http import MoonrakerHTTPError
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/printers", tags=["camera"])
@@ -129,6 +145,108 @@ async def get_printer_or_404(printer_id: int, db: AsyncSession) -> Printer:
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
     return printer
+
+
+def _camera_response(camera: PrinterCamera) -> PrinterCameraResponse:
+    return PrinterCameraResponse(
+        id=camera.id,
+        printer_id=camera.printer_id,
+        source=camera.source,
+        source_uid=camera.source_uid,
+        name=camera.name,
+        location=camera.location,
+        service=camera.service,
+        camera_type=camera.camera_type,
+        source_enabled=camera.source_enabled,
+        enabled=camera.enabled,
+        is_primary=camera.is_primary,
+        rotation=camera.rotation,
+        sort_order=camera.sort_order,
+        available=camera.missing_since is None and camera.source_enabled,
+        supported_live=camera.camera_type in ("mjpeg", "rtsp"),
+        snapshot_available=bool(camera.snapshot_url),
+        history=camera_is_history(camera),
+        first_seen_at=camera.first_seen_at,
+        last_seen_at=camera.last_seen_at,
+        missing_since=camera.missing_since,
+    )
+
+
+async def _camera_or_404(printer_id: int, camera_id: int, db: AsyncSession) -> PrinterCamera:
+    camera = await db.get(PrinterCamera, camera_id)
+    if camera is None or camera.printer_id != printer_id:
+        raise HTTPException(404, "Camera not found")
+    return camera
+
+
+def _mirror_primary(printer: Printer, camera: PrinterCamera) -> None:
+    printer.external_camera_url = camera.stream_url
+    printer.external_camera_snapshot_url = camera.snapshot_url
+    printer.external_camera_type = camera_capture_type(camera)
+    printer.external_camera_enabled = camera.enabled
+    printer.camera_rotation = camera.rotation
+
+
+async def _camera_snapshot_response(camera: PrinterCamera) -> Response:
+    from backend.app.services.external_camera import capture_frame
+
+    capture_type = camera_capture_type(camera)
+    url = camera.snapshot_url if capture_type == "snapshot" else camera.stream_url or camera.snapshot_url
+    if not url or capture_type == "unsupported":
+        raise HTTPException(503, "Camera does not expose a compatible image source")
+    frame = await capture_frame(
+        url,
+        capture_type,
+        timeout=15,
+        snapshot_url=camera.snapshot_url,
+    )
+    if not frame:
+        raise HTTPException(503, "Failed to capture frame from camera")
+    return Response(
+        content=frame,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
+
+
+async def _camera_stream_response(camera: PrinterCamera, request: Request, fps: int) -> StreamingResponse:
+    from backend.app.services.external_camera import generate_mjpeg_stream
+
+    capture_type = camera_capture_type(camera)
+    url = camera.snapshot_url if capture_type == "snapshot" else camera.stream_url or camera.snapshot_url
+    if not url or capture_type == "unsupported":
+        raise HTTPException(503, "Camera does not expose a compatible live source")
+    fps = min(max(fps, 1), 15)
+    fanout_key = f"printer-{camera.printer_id}-camera-{camera.id}"
+
+    async def _upstream(disconnect_event: asyncio.Event):
+        async for chunk in generate_mjpeg_stream(url, capture_type, fps):
+            if disconnect_event.is_set():
+                break
+            yield chunk
+
+    broadcaster = await get_or_create_broadcaster(fanout_key, _upstream)
+    try:
+        queue = await broadcaster.subscribe()
+    except RuntimeError:
+        broadcaster = await get_or_create_broadcaster(fanout_key, _upstream)
+        queue = await broadcaster.subscribe()
+
+    async def _is_disconnected() -> bool:
+        try:
+            return await request.is_disconnected()
+        except Exception:
+            return True
+
+    async def _generate():
+        async for chunk in iter_subscriber(broadcaster, queue, is_disconnected=_is_disconnected):
+            yield chunk
+
+    return StreamingResponse(
+        _generate(),
+        media_type="multipart/x-mixed-replace; boundary=frame",
+        headers={"Cache-Control": "no-cache, no-store, must-revalidate"},
+    )
 
 
 async def generate_chamber_mjpeg_stream(
@@ -592,6 +710,193 @@ async def generate_rtsp_mjpeg_stream(
         await proxy_server.wait_closed()
 
 
+@router.get("/{printer_id}/cameras", response_model=list[PrinterCameraResponse])
+async def list_printer_cameras(
+    printer_id: int,
+    include_history: bool = False,
+    user: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
+    db: AsyncSession = Depends(get_db),
+):
+    await get_printer_or_404(printer_id, db)
+    if include_history and await is_auth_enabled(db):
+        if user is None or not user.has_permission(Permission.PRINTERS_UPDATE.value):
+            raise HTTPException(403, "Printer update permission required for camera history")
+    cameras = list(
+        (
+            await db.execute(
+                select(PrinterCamera)
+                .where(PrinterCamera.printer_id == printer_id)
+                .order_by(PrinterCamera.is_primary.desc(), PrinterCamera.sort_order, PrinterCamera.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    if not include_history:
+        cameras = [camera for camera in cameras if not camera_is_history(camera)]
+    return [_camera_response(camera) for camera in cameras]
+
+
+@router.post("/{printer_id}/cameras/sync", response_model=list[PrinterCameraResponse])
+async def sync_printer_cameras(
+    printer_id: int,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
+    db: AsyncSession = Depends(get_db),
+):
+    printer = await get_printer_or_404(printer_id, db)
+    try:
+        cameras = await sync_moonraker_cameras(db, printer)
+    except MoonrakerHTTPError as exc:
+        status_code = 400 if exc.code in ("invalid_provider", "missing_config") else 502
+        raise HTTPException(status_code, {"code": exc.code, "message": exc.message}) from exc
+    await db.commit()
+    return [_camera_response(camera) for camera in cameras]
+
+
+@router.patch("/{printer_id}/cameras/{camera_id}", response_model=PrinterCameraResponse)
+async def update_printer_camera(
+    printer_id: int,
+    camera_id: int,
+    update: PrinterCameraUpdate,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
+    db: AsyncSession = Depends(get_db),
+):
+    printer = await get_printer_or_404(printer_id, db)
+    camera = await _camera_or_404(printer_id, camera_id, db)
+    values = update.model_dump(exclude_unset=True)
+    manual_fields = {"name", "stream_url", "snapshot_url", "camera_type"}
+    if camera.source != "manual" and manual_fields.intersection(values):
+        raise HTTPException(400, "Moonraker owns camera name, URLs, service, and type")
+    if camera.source == "manual":
+        for field in ("stream_url", "snapshot_url"):
+            if field in values and values[field] is not None:
+                safe = _sanitize_camera_url(values[field])
+                if safe is None:
+                    raise HTTPException(400, f"Invalid {field}")
+                values[field] = safe
+    if values.pop("is_primary", None) is True:
+        rows = await db.execute(select(PrinterCamera).where(PrinterCamera.printer_id == printer_id))
+        for row in rows.scalars():
+            row.is_primary = row.id == camera.id
+        camera.is_primary = True
+    for field, value in values.items():
+        setattr(camera, field, value)
+    if camera.is_primary:
+        _mirror_primary(printer, camera)
+    await db.commit()
+    return _camera_response(camera)
+
+
+@router.post("/{printer_id}/cameras/{camera_id}/restore-as-manual", response_model=PrinterCameraResponse)
+async def restore_camera_as_manual(
+    printer_id: int,
+    camera_id: int,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
+    db: AsyncSession = Depends(get_db),
+):
+    await get_printer_or_404(printer_id, db)
+    camera = await _camera_or_404(printer_id, camera_id, db)
+    if camera.source != "moonraker" or not camera_is_history(camera):
+        raise HTTPException(409, "Only inactive Moonraker cameras can be restored")
+    manual_rows = (
+        await db.execute(
+            select(PrinterCamera).where(
+                PrinterCamera.printer_id == printer_id,
+                PrinterCamera.source == "manual",
+            )
+        )
+    ).scalars()
+    existing = next(
+        (
+            row
+            for row in manual_rows
+            if camera_urls_equivalent(
+                row.stream_url,
+                row.snapshot_url,
+                camera.stream_url,
+                camera.snapshot_url,
+            )
+        ),
+        None,
+    )
+    if existing is not None:
+        return _camera_response(existing)
+    restored = PrinterCamera(
+        printer_id=printer_id,
+        source="manual",
+        source_uid=str(uuid4()),
+        name=f"{camera.name} (manual)",
+        location=camera.location,
+        service=camera.service,
+        stream_url=camera.stream_url,
+        snapshot_url=camera.snapshot_url,
+        camera_type=camera_capture_type(camera),
+        source_enabled=True,
+        enabled=camera.enabled,
+        rotation=camera.rotation,
+    )
+    db.add(restored)
+    await db.commit()
+    return _camera_response(restored)
+
+
+@router.delete("/{printer_id}/cameras/{camera_id}", status_code=204)
+async def delete_printer_camera(
+    printer_id: int,
+    camera_id: int,
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
+    db: AsyncSession = Depends(get_db),
+):
+    printer = await get_printer_or_404(printer_id, db)
+    camera = await _camera_or_404(printer_id, camera_id, db)
+    if camera.source == "moonraker" and not camera_is_history(camera):
+        raise HTTPException(409, "Disable active Moonraker cameras instead of deleting them")
+    was_primary = camera.is_primary
+    await db.delete(camera)
+    await db.flush()
+    if was_primary:
+        replacement = await get_effective_camera(db, printer_id)
+        if replacement is not None:
+            replacement.is_primary = True
+            _mirror_primary(printer, replacement)
+        else:
+            printer.external_camera_url = None
+            printer.external_camera_snapshot_url = None
+            printer.external_camera_type = None
+            printer.external_camera_enabled = False
+            printer.camera_rotation = 0
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/{printer_id}/cameras/{camera_id}/snapshot")
+async def selected_camera_snapshot(
+    printer_id: int,
+    camera_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: None = RequireCameraStreamTokenIfAuthEnabled,
+):
+    camera = await _camera_or_404(printer_id, camera_id, db)
+    if not camera.enabled or not camera.source_enabled or camera.missing_since is not None:
+        raise HTTPException(503, "Camera is unavailable")
+    return await _camera_snapshot_response(camera)
+
+
+@router.get("/{printer_id}/cameras/{camera_id}/stream")
+async def selected_camera_stream(
+    printer_id: int,
+    camera_id: int,
+    request: Request,
+    fps: int = 10,
+    db: AsyncSession = Depends(get_db),
+    _: None = RequireCameraStreamTokenIfAuthEnabled,
+):
+    camera = await _camera_or_404(printer_id, camera_id, db)
+    if not camera.enabled or not camera.source_enabled or camera.missing_since is not None:
+        raise HTTPException(503, "Camera is unavailable")
+    return await _camera_stream_response(camera, request, fps)
+
+
 @router.post("/camera/stream-token")
 async def create_stream_token(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.CAMERA_VIEW),
@@ -629,6 +934,12 @@ async def camera_stream(
         fps: Target frames per second (default: 10, max: 30)
     """
     printer = await get_printer_or_404(printer_id, db)
+
+    if printer.provider == "moonraker":
+        camera = await get_effective_camera(db, printer_id)
+        if camera is None:
+            raise HTTPException(503, "No compatible Moonraker camera is available")
+        return await _camera_stream_response(camera, request, fps)
 
     # Check for external camera first
     if printer.external_camera_enabled and printer.external_camera_url:
@@ -786,7 +1097,8 @@ async def stop_camera_stream(
     HTTP connection actually closes.
     """
     broadcaster_key = f"printer-{printer_id}"
-    remaining_subscribers = get_subscriber_count(broadcaster_key)
+    camera_key_prefix = f"printer-{printer_id}-camera-"
+    remaining_subscribers = get_subscriber_count(broadcaster_key) + get_subscriber_count_with_prefix(camera_key_prefix)
     if remaining_subscribers >= 1:
         logger.info(
             "Skipping force-shutdown for printer %s: %d subscriber(s) still attached; "
@@ -803,6 +1115,7 @@ async def stop_camera_stream(
     # reconnecting before we fall back to forcefully killing the process below.
     if await shutdown_broadcaster(broadcaster_key):
         logger.info("Shut down camera fan-out broadcaster for printer %s", printer_id)
+    await shutdown_broadcasters_with_prefix(camera_key_prefix)
 
     # Stop ffmpeg/RTSP streams
     to_remove = []
@@ -876,6 +1189,12 @@ async def camera_snapshot(
     from pathlib import Path
 
     printer = await get_printer_or_404(printer_id, db)
+
+    if printer.provider == "moonraker":
+        camera = await get_effective_camera(db, printer_id)
+        if camera is None:
+            raise HTTPException(503, "No compatible Moonraker camera is available")
+        return await _camera_snapshot_response(camera)
 
     # Check for external camera first
     if printer.external_camera_enabled and printer.external_camera_url:
@@ -1145,11 +1464,16 @@ async def check_plate_empty(
 
     # Check printer exists first (before OpenCV check)
     printer = await get_printer_or_404(printer_id, db)
+    (
+        external_enabled,
+        external_url,
+        external_type,
+        external_snapshot_url,
+        _rotation,
+    ) = await get_effective_capture_settings(db, printer)
 
     if use_external is None:
-        use_external = bool(
-            printer.external_camera_enabled and printer.external_camera_url and printer.external_camera_type
-        )
+        use_external = bool(external_enabled and external_url and external_type)
 
     if not is_plate_detection_available():
         raise HTTPException(
@@ -1189,11 +1513,11 @@ async def check_plate_empty(
         model=printer.model,
         plate_type=plate_type,
         include_debug_image=include_debug_image,
-        external_camera_url=printer.external_camera_url if printer.external_camera_enabled else None,
-        external_camera_type=printer.external_camera_type if printer.external_camera_enabled else None,
+        external_camera_url=external_url if external_enabled else None,
+        external_camera_type=external_type if external_enabled else None,
         use_external=use_external,
         roi=roi,
-        external_camera_snapshot_url=printer.external_camera_snapshot_url if printer.external_camera_enabled else None,
+        external_camera_snapshot_url=external_snapshot_url if external_enabled else None,
     )
 
     # Get reference count for the response
@@ -1261,11 +1585,16 @@ async def calibrate_plate_detection(
 
     # Check printer exists first (before OpenCV check)
     printer = await get_printer_or_404(printer_id, db)
+    (
+        external_enabled,
+        external_url,
+        external_type,
+        external_snapshot_url,
+        _rotation,
+    ) = await get_effective_capture_settings(db, printer)
 
     if use_external is None:
-        use_external = bool(
-            printer.external_camera_enabled and printer.external_camera_url and printer.external_camera_type
-        )
+        use_external = bool(external_enabled and external_url and external_type)
 
     if not is_plate_detection_available():
         raise HTTPException(
@@ -1283,10 +1612,10 @@ async def calibrate_plate_detection(
         access_code=printer.access_code,
         model=printer.model,
         label=label,
-        external_camera_url=printer.external_camera_url if printer.external_camera_enabled else None,
-        external_camera_type=printer.external_camera_type if printer.external_camera_enabled else None,
+        external_camera_url=external_url if external_enabled else None,
+        external_camera_type=external_type if external_enabled else None,
         use_external=use_external,
-        external_camera_snapshot_url=printer.external_camera_snapshot_url if printer.external_camera_enabled else None,
+        external_camera_snapshot_url=external_snapshot_url if external_enabled else None,
     )
 
     if light_warning and success:

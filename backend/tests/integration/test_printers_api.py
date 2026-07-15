@@ -36,11 +36,16 @@ def _mock_printer_test_connection():
             "backend.app.api.routes.printers.printer_manager.disconnect_printer_async",
             new=AsyncMock(),
         ) as disconnect_printer,
+        patch(
+            "backend.app.services.moonraker_cameras.sync_moonraker_cameras_for_printer",
+            new=AsyncMock(),
+        ) as sync_cameras,
     ):
         moonraker_client_class.return_value.test_connection = AsyncMock(return_value=True)
         m.moonraker_client_class = moonraker_client_class
         m.connect_printer = connect_printer
         m.disconnect_printer = disconnect_printer
+        m.sync_cameras = sync_cameras
         yield m
 
 
@@ -811,6 +816,31 @@ class TestPrintersAPI:
         assert response.status_code == 200
         _mock_printer_test_connection.disconnect_printer.assert_awaited_once_with(printer_id)
         _mock_printer_test_connection.connect_printer.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_updating_inactive_moonraker_config_refreshes_cameras(
+        self, async_client: AsyncClient, _mock_printer_test_connection
+    ):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Inactive Klipper Config",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125"},
+            },
+        )
+        printer_id = created.json()["id"]
+        await async_client.patch(f"/api/v1/printers/{printer_id}", json={"is_active": False})
+        _mock_printer_test_connection.sync_cameras.reset_mock()
+
+        response = await async_client.patch(
+            f"/api/v1/printers/{printer_id}",
+            json={"moonraker_config": {"base_url": "http://moved.local:7125"}},
+        )
+
+        assert response.status_code == 200
+        _mock_printer_test_connection.sync_cameras.assert_awaited_once_with(printer_id)
 
     @pytest.mark.asyncio
     @pytest.mark.integration

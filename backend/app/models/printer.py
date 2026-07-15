@@ -70,6 +70,7 @@ class Printer(Base):
     moonraker_config: Mapped["MoonrakerPrinterConfig | None"] = relationship(
         back_populates="printer", cascade="all, delete-orphan", uselist=False
     )
+    cameras: Mapped[list["PrinterCamera"]] = relationship(back_populates="printer", cascade="all, delete-orphan")
     network_site: Mapped["NetworkSite | None"] = relationship(back_populates="printers")
 
 
@@ -80,5 +81,6 @@ from backend.app.models.maintenance import PrinterMaintenance  # noqa: E402
 from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig  # noqa: E402
 from backend.app.models.network_site import NetworkSite  # noqa: E402
 from backend.app.models.notification import NotificationProvider  # noqa: E402
+from backend.app.models.printer_camera import PrinterCamera  # noqa: E402
 from backend.app.models.printer_sensor_history import PrinterSensorHistory  # noqa: E402
 from backend.app.models.smart_plug import SmartPlug  # noqa: E402

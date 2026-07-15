@@ -200,6 +200,7 @@ async def init_db():
         print_log,
         print_queue,
         printer,
+        printer_camera,
         printer_sensor_history,
         project,
         project_bom,
