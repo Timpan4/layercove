@@ -343,6 +343,7 @@ class PrinterManager:
         self._accepting_events: set[int] = set()
         self._seen_lifecycle_events: set[tuple[int, str, str]] = set()
         self._forced_offline: set[int] = set()
+        self._moonraker_cameras_synced: set[int] = set()
         # Track who started the current print (Issue #206)
         self._current_print_user: dict[int, dict] = {}  # {printer_id: {"user_id": int, "username": str}}
         # Track printers awaiting plate-clear acknowledgment after a finished/failed print.
@@ -555,6 +556,7 @@ class PrinterManager:
 
         printer_id = printer.id
         self._forced_offline.discard(printer_id)
+        self._moonraker_cameras_synced.discard(printer_id)
         loop = asyncio.get_running_loop()
         self._loop = loop
         queue: asyncio.Queue[BackendEvent | None] = asyncio.Queue()
@@ -603,7 +605,21 @@ class PrinterManager:
 
         # Wait a moment for connection
         await asyncio.sleep(1)
-        return backend.snapshot().connected
+        connected = backend.snapshot().connected
+        if connected and backend.provider is PrinterProvider.MOONRAKER:
+            await self._sync_moonraker_cameras_once(printer_id)
+        return connected
+
+    async def _sync_moonraker_cameras_once(self, printer_id: int) -> None:
+        if printer_id in self._moonraker_cameras_synced:
+            return
+        self._moonraker_cameras_synced.add(printer_id)
+        try:
+            from backend.app.services.moonraker_cameras import sync_moonraker_cameras_for_printer
+
+            await sync_moonraker_cameras_for_printer(printer_id)
+        except Exception:
+            logger.warning("Moonraker camera sync failed for printer %s", printer_id, exc_info=True)
 
     def _enqueue_backend_event(self, printer_id: int, event: BackendEvent) -> None:
         queue = self._event_queues.get(printer_id)
@@ -639,6 +655,14 @@ class PrinterManager:
                 self._forced_offline.discard(printer_id)
             else:
                 self._forced_offline.add(printer_id)
+                self._moonraker_cameras_synced.discard(printer_id)
+            backend = self._backends.get(printer_id)
+            if (
+                event.snapshot.connected
+                and backend is not None
+                and backend.provider is PrinterProvider.MOONRAKER
+            ):
+                await self._sync_moonraker_cameras_once(printer_id)
             await self._call_backend_callback(
                 self._on_status_change,
                 printer_id,
@@ -722,6 +746,7 @@ class PrinterManager:
             self._clients.pop(printer_id, None)
             self._models.pop(printer_id, None)
             self._printer_info.pop(printer_id, None)
+            self._moonraker_cameras_synced.discard(printer_id)
 
     def disconnect_printer(self, printer_id: int, timeout: float = 0) -> None:
         """Legacy synchronous facade for callers not yet migrated to async I/O."""

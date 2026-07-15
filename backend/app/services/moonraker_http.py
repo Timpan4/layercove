@@ -360,6 +360,12 @@ class MoonrakerHTTPClient:
         """Probe Moonraker's documented read-only server-info endpoint."""
         return await self._request("GET", "/server/info")
 
+    async def list_webcams(self) -> MoonrakerHTTPResponse:
+        return await self._request("GET", "/server/webcams/list")
+
+    async def test_webcam(self, uid: str) -> MoonrakerHTTPResponse:
+        return await self._request("POST", "/server/webcams/test", params={"uid": uid})
+
     async def test_connection(self) -> bool:
         response = await self.get_server_info()
         return 200 <= response.status_code < 300

@@ -186,19 +186,24 @@ class ObicoDetectionService:
         # Late import to avoid cycles at module load time
         from backend.app.services.camera import capture_camera_frame_bytes
         from backend.app.services.external_camera import capture_frame as capture_external_frame
+        from backend.app.services.moonraker_cameras import get_effective_capture_settings
 
         async with async_session() as db:
             printer = await db.get(Printer, printer_id)
+            if printer is not None:
+                external_enabled, external_url, external_type, external_snapshot_url, _rotation = (
+                    await get_effective_capture_settings(db, printer)
+                )
         if printer is None:
             self._last_error = f"Printer {printer_id} not found"
             return None
 
-        if printer.external_camera_enabled and printer.external_camera_url:
+        if external_enabled and external_url:
             return await capture_external_frame(
-                printer.external_camera_url,
-                printer.external_camera_type,
+                external_url,
+                external_type,
                 timeout=SNAPSHOT_CAPTURE_TIMEOUT,
-                snapshot_url=printer.external_camera_snapshot_url,
+                snapshot_url=external_snapshot_url,
             )
 
         # Reuse the fan-out broadcaster's buffered frame when a viewer is

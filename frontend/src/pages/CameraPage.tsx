@@ -10,6 +10,7 @@ import { useStreamTokenSync } from '../hooks/useCameraStreamToken';
 import { ChamberLight } from '../components/icons/ChamberLight';
 import { SkipObjectsModal, SkipObjectsIcon } from '../components/SkipObjectsModal';
 import { CameraDiagnoseModal } from '../components/CameraDiagnoseModal';
+import { resolveMoonrakerCameraId } from '../utils/moonrakerCameras';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const INITIAL_RECONNECT_DELAY = 2000; // 2 seconds
@@ -40,6 +41,7 @@ export function CameraPage() {
   const streamTokenValue = streamTokenData?.token ?? getStreamToken();
 
   const [streamMode, setStreamMode] = useState<'stream' | 'snapshot'>('stream');
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [showSkipObjectsModal, setShowSkipObjectsModal] = useState(false);
   const [showDiagnoseModal, setShowDiagnoseModal] = useState(false);
   const [streamError, setStreamError] = useState(false);
@@ -68,6 +70,18 @@ export function CameraPage() {
     queryFn: () => api.getPrinter(id),
     enabled: id > 0,
   });
+  const { data: cameras = [] } = useQuery({
+    queryKey: ['printerCameras', id],
+    queryFn: () => api.listPrinterCameras(id),
+    enabled: id > 0 && printer?.provider === 'moonraker',
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (printer?.provider !== 'moonraker' || cameras.length === 0) return;
+    const nextCameraId = resolveMoonrakerCameraId(cameras, selectedCameraId);
+    if (nextCameraId !== selectedCameraId) setSelectedCameraId(nextCameraId);
+  }, [cameras, printer?.provider, selectedCameraId]);
 
   // Fetch printer status for light toggle and skip objects
   const { data: status } = useQuery({
@@ -604,8 +618,12 @@ export function CameraPage() {
   const currentUrl = transitioning || waitingForStreamToken
     ? ''
     : streamMode === 'stream'
-      ? appendToken(`/api/v1/printers/${id}/camera/stream?fps=${fps}&t=${imageKey}`)
-      : appendToken(`/api/v1/printers/${id}/camera/snapshot?t=${imageKey}`);
+      ? appendToken(selectedCameraId
+        ? `/api/v1/printers/${id}/cameras/${selectedCameraId}/stream?fps=${fps}&t=${imageKey}`
+        : `/api/v1/printers/${id}/camera/stream?fps=${fps}&t=${imageKey}`)
+      : appendToken(selectedCameraId
+        ? `/api/v1/printers/${id}/cameras/${selectedCameraId}/snapshot?t=${imageKey}`
+        : `/api/v1/printers/${id}/camera/snapshot?t=${imageKey}`);
 
   const isDisabled = streamLoading || transitioning || isReconnecting;
 
@@ -626,6 +644,47 @@ export function CameraPage() {
           {printer?.name || `Printer ${id}`}
         </h1>
         <div className="flex items-center gap-2">
+          {printer?.provider === 'moonraker' && cameras.length > 1 && (
+            <div className="flex items-center gap-1">
+              {cameras.slice(0, 3).map((camera) => (
+                <button
+                  key={camera.id}
+                  type="button"
+                  disabled={!camera.enabled || !camera.available || (!camera.supported_live && !camera.snapshot_available)}
+                  onClick={() => {
+                    setSelectedCameraId(camera.id);
+                    setStreamError(false);
+                    setStreamLoading(true);
+                    setImageKey(Date.now());
+                  }}
+                  className={`rounded px-2 py-1 text-xs ${camera.id === selectedCameraId ? 'bg-bambu-green text-white' : 'bg-bambu-dark text-bambu-gray'} disabled:opacity-40`}
+                  title={camera.name}
+                >
+                  {camera.name}
+                </button>
+              ))}
+              {cameras.length > 3 && (
+                <select
+                  aria-label={t('camera.moonraker.moreCameras')}
+                  value={cameras.slice(3).some((camera) => camera.id === selectedCameraId) ? selectedCameraId ?? '' : ''}
+                  onChange={(event) => {
+                    setSelectedCameraId(Number(event.target.value));
+                    setStreamError(false);
+                    setStreamLoading(true);
+                    setImageKey(Date.now());
+                  }}
+                  className="rounded bg-bambu-dark px-2 py-1 text-xs text-white"
+                >
+                  <option value="">{t('common.more', { count: cameras.length - 3 })}</option>
+                  {cameras.slice(3).map((camera) => (
+                    <option key={camera.id} value={camera.id} disabled={!camera.enabled || !camera.available}>
+                      {camera.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           {/* Mode toggle */}
           <div className="flex bg-bambu-dark rounded p-0.5">
             <button

@@ -40,6 +40,7 @@ import { TwoFactorSettings } from '../components/TwoFactorSettings';
 import { OIDCProviderSettings } from '../components/OIDCProviderSettings';
 import { SecurityStatusCard } from '../components/SecurityStatusCard';
 import { NetworkSitesPanel } from '../components/NetworkSitesPanel';
+import { MoonrakerCameraSettings } from '../components/MoonrakerCameraSettings';
 import { APIBrowser } from '../components/APIBrowser';
 import { virtualPrinterApi, spoolbuddyApi } from '../api/client';
 import { defaultNavItems, getDefaultView, setDefaultView } from '../components/Layout';
@@ -1973,7 +1974,10 @@ export function SettingsPage() {
 
                 {printers && printers.length > 0 ? (
                   <div className="space-y-3">
-                    {printers.map(printer => (
+                    {printers.filter(printer => printer.provider === 'moonraker').map(printer => (
+                      <MoonrakerCameraSettings key={printer.id} printer={printer} />
+                    ))}
+                    {printers.filter(printer => printer.provider !== 'moonraker').map(printer => (
                       <div key={printer.id} className="p-3 bg-bambu-dark rounded-lg">
                         <div className="flex items-center justify-between mb-2">
                           <span className="text-white font-medium text-sm">{printer.name}</span>

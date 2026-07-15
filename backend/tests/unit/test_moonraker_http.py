@@ -516,6 +516,34 @@ async def test_moonraker_client_total_deadline_bounds_dns_resolution(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_moonraker_client_exposes_webcam_list_and_test_endpoints():
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    requests: list[tuple[str, str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path, request.url.query.decode()))
+        return httpx.Response(200, json={"result": {"webcams": []}})
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+
+    await client.list_webcams()
+    await client.test_webcam("camera uid")
+
+    assert requests == [
+        ("GET", "/server/webcams/list", ""),
+        ("POST", "/server/webcams/test", "uid=camera+uid"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_moonraker_client_total_deadline_bounds_slow_response_body(monkeypatch):
     from backend.app.services import moonraker_http
     from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError

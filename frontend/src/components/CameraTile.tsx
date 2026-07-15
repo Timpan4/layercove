@@ -1,8 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, VideoOff, WifiOff } from 'lucide-react';
-import { getAuthToken, withStreamToken } from '../api/client';
+import { api, getAuthToken, withStreamToken } from '../api/client';
 import { formatDuration } from '../utils/date';
+import { resolveMoonrakerCameraId } from '../utils/moonrakerCameras';
 
 export type CameraTileMode = 'live' | 'snapshot' | 'paused';
 export type CameraTileStatusMode = 'off' | 'compact' | 'full';
@@ -10,6 +12,7 @@ export type CameraTileStatusMode = 'off' | 'compact' | 'full';
 interface CameraTileProps {
   printerId: number;
   printerName: string;
+  provider?: 'bambu' | 'moonraker';
   cameraRotation?: number;
   mode: CameraTileMode;
   snapshotIntervalMs: number;
@@ -60,6 +63,7 @@ const BUCKET_CHIP_CLASS: Record<StatusBucket, string> = {
 export function CameraTile({
   printerId,
   printerName,
+  provider = 'bambu',
   cameraRotation = 0,
   mode,
   snapshotIntervalMs,
@@ -77,7 +81,20 @@ export function CameraTile({
   const { t } = useTranslation();
   const [bust, setBust] = useState(0);
   const [errored, setErrored] = useState(false);
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const lastModeRef = useRef<CameraTileMode>(mode);
+  const { data: cameras = [] } = useQuery({
+    queryKey: ['printerCameras', printerId],
+    queryFn: () => api.listPrinterCameras(printerId),
+    enabled: provider === 'moonraker' && connected,
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (provider !== 'moonraker' || cameras.length === 0) return;
+    const nextCameraId = resolveMoonrakerCameraId(cameras, selectedCameraId);
+    if (nextCameraId !== selectedCameraId) setSelectedCameraId(nextCameraId);
+  }, [cameras, provider, selectedCameraId]);
 
   // Tell the backend to release its MJPEG transcoder when this tile stops
   // being live — either by unmounting or by transitioning to snapshot/paused.
@@ -121,18 +138,20 @@ export function CameraTile({
     return () => clearInterval(interval);
   }, [mode, snapshotIntervalMs]);
 
-  const liveUrl = withStreamToken(
-    `/api/v1/printers/${printerId}/camera/stream?fps=${LIVE_FPS}&t=${bust}`,
-  );
-  const snapshotUrl = withStreamToken(
-    `/api/v1/printers/${printerId}/camera/snapshot?t=${bust}`,
-  );
+  const selectedCamera = cameras.find((camera) => camera.id === selectedCameraId);
+  const liveUrl = withStreamToken(selectedCamera
+    ? `/api/v1/printers/${printerId}/cameras/${selectedCamera.id}/stream?fps=${LIVE_FPS}&t=${bust}`
+    : `/api/v1/printers/${printerId}/camera/stream?fps=${LIVE_FPS}&t=${bust}`);
+  const snapshotUrl = withStreamToken(selectedCamera
+    ? `/api/v1/printers/${printerId}/cameras/${selectedCamera.id}/snapshot?t=${bust}`
+    : `/api/v1/printers/${printerId}/camera/snapshot?t=${bust}`);
 
   const handleClick = () => {
     if (onClick) onClick();
   };
 
-  const transform = cameraRotation ? `rotate(${cameraRotation}deg)` : undefined;
+  const effectiveRotation = selectedCamera?.rotation ?? cameraRotation;
+  const transform = effectiveRotation ? `rotate(${effectiveRotation}deg)` : undefined;
 
   const bucket = classifyState(printerState, hmsErrorCount);
   // Hide chip for idle to keep cold walls clean; always show when something
@@ -146,6 +165,7 @@ export function CameraTile({
   const hasRemaining = remainingMin != null && remainingMin > 0;
 
   return (
+    <div className="relative">
     <button
       type="button"
       onClick={handleClick}
@@ -244,5 +264,56 @@ export function CameraTile({
         <span className="block truncate text-xs font-medium">{printerName}</span>
       </div>
     </button>
+      {provider === 'moonraker' && cameras.length > 1 && (
+        <div className="absolute right-2 top-9 z-10 flex w-20 flex-col gap-1" onClick={(event) => event.stopPropagation()}>
+          {cameras.slice(0, 3).map((camera) => (
+            <button
+              key={camera.id}
+              type="button"
+              disabled={!camera.enabled || !camera.available || (!camera.supported_live && !camera.snapshot_available)}
+              onClick={() => {
+                setSelectedCameraId(camera.id);
+                setErrored(false);
+                setBust((value) => value + 1);
+              }}
+              className={`relative h-10 overflow-hidden rounded border text-[10px] ${
+                camera.id === selectedCameraId ? 'border-bambu-green' : 'border-bambu-dark-tertiary'
+              } disabled:opacity-40`}
+              title={camera.name}
+            >
+              {camera.snapshot_available ? (
+                <img
+                  src={withStreamToken(`/api/v1/printers/${printerId}/cameras/${camera.id}/snapshot?t=${bust}`)}
+                  alt=""
+                  loading="lazy"
+                  className="h-full w-full object-cover"
+                />
+              ) : (
+                <span className="flex h-full items-center justify-center bg-black/70 px-1 text-white">{camera.name}</span>
+              )}
+            </button>
+          ))}
+          {cameras.length > 3 && (
+            <select
+                aria-label={t('camera.moonraker.moreCameras')}
+              value={selectedCameraId && cameras.slice(3).some((camera) => camera.id === selectedCameraId) ? selectedCameraId : ''}
+              onChange={(event) => {
+                setSelectedCameraId(Number(event.target.value));
+                setErrored(false);
+                setBust((value) => value + 1);
+              }}
+              className="rounded border border-bambu-dark-tertiary bg-black/80 px-1 py-1 text-[10px] text-white"
+            >
+                <option value="">{t('common.more', { count: cameras.length - 3 })}</option>
+              {cameras.slice(3).map((camera) => (
+                <option key={camera.id} value={camera.id} disabled={!camera.enabled || !camera.available}>
+                  {camera.name}
+                </option>
+              ))}
+            </select>
+          )}
+        </div>
+      )}
+    </div>
   );
 }

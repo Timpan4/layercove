@@ -1,6 +1,7 @@
 import asyncio
 from datetime import datetime, timezone
 from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -61,6 +62,10 @@ class FakeBackend:
     async def cancel(self):
         self.calls.append("cancel")
         return True
+
+
+class FakeMoonrakerBackend(FakeBackend):
+    provider = PrinterProvider.MOONRAKER
 
 
 def lifecycle(kind, name, correlation_id="job-1"):
@@ -165,6 +170,73 @@ async def test_manager_forwards_events_fifo_and_drops_events_after_disconnect():
         (7, "idle"),
         (7, "during disconnect"),
     ]
+
+
+@pytest.mark.asyncio
+async def test_moonraker_camera_sync_runs_once_per_connected_edge():
+    manager = PrinterManager(registry=PrinterBackendRegistry())
+    backend = FakeMoonrakerBackend()
+    manager._backends[9] = backend
+    manager._forced_offline.add(9)
+    online = PrinterSnapshot(
+        provider=PrinterProvider.MOONRAKER,
+        connected=True,
+        state=NormalizedPrinterState.IDLE,
+    )
+    offline = PrinterSnapshot(
+        provider=PrinterProvider.MOONRAKER,
+        connected=False,
+        state=NormalizedPrinterState.OFFLINE,
+    )
+
+    with patch(
+        "backend.app.services.moonraker_cameras.sync_moonraker_cameras_for_printer",
+        new_callable=AsyncMock,
+    ) as sync:
+        await manager._forward_backend_event(9, StatusChanged(online))
+        await manager._forward_backend_event(9, StatusChanged(online))
+        await manager._forward_backend_event(9, StatusChanged(offline))
+        await manager._forward_backend_event(9, StatusChanged(online))
+
+    assert sync.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_moonraker_camera_sync_runs_after_initial_connection():
+    backend = FakeMoonrakerBackend()
+    registry = PrinterBackendRegistry()
+
+    def make_backend(printer, emit):
+        backend.emit = emit
+        return backend
+
+    registry.register(PrinterProvider.MOONRAKER, make_backend)
+    manager = PrinterManager(registry=registry)
+    printer = SimpleNamespace(id=10, provider="moonraker", name="Voron", serial_number="V", model=None)
+
+    with patch(
+        "backend.app.services.moonraker_cameras.sync_moonraker_cameras_for_printer",
+        new_callable=AsyncMock,
+    ) as sync:
+        assert await manager.connect_printer(printer) is True
+
+    sync.assert_awaited_once_with(10)
+
+
+@pytest.mark.asyncio
+async def test_moonraker_camera_sync_failure_does_not_fail_connection():
+    backend = FakeMoonrakerBackend()
+    registry = PrinterBackendRegistry()
+    registry.register(PrinterProvider.MOONRAKER, lambda _printer, emit: backend)
+    manager = PrinterManager(registry=registry)
+    printer = SimpleNamespace(id=11, provider="moonraker", name="Voron", serial_number="V", model=None)
+
+    with patch(
+        "backend.app.services.moonraker_cameras.sync_moonraker_cameras_for_printer",
+        new_callable=AsyncMock,
+        side_effect=RuntimeError("offline"),
+    ):
+        assert await manager.connect_printer(printer) is True
 
 
 @pytest.mark.asyncio

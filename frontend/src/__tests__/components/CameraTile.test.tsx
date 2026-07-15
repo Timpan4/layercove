@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { act, screen } from '@testing-library/react';
+import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { render } from '../utils';
 import { CameraTile } from '../../components/CameraTile';
 
@@ -122,5 +122,45 @@ describe('CameraTile', () => {
       String(url).includes('/api/v1/printers/11/camera/stop'),
     );
     expect(stopCalls.length).toBeGreaterThan(0);
+  });
+
+  it('shows one Moonraker feed and switches it with camera buttons', async () => {
+    vi.useRealTimers();
+    vi.spyOn(global, 'fetch').mockImplementation(async (input) => {
+      if (String(input).includes('/printers/23/cameras')) {
+        return Response.json([
+          {
+            id: 5, printer_id: 23, source: 'moonraker', source_uid: 'front', name: 'Front',
+            location: null, service: 'mjpegstreamer', camera_type: 'mjpeg', source_enabled: true,
+            enabled: true, is_primary: true, rotation: 0, sort_order: 0, available: true,
+            supported_live: true, snapshot_available: false, history: false,
+            first_seen_at: '2026-07-15T00:00:00Z', last_seen_at: '2026-07-15T00:00:00Z', missing_since: null,
+          },
+          {
+            id: 6, printer_id: 23, source: 'moonraker', source_uid: 'side', name: 'Side',
+            location: null, service: 'mjpegstreamer', camera_type: 'mjpeg', source_enabled: true,
+            enabled: true, is_primary: false, rotation: 90, sort_order: 1, available: true,
+            supported_live: true, snapshot_available: false, history: false,
+            first_seen_at: '2026-07-15T00:00:00Z', last_seen_at: '2026-07-15T00:00:00Z', missing_since: null,
+          },
+        ]);
+      }
+      return new Response(null, { status: 200 });
+    });
+
+    render(
+      <CameraTile
+        printerId={23}
+        printerName="Klipper"
+        provider="moonraker"
+        mode="live"
+        snapshotIntervalMs={5000}
+        connected
+      />,
+    );
+
+    await waitFor(() => expect((screen.getByAltText('Klipper') as HTMLImageElement).src).toContain('/cameras/5/stream'));
+    fireEvent.click(screen.getByTitle('Side'));
+    expect((screen.getByAltText('Klipper') as HTMLImageElement).src).toContain('/cameras/6/stream');
   });
 });

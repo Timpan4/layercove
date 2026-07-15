@@ -352,6 +352,39 @@ export interface Printer {
   moonraker_config: MoonrakerPrinterConfigResponse | null;
 }
 
+export interface PrinterCamera {
+  id: number;
+  printer_id: number;
+  source: 'moonraker' | 'manual';
+  source_uid: string;
+  name: string;
+  location: string | null;
+  service: string | null;
+  camera_type: 'mjpeg' | 'rtsp' | 'snapshot' | 'unsupported';
+  source_enabled: boolean;
+  enabled: boolean;
+  is_primary: boolean;
+  rotation: 0 | 90 | 180 | 270;
+  sort_order: number;
+  available: boolean;
+  supported_live: boolean;
+  snapshot_available: boolean;
+  history: boolean;
+  first_seen_at: string;
+  last_seen_at: string;
+  missing_since: string | null;
+}
+
+export interface PrinterCameraUpdate {
+  enabled?: boolean;
+  is_primary?: boolean;
+  rotation?: 0 | 90 | 180 | 270;
+  name?: string;
+  stream_url?: string;
+  snapshot_url?: string;
+  camera_type?: 'mjpeg' | 'rtsp' | 'snapshot';
+}
+
 export interface PrinterCapabilities {
   upload_gcode: boolean;
   upload_3mf: boolean;
@@ -5753,6 +5786,25 @@ export const api = {
     withStreamToken(`${API_BASE}/printers/${printerId}/camera/stream?fps=${fps}`),
   getCameraSnapshotUrl: (printerId: number) =>
     withStreamToken(`${API_BASE}/printers/${printerId}/camera/snapshot`),
+  listPrinterCameras: (printerId: number, includeHistory = false) =>
+    request<PrinterCamera[]>(`/printers/${printerId}/cameras?include_history=${includeHistory}`),
+  syncPrinterCameras: (printerId: number) =>
+    request<PrinterCamera[]>(`/printers/${printerId}/cameras/sync`, { method: 'POST' }),
+  updatePrinterCamera: (printerId: number, cameraId: number, payload: PrinterCameraUpdate) =>
+    request<PrinterCamera>(`/printers/${printerId}/cameras/${cameraId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  restorePrinterCameraAsManual: (printerId: number, cameraId: number) =>
+    request<PrinterCamera>(`/printers/${printerId}/cameras/${cameraId}/restore-as-manual`, {
+      method: 'POST',
+    }),
+  deletePrinterCamera: (printerId: number, cameraId: number) =>
+    request<void>(`/printers/${printerId}/cameras/${cameraId}`, { method: 'DELETE' }),
+  getPrinterCameraStreamUrl: (printerId: number, cameraId: number, fps = 10) =>
+    withStreamToken(`${API_BASE}/printers/${printerId}/cameras/${cameraId}/stream?fps=${fps}`),
+  getPrinterCameraSnapshotUrl: (printerId: number, cameraId: number) =>
+    withStreamToken(`${API_BASE}/printers/${printerId}/cameras/${cameraId}/snapshot`),
   testCameraConnection: (printerId: number) =>
     request<{ success: boolean; message?: string; error?: string }>(`/printers/${printerId}/camera/test`),
   getCameraStatus: (printerId: number) =>

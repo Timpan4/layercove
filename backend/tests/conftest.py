@@ -143,6 +143,7 @@ async def test_engine():
         print_log,
         print_queue,
         printer,
+        printer_camera,
         project,
         project_bom,
         settings,
