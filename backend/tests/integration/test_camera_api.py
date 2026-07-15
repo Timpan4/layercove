@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
+from starlette.responses import Response
 
 
 class TestCameraAPI:
@@ -393,6 +394,98 @@ class TestCameraAPI:
 
         assert response.status_code == 503
         assert "external camera" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_selected_camera_media_uses_stream_token_when_auth_enabled(
+        self, async_client: AsyncClient, db_session, printer_factory
+    ):
+        """Selected Moonraker media bypasses only gateway bearer auth, not its token gate."""
+        from backend.app.models.printer_camera import PrinterCamera
+
+        printer = await printer_factory(provider="moonraker")
+        camera = PrinterCamera(
+            printer_id=printer.id,
+            source="moonraker",
+            source_uid="selected-camera",
+            name="Selected camera",
+            camera_type="mjpeg",
+            stream_url="http://printer.lan/webcam/stream",
+            snapshot_url="http://printer.lan/webcam/snapshot",
+        )
+        db_session.add(camera)
+        await db_session.commit()
+
+        setup = await async_client.post(
+            "/api/v1/auth/setup",
+            json={"auth_enabled": True, "admin_username": "camera_admin", "admin_password": "CameraPass1!"},
+        )
+        assert setup.status_code in (200, 201)
+        login = await async_client.post(
+            "/api/v1/auth/login",
+            json={"username": "camera_admin", "password": "CameraPass1!"},
+        )
+        token_response = await async_client.post(
+            "/api/v1/printers/camera/stream-token",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+        assert token_response.status_code == 200
+        stream_token = token_response.json()["token"]
+
+        for suffix, handler in (
+            ("snapshot", "_camera_snapshot_response"),
+            ("stream", "_camera_stream_response"),
+        ):
+            with patch(
+                f"backend.app.api.routes.camera.{handler}",
+                new=AsyncMock(return_value=Response(status_code=204)),
+            ) as mocked_handler:
+                path = f"/api/v1/printers/{printer.id}/cameras/{camera.id}/{suffix}"
+                allowed = await async_client.get(path, params={"token": stream_token})
+                assert allowed.status_code == 204
+                mocked_handler.assert_awaited_once()
+
+                rejected = await async_client.get(path)
+                assert rejected.status_code == 401
+                mocked_handler.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_camera_management_routes_require_gateway_auth_when_enabled(
+        self, async_client: AsyncClient, db_session, printer_factory
+    ):
+        """Only selected-camera media may bypass bearer auth with its stream token."""
+        from backend.app.models.printer_camera import PrinterCamera
+
+        printer = await printer_factory(provider="moonraker")
+        camera = PrinterCamera(
+            printer_id=printer.id,
+            source="moonraker",
+            source_uid="managed-camera",
+            name="Managed camera",
+            camera_type="mjpeg",
+            stream_url="http://printer.lan/webcam/stream",
+        )
+        db_session.add(camera)
+        await db_session.commit()
+
+        setup = await async_client.post(
+            "/api/v1/auth/setup",
+            json={"auth_enabled": True, "admin_username": "camera_admin", "admin_password": "CameraPass1!"},
+        )
+        assert setup.status_code in (200, 201)
+
+        base = f"/api/v1/printers/{printer.id}/cameras"
+        for request, path in (
+            (async_client.get, base),
+            (async_client.post, f"{base}/sync"),
+            (async_client.patch, f"{base}/{camera.id}"),
+            (async_client.delete, f"{base}/{camera.id}"),
+            (async_client.post, f"{base}/{camera.id}/restore-as-manual"),
+        ):
+            response = await request(path)
+            assert response.status_code == 401
+            assert response.json()["detail"] == "Authentication required"
 
     # ========================================================================
     # Camera Stream Endpoint
