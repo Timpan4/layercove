@@ -44,6 +44,7 @@ from backend.app.api.routes import (
     makerworld,
     metrics,
     mfa,
+    network_sites,
     notification_templates,
     notifications,
     obico,
@@ -6925,6 +6926,7 @@ app.include_router(bug_report.router, prefix=app_settings.api_prefix)
 app.include_router(users.router, prefix=app_settings.api_prefix)
 app.include_router(groups.router, prefix=app_settings.api_prefix)
 app.include_router(printers.router, prefix=app_settings.api_prefix)
+app.include_router(network_sites.router, prefix=app_settings.api_prefix)
 app.include_router(archives.router, prefix=app_settings.api_prefix)
 app.include_router(filaments.router, prefix=app_settings.api_prefix)
 app.include_router(inventory.router, prefix=app_settings.api_prefix)

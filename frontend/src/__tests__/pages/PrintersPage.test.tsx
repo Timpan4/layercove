@@ -111,7 +111,8 @@ describe('PrintersPage', () => {
       }),
       http.get('/api/v1/queue/', () => {
         return HttpResponse.json([]);
-      })
+      }),
+      http.get('/api/v1/network-sites', () => HttpResponse.json([])),
     );
   });
 
@@ -122,6 +123,25 @@ describe('PrintersPage', () => {
       await waitFor(() => {
         expect(screen.getByText('Printers')).toBeInTheDocument();
       });
+    });
+
+    it('shows the named network-site badge on its printer card', async () => {
+      server.use(
+        http.get('/api/v1/printers/', () =>
+          HttpResponse.json([
+            {
+              ...mockPrinters[0],
+              network_site_id: 1,
+              network_site_lan_ip: '192.168.1.87',
+              network_site: { id: 1, name: 'Timpa Home', site_number: 1 },
+            },
+          ]),
+        ),
+      );
+
+      render(<PrintersPage />);
+
+      expect(await screen.findByText('Timpa Home')).toBeInTheDocument();
     });
 
     it('shows printer cards', async () => {

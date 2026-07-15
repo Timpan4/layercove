@@ -189,6 +189,7 @@ async def init_db():
         long_lived_token,
         maintenance,
         moonraker_printer_config,
+        network_site,
         notification,
         notification_template,
         oidc_provider,
@@ -3436,6 +3437,21 @@ async def run_migrations(conn):
     # Migration: Disambiguate the four ``user_print_*`` notification template
     # names by appending " Email" (#1792). See ``_migrate_rename_user_print_template_names``.
     await _migrate_rename_user_print_template_names(conn)
+
+    await _migrate_network_sites(conn)
+
+
+async def _migrate_network_sites(conn) -> None:
+    """Add nullable Network Site fields to printers from older installs."""
+    await _safe_execute(
+        conn,
+        "ALTER TABLE printers ADD COLUMN network_site_id INTEGER REFERENCES network_sites(id) ON DELETE RESTRICT",
+    )
+    await _safe_execute(conn, "ALTER TABLE printers ADD COLUMN network_site_lan_ip VARCHAR(15)")
+    await _safe_execute(
+        conn,
+        "CREATE INDEX IF NOT EXISTS ix_printers_network_site_id ON printers (network_site_id)",
+    )
 
 
 async def _migrate_print_queue_provider_identity(conn) -> None:

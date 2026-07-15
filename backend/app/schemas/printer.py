@@ -8,6 +8,7 @@ from pydantic import BaseModel, Field, SecretStr, ValidationInfo, field_validato
 from pydantic.json_schema import SkipJsonSchema
 
 from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
+from backend.app.schemas.network_site import NetworkSiteSummary
 from backend.app.services.printer_types import PrinterCapabilities, PrinterProvider, capabilities_for_provider
 
 
@@ -168,6 +169,8 @@ class PrinterBase(BaseModel):
     )
     model: str | None = None
     location: str | None = None  # Group/location name
+    network_site_id: int | None = Field(default=None, ge=1)
+    network_site_lan_ip: str | None = Field(default=None, max_length=15)
     auto_archive: bool = True
     external_camera_url: str | None = None
     external_camera_type: str | None = None  # "mjpeg", "rtsp", "snapshot", "usb"
@@ -190,14 +193,18 @@ class PrinterCreate(PrinterBase):
         provider = info.data.get("provider")
         moonraker_config = info.data.get("moonraker_config")
         access_code = info.data.get("access_code")
+        network_site_id = info.data.get("network_site_id")
+        network_site_lan_ip = info.data.get("network_site_lan_ip")
         if access_code is not None and not 1 <= len(access_code.get_secret_value()) <= 20:
             raise ValueError("access_code must contain between 1 and 20 characters")
+        if (network_site_id is None) != (network_site_lan_ip is None):
+            raise ValueError("network_site_id and network_site_lan_ip must be provided together")
         if provider is PrinterProvider.BAMBU:
             missing = [
                 field
                 for field, field_value in (
                     ("serial_number", info.data.get("serial_number")),
-                    ("ip_address", info.data.get("ip_address")),
+                    ("ip_address", info.data.get("ip_address") if network_site_id is None else "generated"),
                     ("access_code", access_code),
                 )
                 if field_value is None
@@ -241,6 +248,8 @@ class PrinterUpdate(BaseModel):
     access_code_valid: SkipJsonSchema[bool] = Field(default=True, exclude=True, validate_default=True)
     model: str | None = None
     location: str | None = None
+    network_site_id: int | None = Field(default=None, ge=1)
+    network_site_lan_ip: str | None = Field(default=None, max_length=15)
     is_active: bool | None = None
     auto_archive: bool | None = None
     print_hours_offset: float | None = None
@@ -282,6 +291,7 @@ class PrinterResponse(PrinterBase):
     updated_at: datetime
     capabilities: PrinterCapabilities = Field(default_factory=lambda: capabilities_for_provider(PrinterProvider.BAMBU))
     moonraker_config: MoonrakerPrinterConfigResponse | None = None
+    network_site: NetworkSiteSummary | None = None
 
     class Config:
         from_attributes = True
@@ -297,6 +307,13 @@ class PrinterResponse(PrinterBase):
             "ip_address": printer.ip_address,
             "model": printer.model,
             "location": printer.location,
+            "network_site_id": printer.network_site_id,
+            "network_site_lan_ip": printer.network_site_lan_ip,
+            "network_site": (
+                NetworkSiteSummary.model_validate(printer.network_site, from_attributes=True)
+                if printer.network_site is not None
+                else None
+            ),
             "auto_archive": printer.auto_archive,
             "external_camera_url": printer.external_camera_url,
             "external_camera_type": printer.external_camera_type,

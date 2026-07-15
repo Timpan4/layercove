@@ -39,6 +39,10 @@ const mockSettings = {
 
 describe('SettingsPage', () => {
   beforeEach(() => {
+    Object.defineProperty(Element.prototype, 'scrollIntoView', {
+      configurable: true,
+      value: vi.fn(),
+    });
     // BrowserRouter shares window.location across tests; reset it so a tab
     // switch in one test (e.g. clicking "Workflow") doesn't carry into
     // sibling tests that expect to land on the default General tab.
@@ -81,7 +85,8 @@ describe('SettingsPage', () => {
       }),
       http.get('/api/v1/external-links/', () => {
         return HttpResponse.json([]);
-      })
+      }),
+      http.get('/api/v1/network-sites', () => HttpResponse.json([])),
     );
   });
 
@@ -535,7 +540,19 @@ describe('SettingsPage', () => {
       await waitFor(() => {
         // Network tab contains MQTT Publishing section
         expect(screen.getByText('MQTT Publishing')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Network Sites' })).toBeInTheDocument();
       });
+    });
+
+    it('finds Network Sites from settings search', async () => {
+      const user = userEvent.setup();
+      render(<SettingsPage />);
+
+      await user.type(await screen.findByPlaceholderText('Search settings…'), 'tailscale');
+      await user.click(await screen.findByText('Network Sites'));
+
+      expect(await screen.findByRole('heading', { name: 'Network Sites' })).toBeInTheDocument();
+      expect(window.location.search).toContain('tab=network');
     });
 
     it('can switch to Smart Plugs tab', async () => {
