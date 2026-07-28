@@ -2819,13 +2819,15 @@ export function ProfilesPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission } = useAuth();
+  const { hasPermission, loading: authLoading } = useAuth();
+  const canUseBambuCloud = hasPermission('cloud:auth');
   const [activeTab, setActiveTab] = useState<ProfileTab>('cloud');
   const [lastSyncTime, setLastSyncTime] = useState<Date>();
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['cloudStatus'],
     queryFn: api.getCloudStatus,
+    enabled: !authLoading && canUseBambuCloud,
   });
 
   const { data: printers = [] } = useQuery({
@@ -2860,7 +2862,7 @@ export function ProfilesPage() {
     queryClient.invalidateQueries({ queryKey: ['cloudStatus'] });
   };
 
-  if (statusLoading) {
+  if (authLoading || statusLoading) {
     return (
       <div className="p-4 md:p-8 flex items-center justify-center min-h-[400px]">
         <Loader2 className="w-8 h-8 text-bambu-green animate-spin" />
@@ -2928,7 +2930,13 @@ export function ProfilesPage() {
       </div>
 
       {/* Cloud Profiles Tab */}
-      {activeTab === 'cloud' && (
+      {activeTab === 'cloud' && !canUseBambuCloud && (
+        <div className="text-center py-16">
+          <AlertTriangle className="w-10 h-10 text-bambu-gray-dark mx-auto mb-3" />
+          <p className="text-bambu-gray">{t('groups.noPermission')}</p>
+        </div>
+      )}
+      {activeTab === 'cloud' && canUseBambuCloud && (
         <>
           {/* Connection Status Bar */}
           {status?.is_authenticated && (
