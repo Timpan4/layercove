@@ -168,7 +168,8 @@ jobs:
 
       - name: Run Bun audit
         working-directory: frontend
-        run: bun audit --prod --audit-level=high
+        # ponytail: This Vite SPA does not use unstable React Router RSC APIs. Remove when react-router-dom ships a compatible patched release.
+        run: bun audit --prod --audit-level=high --ignore GHSA-qwww-vcr4-c8h2
 
   frontend-typecheck:
     name: Frontend Type Check
