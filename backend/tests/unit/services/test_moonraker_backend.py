@@ -99,6 +99,14 @@ async def test_moonraker_subscribes_normalizes_live_status_and_ignores_partial_p
         "printer.objects.query",
         "printer.objects.subscribe",
     ]
+    expected_objects = {
+        "print_stats": None,
+        "virtual_sdcard": None,
+        "display_status": None,
+        "extruder": None,
+        "heater_bed": None,
+    }
+    assert [message["params"]["objects"] for message in connection.sent] == [expected_objects, expected_objects]
     assert backend.snapshot().filename == "cube.gcode"
     assert backend.snapshot().progress == 12.5
     assert backend.snapshot().elapsed_seconds == 61

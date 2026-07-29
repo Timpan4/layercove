@@ -33,8 +33,6 @@ _OBJECTS = {
     "print_stats": None,
     "virtual_sdcard": None,
     "display_status": None,
-    "gcode_move": None,
-    "toolhead": None,
     "extruder": None,
     "heater_bed": None,
 }
