@@ -24,6 +24,7 @@ build/
 # Node
 frontend/node_modules/
 frontend/coverage/
+/static/
 npm-debug.log*
 
 # Database

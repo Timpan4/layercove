@@ -254,7 +254,7 @@ function Start-LayerCove {
     if ($LASTEXITCODE -ne 0) {
         Fail 'Container start failed. Inspect logs with:'
         Write-Host "    cd $InstallPath" -ForegroundColor Yellow
-        Write-Host "    $DockerCompose logs bambuddy" -ForegroundColor Yellow
+        Write-Host "    $DockerCompose logs layercove" -ForegroundColor Yellow
         exit 1
     }
 
@@ -266,7 +266,7 @@ function Start-LayerCove {
         if ($ps -match 'Up') { Ok 'LayerCove container is running'; return }
         if ($ps -match 'Exited') {
             Fail 'Container exited unexpectedly.'
-            Write-Host "    $DockerCompose logs bambuddy" -ForegroundColor Yellow
+            Write-Host "    $DockerCompose logs layercove" -ForegroundColor Yellow
             exit 1
         }
         $attempts++
@@ -326,7 +326,7 @@ Write-Host "                    http://${lanIp}:$Port  (from other devices)" -Fo
 Write-Host ''
 Write-Host '  Manage container:'
 Write-Host "    Status:   cd `"$InstallPath`"; $DockerCompose ps"
-Write-Host "    Logs:     cd `"$InstallPath`"; $DockerCompose logs -f bambuddy"
+Write-Host "    Logs:     cd `"$InstallPath`"; $DockerCompose logs -f layercove"
 Write-Host "    Stop:     cd `"$InstallPath`"; $DockerCompose down"
 Write-Host "    Start:    cd `"$InstallPath`"; $DockerCompose up -d"
 Write-Host "    Restart:  cd `"$InstallPath`"; $DockerCompose restart"

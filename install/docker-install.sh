@@ -347,7 +347,7 @@ start_container() {
         # Check if container failed
         if $DOCKER_CMD ps -a | grep -q "Exited"; then
             log_error "Container failed to start"
-            log_info "Check logs with: $DOCKER_CMD logs bambuddy"
+            log_info "Check logs with: $DOCKER_CMD logs layercove"
             return 1
         fi
 
@@ -532,7 +532,7 @@ main() {
     echo ""
     echo -e "  ${BOLD}Manage container:${NC}"
     echo -e "    Status:  cd $INSTALL_PATH && $DOCKER_CMD ps"
-    echo -e "    Logs:    cd $INSTALL_PATH && $DOCKER_CMD logs -f bambuddy"
+    echo -e "    Logs:    cd $INSTALL_PATH && $DOCKER_CMD logs -f layercove"
     echo -e "    Stop:    cd $INSTALL_PATH && $DOCKER_CMD down"
     echo -e "    Start:   cd $INSTALL_PATH && $DOCKER_CMD up -d"
     echo -e "    Restart: cd $INSTALL_PATH && $DOCKER_CMD restart"
@@ -544,7 +544,7 @@ main() {
         echo -e "    cd $INSTALL_PATH && $DOCKER_CMD pull && $DOCKER_CMD up -d"
     fi
     echo ""
-    echo -e "  ${BOLD}Data location:${NC}  Docker volumes (bambuddy_data, bambuddy_logs)"
+    echo -e "  ${BOLD}Data location:${NC}  Docker volumes (layercove_data, layercove_logs)"
     echo ""
     echo -e "  ${BOLD}Documentation:${NC}  ${CYAN}https://github.com/Timpan4/layercove#readme${NC}"
     echo ""
