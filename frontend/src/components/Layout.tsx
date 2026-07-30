@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Printer, Archive, ListOrdered, BarChart3, Cloud, Settings, Sun, Moon, Monitor, ChevronLeft, ChevronRight, Keyboard, Github, ArrowUpCircle, Wrench, FolderKanban, FolderOpen, X, Menu, Info, Plug, Bug, LogOut, Key, Loader2, Disc3, ShieldAlert, Globe, Bell, type LucideIcon } from 'lucide-react';
@@ -246,7 +247,7 @@ export function Layout() {
 
   const printerStatusQueries = useQueries({
     queries: queuePrinterIds.map(id => ({
-      queryKey: ['printerStatus', id],
+      queryKey: queryKeys.printerStatus(id),
       queryFn: () => api.getPrinterStatus(id),
       staleTime: 30 * 1000, // WebSocket keeps this warm
     })),

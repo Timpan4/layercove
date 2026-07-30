@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -180,7 +181,7 @@ export function SpoolBuddyDashboard() {
 
   const statusQueries = useQueries({
     queries: printers.map((printer: Printer) => ({
-      queryKey: ['printerStatus', printer.id],
+      queryKey: queryKeys.printerStatus(printer.id),
       queryFn: () => api.getPrinterStatus(printer.id),
       refetchInterval: 10000,
       select: (data: PrinterStatus) => ({
@@ -207,7 +208,7 @@ export function SpoolBuddyDashboard() {
       // Optimistically clear the flag so the row vanishes immediately; the
       // backend already broadcasts a printer_status WS event after clearing,
       // but we don't want the user to see the row linger while that round-trips.
-      queryClient.setQueryData(['printerStatus', printerId], (old: PrinterStatus | undefined) =>
+      queryClient.setQueryData(queryKeys.printerStatus(printerId), (old: PrinterStatus | undefined) =>
         old ? { ...old, awaiting_plate_clear: false } : old
       );
       showToast(t('spoolbuddy.dashboard.plateClearedToast', 'Plate marked as cleared'), 'success');

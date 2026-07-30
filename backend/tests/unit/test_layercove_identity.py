@@ -4,6 +4,8 @@ import importlib
 import json
 import os
 import re
+import subprocess
+import sys
 from pathlib import Path
 
 import pytest
@@ -61,27 +63,6 @@ def test_layercove_metadata_is_active_product_identity():
 
 
 @pytest.mark.unit
-def test_generated_frontend_identity_matches_sources():
-    root = REPOSITORY_ROOT
-    source_index = (root / "frontend" / "index.html").read_text(encoding="utf-8")
-    generated_index = (root / "static" / "index.html").read_text(encoding="utf-8")
-    source_manifest = json.loads((root / "frontend" / "public" / "manifest.json").read_text(encoding="utf-8"))
-    generated_manifest = json.loads((root / "static" / "manifest.json").read_text(encoding="utf-8"))
-
-    for tag in ("title", "description", "apple-mobile-web-app-title"):
-        pattern = rf"<(?:title|meta)[^>]*(?:name=\"{tag}\"[^>]*content=\"([^\"]+)\"|content=\"([^\"]+)\"[^>]*name=\"{tag}\")[^>]*>|<title>([^<]+)</title>"
-        source_match = re.search(pattern, source_index)
-        generated_match = re.search(pattern, generated_index)
-        assert source_match is not None and generated_match is not None
-        assert next(value for value in source_match.groups() if value) == next(
-            value for value in generated_match.groups() if value
-        )
-
-    for field in ("name", "short_name", "description", "screenshots"):
-        assert generated_manifest[field] == source_manifest[field]
-
-
-@pytest.mark.unit
 def test_readme_local_links_and_assets_resolve():
     root = REPOSITORY_ROOT
     readme = (root / "README.md").read_text(encoding="utf-8")
@@ -98,28 +79,11 @@ def test_readme_local_links_and_assets_resolve():
 
 
 @pytest.mark.unit
-def test_bambu_storage_and_runtime_compatibility_identifiers_remain():
-    import backend.app.core.config as config
-
-    assert Path(config.settings.database_url.removeprefix("sqlite+aiosqlite:///")).name == "bambuddy.db"
-    assert config.settings.archive_dir.name == "archive"
-
-    root = REPOSITORY_ROOT
-    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
-    assert "  bambuddy:" in compose
-    assert "image: ghcr.io/timpan4/layercove:latest" in compose
-    assert "container_name: bambuddy" in compose
-    assert "bambuddy_data:/app/data" in compose
-    assert "bambuddy_logs:/app/logs" in compose
-
-
-@pytest.mark.unit
-def test_fresh_deployment_sources_target_layercove_and_keep_runtime_compatibility():
+def test_fresh_deployment_sources_target_layercove():
     root = REPOSITORY_ROOT
     installers = {
         path: (root / path).read_text(encoding="utf-8")
         for path in (
-            "install/install.sh",
             "install/docker-install.sh",
             "install/docker-install.ps1",
         )
@@ -129,15 +93,47 @@ def test_fresh_deployment_sources_target_layercove_and_keep_runtime_compatibilit
         assert "Timpan4/layercove" in content, path
         assert "maziggy/bambuddy" not in content, path
 
-    assert 'DEFAULT_INSTALL_PATH="/opt/layercove"' in installers["install/install.sh"]
     assert 'DEFAULT_INSTALL_PATH="/opt/layercove"' in installers["install/docker-install.sh"]
     assert "Join-Path $env:USERPROFILE 'layercove'" in installers["install/docker-install.ps1"]
-    assert 'SERVICE_USER="bambuddy"' in installers["install/install.sh"]
-    assert "/etc/systemd/system/bambuddy.service" in installers["install/install.sh"]
 
-    for path in ("install/update.sh", "install/update_macos.sh"):
-        content = (root / path).read_text(encoding="utf-8")
-        assert 'DEFAULT_INSTALL_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"' in content
+
+@pytest.mark.unit
+@pytest.mark.parametrize("legacy_name", ["bambutrack.db", "bambuddy.db"])
+def test_legacy_database_refusal_preserves_bytes(tmp_path, legacy_name):
+    legacy = tmp_path / legacy_name
+    original = b"SQLite format 3\x00legacy-data"
+    legacy.write_bytes(original)
+    env = os.environ | {"DATA_DIR": str(tmp_path), "DATABASE_URL": "", "LOG_TO_FILE": "false"}
+
+    result = subprocess.run(
+        [sys.executable, "-c", "import backend.app.core.config"],
+        cwd=REPOSITORY_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert "Legacy database found" in result.stderr
+    assert legacy.read_bytes() == original
+    assert not (tmp_path / "layercove.db").exists()
+
+
+@pytest.mark.unit
+def test_fresh_default_database_is_layercove(tmp_path):
+    env = os.environ | {"DATA_DIR": str(tmp_path), "DATABASE_URL": "", "LOG_TO_FILE": "false"}
+
+    result = subprocess.run(
+        [sys.executable, "-c", "from backend.app.core.config import settings; print(settings.database_url)"],
+        cwd=REPOSITORY_ROOT,
+        env=env,
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert result.stdout.strip().endswith("/layercove.db")
 
 
 @pytest.mark.unit

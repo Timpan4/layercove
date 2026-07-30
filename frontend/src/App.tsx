@@ -30,6 +30,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { SliceJobTrackerProvider } from './contexts/SliceJobTrackerContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import type { Permission } from './api/client';
 import { ColorCatalogProvider } from './contexts/ColorCatalogContext';
 import { SpoolBuddyLayout } from './components/spoolbuddy/SpoolBuddyLayout';
 import { SpoolBuddyDashboard } from './pages/spoolbuddy/SpoolBuddyDashboard';
@@ -106,13 +107,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function PermissionRoute({ permission, children }: { permission: string; children: React.ReactNode }) {
+function PermissionRoute({ permission, children }: { permission: Permission; children: React.ReactNode }) {
   // Permission-gated route: any user with the given permission can enter, not
   // just admins. Individual components below this guard apply their own
   // per-action permission checks. Used for pages where delegation is supported
   // (e.g. settings:read grants read-only access to Settings; specific tabs
   // require their own permissions like users:read, groups:update, etc.).
-  const { authEnabled, loading, user, hasPermission } = useAuth();
+  const { authEnabled, loading, user, authorization } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -128,7 +129,7 @@ function PermissionRoute({ permission, children }: { permission: string; childre
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  if (!hasPermission(permission as Parameters<typeof hasPermission>[0])) {
+  if (!authorization.route(permission).allowed) {
     return <Navigate to="/" replace />;
   }
 

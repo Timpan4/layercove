@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -127,7 +128,7 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
 
   // Fetch printer status for light toggle and skip objects
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', printerId],
+    queryKey: queryKeys.printerStatus(printerId),
     queryFn: () => api.getPrinterStatus(printerId),
     refetchInterval: 30000,
     enabled: printerId > 0,
@@ -137,9 +138,9 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
   const chamberLightMutation = useMutation({
     mutationFn: (on: boolean) => api.setChamberLight(printerId, on),
     onMutate: async (on) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printerId] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printerId]);
-      queryClient.setQueryData(['printerStatus', printerId], (old: typeof status) => ({
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printerId) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printerId));
+      queryClient.setQueryData(queryKeys.printerStatus(printerId), (old: typeof status) => ({
         ...old,
         chamber_light: on,
       }));
@@ -150,7 +151,7 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     },
     onError: (error: Error, _, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printerId], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printerId), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToControlChamberLight'), 'error');
     },

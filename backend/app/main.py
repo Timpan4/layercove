@@ -94,6 +94,7 @@ from backend.app.services.bambu_ftp import (
     with_ftp_retry,
 )
 from backend.app.services.bambu_mqtt import PrinterState
+from backend.app.services.filament_accounting import weight_used_from_ams_percentage
 from backend.app.services.github_backup import github_backup_service
 from backend.app.services.homeassistant import homeassistant_service
 from backend.app.services.library_trash import library_trash_service
@@ -1689,39 +1690,29 @@ async def on_ams_change(printer_id: int, ams_data: list):
                         )
                         existing_assignment = existing.scalar_one_or_none()
                         if existing_assignment:
-                            # Sync spool weight_used from AMS remain — only INCREASE, never decrease.
-                            # The AMS remain% is low-resolution (integer %, i.e. 10g steps for 1kg spool)
-                            # and must not overwrite precise values from the usage tracker (3MF/G-code).
-                            # Skip during active prints: the usage tracker handles deduction
-                            # precisely via 3MF data on print completion. Without this guard the
-                            # AMS remain% SET and the usage tracker ADD both fire from the same
-                            # MQTT message, doubling the deduction (#880).
+                            # Skip during active prints: the usage tracker owns deduction
+                            # and this guard also preserves the no-K-profile-write behavior (#880).
                             if _print_active:
                                 continue
-                            remain_raw = tray.get("remain")
-                            if (
-                                remain_raw is not None
-                                and existing_assignment.spool
-                                and not existing_assignment.spool.weight_locked
-                            ):
-                                try:
-                                    remain_val = int(remain_raw)
-                                except (TypeError, ValueError):
-                                    remain_val = -1
-                                if 1 <= remain_val <= 100:
-                                    lw = existing_assignment.spool.label_weight or 1000
-                                    new_used = round(lw * (100 - remain_val) / 100.0, 1)
-                                    current_used = existing_assignment.spool.weight_used or 0
-                                    if new_used > current_used + 1:
-                                        logger.info(
-                                            "Weight sync: spool %d weight_used %s -> %s (remain=%d)",
-                                            existing_assignment.spool_id,
-                                            current_used,
-                                            new_used,
-                                            remain_val,
-                                        )
-                                        existing_assignment.spool.weight_used = new_used
-                                        await db.commit()
+                            spool = existing_assignment.spool
+                            if spool:
+                                new_used = weight_used_from_ams_percentage(
+                                    print_active=_print_active,
+                                    weight_locked=spool.weight_locked,
+                                    remain=tray.get("remain"),
+                                    label_weight=spool.label_weight,
+                                    weight_used=spool.weight_used,
+                                )
+                                if new_used is not None:
+                                    logger.info(
+                                        "Weight sync: spool %d weight_used %s -> %s (remain=%s)",
+                                        existing_assignment.spool_id,
+                                        spool.weight_used or 0,
+                                        new_used,
+                                        tray.get("remain"),
+                                    )
+                                    spool.weight_used = new_used
+                                    await db.commit()
 
                             # Re-apply stored K-profile when the live tray's
                             # cali_idx drifted from the spool's stored profile.
@@ -2333,6 +2324,12 @@ async def on_print_start(printer_id: int, data: dict):
     from backend.app.api.routes.printers import clear_cover_cache
 
     clear_cover_cache(printer_id)
+
+    client = printer_manager.get_client(printer_id)
+    if client:
+        client.state.printable_objects = {}
+        client.state.printable_objects_bbox_all = None
+        client.state.skipped_objects = []
 
     await ws_manager.send_print_start(printer_id, data)
 
@@ -6241,22 +6238,6 @@ async def lifespan(app: FastAPI):
     # Reuse the same connection pool for MakerWorld — different host, same
     # keep-alive pool saves a TLS handshake per request.
     set_shared_makerworld_http_client(_shared_cloud_http_client)
-
-    # Fix queue items stuck with invalid "aborted" status (should be "cancelled").
-    # This can happen when a print was cancelled mid-print on versions before this fix.
-    try:
-        async with async_session() as db:
-            from backend.app.models.print_queue import PrintQueueItem
-
-            result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.status == "aborted"))
-            aborted_items = result.scalars().all()
-            if aborted_items:
-                for item in aborted_items:
-                    item.status = "cancelled"
-                await db.commit()
-                logging.info("Fixed %d queue item(s) with invalid 'aborted' status → 'cancelled'", len(aborted_items))
-    except Exception as e:
-        logging.warning("Failed to fix aborted queue items: %s", e)
 
     # Restore debug logging state from previous session
     await init_debug_logging()

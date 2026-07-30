@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQueries } from '@tanstack/react-query';
@@ -36,11 +37,11 @@ export function CameraWall({
   const { t } = useTranslation();
   const tileRefs = useRef<Map<number, HTMLDivElement | null>>(new Map());
 
-  // Reuses the same ['printerStatus', id] cache that each PrinterCard
+  // Reuses the same queryKeys.printerStatus(id) cache that each PrinterCard
   // populates, so flipping between Cards and Cam Wall is instant.
   const statusQueries = useQueries({
     queries: printers.map((p) => ({
-      queryKey: ['printerStatus', p.id],
+      queryKey: queryKeys.printerStatus(p.id),
       queryFn: () => api.getPrinterStatus(p.id),
       staleTime: 5000,
     })),

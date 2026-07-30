@@ -10,8 +10,17 @@ import {
   Upload, Download,
 } from 'lucide-react';
 import { ForecastPanel } from '../components/ForecastPanel';
-import { api, spoolbuddyApi, ApiError } from '../api/client';
+import { api, ApiError } from '../api/client';
 import type { InventorySpool, SpoolCatalogEntry } from '../api/client';
+import {
+  aggregateInventoryGroup,
+  failedBulkCount,
+  groupInventorySpools,
+  inventoryData,
+  inventoryQueryKeys,
+  invalidateInventory,
+  useInventorySource,
+} from '../api/inventoryData';
 import { Button } from '../components/Button';
 import { FilamentSwatch } from '../components/FilamentSwatch';
 import { buildFilamentBackground } from '../components/filamentSwatchHelpers';
@@ -29,11 +38,6 @@ import { getCurrencySymbol } from '../utils/currency';
 import { formatDateInput, parseUTCDate, type DateFormat } from '../utils/date';
 import { formatSlotLabel } from '../utils/amsHelpers';
 import { filterSpoolsByQuery } from '../utils/inventorySearch';
-import {
-  inventoryLocationsQueryKey,
-  invalidateSpoolAndLocationQueries,
-} from '../utils/inventoryQueries';
-import { aggregateGroupSpool } from '../utils/inventoryGrouping';
 
 type ArchiveFilter = 'active' | 'archived';
 type UsageFilter = 'all' | 'used' | 'new' | 'lowstock';
@@ -41,9 +45,7 @@ type ViewMode = 'table' | 'cards' | 'forecast';
 type SortDirection = 'asc' | 'desc';
 type SortState = { column: string; direction: SortDirection } | null;
 
-type DisplayItem =
-  | { type: 'single'; spool: InventorySpool }
-  | { type: 'group'; key: string; spools: InventorySpool[]; representative: InventorySpool };
+type DisplayItem = import('../api/inventoryData').InventoryDisplayItem;
 
 function dedupeAndSort(values: Array<string | null | undefined>): string[] {
   const set = new Set<string>();
@@ -54,13 +56,6 @@ function dedupeAndSort(values: Array<string | null | undefined>): string[] {
     }
   }
   return Array.from(set).sort((a, b) => a.localeCompare(b));
-}
-
-function spoolGroupKey(s: InventorySpool): string {
-  // Include extra_colors + effect_type so the "Group similar" toggle does
-  // not collapse two spools that share the base colour but differ on
-  // gradient stops or visual effect (#1154).
-  return `${s.material}|${s.subtype || ''}|${s.brand || ''}|${s.color_name || ''}|${s.rgba || ''}|${s.extra_colors || ''}|${s.effect_type || ''}|${s.label_weight}`;
 }
 
 // Column definitions for the inventory table
@@ -461,23 +456,15 @@ function saveSortState(state: SortState) {
   } catch { /* ignore */ }
 }
 
-// Wrapper: detects Spoolman mode and passes it to the shared inventory UI
 export default function InventoryPageRouter() {
-  const { data: spoolmanSettings } = useQuery({
-    queryKey: ['spoolman-settings'],
-    queryFn: api.getSpoolmanSettings,
-    staleTime: 5 * 60 * 1000,
-  });
-
-  const spoolmanModeReady = spoolmanSettings !== undefined;
-  const spoolmanMode =
-    spoolmanSettings?.spoolman_enabled === 'true' && !!spoolmanSettings?.spoolman_url;
-
-  return <InventoryPage spoolmanMode={spoolmanMode} spoolmanModeReady={spoolmanModeReady} />;
+  return <InventoryPage />;
 }
 
-function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spoolmanMode?: boolean; spoolmanModeReady?: boolean }) {
+function InventoryPage() {
   const { t } = useTranslation();
+  const { source, isReady: sourceReady } = useInventorySource();
+  const spoolmanMode = source === 'spoolman';
+  const inventory = inventoryData(source);
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { hasPermission, loading: authLoading } = useAuth();
@@ -559,13 +546,11 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const dateFormat: DateFormat = settings?.date_format || 'system';
 
-  // Query key and fetch function differ based on data source
-  const spoolsQueryKey = spoolmanMode ? ['spoolman-inventory-spools'] : ['inventory-spools'];
-  const refreshSpoolQueries = () => invalidateSpoolAndLocationQueries(queryClient, spoolsQueryKey);
+  const spoolsQueryKey = inventoryQueryKeys.spools(source);
+  const refreshSpoolQueries = () => invalidateInventory(queryClient, source);
   const { data: spools, isLoading } = useQuery({
     queryKey: spoolsQueryKey,
-    queryFn: () =>
-      spoolmanMode ? api.getSpoolmanInventorySpools(true) : api.getSpools(true),
+    queryFn: inventory.getSpools,
     refetchInterval: 30000,
   });
 
@@ -590,7 +575,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
     : undefined;
 
   const { data: storageLocations = [] } = useQuery({
-    queryKey: inventoryLocationsQueryKey,
+    queryKey: inventoryQueryKeys.locations,
     queryFn: api.getLocations,
   });
 
@@ -623,14 +608,9 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   // Targeted fetch — only fires when mode is known and spool isn't in the list yet
   const { data: deepLinkSpool, isError: deepLinkFetchFailed, error: deepLinkError } = useQuery({
-    queryKey: spoolmanMode
-      ? ['spoolman-inventory-spool', deepLinkSpoolId]
-      : ['inventory-spool', deepLinkSpoolId],
-    queryFn: () =>
-      spoolmanMode
-        ? api.getSpoolmanInventorySpool(deepLinkSpoolId!)
-        : api.getSpool(deepLinkSpoolId!),
-    enabled: spoolmanModeReady && deepLinkSpoolId !== null && deepLinkInList === null,
+    queryKey: inventoryQueryKeys.spool(source, deepLinkSpoolId),
+    queryFn: () => inventory.getSpool(deepLinkSpoolId!),
+    enabled: sourceReady && deepLinkSpoolId !== null && deepLinkInList === null,
     staleTime: Infinity,
     retry: (failureCount, error) =>
       failureCount < 2 && !(error instanceof ApiError && error.status === 404),
@@ -640,7 +620,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
     if (deepLinkHandled.current) return;
 
     // Case 1: spool is already in the fetched list
-    if (spoolmanModeReady && deepLinkSpoolId && deepLinkInList) {
+    if (sourceReady && deepLinkSpoolId && deepLinkInList) {
       clearDeepLinkParam();
       setFormModal({ spool: deepLinkInList, mode: 'edit' });
       return;
@@ -660,7 +640,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
       showToast(t(is404 ? 'inventory.deepLinkSpoolNotFound' : 'inventory.deepLinkFetchFailed'), 'error');
     }
   }, [
-    spoolmanModeReady,
+    sourceReady,
     deepLinkSpoolId,
     deepLinkInList,
     deepLinkSpool,
@@ -711,7 +691,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const deleteMutation = useMutation({
     mutationFn: (id: number) =>
-      spoolmanMode ? api.deleteSpoolmanInventorySpool(id) : api.deleteSpool(id),
+      inventory.delete(id),
     onSuccess: () => {
       refreshSpoolQueries();
       showToast(t('inventory.spoolDeleted'), 'success');
@@ -729,7 +709,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const archiveMutation = useMutation({
     mutationFn: (id: number) =>
-      spoolmanMode ? api.archiveSpoolmanInventorySpool(id) : api.archiveSpool(id),
+      inventory.archive(id),
     onSuccess: () => {
       refreshSpoolQueries();
       showToast(t('inventory.spoolArchived'), 'success');
@@ -747,7 +727,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const restoreMutation = useMutation({
     mutationFn: (id: number) =>
-      spoolmanMode ? api.restoreSpoolmanInventorySpool(id) : api.restoreSpool(id),
+      inventory.restore(id),
     onSuccess: () => {
       refreshSpoolQueries();
       showToast(t('inventory.spoolRestored'), 'success');
@@ -765,11 +745,9 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const resetConsumedCounterMutation = useMutation({
     mutationFn: (id: number) =>
-      spoolmanMode
-        ? api.resetSpoolmanInventorySpoolConsumedCounter(id)
-        : api.resetSpoolConsumedCounter(id),
+      inventory.resetConsumed(id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: spoolsQueryKey });
+      invalidateInventory(queryClient, source, false);
       showToast(t('inventory.consumedCounterReset'), 'success');
     },
     onError: () => {
@@ -779,11 +757,9 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const bulkResetConsumedCounterMutation = useMutation({
     mutationFn: (ids: number[]) =>
-      spoolmanMode
-        ? api.bulkResetSpoolmanInventorySpoolConsumedCounter(ids)
-        : api.bulkResetSpoolConsumedCounter(ids),
+      inventory.bulkResetConsumed(ids),
     onSuccess: (data) => {
-      queryClient.invalidateQueries({ queryKey: spoolsQueryKey });
+      invalidateInventory(queryClient, source, false);
       showToast(t('inventory.allConsumedCountersReset', { count: data.reset }), 'success');
       // Close any open bulk-confirm modal + clear selection so the toolbar
       // collapses after the action — matches the other three bulk mutations
@@ -798,21 +774,14 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   // Bulk action mutations (#1795). Each invalidates the same query keys as
   // the per-spool equivalents so the table refreshes with the new state.
-  // Helper: count items that didn't succeed across the two response shapes
-  // (internal mode returns not_found, Spoolman returns errors[]). When the
-  // success count is 0 OR any failures occurred, surface that to the user
-  // instead of the silent green-toast-and-clear flow the first cut shipped.
-  const failedCount = (data: { not_found?: number[]; errors?: Array<{ id: number }> }): number =>
-    (data.not_found?.length ?? 0) + (data.errors?.length ?? 0);
 
   const bulkUpdateMutation = useMutation({
     mutationFn: async ({ ids, update }: { ids: number[]; update: Partial<Omit<InventorySpool, 'id' | 'archived_at' | 'created_at' | 'updated_at' | 'k_profiles'>> }): Promise<{ updated: number; not_found?: number[]; errors?: Array<{ id: number; status: number; detail: string }> }> => {
-      if (spoolmanMode) return api.bulkUpdateSpoolmanInventorySpools(ids, update);
-      return api.bulkUpdateSpools(ids, update);
+      return inventory.bulkUpdate(ids, update);
     },
     onSuccess: (data) => {
       refreshSpoolQueries();
-      const failed = failedCount(data);
+      const failed = failedBulkCount(data);
       if (data.updated === 0) {
         showToast(t('inventory.bulk.updateAllFailed', { count: failed }), 'error');
         return; // keep modal open + selection intact so user can retry
@@ -832,12 +801,11 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const bulkDeleteMutation = useMutation({
     mutationFn: async (ids: number[]): Promise<{ deleted: number; not_found?: number[]; errors?: Array<{ id: number; status: number; detail: string }> }> => {
-      if (spoolmanMode) return api.bulkDeleteSpoolmanInventorySpools(ids);
-      return api.bulkDeleteSpools(ids);
+      return inventory.bulkDelete(ids);
     },
     onSuccess: (data) => {
       refreshSpoolQueries();
-      const failed = failedCount(data);
+      const failed = failedBulkCount(data);
       if (data.deleted === 0) {
         showToast(t('inventory.bulk.deleteAllFailed', { count: failed }), 'error');
         return;
@@ -857,13 +825,12 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const bulkArchiveMutation = useMutation({
     mutationFn: async (ids: number[]): Promise<{ archived: number; already_archived?: number[]; not_found?: number[]; errors?: Array<{ id: number; status: number; detail: string }> }> => {
-      if (spoolmanMode) return api.bulkArchiveSpoolmanInventorySpools(ids);
-      return api.bulkArchiveSpools(ids);
+      return inventory.bulkArchive(ids);
     },
     onSuccess: (data) => {
       refreshSpoolQueries();
       // already-archived rows are NOT failures — they're correctly idempotent.
-      const failed = failedCount(data);
+      const failed = failedBulkCount(data);
       if (data.archived === 0 && failed > 0) {
         showToast(t('inventory.bulk.archiveAllFailed', { count: failed }), 'error');
         return;
@@ -883,12 +850,11 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   const bulkRestoreMutation = useMutation({
     mutationFn: async (ids: number[]): Promise<{ restored: number; already_active?: number[]; not_found?: number[]; errors?: Array<{ id: number; status: number; detail: string }> }> => {
-      if (spoolmanMode) return api.bulkRestoreSpoolmanInventorySpools(ids);
-      return api.bulkRestoreSpools(ids);
+      return inventory.bulkRestore(ids);
     },
     onSuccess: (data) => {
       refreshSpoolQueries();
-      const failed = failedCount(data);
+      const failed = failedBulkCount(data);
       if (data.restored === 0 && failed > 0) {
         showToast(t('inventory.bulk.restoreAllFailed', { count: failed }), 'error');
         return;
@@ -920,12 +886,8 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
   const handleSyncWeight = async (spool: InventorySpool) => {
     if (spool.last_scale_weight == null) return;
     try {
-      if (spoolmanMode) {
-        await api.syncSpoolmanSpoolWeight(spool.id, spool.last_scale_weight);
-      } else {
-        await spoolbuddyApi.updateSpoolWeight(spool.id, spool.last_scale_weight);
-      }
-      queryClient.invalidateQueries({ queryKey: spoolsQueryKey });
+      await inventory.syncWeight(spool.id, spool.last_scale_weight);
+      invalidateInventory(queryClient, source, false);
       const spoolName = [spool.brand, spool.material, spool.color_name].filter(Boolean).join(' ');
       showToast(`Synced "${spoolName}" to scale weight`, 'success');
     } catch (e) {
@@ -1216,42 +1178,8 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
 
   // Group similar spools when toggle is active
   const displayItems = useMemo((): DisplayItem[] => {
-    if (!groupSimilar) return sortedSpools.map((s) => ({ type: 'single' as const, spool: s }));
-
-    const groups = new Map<string, InventorySpool[]>();
-
-    for (const spool of sortedSpools) {
-      // Only group unused & unassigned spools
-      if (spool.weight_used > 0 || assignmentMap[spool.id]) {
-        // Will be added as singles in the walk below
-      } else {
-        const key = spoolGroupKey(spool);
-        const arr = groups.get(key);
-        if (arr) arr.push(spool);
-        else groups.set(key, [spool]);
-      }
-    }
-
-    const items: DisplayItem[] = [];
-    const processedKeys = new Set<string>();
-
-    // Walk sortedSpools order so groups appear at the position of their first member
-    for (const spool of sortedSpools) {
-      if (spool.weight_used > 0 || assignmentMap[spool.id]) {
-        items.push({ type: 'single', spool });
-        continue;
-      }
-      const key = spoolGroupKey(spool);
-      if (processedKeys.has(key)) continue;
-      processedKeys.add(key);
-      const members = groups.get(key)!;
-      if (members.length === 1) {
-        items.push({ type: 'single', spool: members[0] });
-      } else {
-        items.push({ type: 'group', key, spools: members, representative: members[0] });
-      }
-    }
-    return items;
+    if (!groupSimilar) return sortedSpools.map((spool) => ({ type: 'single', spool }));
+    return groupInventorySpools(sortedSpools, assignmentMap);
   }, [sortedSpools, groupSimilar, assignmentMap]);
 
   // Pagination (after sorting) — pageSize -1 means "All"
@@ -2046,7 +1974,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
                       const isExpanded = expandedGroups.has(key);
                       // Header row shows group totals (#1368): an aggregate
                       // spool plus remaining / pct summed across all members.
-                      const headerSpool = aggregateGroupSpool(groupSpools);
+                      const headerSpool = aggregateInventoryGroup(groupSpools);
                       const remaining = Math.max(0, headerSpool.label_weight - headerSpool.weight_used);
                       const pct = headerSpool.label_weight > 0 ? (remaining / headerSpool.label_weight) * 100 : 0;
                       return (
@@ -2199,8 +2127,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
           spool={formModal.spool}
           mode={formModal.mode}
           currencySymbol={currencySymbol}
-          spoolmanMode={spoolmanMode}
-          spoolsQueryKey={spoolsQueryKey}
+          source={source}
         />
       )}
 
@@ -2316,7 +2243,7 @@ function InventoryPage({ spoolmanMode = false, spoolmanModeReady = true }: { spo
           onClose={() => setCsvImportOpen(false)}
           onImported={(created) => {
             setCsvImportOpen(false);
-            queryClient.invalidateQueries({ queryKey: spoolsQueryKey });
+            invalidateInventory(queryClient, source, false);
             showToast(t('inventory.csv.importSuccess', '{{count}} spools imported', { count: created }), 'success');
           }}
         />

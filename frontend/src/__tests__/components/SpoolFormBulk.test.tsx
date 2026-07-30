@@ -35,6 +35,8 @@ vi.mock('../../api/client', () => ({
     getBuiltinFilaments: vi.fn().mockResolvedValue([]),
     getPrinters: vi.fn().mockResolvedValue([]),
     getSpoolUsageHistory: vi.fn().mockResolvedValue([]),
+    getSpools: vi.fn().mockResolvedValue([]),
+    getSpoolmanInventorySpools: vi.fn().mockResolvedValue([]),
     createSpool: vi.fn().mockResolvedValue({ id: 99 }),
     bulkCreateSpools: vi.fn().mockResolvedValue([
       { id: 100, k_profiles: [] },
@@ -43,6 +45,9 @@ vi.mock('../../api/client', () => ({
     ]),
     updateSpool: vi.fn().mockResolvedValue({ id: 1 }),
     saveSpoolKProfiles: vi.fn().mockResolvedValue([]),
+  },
+  spoolbuddyApi: {
+    updateSpoolWeight: vi.fn().mockResolvedValue({}),
   },
 }));
 

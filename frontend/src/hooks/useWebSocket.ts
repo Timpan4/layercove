@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '../contexts/ToastContext';
 import { useTranslation } from 'react-i18next';
 import { api, ApiError } from '../api/client';
+import { reducePrinterStatus } from '../api/printerData';
+import { queryKeys } from '../api/queryKeys';
 import { inventoryLocationsQueryKey } from '../utils/inventoryQueries';
 
 // The only auth-failure close code /api/v1/ws emits (websocket.py
@@ -191,9 +193,10 @@ export function useWebSocket() {
 
   // Throttled printer status update - coalesces rapid updates per printer
   const throttledPrinterStatusUpdate = useCallback((printerId: number, data: Record<string, unknown>) => {
-    // Merge with any pending data for this printer
-    const existing = pendingPrinterStatus.current.get(printerId) || {};
-    pendingPrinterStatus.current.set(printerId, { ...existing, ...data });
+    // Merge with pending data first, then the current HTTP-backed cache.
+    const cached = queryClient.getQueryData<Record<string, unknown>>(queryKeys.printerStatus(printerId));
+    const existing = pendingPrinterStatus.current.get(printerId) || cached;
+    pendingPrinterStatus.current.set(printerId, reducePrinterStatus(existing, data));
 
     // Schedule update if not already scheduled
     if (!printerStatusTimeoutRef.current) {
@@ -206,14 +209,8 @@ export function useWebSocket() {
         requestAnimationFrame(() => {
           updates.forEach((statusData, id) => {
             queryClient.setQueryData(
-              ['printerStatus', id],
-              (old: Record<string, unknown> | undefined) => {
-                const merged = { ...old, ...statusData };
-                if (merged.wifi_signal == null && old?.wifi_signal != null) {
-                  merged.wifi_signal = old.wifi_signal;
-                }
-                return merged;
-              }
+              queryKeys.printerStatus(id),
+              (old: Record<string, unknown> | undefined) => reducePrinterStatus(old, statusData),
             );
           });
         });
@@ -260,7 +257,7 @@ export function useWebSocket() {
       case 'print_start':
         // Refetch printer status immediately when print starts to get printable_objects_count
         if (message.printer_id !== undefined) {
-          queryClient.invalidateQueries({ queryKey: ['printerStatus', message.printer_id] });
+          queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(message.printer_id) });
         }
         break;
 
@@ -297,12 +294,12 @@ export function useWebSocket() {
         // Don't invalidate printerStatus here - it causes re-render cascade and browser freeze
         // The printer_status websocket messages will naturally update the status
         debouncedInvalidate('archives');
-        debouncedInvalidate('archiveStats');
+        debouncedInvalidate(queryKeys.archiveStats()[0]);
         break;
 
       case 'archive_created':
         debouncedInvalidate('archives');
-        debouncedInvalidate('archiveStats');
+        debouncedInvalidate(queryKeys.archiveStats()[0]);
         break;
 
       case 'archive_updated':

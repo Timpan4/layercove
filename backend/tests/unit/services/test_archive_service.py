@@ -822,6 +822,29 @@ class TestMultiPlateSliceInfoSum:
             zf.writestr("Metadata/slice_info.config", slice_info_xml)
         return path
 
+    def test_archive_preserves_consumed_filament_metadata_shape(self):
+        """The canonical consumed-filament reader still feeds archive metadata's
+        public type, color, and per-slot dictionary shapes."""
+        from backend.app.services.archive import ThreeMFParser
+
+        slice_info_xml = """<config>
+            <plate>
+                <filament id="1" type="PLA" color="#FFFFFF" used_g="12.345" />
+                <filament id="2" type="PETG" color="#000000" used_g="0" />
+            </plate>
+            <plate>
+                <filament id="3" type="TPU" color="#00FF00" used_g="4.567" />
+            </plate>
+        </config>"""
+        meta = ThreeMFParser(self._make_3mf_with_slice_info(slice_info_xml)).parse()
+
+        assert meta["filament_type"] == "PLA, TPU"
+        assert meta["filament_color"] == "#FFFFFF,#00FF00"
+        assert meta["filament_slots"] == [
+            {"slot_id": 1, "used_g": 12.35, "type": "PLA", "color": "#FFFFFF"},
+            {"slot_id": 3, "used_g": 4.57, "type": "TPU", "color": "#00FF00"},
+        ]
+
     def test_three_plate_file_sums_prediction_and_weight(self):
         """The reporter's case: three plates with distinct prediction +
         weight values must yield file-level totals that are the sum.
@@ -938,6 +961,29 @@ class TestMultiPlateSliceInfoSum:
         assert meta["print_time_seconds"] == 300
         # Only the second plate's weight contributed.
         assert meta["filament_used_grams"] == 5.0
+
+    def test_non_finite_weights_are_skipped(self):
+        from backend.app.services.archive import ThreeMFParser
+
+        slice_info_xml = """<config>
+            <plate><metadata key="weight" value="nan" /></plate>
+            <plate><metadata key="weight" value="inf" /></plate>
+            <plate><metadata key="weight" value="5.0" /></plate>
+        </config>"""
+        meta = ThreeMFParser(self._make_3mf_with_slice_info(slice_info_xml)).parse()
+
+        assert meta["filament_used_grams"] == 5.0
+
+    def test_finite_weights_cannot_overflow_total(self):
+        from backend.app.services.archive import ThreeMFParser
+
+        slice_info_xml = """<config>
+            <plate><metadata key="weight" value="1e308" /></plate>
+            <plate><metadata key="weight" value="1e308" /></plate>
+        </config>"""
+        meta = ThreeMFParser(self._make_3mf_with_slice_info(slice_info_xml)).parse()
+
+        assert meta["filament_used_grams"] == 1e308
 
 
 class TestThreeMFParserSupportMaterial:

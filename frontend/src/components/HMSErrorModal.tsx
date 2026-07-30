@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 // HMS Error Modal - Comprehensive error code database
 // Source: https://github.com/greghesp/ha-bambulab
 import { useEffect } from 'react';
@@ -959,9 +960,9 @@ export function HMSErrorModal({ printerName, errors, onClose, printerId, hasPerm
     }),
     onSuccess: () => {
       // Scope the invalidation to THIS printer. The prefix form
-      // `['printerStatus']` would refresh every printer card on the page,
+      // `queryKeys.printerStatus` would refresh every printer card on the page,
       // which is wasteful when only one printer's state actually changed.
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printerId] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printerId) });
       showToast(t('hmsErrors.actionSuccess', 'Action sent to printer'), 'success');
       onClose();
     },

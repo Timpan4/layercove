@@ -10,6 +10,8 @@ import { renderHook, waitFor, act } from '@testing-library/react';
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ToastProvider } from '../../contexts/ToastContext';
+import { reducePrinterStatus } from '../../api/printerData';
+import { queryKeys } from '../../api/queryKeys';
 
 // Track WebSocket instances created during tests
 let wsInstances: MockWebSocket[] = [];
@@ -266,57 +268,51 @@ describe('useWebSocket hook', () => {
   });
 
   describe('message handling', () => {
-    it('updates printer status in query cache on printer_status message', async () => {
-      // Test the printer status update logic directly using setQueryData
-      // The WebSocket handler with throttling is complex to test with fake timers,
-      // so we test the core behavior directly
+    it('uses HTTP printer-status key for WebSocket updates', async () => {
+      vi.useFakeTimers();
+      vi.stubGlobal('requestAnimationFrame', (cb: FrameRequestCallback) => {
+        cb(0);
+        return 0;
+      });
+      const { useWebSocket } = await import('../../hooks/useWebSocket');
+      const httpQueryKey = queryKeys.printerStatus(1);
 
-      // Simulate what the throttled update does
-      queryClient.setQueryData(
-        ['printerStatus', 1],
-        (old: Record<string, unknown> | undefined) => {
-          const statusData = { state: 'IDLE', progress: 0 };
-          const merged = { ...old, ...statusData };
-          return merged;
-        }
-      );
-
-      // Check query cache was updated
-      const cachedData = queryClient.getQueryData(['printerStatus', 1]);
-      expect(cachedData).toEqual({ state: 'IDLE', progress: 0 });
-    });
-
-    it('preserves wifi_signal when new value is null', async () => {
-      // Test the wifi_signal preservation logic directly on QueryClient
-      // The throttled WebSocket handler makes this hard to test end-to-end
-      // This tests that the merge logic correctly preserves wifi_signal
-
-      // Set initial data with wifi_signal
-      queryClient.setQueryData(['printerStatus', 1], {
-        wifi_signal: -65,
-        state: 'IDLE',
+      await queryClient.fetchQuery({
+        queryKey: httpQueryKey,
+        queryFn: async () => ({ wifi_signal: -65, state: 'IDLE' }),
       });
 
-      // Simulate what the throttled update does - use setQueryData with updater function
-      queryClient.setQueryData(
-        ['printerStatus', 1],
-        (old: Record<string, unknown> | undefined) => {
-          const statusData = { state: 'RUNNING', wifi_signal: null };
-          const merged = { ...old, ...statusData };
-          // This is the preservation logic from useWebSocket
-          if (merged.wifi_signal == null && old?.wifi_signal != null) {
-            merged.wifi_signal = old.wifi_signal;
-          }
-          return merged;
-        }
-      );
+      const { unmount } = renderHook(() => useWebSocket(), {
+        wrapper: createWrapper(queryClient),
+      });
+      const ws = await waitForWs();
+      act(() => {
+        ws.simulateMessage({
+          type: 'printer_status',
+          printer_id: 1,
+          data: { state: 'RUNNING', wifi_signal: null },
+        });
+      });
+      await act(async () => {
+        vi.advanceTimersByTime(100);
+      });
 
-      const cachedData = queryClient.getQueryData(['printerStatus', 1]) as Record<
-        string,
-        unknown
-      >;
-      expect(cachedData.wifi_signal).toBe(-65); // Preserved
-      expect(cachedData.state).toBe('RUNNING'); // Updated
+      expect(queryClient.getQueryData(httpQueryKey)).toEqual({
+        wifi_signal: -65,
+        state: 'RUNNING',
+      });
+      expect(queryClient.getQueryData(['printer-status', 1])).toBeUndefined();
+
+      unmount();
+      vi.useRealTimers();
+      vi.unstubAllGlobals();
+    });
+
+    it('preserves wifi_signal when new value is null', () => {
+      expect(reducePrinterStatus(
+        { wifi_signal: -65, state: 'IDLE' },
+        { state: 'RUNNING', wifi_signal: null },
+      )).toEqual({ wifi_signal: -65, state: 'RUNNING' });
     });
 
     it('invalidates archives on print_complete message', async () => {
@@ -355,7 +351,7 @@ describe('useWebSocket hook', () => {
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['archives'] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['archiveStats'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.archiveStats() });
 
       vi.useRealTimers();
       vi.unstubAllGlobals();
@@ -396,7 +392,7 @@ describe('useWebSocket hook', () => {
       });
 
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['archives'] });
-      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['archiveStats'] });
+      expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.archiveStats() });
 
       vi.useRealTimers();
       vi.unstubAllGlobals();

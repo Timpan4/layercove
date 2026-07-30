@@ -14,16 +14,15 @@ that schema logic locally.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import zipfile
 from io import BytesIO
 
+from backend.app.utils.threemf_tools import ThreeMFDocument
+
 logger = logging.getLogger(__name__)
 
-_PROJECT_SETTINGS_PATH = "Metadata/project_settings.config"
-_MODEL_SETTINGS_PATH = "Metadata/model_settings.config"
 _SLICE_INFO_PATH = "Metadata/slice_info.config"
 
 
@@ -36,16 +35,9 @@ def count_plates_in_3mf(zip_bytes: bytes) -> int:
     """
     try:
         with zipfile.ZipFile(BytesIO(zip_bytes), "r") as zf:
-            if _MODEL_SETTINGS_PATH not in zf.namelist():
-                return 0
-            xml = zf.read(_MODEL_SETTINGS_PATH).decode("utf-8", errors="replace")
-    except (zipfile.BadZipFile, OSError, KeyError):
+            return ThreeMFDocument(zf).plate_count()
+    except (zipfile.BadZipFile, OSError):
         return 0
-    # Count ``<metadata key="plater_id" value="..."/>`` entries — each
-    # ``<plate>`` element carries exactly one. Cheap and tolerant of the
-    # full schema (no need to parse the whole XML, which is large and may
-    # contain CDATA quirks).
-    return len(re.findall(r'<metadata key="plater_id" value="(\d+)"', xml))
 
 
 def extract_source_printer_model(zip_bytes: bytes) -> str | None:
@@ -58,22 +50,11 @@ def extract_source_printer_model(zip_bytes: bytes) -> str | None:
     :func:`is_dual_nozzle_model` matches against (the raw field is
     ``"Bambu Lab H2D"``, not ``"H2D"``).
     """
-    from backend.app.utils.printer_models import normalize_printer_model
-
     try:
         with zipfile.ZipFile(BytesIO(zip_bytes), "r") as zf:
-            if _PROJECT_SETTINGS_PATH not in zf.namelist():
-                return None
-            cfg = json.loads(zf.read(_PROJECT_SETTINGS_PATH).decode("utf-8"))
-    except (zipfile.BadZipFile, json.JSONDecodeError, UnicodeDecodeError, OSError, KeyError):
+            return ThreeMFDocument(zf).source_printer_model()
+    except (zipfile.BadZipFile, OSError):
         return None
-    if not isinstance(cfg, dict):
-        return None
-    raw = cfg.get("printer_model")
-    if not raw:
-        return None
-    canonical = normalize_printer_model(str(raw))
-    return canonical or None
 
 
 _PLATE_BLOCK_RE = re.compile(r"<plate>.*?</plate>", re.DOTALL)
@@ -262,21 +243,15 @@ def substitute_unused_plate_filaments(source_3mf_bytes: bytes, plate_id: int | N
     """
     if plate_id is None or len(items) < 2:
         return items
-    # Local import keeps the bytes->ZipFile boundary in this module and
-    # avoids dragging zipfile into every caller.
-    from backend.app.utils.threemf_tools import (
-        extract_plate_extruder_set_from_3mf,
-        extract_support_filament_slots_from_3mf,
-    )
-
     try:
         with zipfile.ZipFile(BytesIO(source_3mf_bytes), "r") as zf:
+            document = ThreeMFDocument(zf)
             # Geometry-derived slots (per-object metadata + paint_color)
             # plus process-derived support-filament slots. Supports aren't
             # attached to object geometry so the geometry pass alone
             # misses PVA-in-support-slot setups (#1881).
-            used = extract_plate_extruder_set_from_3mf(zf, plate_id)
-            used |= extract_support_filament_slots_from_3mf(zf)
+            used = document.plate_extruder_set(plate_id)
+            used |= document.support_filament_slots()
     except (zipfile.BadZipFile, OSError) as exc:
         logger.warning("Plate-filament parse failed (%s); leaving filament list unchanged", exc)
         return items

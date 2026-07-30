@@ -12,6 +12,7 @@ from backend.app.services.slicer_3mf_convert import (
     merge_plate_3mfs,
     substitute_unused_plate_filaments,
 )
+from backend.app.utils.threemf_tools import ThreeMFDocument
 
 
 def _make_3mf(entries: dict[str, bytes]) -> bytes:
@@ -97,6 +98,35 @@ class TestCountPlatesIn3mf:
     def test_returns_zero_when_no_plate_ids(self):
         zip_bytes = _make_3mf({"Metadata/model_settings.config": b"<config/>"})
         assert count_plates_in_3mf(zip_bytes) == 0
+
+
+class TestThreeMFDocument:
+    def test_matches_conversion_metadata_reads(self):
+        model_settings = b"""<config>
+            <object id="1"><metadata key="extruder" value="2"/></object>
+            <plate><metadata key="plater_id" value="1"/><model_instance><metadata key="object_id" value="1"/></model_instance></plate>
+            <plate><metadata key="plater_id" value="2"/></plate>
+        </config>"""
+        zip_bytes = _make_3mf(
+            {
+                "Metadata/model_settings.config": model_settings,
+                "Metadata/project_settings.config": b'{"printer_model": "Bambu Lab H2D"}',
+            }
+        )
+
+        with zipfile.ZipFile(BytesIO(zip_bytes), "r") as zf:
+            document = ThreeMFDocument(zf)
+            assert document.plate_count() == count_plates_in_3mf(zip_bytes) == 2
+            assert document.source_printer_model() == extract_source_printer_model(zip_bytes) == "H2D"
+            assert document.plate_extruder_set(1) == {2}
+
+    def test_matches_conversion_metadata_read_failures(self):
+        zip_bytes = _make_3mf({"Metadata/project_settings.config": b"{not json"})
+
+        with zipfile.ZipFile(BytesIO(zip_bytes), "r") as zf:
+            document = ThreeMFDocument(zf)
+            assert document.plate_count() == count_plates_in_3mf(zip_bytes) == 0
+            assert document.source_printer_model() == extract_source_printer_model(zip_bytes) is None
 
 
 class TestMergePlate3mfs:
@@ -351,6 +381,52 @@ class TestSubstituteUnusedPlateFilaments:
         items = ["pla.json", "pva_support.json"]
         result = substitute_unused_plate_filaments(zip_bytes, plate_id=1, items=items)
         assert result == ["pla.json", "pva_support.json"]
+
+    def test_painted_slot_in_large_model_index_is_preserved(self):
+        model_settings = self._model_settings_xml([(1, [1])])
+        component_index = (
+            b" "
+            * (ThreeMFDocument._MAX_METADATA_BYTES + 1)
+            + b'<model xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" '
+            b'xmlns:p="http://schemas.microsoft.com/3dmanufacturing/production/2015/06">'
+            b'<resources><object id="1"><components>'
+            b'<component p:path="/3D/Objects/object_1.model" objectid="1"/>'
+            b"</components></object></resources></model>"
+        )
+        geometry = b'<model><triangle paint_color="2"/></model>'
+        zip_bytes = _make_3mf(
+            {
+                "Metadata/model_settings.config": model_settings,
+                "3D/3dmodel.model": component_index,
+                "3D/Objects/object_1.model": geometry,
+            }
+        )
+
+        assert substitute_unused_plate_filaments(zip_bytes, plate_id=1, items=["pla.json", "red.json"]) == [
+            "pla.json",
+            "red.json",
+        ]
+
+    def test_oversized_support_metadata_is_not_expanded(self, monkeypatch):
+        model_settings = self._model_settings_xml([(1, [1])])
+        zip_bytes = _make_3mf(
+            {
+                "Metadata/model_settings.config": model_settings,
+                "Metadata/project_settings.config": b" " * (ThreeMFDocument._MAX_METADATA_BYTES + 1),
+            }
+        )
+        original_open = zipfile.ZipFile.open
+
+        def guarded_open(zf, name, *args, **kwargs):
+            if getattr(name, "filename", name) == "Metadata/project_settings.config":
+                raise AssertionError("oversized metadata must not be expanded")
+            return original_open(zf, name, *args, **kwargs)
+
+        monkeypatch.setattr(zipfile.ZipFile, "open", guarded_open)
+        assert substitute_unused_plate_filaments(zip_bytes, plate_id=1, items=["pla.json", "abs.json"]) == [
+            "pla.json",
+            "pla.json",
+        ]
 
     def test_support_disabled_still_substitutes_unused(self):
         # When supports are off, slot 2 is genuinely unused — the temp-spread

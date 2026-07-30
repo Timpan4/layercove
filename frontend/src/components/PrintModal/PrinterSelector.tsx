@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useState, useMemo } from 'react';
 import { useQueryClient, useQueries } from '@tanstack/react-query';
 import {
@@ -89,7 +90,7 @@ function InlineMappingEditor({
     try {
       await api.refreshPrinterStatus(printerResult.printerId);
       await new Promise((r) => setTimeout(r, 500));
-      await queryClient.refetchQueries({ queryKey: ['printer-status', printerResult.printerId] });
+      await queryClient.refetchQueries({ queryKey: queryKeys.printerStatus(printerResult.printerId) });
     } finally {
       setIsRefreshing(false);
     }
@@ -237,7 +238,7 @@ export function PrinterSelector({
   // Fetch printer statuses to determine busy/idle state
   const statusQueries = useQueries({
     queries: activePrinters.map((printer) => ({
-      queryKey: ['printerStatus', printer.id],
+      queryKey: queryKeys.printerStatus(printer.id),
       queryFn: () => api.getPrinterStatus(printer.id),
       staleTime: 5000,
     })),

@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useQuery } from '@tanstack/react-query';
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -1028,7 +1029,7 @@ export function StatsPage() {
   const createdByIdParam = selectedUserId !== null ? selectedUserId : undefined;
 
   const { data: stats, isLoading, isFetching: isStatsFetching, refetch: refetchStats } = useQuery({
-    queryKey: ['archiveStats', effectiveDateRange.dateFrom, effectiveDateRange.dateTo, createdByIdParam ?? 'all'],
+    queryKey: queryKeys.archiveStatsForRange(effectiveDateRange.dateFrom, effectiveDateRange.dateTo, createdByIdParam ?? 'all'),
     queryFn: () => api.getArchiveStats({
       dateFrom: effectiveDateRange.dateFrom,
       dateTo: effectiveDateRange.dateTo,

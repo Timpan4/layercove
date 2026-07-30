@@ -430,11 +430,8 @@ describe('SettingsPage', () => {
   });
 
   describe('update CTA per deployment shape', () => {
-    // The update card branches on the deployment shape returned by
-    // /updates/check. Each branch is mutually exclusive — verify the right
-    // one wins so HA addon users never see the docker-compose snippet
-    // (which they can't run from inside an HA addon container) and Docker
-    // users never see the in-app Install button (which would no-op).
+    // The update card distinguishes the HA add-on from standard Compose so
+    // each deployment gets commands it can actually run.
     const renderWithUpdateCheck = async (
       checkBody: Record<string, unknown>,
     ) => {
@@ -494,35 +491,6 @@ describe('SettingsPage', () => {
       expect(screen.queryByText(/Home Assistant Supervisor/i)).not.toBeInTheDocument();
       expect(screen.queryByRole('button', { name: /install update/i })).not.toBeInTheDocument();
     });
-
-    it('shows the installer-download link for Windows installer installs', async () => {
-      const downloadUrl =
-        'https://github.com/maziggy/bambuddy/releases/download/v0.2.5/bambuddy-0.2.5-windows-x64-setup.exe';
-      await renderWithUpdateCheck({
-        update_available: true,
-        current_version: '0.2.4',
-        latest_version: '0.2.5',
-        release_name: '0.2.5',
-        release_notes: '',
-        release_url: 'https://github.com/maziggy/bambuddy/releases/tag/v0.2.5',
-        published_at: '2099-01-01T00:00:00Z',
-        is_docker: false,
-        is_ha_addon: false,
-        is_windows_installer: true,
-        update_method: 'windows_installer',
-        installer_download_url: downloadUrl,
-      });
-
-      const link = await screen.findByRole('link', { name: /download installer for v0\.2\.5/i });
-      expect(link).toHaveAttribute('href', downloadUrl);
-      expect(link).toHaveAttribute('target', '_blank');
-      expect(link).toHaveAttribute('rel', expect.stringContaining('noopener'));
-      // The in-app update button must NOT render — the git-fetch path can't
-      // work from an installer payload.
-      expect(screen.queryByRole('button', { name: /install update/i })).not.toBeInTheDocument();
-      expect(screen.queryByText(/Home Assistant Supervisor/i)).not.toBeInTheDocument();
-      expect(screen.queryByText('docker compose pull && docker compose up -d')).not.toBeInTheDocument();
-    });
   });
 
   describe('tabs navigation', () => {
@@ -542,6 +510,29 @@ describe('SettingsPage', () => {
         expect(screen.getByText('MQTT Publishing')).toBeInTheDocument();
         expect(screen.getByRole('heading', { name: 'Network Sites' })).toBeInTheDocument();
       });
+    });
+
+    it('commits one MQTT change after the settings debounce', async () => {
+      const requests: Record<string, unknown>[] = [];
+      server.use(
+        http.get('/api/v1/settings/', () => HttpResponse.json({ ...mockSettings, external_url: 'http://localhost' })),
+        http.put('/api/v1/settings/', async ({ request }) => {
+          const body = await request.json() as Record<string, unknown>;
+          requests.push(body);
+          return HttpResponse.json({ ...mockSettings, external_url: 'http://localhost', ...body });
+        }),
+      );
+      const user = userEvent.setup();
+      render(<SettingsPage />);
+
+      await user.click(await screen.findByText('Network'));
+      const mqttCard = await screen.findByText('MQTT Publishing');
+      const toggle = mqttCard.closest('#card-mqtt')?.querySelector<HTMLInputElement>('input[type="checkbox"]');
+      expect(toggle).toBeTruthy();
+      await user.click(toggle!);
+
+      await waitFor(() => expect(requests).toHaveLength(1));
+      expect(requests[0]).toMatchObject({ mqtt_enabled: true, mqtt_port: 1883 });
     });
 
     it('finds Network Sites from settings search', async () => {

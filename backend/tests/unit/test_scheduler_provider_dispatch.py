@@ -12,14 +12,22 @@ import backend.app.main as main_module
 import backend.app.models  # noqa: F401
 import backend.app.services.print_scheduler as scheduler_module
 from backend.app.api.routes.print_queue import stop_queue_item
-from backend.app.core.database import Base, _migrate_print_queue_provider_identity
+from backend.app.core.database import Base
+from backend.app.core.identity import CallerIdentity
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
 from backend.app.models.print_log import PrintLogEntry
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.services.print_scheduler import PrintScheduler
-from backend.app.services.printer_backend import BackendError, JobLifecycle
+from backend.app.services.printer_backend import (
+    BackendError,
+    JobLifecycle,
+    MoonrakerStartJob,
+    StartResult,
+    UploadJob,
+    UploadResult,
+)
 from backend.app.services.printer_manager import PrinterManager
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
@@ -66,8 +74,8 @@ def _backend(*, upload=None, start=None):
     return SimpleNamespace(
         provider=PrinterProvider.MOONRAKER,
         capabilities=PrinterCapabilities(upload_gcode=True, start_print=True),
-        upload_gcode=upload or AsyncMock(return_value="queue/cube.gcode"),
-        start_print=start or AsyncMock(return_value=True),
+        upload=upload or AsyncMock(return_value=UploadResult("queue/cube.gcode")),
+        start=start or AsyncMock(return_value=StartResult(started=True)),
         bind_queued_job=MagicMock(),
         clear_queued_job_binding=MagicMock(),
     )
@@ -95,15 +103,14 @@ async def test_moonraker_upload_claim_start_has_no_bambu_options(moonraker_queue
         assert item.provider_job_id == "queue/cube.gcode"
         assert item.start_reconcile_after is None
         assert archive.status == "printing"
-    handle = backend.upload_gcode.await_args.args[0]
-    assert handle.closed
-    upload_kwargs = backend.upload_gcode.await_args.kwargs
-    assert upload_kwargs["filename"].startswith("queued-")
-    assert upload_kwargs["filename"].endswith(".gcode")
-    assert "cube" not in upload_kwargs["filename"]
-    assert upload_kwargs["start"] is False
-    assert upload_kwargs["size"] == source.stat().st_size
-    backend.start_print.assert_awaited_once_with("queue/cube.gcode")
+    upload_job = backend.upload.await_args.args[0]
+    assert isinstance(upload_job, UploadJob)
+    assert upload_job.file.closed
+    assert upload_job.filename.startswith("queued-")
+    assert upload_job.filename.endswith(".gcode")
+    assert "cube" not in upload_job.filename
+    assert upload_job.size == source.stat().st_size
+    backend.start.assert_awaited_once_with(MoonrakerStartJob("queue/cube.gcode"))
     backend.bind_queued_job.assert_called_once_with(
         item.provider_correlation_id, "queue/cube.gcode", "queue/cube.gcode"
     )
@@ -118,7 +125,7 @@ async def test_moonraker_cancel_wins_after_upload_and_remote_file_is_retained(mo
             item = await db.get(PrintQueueItem, ids.item)
             item.status = "cancelled"
             await db.commit()
-        return "queue/cube.gcode"
+        return UploadResult("queue/cube.gcode")
 
     backend = _backend(upload=AsyncMock(side_effect=upload_then_cancel))
     scheduler = PrintScheduler()
@@ -136,7 +143,7 @@ async def test_moonraker_cancel_wins_after_upload_and_remote_file_is_retained(mo
         assert item.status == "cancelled"
         assert archive.status == "archived"
         assert await db.scalar(select(func.count(PrintLogEntry.id))) == 0
-    backend.start_print.assert_not_awaited()
+    backend.start.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -163,7 +170,7 @@ async def test_moonraker_upload_failure_records_one_queue_archive_log_outcome(mo
         assert archive.status == "failed"
         assert len(logs) == 1
         assert logs[0].failure_reason == "Failed to upload G-code to Moonraker"
-    backend.start_print.assert_not_awaited()
+    backend.start.assert_not_awaited()
     assert terminal_effects.await_args.args[0]["status"] == "failed"
 
 
@@ -532,7 +539,7 @@ async def test_pre_active_stop_intent_cancels_once_after_started_observation(moo
         patch.object(scheduler_module.printer_manager, "stop_print_async", stop),
     ):
         async with sessions() as db:
-            assert await stop_queue_item(ids.item, db=db, auth_result=(None, True)) == {
+            assert await stop_queue_item(ids.item, db=db, auth_result=(CallerIdentity.auth_disabled(), True)) == {
                 "message": "Print stop requested"
             }
         observed = {
@@ -584,8 +591,8 @@ async def test_moonraker_rejects_3mf_before_provider_io(moonraker_queue):
         assert "not compatible" in item.error_message
         assert archive.status == "failed"
         assert await db.scalar(select(func.count(PrintLogEntry.id))) == 1
-    backend.upload_gcode.assert_not_awaited()
-    backend.start_print.assert_not_awaited()
+    backend.upload.assert_not_awaited()
+    backend.start.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -642,7 +649,7 @@ async def test_moonraker_stop_awaits_cancel_and_leaves_finalization_to_lifecycle
     db.get.return_value = SimpleNamespace(id=7, provider="moonraker")
 
     with patch.object(PrintScheduler, "dispatch_moonraker_cancel_intent", AsyncMock(return_value=True)) as stop:
-        response = await stop_queue_item(9, db=db, auth_result=(None, True))
+        response = await stop_queue_item(9, db=db, auth_result=(CallerIdentity.auth_disabled(), True))
 
     assert response == {"message": "Print stop requested"}
     stop.assert_awaited_once_with(9, 7)
@@ -723,24 +730,3 @@ async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue, stat
         library_file = await db.get(LibraryFile, library_id)
         assert library_file.print_count == expected_print_count
         assert (library_file.last_printed_at is not None) is (status == "completed")
-
-
-@pytest.mark.asyncio
-async def test_provider_identity_migration_is_additive_and_idempotent(tmp_path):
-    engine = create_async_engine(f"sqlite+aiosqlite:///{tmp_path / 'legacy.db'}")
-    async with engine.begin() as conn:
-        await conn.exec_driver_sql("CREATE TABLE print_queue (id INTEGER PRIMARY KEY, status VARCHAR(20))")
-        await _migrate_print_queue_provider_identity(conn)
-        await _migrate_print_queue_provider_identity(conn)
-        columns = {row[1] for row in (await conn.exec_driver_sql("PRAGMA table_info(print_queue)")).all()}
-        indexes = {row[1] for row in (await conn.exec_driver_sql("PRAGMA index_list(print_queue)")).all()}
-    await engine.dispose()
-
-    assert {
-        "provider_correlation_id",
-        "provider_job_id",
-        "start_reconcile_after",
-        "cancel_requested_at",
-        "cancel_dispatched_at",
-    } <= columns
-    assert "ix_print_queue_provider_correlation_id" in indexes

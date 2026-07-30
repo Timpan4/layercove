@@ -157,16 +157,14 @@ async def create_spool_from_tray(db: AsyncSession, tray_data: dict) -> Spool:
         if not slicer_filament_name and tray_sub_brands:
             slicer_filament_name = tray_sub_brands
 
-    # Calculate initial weight_used from AMS remain percentage
-    remain_raw = tray_data.get("remain")
-    try:
-        remain_pct = int(remain_raw) if remain_raw is not None else 100
-    except (TypeError, ValueError):
-        remain_pct = 100
-    # Clamp to valid range: negative means unknown, >100 is invalid
-    if remain_pct < 0 or remain_pct > 100:
-        remain_pct = 100  # Unknown → assume full
-    weight_used = round(label_weight * (100 - remain_pct) / 100.0, 1)
+    # RFID's percentage is a creation-time estimate only. A later tag link must
+    # preserve the inventory weight, which may be a scale or print measurement.
+    from backend.app.services.filament_accounting import initial_weight_used_from_rfid_percentage
+
+    weight_used = initial_weight_used_from_rfid_percentage(
+        remain=tray_data.get("remain"),
+        label_weight=label_weight,
+    )
 
     spool = Spool(
         material=material,

@@ -62,7 +62,12 @@ from backend.app.schemas.library import (
     ZipExtractResponse,
     ZipExtractResult,
 )
-from backend.app.schemas.slicer import DestinationArtifactKind, SliceRequest, SliceResponse
+from backend.app.schemas.slicer import (
+    DestinationArtifactKind,
+    LibraryFilePlatesResponse,
+    SliceRequest,
+    SliceResponse,
+)
 from backend.app.services.archive import ThreeMFParser
 from backend.app.services.plate_thumbnail import inject_plate_thumbnails_if_missing
 from backend.app.services.stl_thumbnail import MIN_USABLE_STL_BYTES, generate_stl_thumbnail
@@ -2595,7 +2600,7 @@ async def add_files_to_queue(
     return AddToQueueResponse(added=added, errors=errors)
 
 
-@router.get("/files/{file_id}/plates")
+@router.get("/files/{file_id}/plates", response_model=LibraryFilePlatesResponse)
 async def get_library_file_plates(
     file_id: int,
     db: AsyncSession = Depends(get_db),

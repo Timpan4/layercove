@@ -16,11 +16,10 @@ add that themselves based on their own setting.
 from __future__ import annotations
 
 import logging
-import xml.etree.ElementTree as ET
 import zipfile
 from pathlib import Path
 
-from backend.app.utils.threemf_tools import extract_nozzle_mapping_from_3mf
+from backend.app.utils.threemf_tools import ThreeMFDocument, extract_nozzle_mapping_from_3mf
 
 logger = logging.getLogger(__name__)
 
@@ -46,47 +45,34 @@ def extract_filament_requirements(file_path: Path, plate_id: int | None = None) 
     filaments: list[dict] = []
     try:
         with zipfile.ZipFile(file_path, "r") as zf:
-            if "Metadata/slice_info.config" not in zf.namelist():
-                return []
+            for filament in ThreeMFDocument(zf).consumed_filaments(plate_id):
+                try:
+                    slot_id = int(filament["slot_id"])
+                except (KeyError, TypeError, ValueError):
+                    continue
+                filaments.append(
+                    {
+                        "slot_id": slot_id,
+                        "type": filament["type"],
+                        "color": filament["color"],
+                        "tray_info_idx": filament["tray_info_idx"],
+                        "used_grams": filament["used_grams"],
+                    }
+                )
 
-            content = zf.read("Metadata/slice_info.config").decode()
-            root = ET.fromstring(content)  # noqa: S314  # nosec B314
-
-            if plate_id is not None:
-                for plate_elem in root.findall("./plate"):
-                    plate_index = None
-                    for meta in plate_elem.findall("metadata"):
-                        if meta.get("key") == "index":
-                            try:
-                                plate_index = int(meta.get("value", "0"))
-                            except ValueError:
-                                pass
-                            break
-                    if plate_index == plate_id:
-                        _collect_filaments(plate_elem, filaments)
-                        break
-            else:
-                # Modern BambuStudio format wraps filaments inside <plate> elements.
-                # When no plate filter is requested, collect from every plate and
-                # deduplicate by slot_id (first occurrence wins after sort).
-                plate_elems = root.findall("./plate")
-                if plate_elems:
-                    for plate_elem in plate_elems:
-                        _collect_filaments(plate_elem, filaments)
-                    # Deduplicate: same slot_id can appear on multiple plates.
-                    # Keep the entry with the highest used_grams; ties go to the
-                    # first plate (stable after sort + dict insertion order).
-                    seen: dict[int, dict] = {}
-                    for f in filaments:
-                        sid = f["slot_id"]
-                        if sid not in seen or f["used_grams"] > seen[sid]["used_grams"]:
-                            seen[sid] = f
-                    filaments = list(seen.values())
-                else:
-                    # Older / non-plate-wrapped format: filaments are direct children of root.
-                    _collect_filaments(root, filaments)
+            if plate_id is None:
+                # Same slot can occur on multiple plates. Keep the highest
+                # consumption; ties retain the first plate's entry.
+                seen: dict[int, dict] = {}
+                for filament in filaments:
+                    slot_id = filament["slot_id"]
+                    if slot_id not in seen or filament["used_grams"] > seen[slot_id]["used_grams"]:
+                        seen[slot_id] = filament
+                filaments = list(seen.values())
 
             filaments.sort(key=lambda x: x["slot_id"])
+            for filament in filaments:
+                filament["used_grams"] = round(filament["used_grams"], 1)
 
             # Dual-nozzle printers (H2D / X2D) — annotate which extruder each
             # slot is fed into. Empty mapping for single-nozzle printers, in
@@ -100,32 +86,3 @@ def extract_filament_requirements(file_path: Path, plate_id: int | None = None) 
         return []
 
     return filaments
-
-
-def _collect_filaments(parent: ET.Element, into: list[dict]) -> None:
-    """Walk every `./filament` child under `parent` and append normalised
-    entries to `into`. Skips filaments with `used_g <= 0` (slot present in
-    the slicer config but not consumed by this plate)."""
-    for filament_elem in parent.findall("./filament"):
-        filament_id = filament_elem.get("id")
-        if not filament_id:
-            continue
-        try:
-            used_grams = float(filament_elem.get("used_g", "0"))
-        except (ValueError, TypeError):
-            continue
-        if used_grams <= 0:
-            continue
-        try:
-            slot_id = int(filament_id)
-        except (ValueError, TypeError):
-            continue
-        into.append(
-            {
-                "slot_id": slot_id,
-                "type": filament_elem.get("type", ""),
-                "color": filament_elem.get("color", ""),
-                "tray_info_idx": filament_elem.get("tray_info_idx", ""),
-                "used_grams": round(used_grams, 1),
-            }
-        )

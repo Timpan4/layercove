@@ -1,5 +1,6 @@
+import { queryKeys } from '../api/queryKeys';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Loader2, Plus, Plug, AlertTriangle, RotateCcw, Bell, Download, RefreshCw, ExternalLink, Globe, Droplets, Thermometer, FileText, Edit2, Send, CheckCircle, XCircle, History, Trash2, Zap, TrendingUp, Calendar, DollarSign, Power, PowerOff, Key, Copy, Database, X, Shield, Printer, Cylinder, Wifi, Home, Video, Users, Lock, Unlock, ChevronDown, Save, Mail, Flame, Layers, ListOrdered, Code, Search, Scale, Settings as SettingsIcon, ScanEye, Cog, QrCode, Heart, Workflow } from 'lucide-react';
+import { Loader2, Plus, Plug, AlertTriangle, RotateCcw, Bell, RefreshCw, ExternalLink, Globe, Droplets, Thermometer, FileText, Edit2, Send, CheckCircle, XCircle, History, Trash2, Zap, TrendingUp, Calendar, DollarSign, Power, PowerOff, Key, Copy, Database, X, Shield, Printer, Cylinder, Wifi, Home, Video, Users, Lock, Unlock, ChevronDown, Save, Mail, Flame, Layers, ListOrdered, Code, Search, Scale, Settings as SettingsIcon, ScanEye, Cog, QrCode, Heart, Workflow } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { api } from '../api/client';
@@ -9,7 +10,8 @@ import { getCurrencySymbol, SUPPORTED_CURRENCIES } from '../utils/currency';
 import { checkPasswordComplexity } from '../utils/password';
 import { PRESET_CATEGORIES, parsePresetTriple } from '../utils/temperatureFanPresets';
 import { PreheatFilamentTargetsEditor } from '../components/PreheatFilamentTargetsEditor';
-import type { APIKey, AppSettings, AppSettingsUpdate, SmartPlug, SmartPlugStatus, NotificationProvider, NotificationTemplate, UpdateStatus, GitHubBackupStatus, CloudAuthStatus, UserCreate, UserUpdate, UserResponse, StorageUsageResponse } from '../api/client';
+import type { APIKey, AppSettings, SmartPlug, SmartPlugStatus, NotificationProvider, NotificationTemplate, GitHubBackupStatus, CloudAuthStatus, UserCreate, UserUpdate, UserResponse, StorageUsageResponse } from '../api/client';
+import { normalizeSettingsDraft, settingsDraftPersistence, shouldDebounceSettingsCommit, updateSettingsDraft } from '../domain/settingsDraft';
 import { Card, CardContent, CardDensityProvider, CardHeader } from '../components/Card';
 import { SlicerBundlesPanel } from '../components/SlicerBundlesPanel';
 import { SlicerPipelinesPanel } from '../components/SlicerPipelinesPanel';
@@ -549,19 +551,6 @@ export function SettingsPage() {
     staleTime: 5 * 60 * 1000,
   });
 
-  const { data: updateStatus, refetch: refetchUpdateStatus } = useQuery({
-    queryKey: ['updateStatus'],
-    queryFn: api.getUpdateStatus,
-    refetchInterval: (query) => {
-      const status = query.state.data as UpdateStatus | undefined;
-      // Poll while update is in progress
-      if (status?.status === 'downloading' || status?.status === 'installing') {
-        return 1000;
-      }
-      return false;
-    },
-  });
-
   // MQTT status for Network tab
   const { data: mqttStatus } = useQuery({
     queryKey: ['mqtt-status'],
@@ -798,17 +787,6 @@ export function SettingsPage() {
     }));
   };
 
-  const applyUpdateMutation = useMutation({
-    mutationFn: api.applyUpdate,
-    onSuccess: (data) => {
-      if (data.is_ha_addon || data.is_docker || data.is_windows_installer) {
-        showToast(data.message, 'error');
-      } else {
-        refetchUpdateStatus();
-      }
-    },
-  });
-
   // Test all notification providers
   const [testAllResult, setTestAllResult] = useState<{
     tested: number;
@@ -882,16 +860,8 @@ export function SettingsPage() {
   // Sync local state when settings load
   useEffect(() => {
     if (settings && !localSettings) {
-      // Auto-detect external_url from browser if not set
-      const settingsWithExternalUrl = {
-        ...settings,
-        external_url: settings.external_url || window.location.origin,
-      };
-      setLocalSettings(settingsWithExternalUrl);
-      // Mark initial load complete after a short delay
-      setTimeout(() => {
-        isInitialLoadRef.current = false;
-      }, 100);
+      setLocalSettings(normalizeSettingsDraft(settings, window.location.origin));
+      isInitialLoadRef.current = false;
     }
   }, [settings, localSettings]);
 
@@ -904,7 +874,7 @@ export function SettingsPage() {
       // causing the text field to reset mid-typing. Instead, let the useEffect
       // re-compare the updated `settings` with current `localSettings` and
       // debounce-save any remaining differences.
-      queryClient.invalidateQueries({ queryKey: ['archiveStats'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.archiveStats() });
       showToast(t('settings.toast.settingsSaved'), 'success');
     },
     onError: (error: Error) => {
@@ -937,204 +907,35 @@ export function SettingsPage() {
 
   // Debounced auto-save when localSettings change
   useEffect(() => {
-    // Skip if initial load or no settings
-    if (isInitialLoadRef.current || !localSettings || !settings) {
+    if (!localSettings || !shouldDebounceSettingsCommit({
+      initialLoad: isInitialLoadRef.current,
+      canUpdate: !authEnabled || hasPermission('settings:update'),
+      isSaving: isSavingRef.current,
+      saved: settings ? normalizeSettingsDraft(settings, window.location.origin) : undefined,
+      draft: localSettings,
+    })) {
       return;
     }
 
-    // Safety net: skip auto-save entirely when the user lacks settings:update.
-    // The actual user feedback (toast + revert) lives in updateSetting below,
-    // which runs once per click. Doing it here as well would fire on every
-    // React render since the debounced-save effect depends on non-stable refs.
-    if (authEnabled && !hasPermission('settings:update')) {
-      return;
-    }
-
-    // Check if there are actual changes
-    const hasChanges =
-      settings.auto_archive !== localSettings.auto_archive ||
-      settings.save_thumbnails !== localSettings.save_thumbnails ||
-      settings.capture_finish_photo !== localSettings.capture_finish_photo ||
-      settings.default_filament_cost !== localSettings.default_filament_cost ||
-      settings.currency !== localSettings.currency ||
-      settings.energy_cost_per_kwh !== localSettings.energy_cost_per_kwh ||
-      settings.energy_tracking_mode !== localSettings.energy_tracking_mode ||
-      settings.check_updates !== localSettings.check_updates ||
-      (settings.check_printer_firmware ?? true) !== (localSettings.check_printer_firmware ?? true) ||
-      (settings.include_beta_updates ?? false) !== (localSettings.include_beta_updates ?? false) ||
-      (settings.local_login_enabled ?? true) !== (localSettings.local_login_enabled ?? true) ||
-      settings.notification_language !== localSettings.notification_language ||
-      (settings.bed_cooled_threshold ?? 35) !== (localSettings.bed_cooled_threshold ?? 35) ||
-      settings.ams_humidity_good !== localSettings.ams_humidity_good ||
-      settings.ams_humidity_fair !== localSettings.ams_humidity_fair ||
-      settings.ams_temp_good !== localSettings.ams_temp_good ||
-      settings.ams_temp_fair !== localSettings.ams_temp_fair ||
-      settings.ams_history_retention_days !== localSettings.ams_history_retention_days ||
-      settings.disable_filament_warnings !== localSettings.disable_filament_warnings ||
-      settings.prefer_lowest_filament !== localSettings.prefer_lowest_filament ||
-      (settings.queue_drying_enabled ?? false) !== (localSettings.queue_drying_enabled ?? false) ||
-      (settings.queue_drying_block ?? false) !== (localSettings.queue_drying_block ?? false) ||
-      (settings.ambient_drying_enabled ?? false) !== (localSettings.ambient_drying_enabled ?? false) ||
-      (settings.print_drying_enabled ?? false) !== (localSettings.print_drying_enabled ?? false) ||
-      (settings.drying_presets ?? '') !== (localSettings.drying_presets ?? '') ||
-      (settings.ams_humidity_thresholds ?? '') !== (localSettings.ams_humidity_thresholds ?? '') ||
-      settings.per_printer_mapping_expanded !== localSettings.per_printer_mapping_expanded ||
-      settings.date_format !== localSettings.date_format ||
-      settings.time_format !== localSettings.time_format ||
-      settings.default_printer_id !== localSettings.default_printer_id ||
-      settings.ftp_retry_enabled !== localSettings.ftp_retry_enabled ||
-      settings.ftp_retry_count !== localSettings.ftp_retry_count ||
-      settings.ftp_retry_delay !== localSettings.ftp_retry_delay ||
-      settings.ftp_timeout !== localSettings.ftp_timeout ||
-      settings.mqtt_enabled !== localSettings.mqtt_enabled ||
-      settings.mqtt_broker !== localSettings.mqtt_broker ||
-      settings.mqtt_port !== localSettings.mqtt_port ||
-      settings.mqtt_username !== localSettings.mqtt_username ||
-      settings.mqtt_password !== localSettings.mqtt_password ||
-      settings.mqtt_topic_prefix !== localSettings.mqtt_topic_prefix ||
-      settings.mqtt_use_tls !== localSettings.mqtt_use_tls ||
-      settings.external_url !== localSettings.external_url ||
-      settings.ha_enabled !== localSettings.ha_enabled ||
-      settings.ha_url !== localSettings.ha_url ||
-      settings.ha_token !== localSettings.ha_token ||
-      (settings.library_archive_mode ?? 'ask') !== (localSettings.library_archive_mode ?? 'ask') ||
-      Number(settings.library_disk_warning_gb ?? 5) !== Number(localSettings.library_disk_warning_gb ?? 5) ||
-      (settings.camera_view_mode ?? 'window') !== (localSettings.camera_view_mode ?? 'window') ||
-      (settings.preferred_slicer ?? 'bambu_studio') !== (localSettings.preferred_slicer ?? 'bambu_studio') ||
-      (settings.open_in_slicer ?? null) !== (localSettings.open_in_slicer ?? null) ||
-      (settings.use_slicer_api ?? false) !== (localSettings.use_slicer_api ?? false) ||
-      (settings.orcaslicer_api_url ?? '') !== (localSettings.orcaslicer_api_url ?? '') ||
-      (settings.bambu_studio_api_url ?? '') !== (localSettings.bambu_studio_api_url ?? '') ||
-      settings.prometheus_enabled !== localSettings.prometheus_enabled ||
-      settings.prometheus_token !== localSettings.prometheus_token ||
-      (settings.user_notifications_enabled ?? true) !== (localSettings.user_notifications_enabled ?? true) ||
-      (settings.default_bed_levelling ?? true) !== (localSettings.default_bed_levelling ?? true) ||
-      (settings.default_flow_cali ?? false) !== (localSettings.default_flow_cali ?? false) ||
-      (settings.default_vibration_cali ?? true) !== (localSettings.default_vibration_cali ?? true) ||
-      (settings.default_layer_inspect ?? false) !== (localSettings.default_layer_inspect ?? false) ||
-      (settings.default_timelapse ?? false) !== (localSettings.default_timelapse ?? false) ||
-      (settings.default_nozzle_offset_cali ?? true) !== (localSettings.default_nozzle_offset_cali ?? true) ||
-      (settings.stagger_group_size ?? 2) !== (localSettings.stagger_group_size ?? 2) ||
-      (settings.stagger_interval_minutes ?? 5) !== (localSettings.stagger_interval_minutes ?? 5) ||
-      (settings.require_plate_clear ?? false) !== (localSettings.require_plate_clear ?? false) ||
-      (settings.preheat_enabled ?? false) !== (localSettings.preheat_enabled ?? false) ||
-      (settings.preheat_filament_targets ?? '') !== (localSettings.preheat_filament_targets ?? '') ||
-      (settings.preheat_max_wait_seconds ?? 900) !== (localSettings.preheat_max_wait_seconds ?? 900) ||
-      (settings.preheat_soak_seconds ?? 300) !== (localSettings.preheat_soak_seconds ?? 300) ||
-      (settings.nozzle_temp_presets ?? '') !== (localSettings.nozzle_temp_presets ?? '') ||
-      (settings.bed_temp_presets ?? '') !== (localSettings.bed_temp_presets ?? '') ||
-      (settings.chamber_temp_presets ?? '') !== (localSettings.chamber_temp_presets ?? '') ||
-      (settings.fan_speed_presets ?? '') !== (localSettings.fan_speed_presets ?? '') ||
-      (settings.session_max_hours ?? 24) !== (localSettings.session_max_hours ?? 24);
-
-    if (!hasChanges) {
-      return;
-    }
-
-    // Don't queue more saves while one is in progress
-    if (isSavingRef.current) {
-      return;
-    }
-
-    // Clear existing timeout
     if (saveTimeoutRef.current) {
       clearTimeout(saveTimeoutRef.current);
     }
 
     // Set new debounced save (500ms delay)
     saveTimeoutRef.current = setTimeout(() => {
-      // Skip if a save is already in progress
       if (isSavingRef.current) {
         return;
       }
       isSavingRef.current = true;
-      // Only send the fields we manage on this page (exclude virtual_printer_* which are managed separately)
-      const settingsToSave: AppSettingsUpdate = {
-        auto_archive: localSettings.auto_archive,
-        save_thumbnails: localSettings.save_thumbnails,
-        capture_finish_photo: localSettings.capture_finish_photo,
-        default_filament_cost: localSettings.default_filament_cost,
-        currency: localSettings.currency,
-        energy_cost_per_kwh: localSettings.energy_cost_per_kwh,
-        energy_tracking_mode: localSettings.energy_tracking_mode,
-        check_updates: localSettings.check_updates,
-        check_printer_firmware: localSettings.check_printer_firmware,
-        include_beta_updates: localSettings.include_beta_updates,
-        local_login_enabled: localSettings.local_login_enabled,
-        notification_language: localSettings.notification_language,
-        bed_cooled_threshold: localSettings.bed_cooled_threshold,
-        ams_humidity_good: localSettings.ams_humidity_good,
-        ams_humidity_fair: localSettings.ams_humidity_fair,
-        ams_temp_good: localSettings.ams_temp_good,
-        ams_temp_fair: localSettings.ams_temp_fair,
-        ams_history_retention_days: localSettings.ams_history_retention_days,
-        disable_filament_warnings: localSettings.disable_filament_warnings,
-        prefer_lowest_filament: localSettings.prefer_lowest_filament,
-        queue_drying_enabled: localSettings.queue_drying_enabled,
-        queue_drying_block: localSettings.queue_drying_block,
-        ambient_drying_enabled: localSettings.ambient_drying_enabled,
-        print_drying_enabled: localSettings.print_drying_enabled,
-        drying_presets: localSettings.drying_presets,
-        ams_humidity_thresholds: localSettings.ams_humidity_thresholds,
-        per_printer_mapping_expanded: localSettings.per_printer_mapping_expanded,
-        date_format: localSettings.date_format,
-        time_format: localSettings.time_format,
-        default_printer_id: localSettings.default_printer_id,
-        ftp_retry_enabled: localSettings.ftp_retry_enabled,
-        ftp_retry_count: localSettings.ftp_retry_count,
-        ftp_retry_delay: localSettings.ftp_retry_delay,
-        ftp_timeout: localSettings.ftp_timeout,
-        mqtt_enabled: localSettings.mqtt_enabled,
-        mqtt_broker: localSettings.mqtt_broker,
-        mqtt_port: localSettings.mqtt_port,
-        mqtt_username: localSettings.mqtt_username,
-        mqtt_password: localSettings.mqtt_password,
-        mqtt_topic_prefix: localSettings.mqtt_topic_prefix,
-        mqtt_use_tls: localSettings.mqtt_use_tls,
-        external_url: localSettings.external_url,
-        ha_enabled: localSettings.ha_enabled,
-        ha_url: localSettings.ha_url,
-        ha_token: localSettings.ha_token,
-        library_archive_mode: localSettings.library_archive_mode,
-        library_disk_warning_gb: localSettings.library_disk_warning_gb,
-        camera_view_mode: localSettings.camera_view_mode,
-        preferred_slicer: localSettings.preferred_slicer,
-        open_in_slicer: localSettings.open_in_slicer,
-        use_slicer_api: localSettings.use_slicer_api,
-        orcaslicer_api_url: localSettings.orcaslicer_api_url,
-        bambu_studio_api_url: localSettings.bambu_studio_api_url,
-        prometheus_enabled: localSettings.prometheus_enabled,
-        prometheus_token: localSettings.prometheus_token,
-        user_notifications_enabled: localSettings.user_notifications_enabled,
-        default_bed_levelling: localSettings.default_bed_levelling,
-        default_flow_cali: localSettings.default_flow_cali,
-        default_vibration_cali: localSettings.default_vibration_cali,
-        default_layer_inspect: localSettings.default_layer_inspect,
-        default_timelapse: localSettings.default_timelapse,
-        default_nozzle_offset_cali: localSettings.default_nozzle_offset_cali,
-        stagger_group_size: localSettings.stagger_group_size,
-        stagger_interval_minutes: localSettings.stagger_interval_minutes,
-        require_plate_clear: localSettings.require_plate_clear,
-        preheat_enabled: localSettings.preheat_enabled,
-        preheat_filament_targets: localSettings.preheat_filament_targets,
-        preheat_max_wait_seconds: localSettings.preheat_max_wait_seconds,
-        preheat_soak_seconds: localSettings.preheat_soak_seconds,
-        nozzle_temp_presets: localSettings.nozzle_temp_presets,
-        bed_temp_presets: localSettings.bed_temp_presets,
-        chamber_temp_presets: localSettings.chamber_temp_presets,
-        fan_speed_presets: localSettings.fan_speed_presets,
-        session_max_hours: localSettings.session_max_hours,
-      };
-      updateMutation.mutate(settingsToSave);
+      updateMutation.mutate(settingsDraftPersistence(localSettings));
     }, 500);
 
-    // Cleanup on unmount or when localSettings changes again
     return () => {
       if (saveTimeoutRef.current) {
         clearTimeout(saveTimeoutRef.current);
       }
     };
-  }, [localSettings, settings, updateMutation, authEnabled, hasPermission, showToast, t]);
+  }, [localSettings, settings, updateMutation, authEnabled, hasPermission]);
 
   const updateSetting = useCallback(<K extends keyof AppSettings>(key: K, value: AppSettings[K]) => {
     // Gate at the point of user interaction (not in the debounced-save effect —
@@ -1144,7 +945,7 @@ export function SettingsPage() {
       showToast(t('settings.toast.noPermissionUpdate'), 'error');
       return;
     }
-    setLocalSettings(prev => prev ? { ...prev, [key]: value } : null);
+    setLocalSettings(prev => prev ? updateSettingsDraft(prev, key, value) : null);
   }, [authEnabled, hasPermission, showToast, t]);
 
   const handleTestExternalCamera = async (printerId: number, url: string, cameraType: string) => {
@@ -2563,34 +2364,13 @@ export function SettingsPage() {
                       </div>
                     </div>
 
-                    {updateStatus?.status === 'downloading' || updateStatus?.status === 'installing' ? (
-                      <div className="mt-3">
-                        <div className="flex items-center gap-2 text-sm text-bambu-gray">
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                          <span>{updateStatus.message}</span>
-                        </div>
-                        <div className="mt-2 w-full bg-bambu-dark-tertiary rounded-full h-2">
-                          <div
-                            className="bg-bambu-green h-2 rounded-full transition-all duration-300"
-                            style={{ width: `${updateStatus.progress}%` }}
-                          />
-                        </div>
-                      </div>
-                    ) : updateStatus?.status === 'complete' ? (
-                      <div className="mt-3 p-2 bg-bambu-green/20 rounded text-sm text-bambu-green">
-                        {updateStatus.message}
-                      </div>
-                    ) : updateStatus?.status === 'error' ? (
-                      <div className="mt-3 p-2 bg-red-100 dark:bg-red-500/20 rounded text-sm text-red-700 dark:text-red-400">
-                        {updateStatus.error || updateStatus.message}
-                      </div>
-                    ) : updateCheck?.is_ha_addon ? (
+                    {updateCheck.is_ha_addon ? (
                       <div className="mt-3 p-3 bg-bambu-dark-tertiary rounded-lg">
                         <p className="text-sm text-bambu-gray">
                           {t('settings.updateViaHomeAssistant')}
                         </p>
                       </div>
-                    ) : updateCheck?.is_docker ? (
+                    ) : (
                       <div className="mt-3 p-3 bg-bambu-dark-tertiary rounded-lg">
                         <p className="text-sm text-bambu-gray mb-2">
                           {t('settings.updateViaDocker')}
@@ -2599,34 +2379,6 @@ export function SettingsPage() {
                           docker compose pull && docker compose up -d
                         </code>
                       </div>
-                    ) : updateCheck?.update_method === 'windows_installer' ? (
-                      <div className="mt-3 p-3 bg-bambu-dark-tertiary rounded-lg">
-                        <p className="text-sm text-bambu-gray mb-3">
-                          {t('settings.updateViaWindowsInstaller')}
-                        </p>
-                        <a
-                          href={updateCheck.installer_download_url || updateCheck.release_url || `https://github.com/maziggy/bambuddy/releases/tag/v${updateCheck.latest_version}`}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="inline-flex items-center justify-center font-medium rounded-lg transition-colors focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-offset-bambu-dark disabled:opacity-50 bg-bambu-green hover:bg-bambu-green-light text-white focus:ring-bambu-green px-4 py-2 text-sm gap-2 min-h-[44px] md:min-h-0"
-                        >
-                          <Download className="w-4 h-4" />
-                          {t('settings.downloadWindowsInstaller', { version: updateCheck.latest_version })}
-                        </a>
-                      </div>
-                    ) : (
-                      <Button
-                        className="mt-3"
-                        onClick={() => applyUpdateMutation.mutate()}
-                        disabled={applyUpdateMutation.isPending}
-                      >
-                        {applyUpdateMutation.isPending ? (
-                          <Loader2 className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Download className="w-4 h-4" />
-                        )}
-                        {t('settings.installUpdate')}
-                      </Button>
                     )}
                   </div>
                 ) : updateCheck?.error ? (
@@ -4511,7 +4263,7 @@ export function SettingsPage() {
                   }
                   const newValue = Object.keys(updated).length > 0 ? JSON.stringify(updated) : '';
                   // Update local state for immediate UI feedback, save on blur
-                  setLocalSettings(prev => prev ? { ...prev, gcode_snippets: newValue } : null);
+                  setLocalSettings(prev => prev ? updateSettingsDraft(prev, 'gcode_snippets', newValue) : null);
                   pendingGcodeSnippetsRef.current = newValue;
                 };
 

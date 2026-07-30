@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -180,7 +181,8 @@ function ArchiveCard({
 
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission, canModify } = useAuth();
+  const { hasPermission, canArchiveAction } = useAuth();
+  const archiveAction = (action: 'update' | 'delete' | 'reprint') => canArchiveAction(action, archive.created_by_id);
   const isMobile = useIsMobile();
   const navigate = useNavigate();
   const [showReprint, setShowReprint] = useState(false);
@@ -409,12 +411,12 @@ function ArchiveCard({
         label: t('common.print'),
         icon: <Printer className="w-4 h-4" />,
         onClick: () => setShowReprint(true),
-        disabled: !archive.file_path || !hasPermission('queue:create') || !canModify('archives', 'reprint', archive.created_by_id),
+        disabled: !archive.file_path || !hasPermission('queue:create') || !archiveAction('reprint').allowed,
         title: !archive.file_path
           ? t('archives.card.noFileForReprint')
           : !hasPermission('queue:create')
             ? t('archives.permission.noAddToQueue')
-            : !canModify('archives', 'reprint', archive.created_by_id)
+            : !archiveAction('reprint').allowed
               ? t('archives.permission.noReprint')
               : undefined,
       },
@@ -480,23 +482,23 @@ function ArchiveCard({
       label: t('archives.menu.scanForTimelapse'),
       icon: <ScanSearch className="w-4 h-4" />,
       onClick: () => timelapseScanMutation.mutate(),
-      disabled: !archive.printer_id || !!archive.timelapse_path || timelapseScanMutation.isPending || !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archive.printer_id || !!archive.timelapse_path || timelapseScanMutation.isPending || !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     {
       label: t('archives.menu.uploadTimelapse'),
       icon: <Upload className="w-4 h-4" />,
       onClick: () => timelapseInputRef.current?.click(),
-      disabled: !!archive.timelapse_path || !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !!archive.timelapse_path || !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     ...(archive.timelapse_path ? [{
       label: t('archives.menu.removeTimelapse'),
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => setShowDeleteTimelapseConfirm(true),
       danger: true,
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     }] : []),
     { label: '', divider: true, onClick: () => {} },
     {
@@ -511,30 +513,30 @@ function ArchiveCard({
           source3mfInputRef.current?.click();
         }
       },
-      disabled: !archive.source_3mf_path && !canModify('archives', 'update', archive.created_by_id),
-      title: !archive.source_3mf_path && !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUploadFiles') : undefined,
+      disabled: !archive.source_3mf_path && !archiveAction('update').allowed,
+      title: !archive.source_3mf_path && !archiveAction('update').allowed ? t('archives.permission.noUploadFiles') : undefined,
     },
     ...(archive.source_3mf_path ? [{
       label: t('archives.menu.replaceSource3mf'),
       icon: <Upload className="w-4 h-4" />,
       onClick: () => source3mfInputRef.current?.click(),
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     {
       label: t('archives.menu.removeSource3mf'),
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => setShowDeleteSource3mfConfirm(true),
       danger: true,
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     }] : []),
     {
       label: archive.f3d_path ? t('archives.menu.replaceF3d') : t('archives.menu.uploadF3d'),
       icon: <Box className="w-4 h-4" />,
       onClick: () => f3dInputRef.current?.click(),
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     ...(archive.f3d_path ? [{
       label: t('archives.menu.downloadF3d'),
@@ -550,8 +552,8 @@ function ArchiveCard({
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => setShowDeleteF3dConfirm(true),
       danger: true,
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     }] : []),
     { label: '', divider: true, onClick: () => {} },
     {
@@ -600,15 +602,15 @@ function ArchiveCard({
       label: archive.is_favorite ? t('archives.menu.removeFromFavorites') : t('archives.menu.addToFavorites'),
       icon: <Star className={`w-4 h-4 ${archive.is_favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />,
       onClick: () => favoriteMutation.mutate(),
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     {
       label: t('archives.menu.edit'),
       icon: <Pencil className="w-4 h-4" />,
       onClick: () => setShowEdit(true),
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     {
       label: t('archives.menu.printLog'),
@@ -624,8 +626,8 @@ function ArchiveCard({
       label: t('archives.menu.addToProject'),
       icon: <FolderKanban className="w-4 h-4" />,
       onClick: () => {},
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
       submenuSearchPlaceholder: (projects?.filter(p => p.status === 'active').length ?? 0) > 5
         ? t('archives.menu.searchProjects')
         : undefined,
@@ -638,7 +640,7 @@ function ArchiveCard({
             label: t('archives.menu.removeFromProject'),
             icon: <X className="w-4 h-4" />,
             onClick: () => assignProjectMutation.mutate(null),
-            disabled: !canModify('archives', 'update', archive.created_by_id),
+            disabled: !archiveAction('update').allowed,
           });
         }
 
@@ -667,7 +669,7 @@ function ArchiveCard({
                 label: p.name,
                 icon: <div className="w-3 h-3 rounded-full flex-shrink-0" style={{ backgroundColor: p.color || '#888' }} />,
                 onClick: () => assignProjectMutation.mutate(p.id),
-                disabled: archive.project_id === p.id || !canModify('archives', 'update', archive.created_by_id),
+                disabled: archive.project_id === p.id || !archiveAction('update').allowed,
               });
             });
           }
@@ -687,8 +689,8 @@ function ArchiveCard({
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => setShowDeleteConfirm(true),
       danger: true,
-      disabled: !canModify('archives', 'delete', archive.created_by_id),
-      title: !canModify('archives', 'delete', archive.created_by_id) ? t('archives.permission.noDelete') : undefined,
+      disabled: !archiveAction('delete').allowed,
+      title: !archiveAction('delete').allowed ? t('archives.permission.noDelete') : undefined,
     },
   ];
 
@@ -809,21 +811,21 @@ function ArchiveCard({
         {/* Favorite star */}
         <button
           className={`absolute top-2 right-2 p-1 rounded transition-colors ${
-            canModify('archives', 'update', archive.created_by_id)
+            archiveAction('update').allowed
               ? 'bg-black/50 hover:bg-black/70'
               : 'bg-black/30 cursor-not-allowed'
           }`}
           onClick={(e) => {
             e.stopPropagation();
-            if (canModify('archives', 'update', archive.created_by_id)) {
+            if (archiveAction('update').allowed) {
               favoriteMutation.mutate();
             }
           }}
-          disabled={!canModify('archives', 'update', archive.created_by_id)}
-          title={!canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : (archive.is_favorite ? t('archives.card.removeFromFavorites') : t('archives.card.addToFavorites'))}
+          disabled={!archiveAction('update').allowed}
+          title={!archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : (archive.is_favorite ? t('archives.card.removeFromFavorites') : t('archives.card.addToFavorites'))}
         >
           <Star
-            className={`w-5 h-5 ${archive.is_favorite ? 'text-yellow-400 fill-yellow-400' : 'text-white'} ${!canModify('archives', 'update', archive.created_by_id) ? 'opacity-50' : ''}`}
+            className={`w-5 h-5 ${archive.is_favorite ? 'text-yellow-400 fill-yellow-400' : 'text-white'} ${!archiveAction('update').allowed ? 'opacity-50' : ''}`}
           />
         </button>
         {(archive.status === 'failed' || archive.status === 'aborted') && (
@@ -955,8 +957,8 @@ function ArchiveCard({
             size="sm"
             className="p-1 sm:p-1.5 shrink-0"
             onClick={() => setShowEdit(true)}
-            disabled={!canModify('archives', 'update', archive.created_by_id)}
-            title={!canModify('archives', 'update', archive.created_by_id) ? t('archives.card.noPermissionEdit') : t('archives.card.edit')}
+            disabled={!archiveAction('update').allowed}
+            title={!archiveAction('update').allowed ? t('archives.card.noPermissionEdit') : t('archives.card.edit')}
           >
             <Pencil className="w-3 h-3 sm:w-4 sm:h-4" />
           </Button>
@@ -1158,8 +1160,8 @@ function ArchiveCard({
                 size="sm"
                 className="flex-1 min-w-0 overflow-hidden"
                 onClick={() => setShowReprint(true)}
-                disabled={!archive.file_path || !hasPermission('queue:create') || !canModify('archives', 'reprint', archive.created_by_id)}
-                title={!archive.file_path ? t('archives.card.noFileForReprint') : !hasPermission('queue:create') ? t('archives.permission.noAddToQueue') : !canModify('archives', 'reprint', archive.created_by_id) ? t('archives.card.noPermissionReprint') : undefined}
+                disabled={!archive.file_path || !hasPermission('queue:create') || !archiveAction('reprint').allowed}
+                title={!archive.file_path ? t('archives.card.noFileForReprint') : !hasPermission('queue:create') ? t('archives.permission.noAddToQueue') : !archiveAction('reprint').allowed ? t('archives.card.noPermissionReprint') : undefined}
               >
                 <Printer className="w-3 h-3 flex-shrink-0" />
                 <span className="hidden xl:inline truncate">{t('common.print')}</span>
@@ -1238,8 +1240,8 @@ function ArchiveCard({
             size="sm"
             className="min-w-0 p-1 sm:p-1.5"
             onClick={() => setShowDeleteConfirm(true)}
-            disabled={!canModify('archives', 'delete', archive.created_by_id)}
-            title={!canModify('archives', 'delete', archive.created_by_id) ? t('archives.card.noPermissionDelete') : t('archives.card.delete')}
+            disabled={!archiveAction('delete').allowed}
+            title={!archiveAction('delete').allowed ? t('archives.card.noPermissionDelete') : t('archives.card.delete')}
           >
             <Trash2 className="w-3 h-3 sm:w-4 sm:h-4 text-red-600 dark:text-red-400" />
           </Button>
@@ -1589,7 +1591,8 @@ function ArchiveListRow({
 }) {
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission, canModify } = useAuth();
+  const { hasPermission, canArchiveAction } = useAuth();
+  const archiveAction = (action: 'update' | 'delete' | 'reprint') => canArchiveAction(action, archive.created_by_id);
   const [showEdit, setShowEdit] = useState(false);
   const [showPrintLog, setShowPrintLog] = useState(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -1791,12 +1794,12 @@ function ArchiveListRow({
         label: t('common.print'),
         icon: <Printer className="w-4 h-4" />,
         onClick: () => setShowReprint(true),
-        disabled: !archive.file_path || !hasPermission('queue:create') || !canModify('archives', 'reprint', archive.created_by_id),
+        disabled: !archive.file_path || !hasPermission('queue:create') || !archiveAction('reprint').allowed,
         title: !archive.file_path
           ? t('archives.card.noFileForReprint')
           : !hasPermission('queue:create')
             ? t('archives.permission.noAddToQueue')
-            : !canModify('archives', 'reprint', archive.created_by_id)
+            : !archiveAction('reprint').allowed
               ? t('archives.permission.noReprint')
               : undefined,
       },
@@ -1862,23 +1865,23 @@ function ArchiveListRow({
       label: t('archives.menu.scanForTimelapse'),
       icon: <ScanSearch className="w-4 h-4" />,
       onClick: () => timelapseScanMutation.mutate(),
-      disabled: !archive.printer_id || !!archive.timelapse_path || timelapseScanMutation.isPending || !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archive.printer_id || !!archive.timelapse_path || timelapseScanMutation.isPending || !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     {
       label: t('archives.menu.uploadTimelapse'),
       icon: <Upload className="w-4 h-4" />,
       onClick: () => timelapseInputRef.current?.click(),
-      disabled: !!archive.timelapse_path || !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !!archive.timelapse_path || !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     ...(archive.timelapse_path ? [{
       label: t('archives.menu.removeTimelapse'),
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => setShowDeleteTimelapseConfirm(true),
       danger: true,
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     }] : []),
     { label: '', divider: true, onClick: () => {} },
     {
@@ -1893,30 +1896,30 @@ function ArchiveListRow({
           source3mfInputRef.current?.click();
         }
       },
-      disabled: !archive.source_3mf_path && !canModify('archives', 'update', archive.created_by_id),
-      title: !archive.source_3mf_path && !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUploadFiles') : undefined,
+      disabled: !archive.source_3mf_path && !archiveAction('update').allowed,
+      title: !archive.source_3mf_path && !archiveAction('update').allowed ? t('archives.permission.noUploadFiles') : undefined,
     },
     ...(archive.source_3mf_path ? [{
       label: t('archives.menu.replaceSource3mf'),
       icon: <Upload className="w-4 h-4" />,
       onClick: () => source3mfInputRef.current?.click(),
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     {
       label: t('archives.menu.removeSource3mf'),
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => setShowDeleteSource3mfConfirm(true),
       danger: true,
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     }] : []),
     {
       label: archive.f3d_path ? t('archives.menu.replaceF3d') : t('archives.menu.uploadF3d'),
       icon: <Box className="w-4 h-4" />,
       onClick: () => f3dInputRef.current?.click(),
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     ...(archive.f3d_path ? [{
       label: t('archives.menu.downloadF3d'),
@@ -1932,8 +1935,8 @@ function ArchiveListRow({
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => setShowDeleteF3dConfirm(true),
       danger: true,
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     }] : []),
     { label: '', divider: true, onClick: () => {} },
     {
@@ -1982,15 +1985,15 @@ function ArchiveListRow({
       label: archive.is_favorite ? t('archives.menu.removeFromFavorites') : t('archives.menu.addToFavorites'),
       icon: <Star className={`w-4 h-4 ${archive.is_favorite ? 'fill-yellow-400 text-yellow-400' : ''}`} />,
       onClick: () => favoriteMutation.mutate(),
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     {
       label: t('archives.menu.edit'),
       icon: <Pencil className="w-4 h-4" />,
       onClick: () => setShowEdit(true),
-      disabled: !canModify('archives', 'update', archive.created_by_id),
-      title: !canModify('archives', 'update', archive.created_by_id) ? t('archives.permission.noUpdateArchives') : undefined,
+      disabled: !archiveAction('update').allowed,
+      title: !archiveAction('update').allowed ? t('archives.permission.noUpdateArchives') : undefined,
     },
     {
       label: t('archives.menu.printLog'),
@@ -2061,8 +2064,8 @@ function ArchiveListRow({
       icon: <Trash2 className="w-4 h-4" />,
       onClick: () => setShowDeleteConfirm(true),
       danger: true,
-      disabled: !canModify('archives', 'delete', archive.created_by_id),
-      title: !canModify('archives', 'delete', archive.created_by_id) ? t('archives.permission.noDelete') : undefined,
+      disabled: !archiveAction('delete').allowed,
+      title: !archiveAction('delete').allowed ? t('archives.permission.noDelete') : undefined,
     },
   ];
 
@@ -2200,8 +2203,8 @@ function ArchiveListRow({
               variant="ghost"
               size="sm"
               onClick={() => setShowReprint(true)}
-              disabled={!archive.file_path || !hasPermission('queue:create') || !canModify('archives', 'reprint', archive.created_by_id)}
-              title={!archive.file_path ? t('archives.card.noFileForReprint') : !hasPermission('queue:create') ? t('archives.permission.noAddToQueue') : !canModify('archives', 'reprint', archive.created_by_id) ? t('archives.card.noPermissionReprint') : t('common.print')}
+              disabled={!archive.file_path || !hasPermission('queue:create') || !archiveAction('reprint').allowed}
+              title={!archive.file_path ? t('archives.card.noFileForReprint') : !hasPermission('queue:create') ? t('archives.permission.noAddToQueue') : !archiveAction('reprint').allowed ? t('archives.card.noPermissionReprint') : t('common.print')}
               className="text-bambu-green hover:text-bambu-green-light hover:bg-bambu-green/10"
             >
               <Play className="w-4 h-4" />
@@ -2244,8 +2247,8 @@ function ArchiveListRow({
             variant="ghost"
             size="sm"
             onClick={() => setShowEdit(true)}
-            disabled={!canModify('archives', 'update', archive.created_by_id)}
-            title={!canModify('archives', 'update', archive.created_by_id) ? t('archives.card.noPermissionEdit') : t('archives.card.edit')}
+            disabled={!archiveAction('update').allowed}
+            title={!archiveAction('update').allowed ? t('archives.card.noPermissionEdit') : t('archives.card.edit')}
           >
             <Pencil className="w-4 h-4" />
           </Button>
@@ -2253,8 +2256,8 @@ function ArchiveListRow({
             variant="ghost"
             size="sm"
             onClick={() => setShowDeleteConfirm(true)}
-            disabled={!canModify('archives', 'delete', archive.created_by_id)}
-            title={!canModify('archives', 'delete', archive.created_by_id) ? t('archives.card.noPermissionDelete') : t('archives.card.delete')}
+            disabled={!archiveAction('delete').allowed}
+            title={!archiveAction('delete').allowed ? t('archives.card.noPermissionDelete') : t('archives.card.delete')}
           >
             <Trash2 className="w-4 h-4 text-red-600 dark:text-red-400" />
           </Button>
@@ -2821,7 +2824,7 @@ export function ArchivesPage() {
     mutationFn: (id: number) => api.deletePrintLogEntry(id),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['print-log'] });
-      queryClient.invalidateQueries({ queryKey: ['archives-stats'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.archiveStats() });
       showToast(t('archives.log.entryDeleted'));
     },
     onError: () => {
@@ -2837,7 +2840,7 @@ export function ArchivesPage() {
       // Also invalidate /archives/stats — the Failure Analysis widget there
       // groups by PrintLogEntry.failure_reason, so a re-classification needs
       // to flow through (#1687 part 4).
-      queryClient.invalidateQueries({ queryKey: ['archives-stats'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.archiveStats() });
       setEditingLogEntry(null);
       showToast(t('archives.log.entryUpdated'));
     },

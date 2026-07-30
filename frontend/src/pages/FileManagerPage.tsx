@@ -71,6 +71,7 @@ import { usePageFileDrop } from '../hooks/usePageFileDrop';
 import { useAuth } from '../contexts/AuthContext';
 import { formatDuration, parseUTCDate } from '../utils/date';
 import { formatFileSize } from '../utils/file';
+import type { AuthorizationDecision, LibraryFileAction } from '../domain/authorization';
 
 type SortField = 'name' | 'date' | 'size' | 'type' | 'prints';
 type SortDirection = 'asc' | 'desc';
@@ -739,12 +740,12 @@ interface FileCardProps {
   onTagClick?: (tagId: number) => void;
   thumbnailVersion?: number;
   hasPermission: (permission: Permission) => boolean;
-  canModify: (resource: 'queue' | 'archives' | 'library', action: 'update' | 'delete' | 'reprint', createdById: number | null | undefined) => boolean;
+  canLibraryFileAction: (action: LibraryFileAction, createdById: number | null | undefined) => AuthorizationDecision;
   authEnabled: boolean;
   t: TFunction;
 }
 
-function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, onPrint, onSlice, onRunPipeline, useSlicerApi, onPreview3d, onRename, onGenerateThumbnail, onTagClick, thumbnailVersion, hasPermission, canModify, authEnabled, t }: FileCardProps) {
+function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, onPrint, onSlice, onRunPipeline, useSlicerApi, onPreview3d, onRename, onGenerateThumbnail, onTagClick, thumbnailVersion, hasPermission, canLibraryFileAction, authEnabled, t }: FileCardProps) {
   const [showActions, setShowActions] = useState(false);
 
   return (
@@ -907,11 +908,11 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
               {onRename && (
                 <button
                   className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 ${
-                    canModify('library', 'update', file.created_by_id) ? 'text-white hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'
+                    canLibraryFileAction('update', file.created_by_id).allowed ? 'text-white hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'
                   }`}
-                  onClick={() => { if (canModify('library', 'update', file.created_by_id)) { onRename(file); setShowActions(false); } }}
-                  disabled={!canModify('library', 'update', file.created_by_id)}
-                  title={!canModify('library', 'update', file.created_by_id) ? t('fileManager.noPermissionRenameFile') : undefined}
+                  onClick={() => { if (canLibraryFileAction('update', file.created_by_id).allowed) { onRename(file); setShowActions(false); } }}
+                  disabled={!canLibraryFileAction('update', file.created_by_id).allowed}
+                  title={!canLibraryFileAction('update', file.created_by_id).allowed ? t('fileManager.noPermissionRenameFile') : undefined}
                 >
                   <Pencil className="w-3.5 h-3.5" />
                   {t('common.rename')}
@@ -920,11 +921,11 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
               {onGenerateThumbnail && file.file_type === 'stl' && (
                 <button
                   className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 ${
-                    canModify('library', 'update', file.created_by_id) ? 'text-white hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'
+                    canLibraryFileAction('update', file.created_by_id).allowed ? 'text-white hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'
                   }`}
-                  onClick={() => { if (canModify('library', 'update', file.created_by_id)) { onGenerateThumbnail(file); setShowActions(false); } }}
-                  disabled={!canModify('library', 'update', file.created_by_id)}
-                  title={!canModify('library', 'update', file.created_by_id) ? t('fileManager.noPermissionGenerateThumbnail') : undefined}
+                  onClick={() => { if (canLibraryFileAction('update', file.created_by_id).allowed) { onGenerateThumbnail(file); setShowActions(false); } }}
+                  disabled={!canLibraryFileAction('update', file.created_by_id).allowed}
+                  title={!canLibraryFileAction('update', file.created_by_id).allowed ? t('fileManager.noPermissionGenerateThumbnail') : undefined}
                 >
                   <Image className="w-3.5 h-3.5" />
                   {t('fileManager.generateThumbnail')}
@@ -932,11 +933,11 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
               )}
               <button
                 className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 ${
-                  canModify('library', 'delete', file.created_by_id) ? 'text-red-700 dark:text-red-400 hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'
+                  canLibraryFileAction('delete', file.created_by_id).allowed ? 'text-red-700 dark:text-red-400 hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'
                 }`}
-                onClick={() => { if (canModify('library', 'delete', file.created_by_id)) { onDelete(file.id); setShowActions(false); } }}
-                disabled={!canModify('library', 'delete', file.created_by_id)}
-                title={!canModify('library', 'delete', file.created_by_id) ? t('fileManager.noPermissionDeleteFile') : undefined}
+                onClick={() => { if (canLibraryFileAction('delete', file.created_by_id).allowed) { onDelete(file.id); setShowActions(false); } }}
+                disabled={!canLibraryFileAction('delete', file.created_by_id).allowed}
+                title={!canLibraryFileAction('delete', file.created_by_id).allowed ? t('fileManager.noPermissionDeleteFile') : undefined}
               >
                 <Trash2 className="w-3.5 h-3.5" />
                 {t('common.delete')}
@@ -962,7 +963,7 @@ export function FileManagerPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission, hasAnyPermission, canModify, authEnabled } = useAuth();
+  const { hasPermission, hasAnyPermission, canLibraryFileAction, authEnabled } = useAuth();
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -2301,7 +2302,7 @@ export function FileManagerPage() {
                     onTagClick={toggleTagFilter}
                     thumbnailVersion={thumbnailVersions[file.id]}
                     hasPermission={hasPermission}
-                    canModify={canModify}
+                    canLibraryFileAction={canLibraryFileAction}
                     authEnabled={authEnabled}
                   />
                 ))}
@@ -2513,40 +2514,40 @@ export function FileManagerPage() {
                         <Download className="w-4 h-4" />
                       </button>
                       <button
-                        onClick={() => canModify('library', 'update', file.created_by_id) && setRenameItem({ type: 'file', id: file.id, name: file.filename })}
+                        onClick={() => canLibraryFileAction('update', file.created_by_id).allowed && setRenameItem({ type: 'file', id: file.id, name: file.filename })}
                         className={`p-1.5 rounded transition-colors ${
-                          canModify('library', 'update', file.created_by_id)
+                          canLibraryFileAction('update', file.created_by_id).allowed
                             ? 'hover:bg-bambu-dark text-bambu-gray hover:text-white'
                             : 'text-bambu-gray/50 cursor-not-allowed'
                         }`}
-                        title={canModify('library', 'update', file.created_by_id) ? t('common.rename') : t('fileManager.noPermissionRenameFile')}
-                        disabled={!canModify('library', 'update', file.created_by_id)}
+                        title={canLibraryFileAction('update', file.created_by_id).allowed ? t('common.rename') : t('fileManager.noPermissionRenameFile')}
+                        disabled={!canLibraryFileAction('update', file.created_by_id).allowed}
                       >
                         <Pencil className="w-4 h-4" />
                       </button>
                       {file.file_type === 'stl' && (
                         <button
-                          onClick={() => canModify('library', 'update', file.created_by_id) && singleThumbnailMutation.mutate(file.id)}
+                          onClick={() => canLibraryFileAction('update', file.created_by_id).allowed && singleThumbnailMutation.mutate(file.id)}
                           className={`p-1.5 rounded transition-colors ${
-                            canModify('library', 'update', file.created_by_id)
+                            canLibraryFileAction('update', file.created_by_id).allowed
                               ? 'hover:bg-bambu-dark text-bambu-gray hover:text-bambu-green'
                               : 'text-bambu-gray/50 cursor-not-allowed'
                           }`}
-                          title={canModify('library', 'update', file.created_by_id) ? t('fileManager.generateThumbnail') : t('fileManager.noPermissionGenerateThumbnail')}
-                          disabled={singleThumbnailMutation.isPending || !canModify('library', 'update', file.created_by_id)}
+                          title={canLibraryFileAction('update', file.created_by_id).allowed ? t('fileManager.generateThumbnail') : t('fileManager.noPermissionGenerateThumbnail')}
+                          disabled={singleThumbnailMutation.isPending || !canLibraryFileAction('update', file.created_by_id).allowed}
                         >
                           <Image className="w-4 h-4" />
                         </button>
                       )}
                       <button
-                        onClick={() => canModify('library', 'delete', file.created_by_id) && setDeleteConfirm({ type: 'file', id: file.id })}
+                        onClick={() => canLibraryFileAction('delete', file.created_by_id).allowed && setDeleteConfirm({ type: 'file', id: file.id })}
                         className={`p-1.5 rounded transition-colors ${
-                          canModify('library', 'delete', file.created_by_id)
+                          canLibraryFileAction('delete', file.created_by_id).allowed
                             ? 'hover:bg-bambu-dark text-bambu-gray hover:text-red-700 dark:hover:text-red-400'
                             : 'text-bambu-gray/50 cursor-not-allowed'
                         }`}
-                        title={canModify('library', 'delete', file.created_by_id) ? t('common.delete') : t('fileManager.noPermissionDeleteFile')}
-                        disabled={!canModify('library', 'delete', file.created_by_id)}
+                        title={canLibraryFileAction('delete', file.created_by_id).allowed ? t('common.delete') : t('fileManager.noPermissionDeleteFile')}
+                        disabled={!canLibraryFileAction('delete', file.created_by_id).allowed}
                       >
                         <Trash2 className="w-4 h-4" />
                       </button>

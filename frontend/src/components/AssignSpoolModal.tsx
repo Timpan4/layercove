@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useEffect, useMemo, useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -133,7 +134,7 @@ export function AssignSpoolModal({ isOpen, onClose, printerId, amsId, trayId, tr
   // refresh is offline the next poll / websocket update will catch up.
   const nudgePrinterRepublish = () => {
     api.refreshPrinterStatus(printerId).catch(() => {});
-    queryClient.invalidateQueries({ queryKey: ['printerStatus', printerId] });
+    queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printerId) });
   };
 
   const assignMutation = useMutation({
