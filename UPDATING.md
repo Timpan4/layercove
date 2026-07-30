@@ -33,6 +33,54 @@ Compatibility identifiers are intentional. The Compose service/container remains
 
 The LayerCove image is `ghcr.io/timpan4/layercove:latest`. Pin a release tag or digest for reproducible production updates. The first LayerCove start runs database migrations in place; no Alembic command is required.
 
+## Optional bundled Spoolman
+
+The bundled service is opt-in and does not change existing external Spoolman settings. It uses the pinned `ghcr.io/donkie/spoolman:0.21.0` image and the durable `spoolman_data` named volume. It has no `depends_on` relationship with LayerCove, so stopping, restoring, or upgrading it does not block LayerCove startup or normal printer operation.
+
+Enable it only when wanted:
+
+```bash
+docker compose --profile spoolman pull
+docker compose --profile spoolman up -d
+docker compose --profile spoolman ps
+```
+
+It publishes `127.0.0.1:7912` only, so it is not reachable from the LAN or Internet. After `docker compose --profile spoolman ps` reports healthy, configure **Settings → Spoolman** with `http://127.0.0.1:7912` on Linux when LayerCove uses the default host networking. On Docker Desktop, where the Compose instructions require bridge networking, use the private Compose service address `http://spoolman:8000` instead. Spoolman itself has no built-in authentication; retain the loopback binding, or put it behind an authenticated reverse proxy if deliberately exposing it. Do not change an existing external URL unless migrating its data separately.
+
+### Spoolman backup, restore, upgrade, and rollback
+
+Download the volume helper beside `docker-compose.yml` before the first backup or restore, and refresh it whenever you update the Compose file:
+
+```bash
+mkdir -p scripts
+curl -fsSL https://raw.githubusercontent.com/Timpan4/layercove/main/scripts/spoolman_volume.py \
+  -o scripts/spoolman_volume.py
+```
+
+Back up while the service is stopped so the SQLite database is consistent. Backup runs as the invoking host UID with Spoolman's service GID, which lets it write the host archive and publish it group-readable as `0640`; restore runs as Spoolman's default service UID/GID so it can read that archive and keep restored files writable when the normal entrypoint starts the server. The archive contains only Spoolman data; it does not touch `bambuddy_data`, `bambuddy_logs`, or an external Spoolman instance.
+
+```bash
+# Backup
+docker compose --profile spoolman stop spoolman
+docker compose --profile spoolman run --rm --no-deps --user "$(id -u):1000" --entrypoint python \
+  -v "$PWD:/backup" -v "$PWD/scripts:/layercove-scripts:ro" spoolman \
+  /layercove-scripts/spoolman_volume.py backup \
+  /home/app/.local/share/spoolman /backup/spoolman-data-backup.tgz
+docker compose --profile spoolman up -d spoolman
+
+# Restore (validates and stages the archive before replacing live data)
+docker compose --profile spoolman stop spoolman
+docker compose --profile spoolman run --rm --no-deps --user 1000:1000 --entrypoint python \
+  -v "$PWD:/backup:ro" -v "$PWD/scripts:/layercove-scripts:ro" spoolman \
+  /layercove-scripts/spoolman_volume.py restore \
+  /home/app/.local/share/spoolman /backup/spoolman-data-backup.tgz && \
+  docker compose --profile spoolman up -d spoolman
+```
+
+If restore fails, leave Spoolman stopped and read the error before retrying. A message naming `.layercove-restore-rollback` means automatic rollback also failed but the complete pre-restore snapshot remains in that directory; repair the volume or copy that snapshot out before running another restore or starting Spoolman.
+
+Before an upgrade, make that backup and record the current image with `docker compose --profile spoolman images spoolman`. Change only the pinned `spoolman` image tag after reviewing the [Spoolman release notes](https://github.com/Donkie/Spoolman/releases), then run `docker compose --profile spoolman pull spoolman && docker compose --profile spoolman up -d spoolman`. If a schema migration makes the previous image incompatible, restore the pre-upgrade archive first, set the recorded image tag, and recreate the `spoolman` service. Never use `docker compose down -v`; it deletes named volumes.
+
 ### Docker rollback
 
 Set the `image:` line to the previously recorded tag or digest, then recreate the application container:

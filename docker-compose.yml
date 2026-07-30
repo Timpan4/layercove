@@ -151,6 +151,27 @@ services:
       # - USE_SYSTEM_TRUST_STORE=true
     restart: unless-stopped
 
+  # Optional bundled inventory service. Enable explicitly with:
+  #   docker compose --profile spoolman up -d
+  # It is bound to the Docker host only, never the LAN. With LayerCove's
+  # default host networking, configure Settings → Spoolman with
+  # http://127.0.0.1:7912 after it becomes healthy. Do not add depends_on:
+  # LayerCove must remain available when Spoolman is stopped or upgrading.
+  spoolman:
+    image: ghcr.io/donkie/spoolman:0.21.0
+    profiles: ["spoolman"]
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:7912:8000"
+    volumes:
+      - spoolman_data:/home/app/.local/share/spoolman
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/v1/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s
+
   # Optional: External PostgreSQL database
   # Uncomment to run Postgres alongside Bambuddy (or use an external Postgres host)
   #postgres:
@@ -169,4 +190,5 @@ services:
 volumes:
   bambuddy_data:
   bambuddy_logs:
+  spoolman_data:
   #bambuddy_pgdata:

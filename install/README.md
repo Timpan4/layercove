@@ -18,7 +18,7 @@ Windows with Docker Desktop:
 powershell -ExecutionPolicy Bypass -Command "iwr -useb https://raw.githubusercontent.com/Timpan4/layercove/main/install/docker-install.ps1 -OutFile docker-install.ps1; .\docker-install.ps1"
 ```
 
-The Docker installers default to a fresh `layercove` directory, download the LayerCove Compose file, and pull `ghcr.io/timpan4/layercove:latest`. `--build`/`-Build` clones this repository and builds the image locally instead.
+The Docker installers default to a fresh `layercove` directory, download the LayerCove Compose file, and pull `ghcr.io/timpan4/layercove:latest`. `--build`/`-Build` clones this repository and builds the image locally instead. The bundled Spoolman service is not installed or started by default; see [optional Spoolman operations](../UPDATING.md#optional-bundled-spoolman) to opt in without changing an external Spoolman configuration.
 
 | Script | Platform | Important options |
 |---|---|---|

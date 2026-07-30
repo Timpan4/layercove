@@ -19,8 +19,9 @@ COPY requirements-dev.txt ./
 RUN --mount=type=cache,target=/root/.cache/pip \
     pip install -r requirements.txt -r requirements-dev.txt
 
-# Copy backend code
+# Copy backend code and the standalone Spoolman helper exercised by backend tests
 COPY backend/ ./backend/
+COPY scripts/spoolman_volume.py ./scripts/spoolman_volume.py
 COPY pyproject.toml ./
 
 # Embedded GCode viewer assets — required so the @app.get("/gcode-viewer/...")
