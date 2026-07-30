@@ -152,6 +152,51 @@ class SliceRequest(BaseModel):
         return self
 
 
+class PlateFilament(BaseModel):
+    """Filament consumed by one source 3MF plate."""
+
+    slot_id: int
+    type: str
+    color: str
+    used_grams: float
+    used_meters: float
+    used_in_plate: bool | None = None
+
+
+class PlateMetadata(BaseModel):
+    """Metadata returned for a selectable source 3MF plate."""
+
+    index: int
+    name: str | None
+    objects: list[str]
+    object_count: int
+    has_thumbnail: bool
+    thumbnail_url: str | None
+    print_time_seconds: int | None
+    filament_used_grams: float | None
+    filaments: list[PlateFilament]
+    bed_type: str | None = None
+
+
+class LibraryFilePlatesResponse(BaseModel):
+    file_id: int
+    filename: str
+    plates: list[PlateMetadata]
+    is_multi_plate: bool
+    embedded_printer: str | None = None
+    embedded_process: str | None = None
+
+
+class ArchivePlatesResponse(BaseModel):
+    archive_id: int
+    filename: str
+    plates: list[PlateMetadata]
+    is_multi_plate: bool
+    has_gcode: bool | None = None
+    embedded_printer: str | None = None
+    embedded_process: str | None = None
+
+
 class SliceResponse(BaseModel):
     """Response from `POST /library/files/{file_id}/slice`. The result lands
     in the user's library as a new ``LibraryFile`` (in the same folder as

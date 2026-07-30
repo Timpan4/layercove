@@ -100,11 +100,6 @@ class SpoolBase(BaseModel):
     core_weight: int = 250
     core_weight_catalog_id: int | None = None
     weight_used: float = 0
-    # Anchor for the resettable "Total Consumed" display. The Inventory
-    # page shows `weight_used - weight_used_baseline`; the per-spool /
-    # bulk "Reset usage to 0" action sets baseline = weight_used so the
-    # counter zeroes without touching remaining (#1390).
-    weight_used_baseline: float = 0
     slicer_filament: str | None = None
     slicer_filament_name: str | None = None
     nozzle_temp_min: int | None = None
@@ -205,6 +200,9 @@ class SpoolResponse(SpoolBase):
     # or data sourced from AMS firmware / backups may carry malformed values.
     # A single bad row must not 500 the entire inventory list endpoint (#1055).
     rgba: str | None = None
+    # Anchor for the resettable "Total Consumed" display. This is response-only:
+    # reset endpoints set it server-side without accepting client values.
+    weight_used_baseline: float = 0
     added_full: bool | None = None
     last_used: datetime | None = None
     encode_time: datetime | None = None

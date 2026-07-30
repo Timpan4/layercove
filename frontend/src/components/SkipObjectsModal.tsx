@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -34,7 +35,7 @@ export function SkipObjectsModal({ printerId, isOpen, onClose }: SkipObjectsModa
   const [enlarged, setEnlarged] = useState(false);
 
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', printerId],
+    queryKey: queryKeys.printerStatus(printerId),
     queryFn: () => api.getPrinterStatus(printerId),
     refetchInterval: 30000,
     enabled: isOpen,

@@ -35,7 +35,7 @@ from backend.app.services.bambu_ftp import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
-from backend.app.services.printer_backend import BackendError
+from backend.app.services.printer_backend import BackendError, MoonrakerStartJob, UploadJob
 from backend.app.services.printer_manager import (
     printer_manager,
     supports_airduct,
@@ -2528,20 +2528,19 @@ class PrintScheduler:
             )
             return
 
-        upload = getattr(backend, "upload_gcode", None)
-        if upload is None:
-            await self._record_moonraker_dispatch_failure(
-                db, item, archive, printer, filename, "Moonraker printer cannot upload G-code"
-            )
-            return
-
         correlation_id = str(uuid4())
         upload_name = f"queued-{correlation_id}{file_path.suffix.lower()}"
         try:
             with file_path.open("rb") as source:
                 remote_path = self._safe_moonraker_path(
-                    await upload(source, filename=upload_name, start=False, size=file_path.stat().st_size)
+                    (await backend.upload(UploadJob(source, upload_name, file_path.stat().st_size))).path
                 )
+        except BackendError as exc:
+            logger.warning("Queue item %s: Moonraker upload failed: %s", item.id, exc.safe_message)
+            await self._record_moonraker_dispatch_failure(
+                db, item, archive, printer, filename, "Failed to upload G-code to Moonraker"
+            )
+            return
         except Exception as exc:
             logger.warning("Queue item %s: Moonraker upload failed: %s", item.id, exc)
             await self._record_moonraker_dispatch_failure(
@@ -2587,7 +2586,7 @@ class PrintScheduler:
             bind_job(correlation_id, remote_path, remote_path)
 
         try:
-            started = await backend.start_print(remote_path)
+            started = (await backend.start(MoonrakerStartJob(remote_path))).started
         except BackendError as exc:
             logger.warning("Queue item %s: Moonraker start failed: %s", item.id, exc)
             if exc.code in {"timeout", "unavailable"}:
@@ -2616,7 +2615,7 @@ class PrintScheduler:
                 "correlation_id": correlation_id,
                 "provider_job_id": remote_path,
             }
-            outcome = await self.finalize_moonraker_job(
+            outcome = await self.finalize_provider_job(
                 item.printer_id,
                 terminal_data,
             )
@@ -2739,7 +2738,7 @@ class PrintScheduler:
         filename_matches = self._same_provider_filename(remote_path, observed_filename)
         job_matches = provider_job_id is not None and provider_job_id == remote_path
         if active and (filename_matches or job_matches):
-            return await self.bind_moonraker_observed(
+            return await self.bind_provider_observed(
                 printer_id,
                 {
                     "correlation_id": correlation_id,
@@ -2825,7 +2824,7 @@ class PrintScheduler:
         return outcome
 
     @staticmethod
-    async def bind_moonraker_observed(printer_id: int, data: dict) -> bool:
+    async def bind_provider_observed(printer_id: int, data: dict) -> bool:
         """Bind a started/bootstrap observation to exactly one durable queue identity."""
         correlation_id = data.get("correlation_id")
         correlation_id = correlation_id if isinstance(correlation_id, str) and correlation_id else None
@@ -2878,7 +2877,10 @@ class PrintScheduler:
             await PrintScheduler.dispatch_moonraker_cancel_intent(item_id, printer_id)
         return bound
 
-    bind_moonraker_started = bind_moonraker_observed
+    # Legacy Moonraker names remain entry points for route callbacks while all
+    # providers share scheduler-owned correlation binding.
+    bind_moonraker_observed = bind_provider_observed
+    bind_moonraker_started = bind_provider_observed
 
     @staticmethod
     async def dispatch_moonraker_cancel_intent(item_id: int, printer_id: int) -> bool:
@@ -2925,8 +2927,8 @@ class PrintScheduler:
         return False
 
     @staticmethod
-    async def finalize_moonraker_job(printer_id: int, data: dict) -> dict | None:
-        """Atomically finalize only the queue row bound to this provider job."""
+    async def finalize_provider_job(printer_id: int, data: dict) -> dict | None:
+        """Atomically finalize one correlated provider queue job."""
         raw_status = str(data.get("status") or "failed")
         status = "cancelled" if raw_status in ("cancelled", "aborted") else raw_status
         if status not in ("completed", "failed", "cancelled"):
@@ -2941,16 +2943,13 @@ class PrintScheduler:
         provider_job_id = str(provider_job_id) if provider_job_id is not None else None
 
         async with async_session() as db:
-            identities = [
-                PrintQueueItem.provider_job_id == provider_job_id
-                if provider_job_id is not None
-                else PrintQueueItem.provider_correlation_id == correlation_id
-            ]
             query = select(PrintQueueItem).where(
                 PrintQueueItem.printer_id == printer_id,
                 PrintQueueItem.status == "printing",
-                or_(*identities),
+                PrintQueueItem.provider_correlation_id == correlation_id,
             )
+            if provider_job_id is not None:
+                query = query.where(PrintQueueItem.provider_job_id == provider_job_id)
             matches = list((await db.scalars(query.order_by(PrintQueueItem.started_at, PrintQueueItem.id))).all())
             if len(matches) != 1:
                 return None
@@ -2966,8 +2965,10 @@ class PrintScheduler:
             terminal_query = update(PrintQueueItem).where(
                 PrintQueueItem.id == item.id,
                 PrintQueueItem.status == "printing",
-                or_(*identities),
+                PrintQueueItem.provider_correlation_id == correlation_id,
             )
+            if provider_job_id is not None:
+                terminal_query = terminal_query.where(PrintQueueItem.provider_job_id == provider_job_id)
             terminal = await db.execute(terminal_query.values(**terminal_values))
             if terminal.rowcount != 1:
                 await db.rollback()
@@ -3009,6 +3010,8 @@ class PrintScheduler:
             "printer_name": printer.name if printer else f"Printer {printer_id}",
             "filename": str(data.get("filename") or ""),
         }
+
+    finalize_moonraker_job = finalize_provider_job
 
     async def _start_print(self, db: AsyncSession, item: PrintQueueItem):
         """Upload file and start print for a queue item.

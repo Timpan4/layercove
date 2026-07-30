@@ -18,8 +18,13 @@ from backend.app.services.printer_backend import (
     BackendError,
     BackendEventSink,
     JobLifecycle,
+    MoonrakerStartJob,
     ProviderEvent,
+    StartJob,
+    StartResult,
     StatusChanged,
+    UploadJob,
+    UploadResult,
 )
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
@@ -197,10 +202,15 @@ class MoonrakerBackend:
         """Return the exact provider job id and filename in the latest snapshot."""
         return self._provider_job_id(), self._snapshot.filename
 
-    async def start_print(self, filename: str, *args: object, **options: object) -> bool:
+    async def start(self, job: StartJob) -> StartResult:
+        if not isinstance(job, MoonrakerStartJob):
+            raise BackendError("Moonraker start job is invalid", code="invalid_start_job")
         self._require_command("start_print", {NormalizedPrinterState.IDLE})
-        await self._run_command(self._http.start_print(filename))
-        return True
+        await self._run_command(self._http.start_print(job.filename))
+        return StartResult(started=True)
+
+    async def start_print(self, filename: str, *args: object, **options: object) -> bool:
+        return (await self.start(MoonrakerStartJob(filename))).started
 
     async def pause(self) -> bool:
         self._require_command("pause", {NormalizedPrinterState.PRINTING})
@@ -219,12 +229,18 @@ class MoonrakerBackend:
         await self._run_command(self._http.cancel_print())
         return True
 
-    async def upload_gcode(self, file, *, filename: str, start: bool, size: int | None) -> str:
+    async def upload(self, job: UploadJob) -> UploadResult:
+        if not isinstance(job, UploadJob):
+            raise BackendError("Moonraker upload job is invalid", code="invalid_upload_job")
         self._require_command("upload_gcode", {NormalizedPrinterState.IDLE})
-        path = await self._run_command(self._http.upload_gcode(file, filename=filename, size=size))
+        path = await self._run_command(self._http.upload_gcode(job.file, filename=job.filename, size=job.size))
+        return UploadResult(path)
+
+    async def upload_gcode(self, file, *, filename: str, start: bool, size: int | None) -> str:
+        upload = await self.upload(UploadJob(file, filename, size))
         if start:
-            await self._run_command(self._http.start_print(path))
-        return path
+            await self._run_command(self._http.start_print(upload.path))
+        return upload.path
 
     async def emergency_stop(self) -> bool:
         await self._run_command(self._http.emergency_stop())
@@ -240,7 +256,7 @@ class MoonrakerBackend:
         try:
             return await command
         except MoonrakerHTTPError as exc:
-            raise BackendError(exc.message, code=exc.code) from exc
+            raise BackendError(exc.message, code=exc.code, retryable=exc.code in {"timeout", "unavailable"}) from exc
 
     async def _run(self) -> None:
         attempt = 0

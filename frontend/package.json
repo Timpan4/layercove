@@ -14,7 +14,9 @@
     "test:brand": "uv run --with-requirements ../requirements.txt --with-requirements ../requirements-dev.txt python scripts/test_brand_assets.py",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
-    "check:i18n": "node scripts/check-i18n-parity.mjs"
+    "check:i18n": "node scripts/check-i18n-parity.mjs",
+    "generate:api": "uv run --with-requirements ../requirements.txt --with-requirements ../requirements-dev.txt python ../scripts/export_openapi.py | (cd .. && bunx --package typescript@5.9.3 --package openapi-typescript@7.13.0 openapi-typescript -o frontend/src/api/generated.ts)",
+    "check:api": "bun run generate:api && git diff --exit-code -- src/api/generated.ts"
   },
   "dependencies": {
     "@dnd-kit/core": "^6.3.1",

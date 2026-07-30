@@ -2,6 +2,7 @@ import hashlib
 import html
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -19,6 +20,7 @@ from backend.app.models.archive import PrintArchive
 from backend.app.models.filament import Filament
 from backend.app.models.printer import Printer
 from backend.app.utils.safe_path import PathTraversalError, safe_join_under
+from backend.app.utils.threemf_tools import ThreeMFDocument
 
 logger = logging.getLogger(__name__)
 
@@ -228,8 +230,11 @@ class ThreeMFParser:
                                 pass
                         elif key == "weight" and value:
                             try:
-                                summed_grams += float(value)
-                                any_grams_seen = True
+                                weight = float(value)
+                                next_total = summed_grams + weight
+                                if math.isfinite(weight) and math.isfinite(next_total):
+                                    summed_grams = next_total
+                                    any_grams_seen = True
                             except ValueError:
                                 pass
                         elif key == "curr_bed_type" and value and "bed_type" not in self.metadata:
@@ -263,52 +268,37 @@ class ThreeMFParser:
                 if any_grams_seen:
                     self.metadata["filament_used_grams"] = round(summed_grams, 2)
 
-                # Get filament info from filaments ACTUALLY USED in the print
-                # slice_info has <filament id="1" type="PLA" color="#FFFFFF" used_g="100" />
-                # Only include filaments where used_g > 0
-                filaments = root.findall(".//filament")
+                # Slice info lists only filaments consumed by this print.
+                # Keep archive's public type/color and per-slot shapes while
+                # sharing the canonical positive-usage reader with scheduler
+                # requirements.
+                filaments = ThreeMFDocument(zf).consumed_filaments()
                 if filaments:
-                    # Collect unique filament types and colors for filaments that are actually used
                     types = []
                     colors = []
-                    for f in filaments:
-                        # Check if this filament is actually used in the print
-                        used_g = f.get("used_g", "0")
-                        try:
-                            used_amount = float(used_g)
-                        except (ValueError, TypeError):
-                            used_amount = 0
-
-                        # Only include if used_g > 0 (filament is actually consumed)
-                        if used_amount > 0:
-                            ftype = f.get("type")
-                            fcolor = f.get("color")
-                            if ftype and ftype not in types:
-                                types.append(ftype)
-                            if fcolor and fcolor not in colors:
-                                colors.append(fcolor)
+                    for filament in filaments:
+                        ftype = filament["type"]
+                        fcolor = filament["color"]
+                        if ftype and ftype not in types:
+                            types.append(ftype)
+                        if fcolor and fcolor not in colors:
+                            colors.append(fcolor)
 
                     if types:
                         self.metadata["_slice_filament_type"] = ", ".join(types)
                     if colors:
                         self.metadata["_slice_filament_color"] = ",".join(colors)
 
-                    # Collect per-slot filament usage for tracking & notifications
                     filament_slots = []
-                    for f in filaments:
-                        slot_id = f.get("id")
-                        used_g_str = f.get("used_g", "0")
-                        try:
-                            used_g = float(used_g_str)
-                        except (ValueError, TypeError):
-                            used_g = 0
-                        if used_g > 0 and slot_id:
+                    for filament in filaments:
+                        slot_id = filament["slot_id"]
+                        if slot_id:
                             filament_slots.append(
                                 {
                                     "slot_id": int(slot_id),
-                                    "used_g": round(used_g, 2),
-                                    "type": f.get("type", ""),
-                                    "color": f.get("color", ""),
+                                    "used_g": round(filament["used_grams"], 2),
+                                    "type": filament["type"],
+                                    "color": filament["color"],
                                 }
                             )
                     if filament_slots:

@@ -27,7 +27,7 @@ from backend.app.models.spool_usage_history import SpoolUsageHistory
 from backend.app.models.user import User
 from backend.app.schemas.archive import ArchiveResponse, ArchiveSlim, ArchiveStats, ArchiveUpdate
 from backend.app.schemas.print_log import PrintLogResponse
-from backend.app.schemas.slicer import SliceRequest
+from backend.app.schemas.slicer import ArchivePlatesResponse, SliceRequest
 from backend.app.services.archive import ArchiveService
 from backend.app.utils.http import build_content_disposition
 from backend.app.utils.safe_path import safe_join_under
@@ -3410,7 +3410,7 @@ async def upload_archives_bulk(
     }
 
 
-@router.get("/{archive_id}/plates")
+@router.get("/{archive_id}/plates", response_model=ArchivePlatesResponse)
 async def get_archive_plates(
     archive_id: int,
     db: AsyncSession = Depends(get_db),

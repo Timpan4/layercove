@@ -1,3 +1,4 @@
+import type { components } from './generated';
 import type { ArchivePlatesResponse, LibraryFilePlatesResponse } from '../types/plates';
 
 const API_BASE = '/api/v1';
@@ -1562,11 +1563,8 @@ export interface BuiltinFilament {
 //   - Source-aware refs (`*_preset: PresetRef`) — new SliceModal that picks
 //     across cloud / local / standard tiers. Source-aware refs win when both
 //     are present in the same payload.
-export type PresetSource = 'orca_cloud' | 'cloud' | 'local' | 'standard';
-export interface PresetRef {
-  source: PresetSource;
-  id: string;
-}
+export type PresetSource = components['schemas']['PresetRef']['source'];
+export type PresetRef = components['schemas']['PresetRef'];
 export interface SliceRequest {
   printer_preset_id?: number;
   process_preset_id?: number;
@@ -2852,11 +2850,7 @@ export interface NotificationLogStats {
 }
 
 // Spoolman types
-export interface SpoolmanStatus {
-  enabled: boolean;
-  connected: boolean;
-  url: string | null;
-}
+export type SpoolmanStatus = components['schemas']['SpoolmanStatus'];
 
 export interface SkippedSpool {
   location: string;
@@ -3121,16 +3115,7 @@ export interface UpdateCheckResult {
   message?: string;
   is_docker?: boolean;
   is_ha_addon?: boolean;
-  is_windows_installer?: boolean;
-  update_method?: 'docker' | 'git' | 'ha_addon' | 'windows_installer';
-  installer_download_url?: string | null;
-}
-
-export interface UpdateStatus {
-  status: 'idle' | 'checking' | 'downloading' | 'installing' | 'complete' | 'error';
-  progress: number;
-  message: string;
-  error: string | null;
+  update_method?: 'docker' | 'ha_addon';
 }
 
 // Maintenance types
@@ -5706,11 +5691,6 @@ export const api = {
   // Updates
   getVersion: () => request<VersionInfo>('/updates/version'),
   checkForUpdates: () => request<UpdateCheckResult>('/updates/check'),
-  applyUpdate: () =>
-    request<{ success: boolean; message: string; status?: UpdateStatus; is_docker?: boolean; is_ha_addon?: boolean; is_windows_installer?: boolean }>('/updates/apply', {
-      method: 'POST',
-    }),
-  getUpdateStatus: () => request<UpdateStatus>('/updates/status'),
 
   // Maintenance
   getMaintenanceTypes: () => request<MaintenanceType[]>('/maintenance/types'),

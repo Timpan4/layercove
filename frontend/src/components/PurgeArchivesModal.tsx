@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -42,7 +43,7 @@ export function PurgeArchivesModal({ onClose, initialDays }: PurgeArchivesModalP
     onSuccess: (res) => {
       showToast(t('archivePurge.toast.success', { count: res.deleted }), 'success');
       queryClient.invalidateQueries({ queryKey: ['archives'] });
-      queryClient.invalidateQueries({ queryKey: ['archive-stats'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.archiveStats() });
       onClose();
     },
     onError: (e: Error) => showToast(e.message || t('archivePurge.toast.failed'), 'error'),

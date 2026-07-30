@@ -3,21 +3,54 @@
 from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Literal, Protocol, TypeAlias
+from typing import BinaryIO, Literal, Protocol, TypeAlias
 
 from backend.app.services.printer_types import PrinterCapabilities, PrinterProvider, PrinterSnapshot
+
+
+@dataclass(frozen=True)
+class UploadJob:
+    file: BinaryIO
+    filename: str
+    size: int | None
+
+
+@dataclass(frozen=True)
+class UploadResult:
+    path: str
+
+
+@dataclass(frozen=True)
+class BambuStartJob:
+    filename: str
+    plate_id: int = 1
+
+
+@dataclass(frozen=True)
+class MoonrakerStartJob:
+    filename: str
+
+
+@dataclass(frozen=True)
+class StartResult:
+    started: bool
+
+
+StartJob: TypeAlias = BambuStartJob | MoonrakerStartJob
 
 
 class BackendError(Exception):
     """Expected provider failure with a message safe for logs and API callers."""
 
-    def __init__(self, message: str, *, code: str = "backend_error"):
+    def __init__(self, message: str, *, code: str = "backend_error", retryable: bool = False):
         self.code = code
+        self.message = message
+        self.retryable = retryable
         super().__init__(message)
 
     @property
     def safe_message(self) -> str:
-        return str(self)
+        return self.message
 
 
 class UnsupportedPrinterProviderError(BackendError):
@@ -75,6 +108,8 @@ class PrinterBackend(Protocol):
     async def disconnect(self, timeout: float = 0) -> None: ...
 
     def snapshot(self) -> PrinterSnapshot: ...
+
+    async def start(self, job: StartJob) -> StartResult: ...
 
     async def start_print(self, filename: str, *args: object, **options: object) -> bool: ...
 

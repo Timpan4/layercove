@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { compareFwVersions } from '../utils/firmwareVersion';
@@ -986,7 +987,7 @@ function StatusSummaryBar({ printers }: { printers: Printer[] | undefined }) {
     let nextProgress: number = 0;
 
     printers?.forEach((printer) => {
-      const status = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null; progress: number | null; hms_errors?: HMSError[] }>(['printerStatus', printer.id]);
+      const status = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null; progress: number | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(printer.id));
       if (status === undefined) {
         // Status not yet loaded - don't count as offline yet
         loading++;
@@ -1929,7 +1930,7 @@ function PrinterCard({
   const [plateCheckLightWasOff, setPlateCheckLightWasOff] = useState(false);
 
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', printer.id],
+    queryKey: queryKeys.printerStatus(printer.id),
     queryFn: () => api.getPrinterStatus(printer.id),
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
@@ -2215,14 +2216,14 @@ function PrinterCard({
   const connectMutation = useMutation({
     mutationFn: () => api.connectPrinter(printer.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
   });
 
   const forceRefreshMutation = useMutation({
     mutationFn: () => api.refreshPrinterStatus(printer.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       showToast(t('printers.forceRefreshSuccess'), 'success');
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
@@ -2247,7 +2248,7 @@ function PrinterCard({
       api.startDrying(printer.id, amsId, temp, duration, filament, rotateTray),
     onSuccess: () => {
       setDryingPopoverAmsId(null);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2255,7 +2256,7 @@ function PrinterCard({
   const stopDryingMutation = useMutation({
     mutationFn: (amsId: number) => api.stopDrying(printer.id, amsId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2268,8 +2269,8 @@ function PrinterCard({
   const setAmsBackupMutation = useMutation({
     mutationFn: (enabled: boolean) => api.setAmsFilamentBackup(printer.id, enabled),
     onSuccess: (_data, enabled) => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
-      queryClient.invalidateQueries({ queryKey: ['printer-status', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       showToast(t(enabled ? 'printers.amsBackup.toastEnabled' : 'printers.amsBackup.toastDisabled'), 'success');
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
@@ -2308,7 +2309,7 @@ function PrinterCard({
     mutationFn: () => api.stopPrint(printer.id),
     onSuccess: () => {
       showToast(t('printers.toast.printStopped'));
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToStopPrint'), 'error'),
   });
@@ -2317,7 +2318,7 @@ function PrinterCard({
     mutationFn: () => api.pausePrint(printer.id),
     onSuccess: () => {
       showToast(t('printers.toast.printPaused'));
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToPausePrint'), 'error'),
   });
@@ -2326,7 +2327,7 @@ function PrinterCard({
     mutationFn: () => api.resumePrint(printer.id),
     onSuccess: () => {
       showToast(t('printers.toast.printResumed'));
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToResumePrint'), 'error'),
   });
@@ -2335,7 +2336,7 @@ function PrinterCard({
     mutationFn: () => api.emergencyStop(printer.id),
     onSuccess: () => {
       showToast(t('printers.emergencyStopSent'), 'success');
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.emergencyStopFailed'), 'error'),
   });
@@ -2344,10 +2345,10 @@ function PrinterCard({
     mutationFn: () => api.clearPlate(printer.id),
     onSuccess: () => {
       showToast(t('queue.clearPlateSuccess'));
-      queryClient.setQueryData(['printerStatus', printer.id], (old: PrinterStatus | undefined) =>
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: PrinterStatus | undefined) =>
         old ? { ...old, awaiting_plate_clear: false } : old
       );
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       queryClient.invalidateQueries({ queryKey: ['queue', printer.id] });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
@@ -2359,7 +2360,7 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2369,7 +2370,7 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2379,7 +2380,7 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2388,14 +2389,14 @@ function PrinterCard({
     mutationFn: ({ fan, speed }: { fan: 'part' | 'aux' | 'chamber'; speed: number }) =>
       api.setFanSpeed(printer.id, fan, speed),
     onMutate: async ({ fan, speed }) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
       const fanField = {
         part: 'cooling_fan_speed',
         aux: 'big_fan1_speed',
         chamber: 'big_fan2_speed',
       }[fan];
-      queryClient.setQueryData(['printerStatus', printer.id], (old: PrinterStatus | undefined) =>
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: PrinterStatus | undefined) =>
         old ? { ...old, [fanField]: speed } : old
       );
       return { previousStatus };
@@ -2403,11 +2404,11 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error, _variables, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToSendCommand'), 'error');
     },
@@ -2416,9 +2417,9 @@ function PrinterCard({
   const selectExtruderMutation = useMutation({
     mutationFn: (extruder: number) => api.selectExtruder(printer.id, extruder),
     onMutate: async (extruder) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
-      queryClient.setQueryData(['printerStatus', printer.id], (old: PrinterStatus | undefined) =>
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: PrinterStatus | undefined) =>
         old ? { ...old, active_extruder: extruder } : old
       );
       return { previousStatus };
@@ -2426,11 +2427,11 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error, _extruder, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToSendCommand'), 'error');
     },
@@ -2441,11 +2442,11 @@ function PrinterCard({
     mutationFn: (on: boolean) => api.setChamberLight(printer.id, on),
     onMutate: async (on) => {
       // Cancel any outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       // Snapshot the previous value
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
       // Optimistically update
-      queryClient.setQueryData(['printerStatus', printer.id], (old: typeof status) => ({
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: typeof status) => ({
         ...old,
         chamber_light: on,
       }));
@@ -2457,7 +2458,7 @@ function PrinterCard({
     onError: (error: Error, _, context) => {
       // Rollback on error
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToControlChamberLight'), 'error');
     },
@@ -2467,9 +2468,9 @@ function PrinterCard({
   const printSpeedMutation = useMutation({
     mutationFn: (mode: number) => api.setPrintSpeed(printer.id, mode),
     onMutate: async (mode) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
-      queryClient.setQueryData(['printerStatus', printer.id], (old: typeof status) => ({
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: typeof status) => ({
         ...old,
         speed_level: mode,
       }));
@@ -2477,7 +2478,7 @@ function PrinterCard({
     },
     onError: (error: Error, _, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToSetSpeed'), 'error');
     },
@@ -2486,9 +2487,9 @@ function PrinterCard({
   const airductMutation = useMutation({
     mutationFn: (mode: 'cooling' | 'heating') => api.setAirductMode(printer.id, mode),
     onMutate: async (mode) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
-      queryClient.setQueryData(['printerStatus', printer.id], (old: typeof status) => ({
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: typeof status) => ({
         ...old,
         airduct_mode: mode === 'cooling' ? 0 : 1,
       }));
@@ -2496,7 +2497,7 @@ function PrinterCard({
     },
     onError: (error: Error, _, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToSendCommand'), 'error');
     },
@@ -2556,7 +2557,7 @@ function PrinterCard({
     mutationFn: (isActive: boolean) => api.updatePrinter(printer.id, { is_active: isActive }),
     onSuccess: (_data, isActive) => {
       queryClient.invalidateQueries({ queryKey: ['printers'] });
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       showToast(
         isActive
           ? t('printers.maintenance.toastExited', { name: printer.name })
@@ -6341,7 +6342,7 @@ function PrinterCard({
             // Refresh slot presets to show updated profile name
             queryClient.invalidateQueries({ queryKey: ['slotPresets', printer.id] });
             // Printer status will update automatically via WebSocket when AMS data changes
-            queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+            queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
           }}
         />
       )}
@@ -7547,7 +7548,7 @@ function EditPrinterModal({
     mutationFn: (data: Partial<PrinterCreate>) => api.updatePrinter(printer.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['printers'] });
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       onClose();
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToUpdate'), 'error'),
@@ -7876,7 +7877,7 @@ function EditPrinterModal({
 // Component to check if a printer is offline (for power dropdown)
 function usePrinterOfflineStatus(printerId: number) {
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', printerId],
+    queryKey: queryKeys.printerStatus(printerId),
     queryFn: () => api.getPrinterStatus(printerId),
     refetchInterval: 30000,
   });
@@ -8300,7 +8301,7 @@ export function PrintersPage() {
 
     // Filter to only applicable printers based on cached state
     const applicableIds = ids.filter(id => {
-      const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', id]);
+      const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(id));
       if (!status?.connected) return false;
       const printer = printers?.find(item => item.id === id);
       if (!printer) return false;
@@ -8346,7 +8347,7 @@ export function PrintersPage() {
 
     // Invalidate status queries for affected printers
     applicableIds.forEach(id => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(id) });
     });
 
     setBulkActionPending(false);
@@ -8431,7 +8432,7 @@ export function PrintersPage() {
     // Status filter
     if (statusFilter !== 'all') {
       result = result.filter(p => {
-        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', p.id]);
+        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(p.id));
         if (!status?.connected) return statusFilter === 'offline';
         return classifyPrinterStatus(status, p.provider !== 'moonraker') === statusFilter;
       });
@@ -8471,8 +8472,8 @@ export function PrintersPage() {
       case 'status':
         // Sort by status: HMS errors > printing > idle > offline
         sorted.sort((a, b) => {
-          const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', a.id]);
-          const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', b.id]);
+          const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(a.id));
+          const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(b.id));
 
           const priorities: Record<PrinterState, number> = {
             error: 0, printing: 1, paused: 2, finished: 3, idle: 4, offline: 5,
@@ -8483,8 +8484,8 @@ export function PrintersPage() {
         break;
       case 'eta':
         sorted.sort((a, b) => {
-          const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null }>(['printerStatus', a.id]);
-          const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null }>(['printerStatus', b.id]);
+          const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null }>(queryKeys.printerStatus(a.id));
+          const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null }>(queryKeys.printerStatus(b.id));
 
           const tier = (s: typeof statusA) => {
             if (!s?.connected) return 3; // offline last
@@ -8522,7 +8523,7 @@ export function PrintersPage() {
     setSelectedPrinterIds(prev => {
       const next = new Set(prev);
       sortedPrinters.forEach(p => {
-        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', p.id]);
+        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(p.id));
         if (classifyPrinterStatus(status, p.provider !== 'moonraker') === state) next.add(p.id);
       });
       return next;
@@ -8576,7 +8577,7 @@ export function PrintersPage() {
       });
     } else if (sortBy === 'status') {
       sortedPrinters.forEach(printer => {
-        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', printer.id]);
+        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(printer.id));
         const group = classifyPrinterStatus(status, printer.provider !== 'moonraker');
         if (!groups[group]) groups[group] = [];
         groups[group].push(printer);

@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -31,7 +32,7 @@ export function FilamentMapping({
 
   // Fetch printer status
   const { data: printerStatus } = useQuery({
-    queryKey: ['printer-status', printerId],
+    queryKey: queryKeys.printerStatus(printerId),
     queryFn: () => api.getPrinterStatus(printerId),
     enabled: !!printerId,
   });
@@ -178,7 +179,7 @@ export function FilamentMapping({
       await api.refreshPrinterStatus(printerId);
       // Wait a moment for printer to respond, then refetch
       await new Promise((r) => setTimeout(r, 500));
-      await queryClient.refetchQueries({ queryKey: ['printer-status', printerId] });
+      await queryClient.refetchQueries({ queryKey: queryKeys.printerStatus(printerId) });
     } finally {
       setIsRefreshing(false);
     }

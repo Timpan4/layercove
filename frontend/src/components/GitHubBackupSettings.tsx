@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -319,7 +320,7 @@ export function GitHubBackupSettings() {
   // Fetch printer statuses from API (not just cache) to get accurate connection status
   const printerStatusQueries = useQueries({
     queries: (printers ?? []).map(printer => ({
-      queryKey: ['printerStatus', printer.id],
+      queryKey: queryKeys.printerStatus(printer.id),
       queryFn: () => api.getPrinterStatus(printer.id),
       staleTime: 10000, // Consider stale after 10s
       refetchInterval: 30000, // Refresh every 30s

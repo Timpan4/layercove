@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, AlertTriangle, Loader2, Pencil, Printer, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -366,7 +367,7 @@ export function PrintModal({
 
   // Only fetch printer status when single printer selected (for filament mapping)
   const { data: printerStatus } = useQuery({
-    queryKey: ['printer-status', effectivePrinterId],
+    queryKey: queryKeys.printerStatus(effectivePrinterId),
     queryFn: () => api.getPrinterStatus(effectivePrinterId!),
     enabled: !!effectivePrinterId,
   });
@@ -394,7 +395,7 @@ export function PrintModal({
       const statuses = await Promise.all(
         selectedPrinters.map((printerId) =>
           queryClient.fetchQuery({
-            queryKey: ['printer-status', printerId],
+            queryKey: queryKeys.printerStatus(printerId),
             queryFn: () => api.getPrinterStatus(printerId),
             staleTime: 0,
           }),

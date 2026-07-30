@@ -3,6 +3,7 @@
 import asyncio
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
 from typing import Any
 from uuid import uuid4
 
@@ -10,8 +11,11 @@ from backend.app.services.bambu_mqtt import BambuMQTTClient, PrinterState
 from backend.app.services.printer_backend import (
     BackendError,
     BackendEventSink,
+    BambuStartJob,
     JobLifecycle,
     ProviderEvent,
+    StartJob,
+    StartResult,
     StatusChanged,
 )
 from backend.app.services.printer_types import (
@@ -175,6 +179,27 @@ class BambuBackend:
             total_layers=state.total_layers,
             temperatures=dict(state.temperatures),
         )
+
+    async def start(self, job: StartJob) -> StartResult:
+        if (
+            not isinstance(job, BambuStartJob)
+            or not isinstance(job.filename, str)
+            or not job.filename
+            or job.filename.startswith("/")
+            or "\\" in job.filename
+            or any(part in {".", ".."} for part in PurePosixPath(job.filename).parts)
+            or isinstance(job.plate_id, bool)
+            or not isinstance(job.plate_id, int)
+            or job.plate_id < 1
+        ):
+            raise BackendError("Bambu start job is invalid", code="invalid_start_job")
+        try:
+            started = self.client.start_print(job.filename, job.plate_id)
+        except OSError as exc:
+            raise BackendError("Bambu print command could not be sent.", code="unavailable", retryable=True) from exc
+        if not started:
+            raise BackendError("Bambu print command is unavailable.", code="command_unavailable")
+        return StartResult(started=True)
 
     async def start_print(self, filename: str, plate_id: int = 1, **options: object) -> bool:
         return self.client.start_print(filename, plate_id, **options)

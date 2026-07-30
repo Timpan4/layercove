@@ -701,6 +701,195 @@ class TestQueueOwnershipPermissions(TestOwnershipPermissionsSetup):
         assert result["updated_count"] == 1
         assert result["skipped_count"] == 1
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_printer_scoped_api_key_cannot_access_other_printer_queue_items(
+        self, async_client: AsyncClient, auth_setup, db_session, printer_factory, archive_factory
+    ):
+        """API-key printer scope gates every queue operation by target printer."""
+        from backend.app.core.auth import generate_api_key
+        from backend.app.models.api_key import APIKey
+        from backend.app.models.print_queue import PrintQueueItem
+
+        allowed_printer = await printer_factory()
+        denied_printer = await printer_factory()
+        allowed_archive = await archive_factory(allowed_printer.id)
+        denied_archive = await archive_factory(denied_printer.id)
+        denied_item = PrintQueueItem(
+            archive_id=denied_archive.id,
+            printer_id=denied_printer.id,
+            status="pending",
+            position=1,
+        )
+        allowed_item = PrintQueueItem(
+            archive_id=allowed_archive.id,
+            printer_id=allowed_printer.id,
+            status="pending",
+            position=1,
+        )
+        db_session.add_all(
+            [
+                allowed_item,
+                denied_item,
+            ]
+        )
+        full_key, key_hash, key_prefix = generate_api_key()
+        db_session.add(
+            APIKey(
+                name="printer-scoped-queue-key",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                can_queue=True,
+                can_read_status=True,
+                printer_ids=[allowed_printer.id],
+            )
+        )
+        await db_session.commit()
+
+        headers = {"X-API-Key": full_key}
+        listed = await async_client.get("/api/v1/queue/", headers=headers)
+        assert listed.status_code == 200
+        assert {item["printer_id"] for item in listed.json()} == {allowed_printer.id}
+
+        response = await async_client.get(f"/api/v1/queue/?printer_id={denied_printer.id}", headers=headers)
+        assert response.status_code == 403
+
+        response = await async_client.post(
+            "/api/v1/queue/",
+            headers=headers,
+            json={"archive_id": denied_archive.id, "printer_id": denied_printer.id},
+        )
+        assert response.status_code == 403
+
+        response = await async_client.patch(
+            f"/api/v1/queue/{allowed_item.id}",
+            headers=headers,
+            json={"printer_id": denied_printer.id},
+        )
+        assert response.status_code == 403
+
+        for action in ("start?skip_filament_check=true", "stop", "cancel"):
+            response = await async_client.post(
+                f"/api/v1/queue/{denied_item.id}/{action}",
+                headers=headers,
+            )
+            assert response.status_code == 403
+
+        response = await async_client.get(f"/api/v1/queue/{denied_item.id}", headers=headers)
+        assert response.status_code == 403
+
+        response = await async_client.patch(
+            f"/api/v1/queue/{denied_item.id}",
+            headers=headers,
+            json={"position": 2},
+        )
+        assert response.status_code == 403
+
+        response = await async_client.delete(f"/api/v1/queue/{denied_item.id}", headers=headers)
+        assert response.status_code == 403
+
+        response = await async_client.patch(
+            "/api/v1/queue/bulk",
+            headers=headers,
+            json={"item_ids": [denied_item.id], "manual_start": True},
+        )
+        assert response.status_code == 403
+
+        response = await async_client.post(
+            "/api/v1/queue/reorder",
+            headers=headers,
+            json={"items": [{"id": denied_item.id, "position": 2}]},
+        )
+        assert response.status_code == 403
+
+        response = await async_client.post(
+            f"/api/v1/queue/printer/{denied_printer.id}/resume",
+            headers=headers,
+        )
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_printer_scoped_api_key_cannot_use_other_printer_model_or_batch(
+        self, async_client: AsyncClient, auth_setup, db_session, printer_factory, archive_factory
+    ):
+        """Scoped keys cannot select model jobs, sources, or batches outside scope."""
+        from backend.app.core.auth import generate_api_key
+        from backend.app.models.api_key import APIKey
+        from backend.app.models.print_batch import PrintBatch
+        from backend.app.models.print_queue import PrintQueueItem
+
+        allowed_printer = await printer_factory(model="P1S")
+        denied_printer = await printer_factory(model="P1S")
+        allowed_archive = await archive_factory(allowed_printer.id)
+        denied_archive = await archive_factory(denied_printer.id)
+        allowed_item = PrintQueueItem(
+            archive_id=allowed_archive.id,
+            printer_id=allowed_printer.id,
+            status="pending",
+            position=1,
+        )
+        denied_item = PrintQueueItem(
+            archive_id=denied_archive.id,
+            printer_id=denied_printer.id,
+            status="pending",
+            position=1,
+        )
+        batch = PrintBatch(name="Denied printer batch", archive_id=denied_archive.id)
+        db_session.add_all([allowed_item, denied_item, batch])
+        await db_session.flush()
+        denied_item.batch_id = batch.id
+        full_key, key_hash, key_prefix = generate_api_key()
+        db_session.add(
+            APIKey(
+                name="narrow-printer-queue-key",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                can_queue=True,
+                can_read_status=True,
+                printer_ids=[allowed_printer.id],
+            )
+        )
+        await db_session.commit()
+
+        headers = {"X-API-Key": full_key}
+        response = await async_client.post(
+            "/api/v1/queue/",
+            headers=headers,
+            json={"archive_id": allowed_archive.id, "target_model": "P1S"},
+        )
+        assert response.status_code == 403
+
+        response = await async_client.patch(
+            f"/api/v1/queue/{allowed_item.id}",
+            headers=headers,
+            json={"printer_id": None, "target_model": "P1S"},
+        )
+        assert response.status_code == 403
+
+        response = await async_client.post(
+            "/api/v1/queue/",
+            headers=headers,
+            json={"archive_id": denied_archive.id, "printer_id": allowed_printer.id},
+        )
+        assert response.status_code == 403
+
+        response = await async_client.post(
+            "/api/v1/queue/batches",
+            headers=headers,
+            json={"name": "Cross-printer batch", "item_ids": [denied_item.id]},
+        )
+        assert response.status_code == 403
+
+        for method, path in (
+            ("get", "/api/v1/queue/batches"),
+            ("get", f"/api/v1/queue/batches/{batch.id}"),
+            ("post", f"/api/v1/queue/batches/{batch.id}/ungroup"),
+            ("delete", f"/api/v1/queue/batches/{batch.id}"),
+        ):
+            response = await getattr(async_client, method)(path, headers=headers)
+            assert response.status_code == 403
+
 
 class TestLibraryOwnershipPermissions(TestOwnershipPermissionsSetup):
     """Tests for library file ownership-based permissions."""

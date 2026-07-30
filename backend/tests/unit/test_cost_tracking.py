@@ -134,7 +134,9 @@ def _mock_db_sequential(responses):
     db = AsyncMock()
     call_count = [0]
 
-    async def mock_execute(*args, **kwargs):
+    async def mock_execute(statement, *args, **kwargs):
+        if statement.is_update:
+            return MagicMock()
         idx = call_count[0]
         call_count[0] += 1
         result = MagicMock()
@@ -144,7 +146,7 @@ def _mock_db_sequential(responses):
             result.scalar_one_or_none.return_value = None
         return result
 
-    db.execute = mock_execute
+    db.execute = AsyncMock(side_effect=mock_execute)
     return db
 
 
@@ -567,7 +569,9 @@ class TestCostAggregation:
         db = AsyncMock()
         call_count = [0]
 
-        async def mock_execute(*args, **kwargs):
+        async def mock_execute(statement, *args, **kwargs):
+            if statement.is_update:
+                return MagicMock()
             idx = call_count[0]
             call_count[0] += 1
             result = MagicMock()
@@ -584,7 +588,7 @@ class TestCostAggregation:
                 result.scalar.return_value = None
             return result
 
-        db.execute = mock_execute
+        db.execute = AsyncMock(side_effect=mock_execute)
 
         filament_usage = [{"slot_id": 1, "used_g": 10.0, "type": "PLA", "color": "#FF0000"}]
 
@@ -653,7 +657,9 @@ class TestCostAggregation:
         db = AsyncMock()
         call_count = [0]
 
-        async def mock_execute(*args, **kwargs):
+        async def mock_execute(statement, *args, **kwargs):
+            if statement.is_update:
+                return MagicMock()
             idx = call_count[0]
             call_count[0] += 1
             result = MagicMock()
@@ -666,7 +672,7 @@ class TestCostAggregation:
                 result.scalar.return_value = None
             return result
 
-        db.execute = mock_execute
+        db.execute = AsyncMock(side_effect=mock_execute)
 
         filament_usage = [{"slot_id": 1, "used_g": 20.0, "type": "PLA", "color": "#FF0000"}]
 
@@ -733,7 +739,9 @@ class TestCostAggregation:
         db = AsyncMock()
         call_count = [0]
 
-        async def mock_execute(*args, **kwargs):
+        async def mock_execute(statement, *args, **kwargs):
+            if statement.is_update:
+                return MagicMock()
             idx = call_count[0]
             call_count[0] += 1
             result = MagicMock()
@@ -746,7 +754,7 @@ class TestCostAggregation:
                 result.scalar.return_value = None
             return result
 
-        db.execute = mock_execute
+        db.execute = AsyncMock(side_effect=mock_execute)
 
         # 3MF reports a single slot using 10g, but archive.filament_used_grams
         # says the whole print was 110g -- the other 100g came from spools that
@@ -819,7 +827,9 @@ class TestCostAggregation:
         db = AsyncMock()
         call_count = [0]
 
-        async def mock_execute(*args, **kwargs):
+        async def mock_execute(statement, *args, **kwargs):
+            if statement.is_update:
+                return MagicMock()
             idx = call_count[0]
             call_count[0] += 1
             result = MagicMock()
@@ -832,7 +842,7 @@ class TestCostAggregation:
                 result.scalar.return_value = None
             return result
 
-        db.execute = mock_execute
+        db.execute = AsyncMock(side_effect=mock_execute)
 
         filament_usage = [{"slot_id": 1, "used_g": 20.0, "type": "PLA", "color": "#FF0000"}]
 

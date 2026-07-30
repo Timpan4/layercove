@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQueryClient } from '@tanstack/react-query';
@@ -65,7 +66,7 @@ export function BulkPrinterToolbar({
   // Read cached statuses for selected printers
   const selectedStatuses = Array.from(selectedIds).map(id => ({
     id,
-    status: queryClient.getQueryData<PrinterStatus>(['printerStatus', id]),
+    status: queryClient.getQueryData<PrinterStatus>(queryKeys.printerStatus(id)),
     printer: printers.find(printer => printer.id === id),
   }));
 
@@ -96,7 +97,7 @@ export function BulkPrinterToolbar({
   // Count printers per state for the state dropdown
   const stateCounts: Record<PrinterState, number> = { printing: 0, paused: 0, finished: 0, idle: 0, error: 0, offline: 0 };
   printers.forEach(p => {
-    const status = queryClient.getQueryData<PrinterStatus>(['printerStatus', p.id]);
+    const status = queryClient.getQueryData<PrinterStatus>(queryKeys.printerStatus(p.id));
     if (!status || !status.connected) { stateCounts.offline++; return; }
     const hasKnownHms = p.provider !== 'moonraker' && status.hms_errors ? filterKnownHMSErrors(status.hms_errors).length > 0 : false;
     if (hasKnownHms) stateCounts.error++;

@@ -2053,9 +2053,10 @@ async def sync_weights_from_ams(
     """Force-sync spool weight_used from live AMS remain% data.
 
     Overwrites the database weight_used for every assigned spool using the
-    current AMS remain% from connected printers.  This is a manual recovery
-    tool — it bypasses the normal "only increase" guard.
+    current AMS remain% from connected printers. This is a manual recovery
+    tool and is refused while a printer is actively printing.
     """
+    from backend.app.services.filament_accounting import weight_used_from_manual_ams_percentage
     from backend.app.services.printer_manager import printer_manager
 
     result = await db.execute(select(SpoolAssignment).options(selectinload(SpoolAssignment.spool)))
@@ -2069,11 +2070,6 @@ async def sync_weights_from_ams(
         spool = assignment.spool
         if not spool:
             logger.debug("AMS weight sync: assignment %d has no spool", assignment.id)
-            skipped += 1
-            continue
-
-        if spool.weight_locked:
-            logger.debug("AMS weight sync: spool %d is weight-locked, skipping", spool.id)
             skipped += 1
             continue
 
@@ -2102,34 +2098,24 @@ async def sync_weights_from_ams(
             skipped += 1
             continue
 
-        remain_raw = tray.get("remain")
-        if remain_raw is None:
-            logger.debug("AMS weight sync: no remain value for spool %d", spool.id)
+        new_used = weight_used_from_manual_ams_percentage(
+            print_active=printer_manager.is_print_active(assignment.printer_id),
+            weight_locked=bool(spool.weight_locked),
+            remain=tray.get("remain"),
+            label_weight=spool.label_weight,
+        )
+        if new_used is None:
             skipped += 1
             continue
 
-        try:
-            remain_val = int(remain_raw)
-        except (TypeError, ValueError):
-            skipped += 1
-            continue
-
-        if remain_val < 0 or remain_val > 100:
-            logger.debug("AMS weight sync: invalid remain=%s for spool %d", remain_raw, spool.id)
-            skipped += 1
-            continue
-
-        lw = spool.label_weight or 1000
-        new_used = round(lw * (100 - remain_val) / 100.0, 1)
         old_used = spool.weight_used or 0
-
         if round(old_used, 1) != new_used:
             logger.info(
-                "AMS weight sync: spool %d weight_used %s -> %s (remain=%d%%)",
+                "AMS weight sync: spool %d weight_used %s -> %s (remain=%s%%)",
                 spool.id,
                 old_used,
                 new_used,
-                remain_val,
+                tray.get("remain"),
             )
             spool.weight_used = new_used
             synced += 1

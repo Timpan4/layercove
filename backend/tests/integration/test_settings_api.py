@@ -41,6 +41,61 @@ class TestSettingsAPI:
         assert isinstance(result["auto_archive"], bool)
         assert isinstance(result["currency"], str)
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_legacy_setting_strings_use_schema_coercion(self, async_client: AsyncClient, db_session):
+        """Legacy strings retain Pydantic's compatible coercion behavior."""
+        from backend.app.models.settings import Settings
+
+        db_session.add_all(
+            [
+                Settings(key="use_slicer_api", value="1"),
+                Settings(key="local_backup_retention", value="9.0"),
+            ]
+        )
+        await db_session.commit()
+
+        response = await async_client.get("/api/v1/settings/")
+
+        assert response.status_code == 200
+        assert response.json()["use_slicer_api"] is True
+        assert response.json()["local_backup_retention"] == 9
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_settings_schema_drives_storage_and_response_types(self, async_client: AsyncClient, db_session):
+        """Schema field types round-trip without per-key conversion lists."""
+        from sqlalchemy import select
+
+        from backend.app.models.settings import Settings
+
+        values = {
+            "local_backup_enabled": False,
+            "library_disk_warning_gb": 7.25,
+            "local_backup_retention": 9,
+            "drying_presets": '{"PLA": 45}',
+            "default_printer_id": None,
+            "open_in_slicer": None,
+        }
+        response = await async_client.patch("/api/v1/settings/", json=values)
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["local_backup_enabled"] is False
+        assert result["library_disk_warning_gb"] == 7.25
+        assert result["local_backup_retention"] == 9
+        assert result["drying_presets"] == '{"PLA": 45}'
+        assert result["default_printer_id"] is None
+        assert result["open_in_slicer"] is None
+
+        stored = dict((await db_session.execute(select(Settings.key, Settings.value))).all())
+        assert stored["local_backup_enabled"] == "false"
+        assert stored["library_disk_warning_gb"] == "7.25"
+        assert stored["local_backup_retention"] == "9"
+        assert stored["drying_presets"] == '{"PLA": 45}'
+        assert stored["default_printer_id"] == "None"
+        assert stored["open_in_slicer"] == "None"
+
     # ========================================================================
     # Update settings
     # ========================================================================
@@ -886,7 +941,7 @@ class TestSimplifiedBackupRestore:
         import io
         import zipfile
 
-        # Create a ZIP without bambuddy.db
+        # Create a ZIP without layercove.db
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
             zf.writestr("dummy.txt", "dummy content")
@@ -896,7 +951,26 @@ class TestSimplifiedBackupRestore:
         response = await async_client.post("/api/v1/settings/restore", files=files)
 
         assert response.status_code == 400
-        assert "missing bambuddy.db" in response.json()["detail"].lower()
+        assert "missing layercove.db" in response.json()["detail"].lower()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_restore_rejects_legacy_database_member(self, async_client: AsyncClient):
+        import io
+        import zipfile
+
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr("bambuddy.db", b"SQLite format 3\x00legacy-data")
+        payload = zip_buffer.getvalue()
+
+        response = await async_client.post(
+            "/api/v1/settings/restore", files={"file": ("backup.zip", payload, "application/zip")}
+        )
+
+        assert response.status_code == 400
+        assert "unsupported legacy backup database" in response.json()["detail"].lower()
+        assert payload == zip_buffer.getvalue()
 
     @pytest.mark.asyncio
     @pytest.mark.integration

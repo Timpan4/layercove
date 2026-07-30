@@ -19,7 +19,7 @@ interface CameraTileProps {
   connected: boolean;
   onClick?: () => void;
   // Optional status overlay — wired by CameraWall from the shared
-  // ['printerStatus', id] query. All optional so existing tests don't break.
+  // queryKeys.printerStatus(id) query. All optional so existing tests don't break.
   statusMode?: CameraTileStatusMode;
   printerState?: string | null;
   progress?: number | null;

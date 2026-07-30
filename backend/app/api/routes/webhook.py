@@ -5,9 +5,10 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.core.auth import check_permission, check_printer_access, get_api_key
+from backend.app.core.auth import get_api_key_identity
 from backend.app.core.database import get_db
-from backend.app.models.api_key import APIKey
+from backend.app.core.identity import CallerIdentity
+from backend.app.core.permissions import Permission
 from backend.app.models.archive import PrintArchive
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
@@ -63,21 +64,22 @@ class QueueStatusResponse(BaseModel):
 @router.post("/queue/add", response_model=QueueAddResponse)
 async def webhook_add_to_queue(
     data: QueueAddRequest,
-    api_key: APIKey = Depends(get_api_key),
+    caller: CallerIdentity = Depends(get_api_key_identity),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a print to the queue via webhook.
 
     Requires 'can_queue' permission.
     """
-    check_permission(api_key, "queue")
-    check_printer_access(api_key, data.printer_id)
+    caller.require_permissions(Permission.QUEUE_CREATE)
+    caller.require_printer_access(data.printer_id)
 
     # Verify archive exists
     result = await db.execute(select(PrintArchive).where(PrintArchive.id == data.archive_id))
     archive = result.scalar_one_or_none()
     if not archive:
         raise HTTPException(status_code=404, detail="Archive not found")
+    caller.require_printer_access(archive.printer_id)
 
     # Verify printer exists
     result = await db.execute(select(Printer).where(Printer.id == data.printer_id))
@@ -119,7 +121,7 @@ async def webhook_add_to_queue(
         auto_off_after=data.auto_off_after,
     )
     db.add(queue_item)
-    await db.flush()
+    await db.commit()
     await db.refresh(queue_item)
 
     return QueueAddResponse(
@@ -135,7 +137,7 @@ async def webhook_add_to_queue(
 @router.post("/printer/{printer_id}/start")
 async def webhook_start_print(
     printer_id: int,
-    api_key: APIKey = Depends(get_api_key),
+    caller: CallerIdentity = Depends(get_api_key_identity),
     db: AsyncSession = Depends(get_db),
 ):
     """Trigger the next manual-start queue item on a printer.
@@ -151,8 +153,8 @@ async def webhook_start_print(
 
     Requires 'can_control_printer' permission.
     """
-    check_permission(api_key, "control_printer")
-    check_printer_access(api_key, printer_id)
+    caller.require_permissions(Permission.PRINTERS_CONTROL)
+    caller.require_printer_access(printer_id)
 
     # Get printer
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
@@ -188,14 +190,14 @@ async def webhook_start_print(
 @router.post("/printer/{printer_id}/stop")
 async def webhook_stop_print(
     printer_id: int,
-    api_key: APIKey = Depends(get_api_key),
+    caller: CallerIdentity = Depends(get_api_key_identity),
 ):
     """Stop the current print on a printer.
 
     Requires 'can_control_printer' permission.
     """
-    check_permission(api_key, "control_printer")
-    check_printer_access(api_key, printer_id)
+    caller.require_permissions(Permission.PRINTERS_CONTROL)
+    caller.require_printer_access(printer_id)
 
     status = printer_manager.get_snapshot(printer_id)
     if not status or not status.connected:
@@ -221,14 +223,14 @@ async def webhook_stop_print(
 @router.post("/printer/{printer_id}/cancel")
 async def webhook_cancel_print(
     printer_id: int,
-    api_key: APIKey = Depends(get_api_key),
+    caller: CallerIdentity = Depends(get_api_key_identity),
 ):
     """Cancel the current print on a printer.
 
     Requires 'can_control_printer' permission.
     """
-    check_permission(api_key, "control_printer")
-    check_printer_access(api_key, printer_id)
+    caller.require_permissions(Permission.PRINTERS_CONTROL)
+    caller.require_printer_access(printer_id)
 
     status = printer_manager.get_snapshot(printer_id)
     if not status or not status.connected:
@@ -254,15 +256,15 @@ async def webhook_cancel_print(
 @router.get("/printer/{printer_id}/status", response_model=PrinterStatusResponse)
 async def webhook_get_printer_status(
     printer_id: int,
-    api_key: APIKey = Depends(get_api_key),
+    caller: CallerIdentity = Depends(get_api_key_identity),
     db: AsyncSession = Depends(get_db),
 ):
     """Get status of a printer.
 
     Requires 'can_read_status' permission.
     """
-    check_permission(api_key, "read_status")
-    check_printer_access(api_key, printer_id)
+    caller.require_permissions(Permission.PRINTERS_READ)
+    caller.require_printer_access(printer_id)
 
     # Get printer
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
@@ -285,26 +287,26 @@ async def webhook_get_printer_status(
 @router.get("/queue", response_model=list[QueueStatusResponse])
 async def webhook_get_queue_status(
     printer_id: int | None = None,
-    api_key: APIKey = Depends(get_api_key),
+    caller: CallerIdentity = Depends(get_api_key_identity),
     db: AsyncSession = Depends(get_db),
 ):
     """Get queue status for all printers or a specific printer.
 
     Requires 'can_read_status' permission.
     """
-    check_permission(api_key, "read_status")
+    caller.require_permissions(Permission.PRINTERS_READ)
 
     # Get printers
     if printer_id:
-        check_printer_access(api_key, printer_id)
+        caller.require_printer_access(printer_id)
         result = await db.execute(select(Printer).where(Printer.id == printer_id))
         printers = result.scalars().all()
     else:
         result = await db.execute(select(Printer))
         printers = result.scalars().all()
         # Filter by allowed printers if limited
-        if api_key.printer_ids is not None:
-            printers = [p for p in printers if p.id in api_key.printer_ids]
+        if caller.printer_ids is not None:
+            printers = [p for p in printers if p.id in caller.printer_ids]
 
     response = []
     for printer in printers:

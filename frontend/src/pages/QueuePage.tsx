@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -336,7 +337,7 @@ function SortableQueueItem({
 }) {
   // Fetch printer status every 30 seconds while printing to monitor progress
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', item.printer_id],
+    queryKey: queryKeys.printerStatus(item.printer_id),
     queryFn: () => api.getPrinterStatus(item.printer_id!),
     refetchInterval: 30000,
     enabled: item.printer_id != null && printerState === 'printing',
@@ -1602,7 +1603,7 @@ export function QueuePage() {
   // Fetch printer statuses for printers with active jobs
   const printerStatusQueries = useQueries({
     queries: activePrinterIds.map(printerId => ({
-      queryKey: ['printerStatus', printerId],
+      queryKey: queryKeys.printerStatus(printerId),
       queryFn: () => api.getPrinterStatus(printerId),
       refetchInterval: 5000,
     })),
