@@ -79,6 +79,22 @@ def test_readme_local_links_and_assets_resolve():
 
 
 @pytest.mark.unit
+def test_container_identity_is_layercove():
+    import backend.app.core.config as config
+
+    assert config.settings.database_url == "sqlite+aiosqlite:///:memory:"
+    assert config.settings.archive_dir.name == "archive"
+
+    root = REPOSITORY_ROOT
+    compose = (root / "docker-compose.yml").read_text(encoding="utf-8")
+    assert "  layercove:" in compose
+    assert "image: ghcr.io/timpan4/layercove:latest" in compose
+    assert "container_name: layercove" in compose
+    assert "layercove_data:/app/data" in compose
+    assert "layercove_logs:/app/logs" in compose
+
+
+@pytest.mark.unit
 def test_fresh_deployment_sources_target_layercove():
     root = REPOSITORY_ROOT
     installers = {
