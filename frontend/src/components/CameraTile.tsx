@@ -196,11 +196,12 @@ export function CameraTile({
   const hasLayers = layerNum != null && totalLayers != null && totalLayers > 0;
   const hasRemaining = remainingMin != null && remainingMin > 0;
 
+  const MediaShell = onClick ? 'button' : 'div';
+
   return (
     <div className="relative">
-    <button
-      type="button"
-      onClick={handleClick}
+    <MediaShell
+      {...(onClick ? { type: 'button' as const, onClick: handleClick } : {})}
       className="group relative aspect-video w-full overflow-hidden rounded-lg border border-bambu-dark-tertiary bg-black text-left focus:outline-none focus:ring-2 focus:ring-bambu-green"
       title={printerName}
     >
@@ -296,7 +297,7 @@ export function CameraTile({
         )}
         <span className="block truncate text-xs font-medium">{printerName}</span>
       </div>
-    </button>
+    </MediaShell>
       {provider === 'moonraker' && cameras.length > 1 && (
         <div className="absolute right-2 top-9 z-10 flex w-20 flex-col gap-1" onClick={(event) => event.stopPropagation()}>
           {cameras.slice(0, 3).map((camera) => (
