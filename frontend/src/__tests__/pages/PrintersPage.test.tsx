@@ -80,8 +80,6 @@ const openPrinterControls = async () => {
   await screen.findByRole('heading', { name: 'Printers' });
 };
 
-const getPrinterCard = (name: string) => screen.getByRole('button', { name: `Inspect ${name}` });
-
 describe('PrintersPage', () => {
   beforeEach(() => {
     localStorage.removeItem('printerCardSize');
