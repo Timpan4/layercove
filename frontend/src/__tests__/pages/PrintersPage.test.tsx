@@ -65,10 +65,22 @@ const mockPrinterStatus = {
 
 const selectToolbarDropdownOption = async (triggerName: RegExp, optionName: RegExp) => {
   const user = userEvent.setup();
+  const trigger = screen.getByRole('combobox', {
+    name: /status/i.test(triggerName.source) ? /status/i : /location/i,
+  });
+  const option = await within(trigger).findByRole('option', { name: optionName });
 
-  await user.click(screen.getByRole('button', { name: triggerName }));
-  await user.click(await screen.findByRole('button', { name: optionName }));
+  await user.selectOptions(trigger, option);
 };
+
+const openPrinterControls = async () => {
+  const user = userEvent.setup();
+
+  await user.click(await screen.findByRole('button', { name: 'Open controls' }));
+  await screen.findByRole('heading', { name: 'Printers' });
+};
+
+const getPrinterCard = (name: string) => screen.getByRole('button', { name: `Inspect ${name}` });
 
 describe('PrintersPage', () => {
   beforeEach(() => {
@@ -121,7 +133,7 @@ describe('PrintersPage', () => {
       render(<PrintersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('Printers')).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Command deck' })).toBeInTheDocument();
       });
     });
 
@@ -141,6 +153,8 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       expect(await screen.findByText('Timpa Home')).toBeInTheDocument();
     });
 
@@ -148,8 +162,8 @@ describe('PrintersPage', () => {
       render(<PrintersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
-        expect(screen.getByText('P1S Backup')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
+        expect(screen.getAllByText('P1S Backup')[0]).toBeInTheDocument();
       });
     });
 
@@ -157,8 +171,8 @@ describe('PrintersPage', () => {
       render(<PrintersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('X1C')).toBeInTheDocument();
-        expect(screen.getByText('P1S')).toBeInTheDocument();
+        expect(screen.getAllByText('X1C')[0]).toBeInTheDocument();
+        expect(screen.getAllByText('P1S')[0]).toBeInTheDocument();
       });
     });
 
@@ -167,7 +181,7 @@ describe('PrintersPage', () => {
 
       await waitFor(() => {
         // Status should be shown - may vary based on state
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
     });
   });
@@ -177,12 +191,12 @@ describe('PrintersPage', () => {
       render(<PrintersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // IP address is shown in the PrinterInfoModal (accessed via 3-dot menu),
       // not directly on the card. Verify the printer data loaded correctly.
-      expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+      expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
     });
 
     it('shows location when set', async () => {
@@ -190,7 +204,7 @@ describe('PrintersPage', () => {
 
       await waitFor(() => {
         // Printers should render - location display may vary
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
     });
   });
@@ -240,6 +254,8 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getByText('L / R')).toBeInTheDocument();
       });
@@ -287,6 +303,8 @@ describe('PrintersPage', () => {
     it('hides chamber fan badge on A1 Mini (open-frame, no chamber fan)', async () => {
       renderWithPrinter({ ...mockPrinters[0], model: 'A1 Mini' });
 
+      await openPrinterControls();
+
       await waitFor(() => {
         // Part-cooling badge confirms the fan row rendered.
         expect(screen.getByTitle('Part Cooling Fan')).toBeInTheDocument();
@@ -298,6 +316,8 @@ describe('PrintersPage', () => {
     it('hides chamber fan badge on A1 (open-frame)', async () => {
       renderWithPrinter({ ...mockPrinters[0], model: 'A1' });
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getByTitle('Part Cooling Fan')).toBeInTheDocument();
       });
@@ -306,6 +326,8 @@ describe('PrintersPage', () => {
 
     it('hides chamber fan badge on P1P (open-frame)', async () => {
       renderWithPrinter({ ...mockPrinters[0], model: 'P1P' });
+
+      await openPrinterControls();
 
       await waitFor(() => {
         expect(screen.getByTitle('Part Cooling Fan')).toBeInTheDocument();
@@ -316,6 +338,8 @@ describe('PrintersPage', () => {
     it('shows chamber fan badge on X1C (enclosed)', async () => {
       renderWithPrinter({ ...mockPrinters[0], model: 'X1C' });
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getByTitle('Chamber Fan')).toBeInTheDocument();
       });
@@ -325,6 +349,8 @@ describe('PrintersPage', () => {
 
     it('shows chamber fan badge on P1S (enclosed)', async () => {
       renderWithPrinter({ ...mockPrinters[0], model: 'P1S' });
+
+      await openPrinterControls();
 
       await waitFor(() => {
         expect(screen.getByTitle('Chamber Fan')).toBeInTheDocument();
@@ -353,7 +379,7 @@ describe('PrintersPage', () => {
       render(<PrintersPage />);
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // There should be some interactive elements for printer actions
@@ -369,6 +395,8 @@ describe('PrintersPage', () => {
       );
 
       render(<PrintersPage />);
+
+      await openPrinterControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('Plate not Clear').length).toBeGreaterThan(0);
@@ -386,6 +414,8 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getAllByText('Plate not Clear').length).toBeGreaterThan(0);
       });
@@ -401,6 +431,8 @@ describe('PrintersPage', () => {
       );
 
       render(<PrintersPage />);
+
+      await openPrinterControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('Plate not Clear').length).toBeGreaterThan(0);
@@ -426,6 +458,8 @@ describe('PrintersPage', () => {
       );
 
       render(<PrintersPage />);
+
+      await openPrinterControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('Plate not Clear').length).toBeGreaterThan(0);
@@ -458,8 +492,10 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       fireEvent.click(screen.getByRole('button', { name: 'S' }));
@@ -480,6 +516,8 @@ describe('PrintersPage', () => {
     it('shows plate clear status but no action while idle', async () => {
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getAllByText('Plate Clear').length).toBeGreaterThan(0);
       });
@@ -495,6 +533,8 @@ describe('PrintersPage', () => {
       );
 
       render(<PrintersPage />);
+
+      await openPrinterControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('Plate in Use').length).toBeGreaterThan(0);
@@ -535,8 +575,10 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       expect(screen.queryByText('Plate not Clear')).not.toBeInTheDocument();
@@ -550,12 +592,14 @@ describe('PrintersPage', () => {
     it('shows disabled state for disabled printers', async () => {
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('P1S Backup')).toBeInTheDocument();
+        expect(screen.getAllByText('P1S Backup')[0]).toBeInTheDocument();
       });
 
       // Disabled printers have visual indication
-      const disabledPrinter = screen.getByText('P1S Backup').closest('div');
+      const disabledPrinter = screen.getAllByText('P1S Backup')[0].closest('div');
       expect(disabledPrinter).toBeInTheDocument();
     });
   });
@@ -574,6 +618,8 @@ describe('PrintersPage', () => {
         ),
       );
       render(<PrintersPage />);
+
+      await openPrinterControls();
 
       await waitFor(() => {
         expect(screen.getByText('In Maintenance')).toBeInTheDocument();
@@ -594,6 +640,8 @@ describe('PrintersPage', () => {
         ),
       );
       render(<PrintersPage />);
+
+      await openPrinterControls();
 
       // The header pill row contains "Maintenance" exactly once.
       await waitFor(() => {
@@ -618,6 +666,8 @@ describe('PrintersPage', () => {
       );
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       const exit = await screen.findByRole('button', { name: /exit maintenance/i });
       fireEvent.click(exit);
 
@@ -634,8 +684,10 @@ describe('PrintersPage', () => {
       );
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
       // Active printer never shows the maintenance panel.
       expect(screen.queryByText('In Maintenance')).not.toBeInTheDocument();
@@ -667,6 +719,8 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getAllByText('Nozzle Rack').length).toBeGreaterThan(0);
       });
@@ -680,6 +734,8 @@ describe('PrintersPage', () => {
       );
 
       render(<PrintersPage />);
+
+      await openPrinterControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('Nozzle Rack').length).toBeGreaterThan(0);
@@ -716,6 +772,8 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getAllByText('Nozzle Rack').length).toBeGreaterThan(0);
       });
@@ -746,8 +804,10 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       expect(screen.queryByText('Nozzle Rack')).not.toBeInTheDocument();
@@ -789,6 +849,8 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getAllByText('01.09.00.00').length).toBeGreaterThan(0);
       });
@@ -814,6 +876,8 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
         expect(screen.getAllByText('01.08.00.00').length).toBeGreaterThan(0);
       });
@@ -836,8 +900,10 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // Version should not appear when firmware check is disabled
@@ -870,8 +936,10 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // Badge should not appear when API returns no latest_version
@@ -883,8 +951,10 @@ describe('PrintersPage', () => {
     it('shows select button in toolbar', async () => {
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // The Select button should be in the toolbar (title attribute)
@@ -895,8 +965,10 @@ describe('PrintersPage', () => {
     it('shows selection toolbar after clicking select button', async () => {
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // Click the Select button to enter selection mode
@@ -911,8 +983,10 @@ describe('PrintersPage', () => {
     it('shows selection count when printers are selected', async () => {
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // Enter selection mode
@@ -934,8 +1008,10 @@ describe('PrintersPage', () => {
     it('shows select by state dropdown', async () => {
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // Enter selection mode
@@ -949,8 +1025,10 @@ describe('PrintersPage', () => {
     it('exits selection mode on close button', async () => {
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
       });
 
       // Enter selection mode
@@ -981,78 +1059,77 @@ describe('PrintersPage', () => {
 
     it('filters by name (case-insensitive)', async () => {
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
-      fireEvent.change(screen.getByPlaceholderText('Search printers...'), { target: { value: 'x1 carbon' } });
+      fireEvent.change(screen.getByPlaceholderText('Search printers'), { target: { value: 'x1 carbon' } });
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
         expect(screen.queryByText('P1S Backup')).not.toBeInTheDocument();
       });
     });
 
     it('trims leading and trailing whitespace from search', async () => {
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
       // " X1 Carbon " with surrounding spaces must still match
-      fireEvent.change(screen.getByPlaceholderText('Search printers...'), { target: { value: '  X1 Carbon  ' } });
+      fireEvent.change(screen.getByPlaceholderText('Search printers'), { target: { value: '  X1 Carbon  ' } });
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
         expect(screen.queryByText('P1S Backup')).not.toBeInTheDocument();
       });
     });
 
     it('filters by model', async () => {
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
-      fireEvent.change(screen.getByPlaceholderText('Search printers...'), { target: { value: 'P1S' } });
+      fireEvent.change(screen.getByPlaceholderText('Search printers'), { target: { value: 'P1S' } });
 
       await waitFor(() => {
         expect(screen.queryByText('X1 Carbon')).not.toBeInTheDocument();
-        expect(screen.getByText('P1S Backup')).toBeInTheDocument();
+        expect(screen.getAllByText('P1S Backup')[0]).toBeInTheDocument();
       });
     });
 
     it('filters by serial number', async () => {
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
-      fireEvent.change(screen.getByPlaceholderText('Search printers...'), { target: { value: '00M09A' } });
+      fireEvent.change(screen.getByPlaceholderText('Search printers'), { target: { value: '00M09A' } });
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
         expect(screen.queryByText('P1S Backup')).not.toBeInTheDocument();
       });
     });
 
     it('shows empty state when no printers match search', async () => {
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
-      fireEvent.change(screen.getByPlaceholderText('Search printers...'), { target: { value: 'ZZZ_NO_MATCH' } });
+      fireEvent.change(screen.getByPlaceholderText('Search printers'), { target: { value: 'ZZZ_NO_MATCH' } });
 
       await waitFor(() => {
-        expect(screen.getByText('No printers match your search or filters')).toBeInTheDocument();
+        expect(screen.getByText('No printers match these filters.')).toBeInTheDocument();
       });
     });
 
-    it('clear button resets search and shows all printers', async () => {
+    it('clearing search shows all printers', async () => {
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
-      fireEvent.change(screen.getByPlaceholderText('Search printers...'), { target: { value: 'X1 Carbon' } });
+      fireEvent.change(screen.getByPlaceholderText('Search printers'), { target: { value: 'X1 Carbon' } });
 
       await waitFor(() => expect(screen.queryByText('P1S Backup')).not.toBeInTheDocument());
 
-      // Click the accessible clear button
-      fireEvent.click(screen.getByRole('button', { name: 'Clear' }));
+      fireEvent.change(screen.getByPlaceholderText('Search printers'), { target: { value: '' } });
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
-        expect(screen.getByText('P1S Backup')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
+        expect(screen.getAllByText('P1S Backup')[0]).toBeInTheDocument();
       });
     });
 
@@ -1068,25 +1145,25 @@ describe('PrintersPage', () => {
       );
 
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
       await selectToolbarDropdownOption(/all statuses/i, /^offline$/i);
 
       await waitFor(() => {
         expect(screen.queryByText('X1 Carbon')).not.toBeInTheDocument();
-        expect(screen.getByText('P1S Backup')).toBeInTheDocument();
+        expect(screen.getAllByText('P1S Backup')[0]).toBeInTheDocument();
       });
     });
 
     it('shows empty state when status filter matches nothing', async () => {
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
       // Both printers are IDLE; filtering by "printing" should yield no results
       await selectToolbarDropdownOption(/all statuses/i, /^printing$/i);
 
       await waitFor(() => {
-        expect(screen.getByText('No printers match your search or filters')).toBeInTheDocument();
+        expect(screen.getByText('No printers match these filters.')).toBeInTheDocument();
       });
     });
 
@@ -1102,16 +1179,16 @@ describe('PrintersPage', () => {
       );
 
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
       // Filter to only "printing" printers
       await selectToolbarDropdownOption(/all statuses/i, /^printing$/i);
 
       // Then also search for a term that only matches printer 1
-      fireEvent.change(screen.getByPlaceholderText('Search printers...'), { target: { value: 'X1' } });
+      fireEvent.change(screen.getByPlaceholderText('Search printers'), { target: { value: 'X1' } });
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
         expect(screen.queryByText('P1S Backup')).not.toBeInTheDocument();
       });
     });
@@ -1130,14 +1207,14 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
-        expect(screen.getByText('P1S Backup')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
+        expect(screen.getAllByText('P1S Backup')[0]).toBeInTheDocument();
       });
 
       await selectToolbarDropdownOption(/all locations/i, /^workshop$/i);
 
       await waitFor(() => {
-        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+        expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
         expect(screen.queryByText('P1S Backup')).not.toBeInTheDocument();
       });
 
@@ -1145,7 +1222,7 @@ describe('PrintersPage', () => {
 
       await waitFor(() => {
         expect(screen.queryByText('X1 Carbon')).not.toBeInTheDocument();
-        expect(screen.getByText('P1S Backup')).toBeInTheDocument();
+        expect(screen.getAllByText('P1S Backup')[0]).toBeInTheDocument();
       });
     });
 
@@ -1161,11 +1238,11 @@ describe('PrintersPage', () => {
       );
 
       render(<PrintersPage />);
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
       // Status filter is still there, but the location filter should be absent.
-      expect(screen.getByRole('button', { name: /all statuses/i })).toBeInTheDocument();
-      expect(screen.queryByRole('button', { name: /all locations/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('combobox', { name: /status/i })).toBeInTheDocument();
+      expect(screen.queryByRole('combobox', { name: /location/i })).not.toBeInTheDocument();
     });
   });
 
@@ -1186,8 +1263,10 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
+      await openPrinterControls();
+
       // Wait for the page to render (printers should be visible)
-      await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+      await waitFor(() => expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument());
 
       // While Spoolman queries are still loading, the "Assign Spool" button must
       // not appear (inventory prop is undefined → {inventory && ...} guard fires)
@@ -1263,6 +1342,8 @@ describe('PrintersPage Phase 13 — EmptySlotHoverCard onAssignSpool wiring', ()
     );
     render(<PrintersPage />);
 
+      await openPrinterControls();
+
     // Wait for printer status to load and at least one EmptySlotHoverCard
     // to mount with an onAssignSpool callback. Pre-Phase-13 this would have
     // been undefined in local mode (the gate filtered it out).
@@ -1296,6 +1377,8 @@ describe('PrintersPage Phase 13 — EmptySlotHoverCard onAssignSpool wiring', ()
     );
     render(<PrintersPage />);
 
+      await openPrinterControls();
+
     await waitFor(() => {
       expect(phase13EmptySlotProps.filter(p => p.kind === 'physical').length).toBeGreaterThan(0);
     }, { timeout: 3000 });
@@ -1318,6 +1401,8 @@ describe('PrintersPage Phase 13 — EmptySlotHoverCard onAssignSpool wiring', ()
       http.get('/api/v1/spoolman/inventory/slot-assignments/all', () => HttpResponse.json([])),
     );
     render(<PrintersPage />);
+
+      await openPrinterControls();
 
     await waitFor(() => {
       const withCallback = phase13EmptySlotProps.filter(p => typeof p.onAssignSpool === 'function');
@@ -1381,6 +1466,8 @@ describe('PrintersPage Phase 14 — Local-Branch BL-detection symmetry', () => {
     );
     render(<PrintersPage />);
 
+      await openPrinterControls();
+
     await waitFor(() => {
       const matches = phase14HoverCardProps.filter(
         p => (p.inventory as { isAssigned?: boolean } | undefined)?.isAssigned === true
@@ -1408,6 +1495,8 @@ describe('PrintersPage Phase 14 — Local-Branch BL-detection symmetry', () => {
       http.get('/api/v1/inventory/assignments', () => HttpResponse.json([])),
     );
     render(<PrintersPage />);
+
+      await openPrinterControls();
 
     // Wait for FilamentHoverCard to render at least once.
     await waitFor(() => {
@@ -1460,6 +1549,8 @@ describe('PrintersPage Phase 14 — Local-Branch BL-detection symmetry', () => {
     );
     render(<PrintersPage />);
 
+      await openPrinterControls();
+
     await waitFor(() => {
       const matches = phase14HoverCardProps.filter(
         p => (p.inventory as { isAssigned?: boolean } | undefined)?.isAssigned === true
@@ -1506,6 +1597,8 @@ describe('PrintersPage Phase 14 — Local-Branch BL-detection symmetry', () => {
       ])),
     );
     render(<PrintersPage />);
+
+      await openPrinterControls();
 
     // Wait for FilamentHoverCard renders to settle.
     await waitFor(() => {

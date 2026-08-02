@@ -44,7 +44,7 @@ const mockStatus = {
 
 async function openEditModal() {
   render(<PrintersPage />);
-  await waitFor(() => expect(screen.getByText('X1 Carbon')).toBeInTheDocument());
+  await userEvent.click(await screen.findByRole('button', { name: /^open controls$/i }));
 
   // Open the per-printer actions menu (kebab button), then click Edit.
   const menuBtn = [...document.querySelectorAll('button')].find((b) =>

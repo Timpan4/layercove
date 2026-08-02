@@ -110,10 +110,16 @@ function setupPage(item = printer('moonraker'), currentStatus = status) {
   render(<PrintersPage />);
 }
 
-async function openMoonrakerEdit(item = printer('moonraker')) {
+async function openControls(item = printer('moonraker'), currentStatus = status) {
   const user = userEvent.setup();
-  setupPage(item);
-  await screen.findByText('Klipper One');
+  setupPage(item, currentStatus);
+  await screen.findByRole('heading', { name: item.name, level: 2 });
+  await user.click(screen.getByRole('button', { name: /open controls/i }));
+  return user;
+}
+
+async function openMoonrakerEdit(item = printer('moonraker')) {
+  const user = await openControls(item);
   const menu = [...document.querySelectorAll('button')].find((button) =>
     button.querySelector('.lucide-ellipsis-vertical'),
   );
@@ -148,7 +154,7 @@ describe('provider capability UI', () => {
         return HttpResponse.json({ id: 9, filename: 'cube.gcode.3mf', metadata: {} });
       }),
     );
-    setupPage(printer('bambu'), { ...status, state: 'IDLE', current_print: null });
+    await openControls(printer('bambu'), { ...status, state: 'IDLE', current_print: null });
 
     expect(await screen.findByText('Bambu One')).toBeInTheDocument();
     expect(await screen.findByTestId('speed-control')).toBeInTheDocument();
@@ -186,9 +192,8 @@ describe('provider capability UI', () => {
       http.get('/api/v1/printers/41/ams-labels', () => { labelsRequested(); return HttpResponse.json({}); }),
       http.get('/api/v1/printers/41/print/objects', () => { objectsRequested(); return HttpResponse.json({ objects: [] }); }),
     );
-    setupPage();
+    await openControls();
 
-    expect(await screen.findByText('Klipper One')).toBeInTheDocument();
     expect(screen.queryByTestId('speed-control')).not.toBeInTheDocument();
     expect(screen.queryByTitle(/camera/i)).not.toBeInTheDocument();
     expect(screen.queryByTitle(/view heater history/i)).not.toBeInTheDocument();
@@ -211,13 +216,12 @@ describe('provider capability UI', () => {
   });
 
   it('normalizes paused jobs and hides start/upload when capabilities deny them', async () => {
-    const user = userEvent.setup();
     const resumeRequested = vi.fn();
     server.use(http.post('/api/v1/printers/41/print/resume', () => {
       resumeRequested();
       return HttpResponse.json({ success: true, message: 'Resumed' });
     }));
-    setupPage(
+    const user = await openControls(
       printer('moonraker', { ...moonrakerCapabilities, upload_gcode: false, start_print: false }),
       { ...status, state: 'paused' },
     );
@@ -236,7 +240,7 @@ describe('provider capability UI', () => {
   });
 
   it('hides idle print/upload action when start or upload capability is missing', async () => {
-    setupPage(
+    await openControls(
       printer('moonraker', { ...moonrakerCapabilities, upload_gcode: false, start_print: false }),
       { ...status, state: 'IDLE', current_print: null },
     );
@@ -252,7 +256,7 @@ describe('provider capability UI', () => {
       uploadRequested();
       return HttpResponse.json({ id: 10, filename: 'cube.gcode.3mf', metadata: {} });
     }));
-    setupPage(printer('moonraker'), { ...status, state: 'IDLE', current_print: null });
+    await openControls(printer('moonraker'), { ...status, state: 'IDLE', current_print: null });
 
     await userEvent.click(await screen.findByRole('button', { name: /^print$/i }));
     const picker = document.querySelector<HTMLInputElement>('input[type="file"]')!;
@@ -268,7 +272,7 @@ describe('provider capability UI', () => {
   });
 
   it('names both accepted formats when both upload capabilities are enabled', async () => {
-    setupPage(
+    await openControls(
       printer('bambu', { ...bambuCapabilities, upload_gcode: true }),
       { ...status, state: 'IDLE', current_print: null },
     );
@@ -281,7 +285,7 @@ describe('provider capability UI', () => {
   });
 
   it('treats preparing as busy while keeping cancel available', async () => {
-    setupPage(printer('moonraker'), { ...status, state: 'PREPARING' });
+    await openControls(printer('moonraker'), { ...status, state: 'PREPARING' });
 
     expect(await screen.findByRole('button', { name: /^stop$/i })).toBeInTheDocument();
     expect(screen.getAllByText('cube.gcode').length).toBeGreaterThan(0);
@@ -293,7 +297,7 @@ describe('provider capability UI', () => {
 
   it('uses only same-origin camera route when camera capability is enabled', async () => {
     const open = vi.spyOn(window, 'open').mockImplementation(() => null);
-    setupPage(printer('moonraker', { ...moonrakerCapabilities, camera: true }));
+    await openControls(printer('moonraker', { ...moonrakerCapabilities, camera: true }));
 
     const camera = await screen.findByTitle(/open camera/i);
     await userEvent.click(camera);
@@ -402,7 +406,7 @@ describe('Moonraker onboarding and guarded stop', () => {
       body = await request.json();
       return HttpResponse.json({ detail: { message: 'Emergency stop unavailable.' } }, { status: 503 });
     }));
-    setupPage();
+    await openControls();
 
     const emergencyStop = await screen.findByRole('button', { name: /^emergency stop$/i });
     expect(emergencyStop).toHaveClass('!min-h-11');
