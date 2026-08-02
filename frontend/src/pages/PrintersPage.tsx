@@ -21,7 +21,7 @@ import { isActivePrintState, normalizePrintState } from '../utils/printerState';
 // original bug at #1447).
 const DRYING_POPOVER_WIDTH = 240;
 const DRYING_POPOVER_ESTIMATED_HEIGHT = 320;
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -124,6 +124,7 @@ import { Collapsible } from '../components/Collapsible';
 import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/ConnectionDiagnostic';
 import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
 import { networkSiteHostname, networkSiteMoonrakerUrls } from '../utils/networkSites';
+import { PrintersPagePrototype } from './PrintersPagePrototype';
 
 export interface SpoolmanSlotAssignmentRow {
   printer_id: number;
@@ -7996,6 +7997,7 @@ export function PrintersPage() {
   // Derive viewMode from cardSize: S=compact, M/L/XL=expanded
   const viewMode: ViewMode = cardSize === 1 ? 'compact' : 'expanded';
   const [compactDrilldownPrinterId, setCompactDrilldownPrinterId] = useState<number | null>(null);
+  const [commandDeckControlsPrinterId, setCommandDeckControlsPrinterId] = useState<number | null>(null);
   const scrollPrinterIntoView = useCallback((printerId: number) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -8019,6 +8021,7 @@ export function PrintersPage() {
   const returnToCompactCards = useCallback(() => {
     const printerId = compactDrilldownPrinterId;
     setCompactDrilldownPrinterId(null);
+    setCommandDeckControlsPrinterId(null);
     setCardSize(1);
     localStorage.setItem('printerCardSize', '1');
     if (printerId != null) {
@@ -8067,6 +8070,13 @@ export function PrintersPage() {
   const { data: printers, isLoading } = useQuery({
     queryKey: ['printers'],
     queryFn: api.getPrinters,
+  });
+  useQueries({
+    queries: (printers ?? []).map((printer) => ({
+      queryKey: queryKeys.printerStatus(printer.id),
+      queryFn: () => api.getPrinterStatus(printer.id),
+      refetchInterval: 30000,
+    })),
   });
 
   // Fetch the UI-rendering subset of settings. Uses /ui-preferences (not /settings)
@@ -8861,6 +8871,50 @@ export function PrintersPage() {
       </Button>
     </>
   );
+
+  const prototypePrinters = sortedPrinters
+    .map((printer) => ({
+      printer,
+      status: queryClient.getQueryData<PrinterStatus>(queryKeys.printerStatus(printer.id)),
+    }))
+    .filter(({ status }) => !hideDisconnected || status?.connected);
+
+  if (commandDeckControlsPrinterId == null) {
+    return (
+      <>
+        <PrintersPagePrototype
+          printers={prototypePrinters}
+          totalPrinters={printers?.length ?? 0}
+          isLoading={isLoading}
+          search={search}
+          statusFilter={statusFilter}
+          locationFilter={locationFilter}
+          availableLocations={availableLocations}
+          hideOffline={hideDisconnected}
+          sortBy={sortBy}
+          canAdd={hasPermission('printers:create')}
+          onSearchChange={setSearch}
+          onStatusFilterChange={setStatusFilter}
+          onLocationFilterChange={setLocationFilter}
+          onHideOfflineChange={toggleHideDisconnected}
+          onSortChange={handleSortChange}
+          onAddPrinter={() => setShowAddModal(true)}
+          onOpenControls={(printerId) => {
+            setCommandDeckControlsPrinterId(printerId);
+            openCompactCard(printerId);
+          }}
+          production
+        />
+        {showAddModal && (
+          <AddPrinterModal
+            onClose={() => setShowAddModal(false)}
+            onAdd={(data) => addMutation.mutate(data)}
+            existingSerials={printers?.flatMap(p => p.serial_number ? [p.serial_number] : []) || []}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="p-4 md:p-8">

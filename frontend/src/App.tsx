@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
 import { PrintersPage } from './pages/PrintersPage';
+import { PrintersPrototypeDemo } from './pages/PrintersPagePrototype';
 import { ArchivesPage } from './pages/ArchivesPage';
 import { QueuePage } from './pages/QueuePage';
 import { StatsPage } from './pages/StatsPage';
@@ -176,6 +177,8 @@ function App() {
 
                 {/* Login page */}
                 <Route path="/login" element={<LoginPage />} />
+
+                {import.meta.env.DEV && <Route path="/prototype/printers" element={<PrintersPrototypeDemo />} />}
 
                 {/* Camera page - standalone, no layout, no WebSocket (doesn't need real-time updates) */}
                 <Route path="/camera/:printerId" element={<CameraPage />} />

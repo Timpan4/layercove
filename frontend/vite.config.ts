@@ -4,9 +4,11 @@ import path from 'path'
 import fs from 'fs'
 import type { Connect } from 'vite'
 
-// Backend port for dev server proxy (default: 8000)
+// Backend target for dev server proxy. BACKEND_URL allows the frontend to
+// run locally against a remote LayerCove instance; BACKEND_PORT preserves the
+// existing local-backend workflow.
 const backendPort = process.env.BACKEND_PORT || '8000'
-const backendUrl = `http://localhost:${backendPort}`
+const backendUrl = process.env.BACKEND_URL || `http://localhost:${backendPort}`
 
 // Absolute path to the gcode_viewer directory at the repo root
 const gcodeViewerDir = path.resolve(__dirname, '../gcode_viewer')

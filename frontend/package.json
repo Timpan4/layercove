@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:remote": "BACKEND_URL=https://layercove.timpan.dev vite",
     "build": "tsc -b && vite build",
     "lint": "oxlint --deny-warnings .",
     "preview": "vite preview",
