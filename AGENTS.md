@@ -9,6 +9,11 @@
   - Ruff: `uv run --with-requirements requirements-dev.txt ruff ...`
 - Treat native-Windows-only test failures as environment evidence, not product defects. Reproduce them in WSL before changing code.
 
+## Bug fixes
+
+- Every bug fix must include an automated regression test that reproduces the specific reported failure.
+- Confirm the regression test fails before the fix and passes after it. Generic coverage is not a substitute.
+
 ## Git safety
 
 - Before every Git write, run `git branch --show-current`.
