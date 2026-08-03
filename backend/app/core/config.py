@@ -3,7 +3,7 @@ import os
 import re as _re
 from pathlib import Path
 
-from pydantic import field_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 # Application version - single source of truth
@@ -69,6 +69,9 @@ class Settings(BaseSettings):
     static_dir: Path = _app_dir / "static"  # Static files are part of app, not data
     log_dir: Path = _log_dir
     database_url: str = _external_db_url or _default_db_url
+    db_pool_size: int = Field(default=10, ge=1)
+    db_max_overflow: int = Field(default=2, ge=0)
+    db_pool_timeout: float = Field(default=5.0, gt=0)
 
     @field_validator("database_url", mode="before")
     @classmethod

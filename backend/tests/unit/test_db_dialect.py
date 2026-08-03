@@ -1,6 +1,6 @@
 """Unit tests for database dialect helpers and PostgreSQL compatibility."""
 
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -23,6 +23,32 @@ class TestDialectDetection:
 
             assert is_postgres() is True
             assert is_sqlite() is False
+
+
+class TestPostgresPoolConfiguration:
+    def test_engine_uses_configured_pool_limits(self):
+        from backend.app.core import database
+
+        engine = MagicMock()
+        with (
+            patch.object(database, "is_sqlite", return_value=False),
+            patch.object(database.settings, "database_url", "postgresql+asyncpg://user:pass@host/db"),
+            patch.object(database.settings, "db_pool_size", 7),
+            patch.object(database.settings, "db_max_overflow", 3),
+            patch.object(database.settings, "db_pool_timeout", 4.0),
+            patch.object(database, "create_async_engine", return_value=engine) as create_engine,
+            patch.object(database.event, "listens_for", return_value=lambda function: function),
+        ):
+            result = database._create_engine()
+
+        assert result is engine
+        create_engine.assert_called_once_with(
+            "postgresql+asyncpg://user:pass@host/db",
+            echo=database.settings.debug,
+            pool_size=7,
+            max_overflow=3,
+            pool_timeout=4.0,
+        )
 
 
 class TestRunPragma:
