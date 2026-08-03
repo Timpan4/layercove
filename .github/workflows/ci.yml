@@ -209,6 +209,10 @@ jobs:
         working-directory: frontend
         run: bun install --frozen-lockfile
 
+      - name: Build frontend assets
+        working-directory: frontend
+        run: bun run build
+
       - name: Run tests
         timeout-minutes: 10
         working-directory: frontend

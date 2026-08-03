@@ -187,18 +187,17 @@ def _mirror_primary(printer: Printer, camera: PrinterCamera) -> None:
     printer.camera_rotation = camera.rotation
 
 
-async def _camera_snapshot_response(camera: PrinterCamera) -> Response:
+async def _camera_snapshot_response(*, stream_url: str | None, snapshot_url: str | None, capture_type: str) -> Response:
     from backend.app.services.external_camera import capture_frame
 
-    capture_type = camera_capture_type(camera)
-    url = camera.snapshot_url if capture_type == "snapshot" else camera.stream_url or camera.snapshot_url
+    url = snapshot_url if capture_type == "snapshot" else stream_url or snapshot_url
     if not url or capture_type == "unsupported":
         raise HTTPException(503, "Camera does not expose a compatible image source")
     frame = await capture_frame(
         url,
         capture_type,
         timeout=15,
-        snapshot_url=camera.snapshot_url,
+        snapshot_url=snapshot_url,
     )
     if not frame:
         raise HTTPException(503, "Failed to capture frame from camera")
@@ -209,15 +208,23 @@ async def _camera_snapshot_response(camera: PrinterCamera) -> Response:
     )
 
 
-async def _camera_stream_response(camera: PrinterCamera, request: Request, fps: int) -> StreamingResponse:
+async def _camera_stream_response(
+    *,
+    printer_id: int,
+    camera_id: int,
+    stream_url: str | None,
+    snapshot_url: str | None,
+    capture_type: str,
+    request: Request,
+    fps: int,
+) -> StreamingResponse:
     from backend.app.services.external_camera import generate_mjpeg_stream
 
-    capture_type = camera_capture_type(camera)
-    url = camera.snapshot_url if capture_type == "snapshot" else camera.stream_url or camera.snapshot_url
+    url = snapshot_url if capture_type == "snapshot" else stream_url or snapshot_url
     if not url or capture_type == "unsupported":
         raise HTTPException(503, "Camera does not expose a compatible live source")
     fps = min(max(fps, 1), 15)
-    fanout_key = f"printer-{camera.printer_id}-camera-{camera.id}"
+    fanout_key = f"printer-{printer_id}-camera-{camera_id}"
 
     async def _upstream(disconnect_event: asyncio.Event):
         async for chunk in generate_mjpeg_stream(url, capture_type, fps):
@@ -879,7 +886,15 @@ async def selected_camera_snapshot(
     camera = await _camera_or_404(printer_id, camera_id, db)
     if not camera.enabled or not camera.source_enabled or camera.missing_since is not None:
         raise HTTPException(503, "Camera is unavailable")
-    return await _camera_snapshot_response(camera)
+    stream_url = camera.stream_url
+    snapshot_url = camera.snapshot_url
+    capture_type = camera_capture_type(camera)
+    await db.rollback()
+    return await _camera_snapshot_response(
+        stream_url=stream_url,
+        snapshot_url=snapshot_url,
+        capture_type=capture_type,
+    )
 
 
 @router.get("/{printer_id}/cameras/{camera_id}/stream")
@@ -894,7 +909,19 @@ async def selected_camera_stream(
     camera = await _camera_or_404(printer_id, camera_id, db)
     if not camera.enabled or not camera.source_enabled or camera.missing_since is not None:
         raise HTTPException(503, "Camera is unavailable")
-    return await _camera_stream_response(camera, request, fps)
+    stream_url = camera.stream_url
+    snapshot_url = camera.snapshot_url
+    capture_type = camera_capture_type(camera)
+    await db.rollback()
+    return await _camera_stream_response(
+        printer_id=printer_id,
+        camera_id=camera_id,
+        stream_url=stream_url,
+        snapshot_url=snapshot_url,
+        capture_type=capture_type,
+        request=request,
+        fps=fps,
+    )
 
 
 @router.post("/camera/stream-token")
@@ -939,19 +966,33 @@ async def camera_stream(
         camera = await get_effective_camera(db, printer_id)
         if camera is None:
             raise HTTPException(503, "No compatible Moonraker camera is available")
-        return await _camera_stream_response(camera, request, fps)
+        camera_id = camera.id
+        stream_url = camera.stream_url
+        snapshot_url = camera.snapshot_url
+        capture_type = camera_capture_type(camera)
+        await db.rollback()
+        return await _camera_stream_response(
+            printer_id=printer_id,
+            camera_id=camera_id,
+            stream_url=stream_url,
+            snapshot_url=snapshot_url,
+            capture_type=capture_type,
+            request=request,
+            fps=fps,
+        )
 
     # Check for external camera first
     if printer.external_camera_enabled and printer.external_camera_url:
+        external_camera_url = printer.external_camera_url
+        external_camera_type = printer.external_camera_type
+        await db.rollback()
         import time
 
         from backend.app.services.external_camera import generate_mjpeg_stream
 
         # Limit external camera FPS to reduce browser load
         fps = min(max(fps, 1), 15)
-        logger.info(
-            "Using external camera (%s) for printer %s at %s fps", printer.external_camera_type, printer_id, fps
-        )
+        logger.info("Using external camera (%s) for printer %s at %s fps", external_camera_type, printer_id, fps)
 
         # Track stream start
         _stream_start_times[printer_id] = time.time()
@@ -960,9 +1001,7 @@ async def camera_stream(
         async def external_stream_wrapper():
             """Wrap external stream to track start/stop and update frame times."""
             try:
-                async for frame in generate_mjpeg_stream(
-                    printer.external_camera_url, printer.external_camera_type, fps
-                ):
+                async for frame in generate_mjpeg_stream(external_camera_url, external_camera_type, fps):
                     # generate_mjpeg_stream already handles rate limiting;
                     # just track frame times for stall detection
                     _last_frame_times[printer_id] = time.time()
@@ -981,19 +1020,24 @@ async def camera_stream(
             },
         )
 
+    ip_address = printer.ip_address
+    access_code = printer.access_code
+    model = printer.model
+    await db.rollback()
+
     # Validate FPS - A1/P1 models max out at ~5 FPS
-    if is_chamber_image_model(printer.model):
+    if is_chamber_image_model(model):
         fps = min(max(fps, 1), 5)
     else:
         fps = min(max(fps, 1), 30)
 
     # Choose the appropriate stream generator based on model
-    if is_chamber_image_model(printer.model):
+    if is_chamber_image_model(model):
         stream_generator = generate_chamber_mjpeg_stream
-        logger.info("Using chamber image protocol for %s", printer.model)
+        logger.info("Using chamber image protocol for %s", model)
     else:
         stream_generator = generate_rtsp_mjpeg_stream
-        logger.info("Using RTSP protocol for %s", printer.model)
+        logger.info("Using RTSP protocol for %s", model)
 
     # Track stream start time. Set only if absent so the value reflects when
     # the SHARED upstream first started streaming, not when each new viewer
@@ -1021,9 +1065,9 @@ async def camera_stream(
         # them — disconnect_event is owned by the broadcaster and signalled
         # when the last subscriber leaves (after the grace window).
         return stream_generator(
-            ip_address=printer.ip_address,
-            access_code=printer.access_code,
-            model=printer.model,
+            ip_address=ip_address,
+            access_code=access_code,
+            model=model,
             fps=fps,
             stream_id=upstream_stream_id,
             disconnect_event=disconnect_event,
@@ -1194,17 +1238,29 @@ async def camera_snapshot(
         camera = await get_effective_camera(db, printer_id)
         if camera is None:
             raise HTTPException(503, "No compatible Moonraker camera is available")
-        return await _camera_snapshot_response(camera)
+        stream_url = camera.stream_url
+        snapshot_url = camera.snapshot_url
+        capture_type = camera_capture_type(camera)
+        await db.rollback()
+        return await _camera_snapshot_response(
+            stream_url=stream_url,
+            snapshot_url=snapshot_url,
+            capture_type=capture_type,
+        )
 
     # Check for external camera first
     if printer.external_camera_enabled and printer.external_camera_url:
+        external_camera_url = printer.external_camera_url
+        external_camera_type = printer.external_camera_type
+        external_camera_snapshot_url = printer.external_camera_snapshot_url
+        await db.rollback()
         from backend.app.services.external_camera import capture_frame
 
         frame_data = await capture_frame(
-            printer.external_camera_url,
-            printer.external_camera_type,
+            external_camera_url,
+            external_camera_type,
             timeout=15,
-            snapshot_url=printer.external_camera_snapshot_url,
+            snapshot_url=external_camera_snapshot_url,
         )
         if not frame_data:
             raise HTTPException(
@@ -1219,6 +1275,11 @@ async def camera_snapshot(
                 "Content-Disposition": f'inline; filename="snapshot_{printer_id}.jpg"',
             },
         )
+
+    ip_address = printer.ip_address
+    access_code = printer.access_code
+    model = printer.model
+    await db.rollback()
 
     # Reuse the fan-out broadcaster's buffered frame when a viewer is already
     # watching — avoids opening a second concurrent RTSP socket on printers
@@ -1243,9 +1304,9 @@ async def camera_snapshot(
 
     try:
         success = await capture_camera_frame(
-            ip_address=printer.ip_address,
-            access_code=printer.access_code,
-            model=printer.model,
+            ip_address=ip_address,
+            access_code=access_code,
+            model=model,
             output_path=temp_path,
             timeout=15,
         )
@@ -1285,11 +1346,15 @@ async def test_camera(
     Returns success status and any error message.
     """
     printer = await get_printer_or_404(printer_id, db)
+    ip_address = printer.ip_address
+    access_code = printer.access_code
+    model = printer.model
+    await db.rollback()
 
     result = await test_camera_connection(
-        ip_address=printer.ip_address,
-        access_code=printer.access_code,
-        model=printer.model,
+        ip_address=ip_address,
+        access_code=access_code,
+        model=model,
     )
 
     return result
@@ -1312,6 +1377,10 @@ async def diagnose_camera_route(
     from backend.app.services.camera_diagnose import diagnose_camera
 
     printer = await get_printer_or_404(printer_id, db)
+    ip_address = printer.ip_address
+    access_code = printer.access_code
+    model = printer.model
+    await db.rollback()
 
     # Look up live-stream evidence so the diagnostic can short-circuit
     # instead of fighting a viewer for the printer's single camera slot.
@@ -1320,9 +1389,9 @@ async def diagnose_camera_route(
     live_age = (time.time() - last_ts) if (has_live and last_ts) else None
 
     result = await diagnose_camera(
-        ip_address=printer.ip_address,
-        access_code=printer.access_code,
-        model=printer.model,
+        ip_address=ip_address,
+        access_code=access_code,
+        model=model,
         printer_id=printer_id,
         has_live_stream=has_live,
         live_frame_age_seconds=live_age,
@@ -1415,6 +1484,7 @@ async def test_external_camera(
     """
     # Verify printer exists (for authorization)
     await get_printer_or_404(printer_id, db)
+    await db.rollback()
 
     from backend.app.services.external_camera import test_connection
 
@@ -1471,6 +1541,27 @@ async def check_plate_empty(
         external_snapshot_url,
         _rotation,
     ) = await get_effective_capture_settings(db, printer)
+    camera_printer_id = printer.id
+    ip_address = printer.ip_address
+    access_code = printer.access_code
+    model = printer.model
+    roi = None
+    if all(
+        value is not None
+        for value in (
+            printer.plate_detection_roi_x,
+            printer.plate_detection_roi_y,
+            printer.plate_detection_roi_w,
+            printer.plate_detection_roi_h,
+        )
+    ):
+        roi = (
+            printer.plate_detection_roi_x,
+            printer.plate_detection_roi_y,
+            printer.plate_detection_roi_w,
+            printer.plate_detection_roi_h,
+        )
+    await db.rollback()
 
     if use_external is None:
         use_external = bool(external_enabled and external_url and external_type)
@@ -1489,28 +1580,11 @@ async def check_plate_empty(
 
     from backend.app.services.plate_detection import PlateDetector
 
-    # Build ROI tuple from printer settings if available
-    roi = None
-    if all(
-        [
-            printer.plate_detection_roi_x is not None,
-            printer.plate_detection_roi_y is not None,
-            printer.plate_detection_roi_w is not None,
-            printer.plate_detection_roi_h is not None,
-        ]
-    ):
-        roi = (
-            printer.plate_detection_roi_x,
-            printer.plate_detection_roi_y,
-            printer.plate_detection_roi_w,
-            printer.plate_detection_roi_h,
-        )
-
     result = await do_check(
-        printer_id=printer.id,
-        ip_address=printer.ip_address,
-        access_code=printer.access_code,
-        model=printer.model,
+        printer_id=camera_printer_id,
+        ip_address=ip_address,
+        access_code=access_code,
+        model=model,
         plate_type=plate_type,
         include_debug_image=include_debug_image,
         external_camera_url=external_url if external_enabled else None,
@@ -1522,7 +1596,7 @@ async def check_plate_empty(
 
     # Get reference count for the response
     detector = PlateDetector()
-    ref_count = detector.get_calibration_count(printer.id)
+    ref_count = detector.get_calibration_count(camera_printer_id)
 
     response = result.to_dict()
     response["light_warning"] = light_warning
@@ -1592,6 +1666,11 @@ async def calibrate_plate_detection(
         external_snapshot_url,
         _rotation,
     ) = await get_effective_capture_settings(db, printer)
+    camera_printer_id = printer.id
+    ip_address = printer.ip_address
+    access_code = printer.access_code
+    model = printer.model
+    await db.rollback()
 
     if use_external is None:
         use_external = bool(external_enabled and external_url and external_type)
@@ -1607,10 +1686,10 @@ async def calibrate_plate_detection(
     light_warning = state and not state.chamber_light
 
     success, message, index = await calibrate_plate(
-        printer_id=printer.id,
-        ip_address=printer.ip_address,
-        access_code=printer.access_code,
-        model=printer.model,
+        printer_id=camera_printer_id,
+        ip_address=ip_address,
+        access_code=access_code,
+        model=model,
         label=label,
         external_camera_url=external_url if external_enabled else None,
         external_camera_type=external_type if external_enabled else None,

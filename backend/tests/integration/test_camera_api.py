@@ -7,7 +7,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event
 from starlette.responses import Response
+
+
+def _track_checked_out_connections(engine):
+    state = {"count": 0}
+
+    def checkout(*_args):
+        state["count"] += 1
+
+    def checkin(*_args):
+        state["count"] -= 1
+
+    event.listen(engine.sync_engine, "checkout", checkout)
+    event.listen(engine.sync_engine, "checkin", checkin)
+    return state
 
 
 class TestCameraAPI:
@@ -288,6 +303,31 @@ class TestCameraAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_camera_snapshot_releases_db_before_external_io(
+        self, async_client: AsyncClient, printer_factory, db_session, test_engine
+    ):
+        connections = _track_checked_out_connections(test_engine)
+        printer = await printer_factory(
+            external_camera_enabled=True,
+            external_camera_url="http://192.168.1.50/mjpeg",
+            external_camera_type="mjpeg",
+        )
+        printer_id = printer.id
+        await db_session.rollback()
+        fake_jpeg = b"\xff\xd8\xff\xd9"
+
+        async def capture_frame(*_args, **_kwargs):
+            assert connections["count"] == 0
+            return fake_jpeg
+
+        with patch("backend.app.services.external_camera.capture_frame", side_effect=capture_frame):
+            response = await async_client.get(f"/api/v1/printers/{printer_id}/camera/snapshot")
+
+        assert response.status_code == 200
+        assert response.content == fake_jpeg
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_camera_snapshot_success(self, async_client: AsyncClient, printer_factory):
         """Verify snapshot returns JPEG image when successful."""
         printer = await printer_factory()
@@ -498,6 +538,33 @@ class TestCameraAPI:
         response = await async_client.get("/api/v1/printers/99999/camera/stream")
 
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_camera_stream_releases_db_before_starting_upstream(
+        self, async_client: AsyncClient, printer_factory, db_session, test_engine
+    ):
+        connections = _track_checked_out_connections(test_engine)
+        printer = await printer_factory(model="P1S")
+        printer_id = printer.id
+        await db_session.rollback()
+        broadcaster = MagicMock(subscriber_count=1)
+        broadcaster.subscribe = AsyncMock(return_value=object())
+
+        async def get_broadcaster(*_args, **_kwargs):
+            assert connections["count"] == 0
+            return broadcaster
+
+        async def one_frame(*_args, **_kwargs):
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8\xff\xd9\r\n"
+
+        with (
+            patch("backend.app.api.routes.camera.get_or_create_broadcaster", side_effect=get_broadcaster),
+            patch("backend.app.api.routes.camera.iter_subscriber", side_effect=one_frame),
+        ):
+            response = await async_client.get(f"/api/v1/printers/{printer_id}/camera/stream")
+
+        assert response.status_code == 200
 
     @pytest.mark.asyncio
     @pytest.mark.integration
