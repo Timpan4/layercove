@@ -1,10 +1,12 @@
 import asyncio
 import logging
+from datetime import datetime, timezone
 
-from sqlalchemy import event
+from sqlalchemy import DateTime, event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+from sqlalchemy.types import NullType
 
 from backend.app.core.config import settings
 from backend.app.core.db_dialect import is_sqlite
@@ -22,6 +24,57 @@ def _set_sqlite_pragmas(dbapi_conn, connection_record):
     cursor.execute("PRAGMA busy_timeout = 15000")
     cursor.execute("PRAGMA synchronous = NORMAL")
     cursor.close()
+
+
+def _normalize_postgres_datetime_params(parameters, context, executemany):
+    compiled = getattr(context, "compiled", None)
+    if parameters is None or compiled is None:
+        return parameters
+
+    binds = getattr(compiled, "binds", {})
+    positiontup = getattr(compiled, "positiontup", None)
+
+    def naive_utc(value):
+        if isinstance(value, datetime) and value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
+        if isinstance(value, dict):
+            return {name: naive_utc(item) for name, item in value.items()}
+        if isinstance(value, tuple):
+            return tuple(naive_utc(item) for item in value)
+        if isinstance(value, list):
+            return [naive_utc(item) for item in value]
+        return value
+
+    def normalize(value, bind_name):
+        bind = binds.get(bind_name)
+        if bind is not None and isinstance(bind.type, DateTime) and bind.type.timezone:
+            return value
+        # Untyped text() binds retain legacy naive-UTC handling. Callers targeting
+        # TIMESTAMPTZ must bind DateTime(timezone=True) so their instant is preserved.
+        if bind is None or isinstance(bind.type, (DateTime, NullType)):
+            return naive_utc(value)
+        return value
+
+    def normalize_row(row):
+        if isinstance(row, dict):
+            return {name: normalize(value, name) for name, value in row.items()}
+        if isinstance(row, tuple) and positiontup:
+            return tuple(
+                normalize(value, positiontup[index]) if index < len(positiontup) else value
+                for index, value in enumerate(row)
+            )
+        if isinstance(row, list) and positiontup:
+            return [
+                normalize(value, positiontup[index]) if index < len(positiontup) else value
+                for index, value in enumerate(row)
+            ]
+        return row
+
+    if isinstance(parameters, list) and (
+        executemany or (parameters and all(isinstance(row, (dict, tuple)) for row in parameters))
+    ):
+        return [normalize_row(row) for row in parameters]
+    return normalize_row(parameters)
 
 
 def _create_engine():
@@ -42,35 +95,10 @@ def _create_engine():
     if is_sqlite():
         event.listen(eng.sync_engine, "connect", _set_sqlite_pragmas)
     else:
-        # Strip timezone info from aware datetimes before they reach asyncpg.
-        # asyncpg rejects timezone-aware values for TIMESTAMP WITHOUT TIME ZONE columns.
-        # The codebase uses datetime.now(timezone.utc) in many places — this makes
-        # Postgres behave like SQLite which ignores timezone info entirely.
+
         @event.listens_for(eng.sync_engine, "before_cursor_execute", retval=True)
-        def _strip_tz_from_params(conn, cursor, statement, parameters, context, executemany):
-            import datetime
-
-            if parameters is None:
-                return statement, parameters
-
-            # Recursive strip that walks any nesting of dict/list/tuple. Needed
-            # because SQLAlchemy passes parameters in several shapes depending
-            # on the path: a dict for named binds, a tuple for positional, a
-            # list of dicts/tuples for executemany, and for insertmanyvalues
-            # sometimes a list of tuples inside an outer list. The simplest
-            # correct answer is "strip datetimes at any depth".
-            def _strip(val):
-                if isinstance(val, datetime.datetime) and val.tzinfo is not None:
-                    return val.replace(tzinfo=None)
-                if isinstance(val, dict):
-                    return {k: _strip(v) for k, v in val.items()}
-                if isinstance(val, list):
-                    return [_strip(v) for v in val]
-                if isinstance(val, tuple):
-                    return tuple(_strip(v) for v in val)
-                return val
-
-            return statement, _strip(parameters)
+        def _normalize_datetime_params(conn, cursor, statement, parameters, context, executemany):
+            return statement, _normalize_postgres_datetime_params(parameters, context, executemany)
 
     return eng
 

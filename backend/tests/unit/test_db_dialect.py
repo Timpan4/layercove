@@ -73,38 +73,79 @@ class TestRunPragma:
             mock_conn.execute.assert_not_called()
 
 
-class TestTimezoneStripping:
-    """Test that timezone-aware values become naive before asyncpg calls."""
-
+class TestPostgresDatetimeParameters:
     @staticmethod
-    def _strip(value):
-        import datetime
+    def _context(*, timezone_enabled: bool):
+        from types import SimpleNamespace
 
-        if isinstance(value, datetime.datetime) and value.tzinfo is not None:
-            return value.replace(tzinfo=None)
-        return value
+        from sqlalchemy import DateTime, bindparam
 
-    def test_strip_aware_datetime(self):
-        import datetime
+        name = "occurred_at"
+        return SimpleNamespace(
+            compiled=SimpleNamespace(
+                binds={name: bindparam(name, type_=DateTime(timezone=timezone_enabled))},
+                positiontup=[name],
+            )
+        )
 
-        aware = datetime.datetime(2026, 4, 3, 10, 0, 0, tzinfo=datetime.timezone.utc)
-        assert self._strip(aware) == aware.replace(tzinfo=None)
-        assert self._strip(aware).tzinfo is None
+    def test_preserves_aware_datetime_for_timezone_bind(self):
+        from datetime import datetime, timezone
 
-    def test_strip_in_nested_parameter_shapes(self):
-        import datetime
+        from backend.app.core.database import _normalize_postgres_datetime_params
 
-        aware = datetime.datetime(2026, 4, 3, 10, 0, 0, tzinfo=datetime.timezone.utc)
-        mapping = {"created_at": self._strip(aware)}
-        sequence = tuple(self._strip(value) for value in ("test", aware, 5))
-        assert mapping["created_at"].tzinfo is None
-        assert sequence[1].tzinfo is None
+        aware = datetime(2026, 4, 3, 10, 0, tzinfo=timezone.utc)
 
-    def test_naive_datetime_unchanged(self):
-        import datetime
+        result = _normalize_postgres_datetime_params(
+            (aware,),
+            self._context(timezone_enabled=True),
+            executemany=False,
+        )
 
-        naive = datetime.datetime(2026, 4, 3, 10, 0, 0)
-        assert self._strip(naive) == naive
+        assert result == (aware,)
+        assert result[0].tzinfo is timezone.utc
+
+    def test_normalizes_aware_datetime_for_naive_bind(self):
+        from datetime import datetime, timedelta, timezone
+
+        from backend.app.core.database import _normalize_postgres_datetime_params
+
+        aware = datetime(2026, 4, 3, 10, 0, tzinfo=timezone(timedelta(hours=2)))
+
+        result = _normalize_postgres_datetime_params(
+            [(aware,), (aware,)],
+            self._context(timezone_enabled=False),
+            executemany=True,
+        )
+
+        assert result == [
+            (datetime(2026, 4, 3, 8, 0),),
+            (datetime(2026, 4, 3, 8, 0),),
+        ]
+
+    def test_normalizes_untyped_datetime_in_nested_rows(self):
+        from datetime import datetime, timezone
+        from types import SimpleNamespace
+
+        from sqlalchemy import bindparam
+
+        from backend.app.core.database import _normalize_postgres_datetime_params
+
+        name = "restored_at"
+        context = SimpleNamespace(
+            compiled=SimpleNamespace(
+                binds={name: bindparam(name)},
+                positiontup=[name],
+            )
+        )
+        aware = datetime(2026, 4, 3, 10, 0, tzinfo=timezone.utc)
+
+        result = _normalize_postgres_datetime_params(
+            [((aware,),)],
+            context,
+            executemany=False,
+        )
+
+        assert result == [((datetime(2026, 4, 3, 10, 0),),)]
 
 
 class TestCrossDatabaseConversion:
