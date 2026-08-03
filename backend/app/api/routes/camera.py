@@ -187,9 +187,7 @@ def _mirror_primary(printer: Printer, camera: PrinterCamera) -> None:
     printer.camera_rotation = camera.rotation
 
 
-async def _camera_snapshot_response(
-    *, stream_url: str | None, snapshot_url: str | None, capture_type: str
-) -> Response:
+async def _camera_snapshot_response(*, stream_url: str | None, snapshot_url: str | None, capture_type: str) -> Response:
     from backend.app.services.external_camera import capture_frame
 
     url = snapshot_url if capture_type == "snapshot" else stream_url or snapshot_url
@@ -994,9 +992,7 @@ async def camera_stream(
 
         # Limit external camera FPS to reduce browser load
         fps = min(max(fps, 1), 15)
-        logger.info(
-            "Using external camera (%s) for printer %s at %s fps", external_camera_type, printer_id, fps
-        )
+        logger.info("Using external camera (%s) for printer %s at %s fps", external_camera_type, printer_id, fps)
 
         # Track stream start
         _stream_start_times[printer_id] = time.time()
