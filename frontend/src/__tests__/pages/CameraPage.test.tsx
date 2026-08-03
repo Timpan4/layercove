@@ -12,6 +12,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { ThemeProvider } from '../../contexts/ThemeContext';
 import { ToastProvider } from '../../contexts/ToastContext';
 import { AuthProvider } from '../../contexts/AuthContext';
+import { setAuthToken } from '../../api/client';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../../i18n';
 
@@ -63,6 +64,7 @@ describe('CameraPage', () => {
   const originalTitle = document.title;
 
   beforeEach(() => {
+    setAuthToken(null);
     server.use(
       http.get('/api/v1/printers/:id', () => {
         return HttpResponse.json(mockPrinter);
@@ -84,6 +86,7 @@ describe('CameraPage', () => {
   });
 
   afterEach(() => {
+    setAuthToken(null);
     document.title = originalTitle;
   });
 
@@ -139,7 +142,32 @@ describe('CameraPage', () => {
   });
 
   describe('stream token handling (#979)', () => {
+    it('does not request a stream token before auth bootstrap finishes', async () => {
+      let tokenRequests = 0;
+
+      server.use(
+        http.get('*/api/v1/auth/status', async () => {
+          await new Promise(() => {});
+          return HttpResponse.json({ auth_enabled: true, requires_setup: false });
+        }),
+        http.post('*/api/v1/printers/camera/stream-token', () => {
+          tokenRequests += 1;
+          return HttpResponse.json({ token: 'premature-token' });
+        })
+      );
+
+      renderCameraPage(1);
+
+      await waitFor(() => {
+        expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
+      });
+      expect(tokenRequests).toBe(0);
+      const src = (document.querySelector('img') as HTMLImageElement | null)?.getAttribute('src') || '';
+      expect(src).not.toContain('/camera/stream');
+    });
+
     it('does not render image src until stream token arrives when auth is enabled', async () => {
+      setAuthToken('auth-token');
       let resolveToken!: (value: unknown) => void;
       const tokenPromise = new Promise((resolve) => {
         resolveToken = resolve;

@@ -7,7 +7,6 @@ import { RefreshCw, AlertTriangle, Camera, Maximize, Minimize, WifiOff, ZoomIn, 
 import { api, getAuthToken, getStreamToken, withStreamToken } from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamTokenSync } from '../hooks/useCameraStreamToken';
 import { ChamberLight } from '../components/icons/ChamberLight';
 import { SkipObjectsModal, SkipObjectsIcon } from '../components/SkipObjectsModal';
 import { CameraDiagnoseModal } from '../components/CameraDiagnoseModal';
@@ -22,21 +21,19 @@ export function CameraPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission, authEnabled, user } = useAuth();
+  const { hasPermission, authEnabled, user, loading: authLoading } = useAuth();
   const { printerId } = useParams<{ printerId: string }>();
   const id = parseInt(printerId || '0', 10);
   const [searchParams] = useSearchParams();
   const fpsParam = parseInt(searchParams.get('fps') || '15', 10);
   const fps = Math.min(Math.max(isNaN(fpsParam) ? 15 : fpsParam, 1), 30);
 
-  // Subscribe to the stream-token query so this page re-renders once the token
-  // arrives. useStreamTokenSync (mounted in App) already owns the fetch; this
-  // useQuery call dedupes via the shared key and just reads the cached value.
-  useStreamTokenSync();
+  // Subscribe to the shared stream-token query so this page re-renders once the
+  // token arrives. App uses the same key, so React Query deduplicates the fetch.
   const { data: streamTokenData } = useQuery({
     queryKey: ['camera-stream-token', user?.id ?? null],
     queryFn: () => api.getCameraStreamToken(),
-    enabled: authEnabled ? !!user : true,
+    enabled: !authLoading && (!authEnabled || user !== null),
     staleTime: 50 * 60 * 1000,
   });
   const streamTokenValue = streamTokenData?.token ?? getStreamToken();
@@ -613,7 +610,7 @@ export function CameraPage() {
   // the token directly from the reactive query value instead of relying on the
   // module-level cache in withStreamToken(), because that cache is updated in a
   // useEffect that runs after render.
-  const waitingForStreamToken = authEnabled && !streamTokenValue;
+  const waitingForStreamToken = authLoading || (authEnabled && !streamTokenValue);
   const appendToken = (url: string) =>
     streamTokenValue ? `${url}&token=${encodeURIComponent(streamTokenValue)}` : withStreamToken(url);
   const currentUrl = transitioning || waitingForStreamToken
