@@ -138,7 +138,12 @@ def test_legacy_database_refusal_preserves_bytes(tmp_path, legacy_name):
 
 @pytest.mark.unit
 def test_fresh_default_database_is_layercove(tmp_path):
-    env = os.environ | {"DATA_DIR": str(tmp_path), "DATABASE_URL": "", "LOG_TO_FILE": "false"}
+    env = os.environ | {
+        "DATA_DIR": str(tmp_path),
+        "DATABASE_URL": "",
+        "LOG_TO_FILE": "false",
+        "STATIC_DIR": str(tmp_path / "static"),
+    }
 
     result = subprocess.run(
         [sys.executable, "-c", "from backend.app.core.config import settings; print(settings.database_url)"],
