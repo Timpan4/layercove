@@ -92,6 +92,9 @@ export function Layout() {
     const stored = localStorage.getItem('sidebarExpanded');
     return stored !== 'false';
   });
+  const sidebarPreferenceBeforeWorkbench = useRef(sidebarExpanded);
+  const wasSlicerWorkbench = useRef(false);
+  const isSlicerWorkbench = location.pathname === '/slicer/workbench';
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSwitchbar, setShowSwitchbar] = useState(false);
@@ -385,8 +388,20 @@ export function Layout() {
   }, [location.pathname, navigate]);
 
   useEffect(() => {
-    localStorage.setItem('sidebarExpanded', String(sidebarExpanded));
-  }, [sidebarExpanded]);
+    if (isSlicerWorkbench && !wasSlicerWorkbench.current) {
+      sidebarPreferenceBeforeWorkbench.current = sidebarExpanded;
+      setSidebarExpanded(false);
+    } else if (!isSlicerWorkbench && wasSlicerWorkbench.current) {
+      setSidebarExpanded(sidebarPreferenceBeforeWorkbench.current);
+    }
+    wasSlicerWorkbench.current = isSlicerWorkbench;
+  }, [isSlicerWorkbench, sidebarExpanded]);
+
+  useEffect(() => {
+    if (!isSlicerWorkbench) {
+      localStorage.setItem('sidebarExpanded', String(sidebarExpanded));
+    }
+  }, [isSlicerWorkbench, sidebarExpanded]);
 
   useEffect(() => {
     const refreshSidebarLayout = () => {

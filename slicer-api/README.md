@@ -1,149 +1,49 @@
-# Slicer-API sidecar (optional)
+# Slicer API sidecar
 
-Self-contained Docker Compose stack that runs HTTP wrappers around the
-OrcaSlicer and/or Bambu Studio CLI. Bambuddy's **Slice** action calls
-these to slice models server-side, no desktop slicer required.
+LayerCove's production sidecar is built from OrcaSlicer **2.4.2** at commit
+`8500fcdccaa10b5099ac20d252af3a7c560046f1`. `build-metadata.json` is the source
+of truth. The image must be referenced by a verified digest; this repository
+intentionally does not invent one.
 
-This folder is **optional**. Bambuddy works without it — Slice falls back
-to opening the model in the user's local desktop slicer via URI scheme.
-Enable the API path by:
+## Build contract
 
-1. Starting one or both services here
-2. **Settings → Slicer → Use Slicer API** = on
-3. Set **Slicer sidecar URL** for whichever slicer you've started
+`Dockerfile.orca` runs `schema_exporter.py` during the image build. The
+exporter consumes extraction output from the same pinned checkout:
 
-## Quick start
+- `src/libslic3r/PrintConfig.cpp`
+- `src/slic3r/GUI/Tab.cpp` (`TabPrint::build`)
+- Orca GUI object-option declarations (for example `GUI_Factories.cpp`)
+- `resources/profiles/**/process/*.json`
 
-```bash
-cd slicer-api/
-cp .env.example .env       # edit ports if you like
+The required normalized files are documented in `schema-input/README.md`.
+Missing, duplicate, unknown, unplaced, or incomplete keys fail the build. This
+is scaffolding until the upstream extraction stage is available; it does not
+ship a fake static schema or claim reproducible CLI output.
 
-# OrcaSlicer only (default profile):
-docker compose up -d
-curl http://localhost:3003/health
+## Compose
 
-# Both slicers:
-docker compose --profile bambu up -d
-curl http://localhost:3001/health   # bambu-studio-api
-curl http://localhost:3003/health   # orca-slicer-api
-```
-
-First start pulls pre-built images from GHCR (~110 MB OrcaSlicer,
-~220 MB BambuStudio). No local build, no git in the BuildKit worker,
-works on QNAP / Synology / Container Station out of the box.
-
-Both images are `linux/amd64` only. OrcaSlicer's ARM64 build is on hold
-pending an upstream extraction fix; BambuStudio doesn't publish ARM64
-at all. For ARM64 hosts (Raspberry Pi 4/5, Apple Silicon Linux), run
-the sidecar on a separate x86_64 box and point Bambuddy at it via the
-**Sidecar URL** field — the sidecar doesn't need to live next to Bambuddy.
-
-## Ports
-
-| Service | Default host port | Why this port |
-|---|---|---|
-| `orca-slicer-api` | **3003** | Bambuddy's virtual-printer feature reserves 3000 and 3002 |
-| `bambu-studio-api` | **3001** | First free port in that range |
-
-Override via `ORCA_API_PORT` / `BAMBU_API_PORT` in `.env`.
-
-## Bambuddy wiring
-
-In the Bambuddy UI: **Settings → Slicer**:
-
-- **Preferred Slicer**: pick OrcaSlicer or Bambu Studio.
-- **Use Slicer API**: turn on.
-- **Sidecar URL**: paste the full URL of the chosen slicer's sidecar.
-  Default values match the Compose defaults:
-  - OrcaSlicer: `http://localhost:3003`
-  - Bambu Studio: `http://localhost:3001`
-
-Leaving the URL field blank uses the `SLICER_API_URL` /
-`BAMBU_STUDIO_API_URL` environment defaults from Bambuddy's config.
-
-## Destination artifact contract
-
-The Slice dialog sends an explicit destination artifact kind. It never guesses
-from a printer-profile name:
-
-| Destination | Sidecar request | Persisted result |
-| --- | --- | --- |
-| `bambu_3mf` (default) | `exportType=3mf` | `.gcode.3mf`; existing thumbnail and 3MF metadata flow |
-| `klipper_gcode` | omits `exportType` | raw `.gcode`; SHA-256 and sidecar estimate headers are stored, with no ZIP/thumbnail injection |
-
-All selected `printerProfile`, `presetProfile`, and repeated
-`filamentProfile` JSON parts are forwarded unchanged in both modes. For a
-custom Voron/Klipper setup, import and select complete printer, process, and
-filament profiles. LayerCove does not synthesize a Klipper profile or fetch an
-absent inheritance parent at slice time. The bundled sidecar resolves its known
-GUI-export inheritance chains, but an imported custom profile with unavailable
-external parents must be flattened or imported as a complete profile set first.
-
-### Manual Docker verification
-
-Not run by automated tests. With a representative STL, STEP, or 3MF and
-complete imported Voron profiles, start the sidecar and LayerCove, choose
-**Klipper G-code** in Slice, then inspect the saved library artifact:
+Copy `.env.example`, replace both `REPLACE_WITH_VERIFIED_DIGEST` values, then:
 
 ```bash
 docker compose up -d
-head -40 /path/to/layercove-data/archive/library/files/*.gcode
 ```
 
-Confirm output is raw G-code (not `PK`/a ZIP), has expected slicer headers,
-and the selected printer/process/filament values. Repeat with **Bambu 3MF** and
-confirm the result remains a `.gcode.3mf` archive.
+Services use an internal Docker network and publish no host ports. Attach the
+LayerCove service to `slicer-api_slicer` (or add an explicit authenticated TLS
+proxy) for access. Cross-host use requires authenticated TLS; never expose the
+sidecar directly.
 
-## Where the images live
+The Orca health check verifies liveness and the pinned commit in
+`/capabilities`; the sidecar contract must also include contract version,
+image identity, schema hash, capabilities, pages/groups/options, and supported
+scopes. Cancel is not advertised until the worker can actually stop a job.
 
-Pre-built images are published to two registries on every Bambuddy
-stable release:
+## Upgrades
 
-- `ghcr.io/maziggy/orca-slicer-api:latest` / `docker.io/maziggy/orca-slicer-api:latest`
-- `ghcr.io/maziggy/bambu-studio-api:latest` / `docker.io/maziggy/bambu-studio-api:latest`
-
-Each release also publishes a versioned tag (`:bambuddy-X.Y.Z`) so you
-can pin to the sidecar that shipped alongside a specific Bambuddy
-release — set `SIDECAR_TAG=bambuddy-0.2.5` in `.env`.
-
-Both images are built from the
-[`maziggy/orca-slicer-api`](https://github.com/maziggy/orca-slicer-api)
-fork (`bambuddy/profile-resolver` branch). The fork patches AFKFelix's
-upstream wrapper with the `inherits:` chain resolver, `from: "User"`
-→ `"system"` rewrite, `# ` clone-prefix strip, and sentinel-value
-strip — all empirically required to slice real GUI exports without
-segfaulting the CLI. Once those land upstream, the compose file can be
-flipped back to `ghcr.io/afkfelix/orca-slicer-api`.
-
-## Updating
-
-```bash
-docker compose pull
-docker compose --profile bambu up -d
-```
-
-That's it — Compose pulls the current `:latest` (or whatever
-`SIDECAR_TAG` you've pinned to) and recreates the containers.
-
-To roll back to the sidecar that shipped with a previous Bambuddy
-release, set `SIDECAR_TAG=bambuddy-X.Y.Z` in `.env` and re-run the two
-commands above.
-
-## Troubleshooting
-
-- **`address already in use` on port 3000 or 3002** — Bambuddy's
-  virtual-printer feature owns those. Don't change `ORCA_API_PORT` to
-  3000 or 3002.
-- **`/health` reports `version: "unknown"`** — cosmetic. The bundled
-  binary works; the wrapper just couldn't parse the version string from
-  the slicer's `--help` output (BambuStudio's format differs from
-  OrcaSlicer's, which is what the wrapper was tuned for).
-- **Slice returns "Failed to slice the model"** — the wrapper hides the
-  CLI's stderr. Re-run inside the container to see it:
-
-  ```bash
-  docker exec orca-slicer-api /app/squashfs-root/AppRun --slice 1 \
-      --load-settings "/path/to/printer.json;/path/to/preset.json" \
-      --load-filaments /path/to/filament.json \
-      --allow-newer-file --outputdir /tmp/out /path/to/model.3mf
-  ```
+1. Choose a new Orca version and commit.
+2. Regenerate all schema inputs from that exact checkout.
+3. Build twice and compare normalized `schema.json` and `schema_hash`.
+4. Verify capabilities, override/model-state rejection, progress, and a real
+   representative slice before publishing a new digest.
+5. Update `build-metadata.json`, expected commit, and the deployment digest
+   together. Keep the previous digest for rollback.

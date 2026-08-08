@@ -148,6 +148,7 @@ async def test_engine():
         project,
         project_bom,
         settings,
+        slice_job,
         slot_preset,
         smart_plug,
         smart_plug_energy_snapshot,  # noqa: F401

@@ -39,7 +39,6 @@ from backend.app.models.local_preset import LocalPreset
 from backend.app.models.settings import Settings as SettingsModel
 from backend.app.schemas.slicer import SliceRequest
 from backend.app.services import slicer_api as slicer_api_module
-from backend.app.services.slice_dispatch import slice_dispatch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1111,8 +1110,6 @@ class TestSliceJobs:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_unknown_job_returns_404(self, async_client: AsyncClient):
-        # Sweep dispatcher state so a fresh ID is unknown.
-        slice_dispatch._jobs.clear()
         r = await async_client.get("/api/v1/slice-jobs/999999")
         assert r.status_code == 404
 

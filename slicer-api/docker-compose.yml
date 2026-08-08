@@ -1,55 +1,34 @@
-# Optional slicer-API sidecar stack for Bambuddy.
-#
-# Both services are HTTP wrappers around a slicer CLI: the same Node code
-# (`maziggy/orca-slicer-api`, `bambuddy/profile-resolver` branch) bundled
-# with a different binary in each image. Bambuddy talks to them via the
-# URLs configured in Settings -> Slicer.
-#
-#   bambu-studio-api  → host port 3001 (BambuStudio CLI)
-#   orca-slicer-api   → host port 3003 (OrcaSlicer CLI)
-#
-# Bambuddy's virtual-printer feature reserves host ports 3000 and 3002,
-# which is why the OrcaSlicer sidecar sits on 3003. Override either port
-# in `.env` (see `.env.example`) if you don't run Bambuddy on this host.
-#
-# Usage:
-#   cd slicer-api/
-#   docker compose up -d                       # starts OrcaSlicer only
-#   docker compose --profile bambu up -d       # starts both
-#
-# First start pulls pre-built images from GHCR (~110 MB OrcaSlicer,
-# ~220 MB BambuStudio). No local build, no git in the BuildKit worker,
-# works on QNAP / Synology / Container Station out of the box.
-#
-# Both images are linux/amd64 only. OrcaSlicer's ARM64 path is on hold
-# pending an upstream extraction fix; BambuStudio doesn't publish ARM64
-# at all.
+# Optional slicer sidecars. Images must be supplied as immutable references
+# (for example, image@sha256:...). No host ports are published by default.
 
 services:
   orca-slicer-api:
-    image: ghcr.io/maziggy/orca-slicer-api:${SIDECAR_TAG:-latest}
+    image: ${ORCA_SIDECAR_IMAGE:?set ORCA_SIDECAR_IMAGE to an immutable image@sha256 reference}
     container_name: orca-slicer-api
     restart: unless-stopped
-    ports:
-      - "${ORCA_API_PORT:-3003}:3000"
+    expose:
+      - "3000"
     volumes:
       - ./data/orca:/app/data
     environment:
       NODE_ENV: production
       PORT: "3000"
+      ORCA_EXPECTED_CONTRACT_VERSION: "1"
+      ORCA_EXPECTED_COMMIT: "8500fcdccaa10b5099ac20d252af3a7c560046f1"
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:3000/health"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:3000/health && curl -fsS http://localhost:3000/capabilities | grep -q '8500fcdccaa10b5099ac20d252af3a7c560046f1'"]
       interval: 30s
       timeout: 5s
       start_period: 10s
       retries: 3
+    networks: [slicer]
 
   bambu-studio-api:
-    image: ghcr.io/maziggy/bambu-studio-api:${SIDECAR_TAG:-latest}
+    image: ${BAMBU_SIDECAR_IMAGE:?set BAMBU_SIDECAR_IMAGE to an immutable image@sha256 reference}
     container_name: bambu-studio-api
     restart: unless-stopped
-    ports:
-      - "${BAMBU_API_PORT:-3001}:3000"
+    expose:
+      - "3000"
     volumes:
       - ./data/bambu:/app/data
     environment:
@@ -61,5 +40,9 @@ services:
       timeout: 5s
       start_period: 10s
       retries: 3
-    profiles:
-      - bambu
+    profiles: [bambu]
+    networks: [slicer]
+
+networks:
+  slicer:
+    internal: true

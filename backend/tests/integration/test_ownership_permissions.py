@@ -1461,3 +1461,43 @@ class TestReadIDORClosure(TestOwnershipPermissionsSetup):
         # change auth-enable/disable behavior. Pin not-404 to avoid masking a
         # regression where auth-disabled callers would lose access.
         assert response.status_code in (200, 401)
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_operator_cannot_poll_another_users_slice_job(
+        self,
+        async_client: AsyncClient,
+        auth_setup,
+        db_session,
+    ):
+        from backend.app.models.library import LibraryFile
+        from backend.app.services.slice_dispatch import slice_dispatch
+
+        source = LibraryFile(
+            filename="owned-model.stl",
+            file_path="library/owned-model.stl",
+            file_type="stl",
+            file_size=1024,
+            created_by_id=auth_setup["operator_user"]["id"],
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
+
+        async def finish(_job_id: int) -> dict:
+            return {"library_file_id": source.id}
+
+        job = await slice_dispatch.enqueue(
+            kind="library_file",
+            source_id=source.id,
+            source_name=source.filename,
+            owner_id=auth_setup["operator_user"]["id"],
+            run=finish,
+        )
+        response = await async_client.get(
+            f"/api/v1/slice-jobs/{job.id}",
+            headers={"Authorization": f"Bearer {auth_setup['operator2_token']}"},
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Slice job not found or expired"

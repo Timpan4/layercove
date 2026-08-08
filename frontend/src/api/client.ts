@@ -1586,6 +1586,64 @@ export interface SliceRequest {
   // "Textured PEI Plate", "Smooth PEI Plate", "Cool Plate (SuperTack)",
   // "Supertack Plate".
   bed_type?: string | null;
+  schema_hash?: string | null;
+  process_overrides?: Record<string, string | number | boolean | null | Array<string | number | boolean>>;
+  model_state?: SlicerModelState | null;
+}
+
+export interface SlicerModelTransform {
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+}
+
+export interface SlicerModelObjectState {
+  id: string;
+  transform?: SlicerModelTransform | null;
+  overrides?: Record<string, string | number | boolean | null | Array<string | number | boolean>>;
+}
+
+export interface SlicerModelState {
+  objects: SlicerModelObjectState[];
+  hidden_object_ids: string[];
+  lay_flat_object_ids: string[];
+  arrange: boolean;
+}
+
+export interface SlicerContractIdentity {
+  contract_version: string;
+  engine: { name: 'OrcaSlicer'; version: string; commit: string };
+  image_identity: { digest: string };
+  schema_hash: string;
+  capabilities: { process_schema: boolean; model_state: boolean; progress: boolean; cancel: boolean };
+  supported_scopes: Array<'global' | 'object'>;
+}
+
+export interface SlicerSchemaOption {
+  key: string;
+  type: string;
+  label?: string;
+  tooltip?: string;
+  mode?: 'simple' | 'advanced' | 'expert' | number;
+  units?: string | null;
+  min?: number | null;
+  max?: number | null;
+  choices?: Array<string | number> | null;
+  default?: unknown;
+}
+
+export interface SlicerProcessSchema extends SlicerContractIdentity {
+  pages: Array<{ name: string; groups: Array<{ name: string; options: string[] }> }>;
+  options: SlicerSchemaOption[];
+  scopes: Record<string, 'global' | 'object' | Array<'global' | 'object'>>;
+  samples: Record<string, unknown>;
+}
+
+export interface ResolvedSlicerProfile {
+  preset_type: 'printer' | 'process' | 'filament';
+  source: PresetSource;
+  id: string;
+  values: Record<string, unknown>;
 }
 
 // GET /api/v1/slicer/presets — unified listing across cloud / local / standard.
@@ -1778,7 +1836,7 @@ export interface SliceArchiveResponse {
 
 // Background slice-job lifecycle. POST /slice returns 202 + this shape;
 // the frontend polls /slice-jobs/{id} until status is terminal.
-export type SliceJobStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type SliceJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancel-requested' | 'cancelled';
 
 export interface SliceJobEnqueueResponse {
   job_id: number;
@@ -1809,6 +1867,8 @@ export interface SliceJobState {
   kind: 'library_file' | 'archive';
   source_id: number;
   source_name: string;
+  schema_hash: string | null;
+  request_fingerprint: string | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -1818,6 +1878,7 @@ export interface SliceJobState {
   progress: SliceJobProgress | null;
   result?: SliceResponse | SliceArchiveResponse;
   error_status?: number;
+  error_code?: string;
   error_detail?: string;
 }
 
@@ -6458,6 +6519,16 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ url }),
     }),
+
+  // Pinned Orca workbench contract. Schema discovery fails closed in the backend.
+  getSlicerCapabilities: () =>
+    request<SlicerContractIdentity>('/slicer/capabilities'),
+  getSlicerProcessSchema: (refresh = false) =>
+    request<SlicerProcessSchema>(`/slicer/schema/process${refresh ? '?refresh=true' : ''}`),
+  getResolvedSlicerProfile: (presetType: 'printer' | 'process' | 'filament', ref: PresetRef) =>
+    request<ResolvedSlicerProfile>(
+      `/slicer/profiles/${presetType}?source=${encodeURIComponent(ref.source)}&id=${encodeURIComponent(ref.id)}`,
+    ),
 
   // Slicer API — slice in the background. Both endpoints return 202 + a
   // job_id; poll /slice-jobs/{id} until status is `completed` or `failed`.

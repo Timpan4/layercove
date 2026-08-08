@@ -28608,7 +28608,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": unknown;
+                        "application/json": components["schemas"]["SliceJobStateResponse"];
                     };
                 };
                 /** @description Validation Error */
@@ -29002,6 +29002,53 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/slicer/capabilities": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Slicer Capabilities */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SlicerCapabilitiesResponse"];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/slicer/presets": {
         parameters: {
             query?: never;
@@ -29170,6 +29217,107 @@ export interface paths {
                         "application/json": {
                             [key: string]: string;
                         };
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/profiles/{preset_type}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Resolved Profile */
+        get: {
+            parameters: {
+                query: {
+                    source: string;
+                    id: string;
+                };
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    preset_type: string;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ResolvedSlicerProfileResponse"];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/schema/process": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Process Schema */
+        get: {
+            parameters: {
+                query?: {
+                    refresh?: boolean;
+                };
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SlicerProcessSchemaResponse"];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
                     };
                 };
             };
@@ -40731,6 +40879,72 @@ export interface components {
              */
             has_cloud_token: boolean;
         };
+        /** ModelObjectState */
+        ModelObjectState: {
+            /** Id */
+            id: string;
+            /** Overrides */
+            overrides?: {
+                [key: string]: string | number | boolean | (string | number | boolean)[] | null;
+            };
+            transform?: components["schemas"]["ModelTransform"] | null;
+        };
+        /** ModelState */
+        ModelState: {
+            /**
+             * Arrange
+             * @default false
+             */
+            arrange: boolean;
+            /** Hidden Object Ids */
+            hidden_object_ids?: string[];
+            /** Lay Flat Object Ids */
+            lay_flat_object_ids?: string[];
+            /** Objects */
+            objects?: components["schemas"]["ModelObjectState"][];
+        };
+        /** ModelTransform */
+        ModelTransform: {
+            /**
+             * Position
+             * @default [
+             *       0,
+             *       0,
+             *       0
+             *     ]
+             */
+            position: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Rotation
+             * @default [
+             *       0,
+             *       0,
+             *       0
+             *     ]
+             */
+            rotation: [
+                number,
+                number,
+                number
+            ];
+            /**
+             * Scale
+             * @default [
+             *       1,
+             *       1,
+             *       1
+             *     ]
+             */
+            scale: [
+                number,
+                number,
+                number
+            ];
+        };
         /** MoonrakerConnectionTestResponse */
         MoonrakerConnectionTestResponse: {
             /** Message */
@@ -42118,6 +42332,8 @@ export interface components {
             name: string | null;
             /** Object Count */
             object_count: number;
+            /** Object Ids */
+            object_ids?: string[];
             /** Objects */
             objects: string[];
             /** Print Time Seconds */
@@ -43827,6 +44043,25 @@ export interface components {
             /** Message */
             message: string;
         };
+        /** ResolvedSlicerProfileResponse */
+        ResolvedSlicerProfileResponse: {
+            /** Id */
+            id: string;
+            /**
+             * Preset Type
+             * @enum {string}
+             */
+            preset_type: "printer" | "process" | "filament";
+            /**
+             * Source
+             * @enum {string}
+             */
+            source: "orca_cloud" | "cloud" | "local" | "standard";
+            /** Values */
+            values: {
+                [key: string]: unknown;
+            };
+        };
         /** SMTPSettings */
         SMTPSettings: {
             /**
@@ -43986,6 +44221,52 @@ export interface components {
              */
             reason: "No RFID tag and no slot assignment";
         };
+        /** SliceJobStateResponse */
+        SliceJobStateResponse: {
+            /** Completed At */
+            completed_at?: string | null;
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Error Code */
+            error_code?: string | null;
+            /** Error Detail */
+            error_detail?: string | null;
+            /** Error Status */
+            error_status?: number | null;
+            /** Job Id */
+            job_id: number;
+            /**
+             * Kind
+             * @enum {string}
+             */
+            kind: "library_file" | "archive";
+            /** Progress */
+            progress?: {
+                [key: string]: unknown;
+            } | null;
+            /** Request Fingerprint */
+            request_fingerprint?: string | null;
+            /** Result */
+            result?: {
+                [key: string]: unknown;
+            } | null;
+            /** Schema Hash */
+            schema_hash?: string | null;
+            /** Source Id */
+            source_id: number;
+            /** Source Name */
+            source_name: string;
+            /** Started At */
+            started_at?: string | null;
+            /**
+             * Status
+             * @enum {string}
+             */
+            status: "pending" | "running" | "completed" | "failed" | "cancel-requested" | "cancelled";
+        };
         /**
          * SliceRequest
          * @description Body for `POST /library/files/{file_id}/slice`.
@@ -44028,6 +44309,7 @@ export interface components {
             filament_preset_id?: number | null;
             /** Filament Presets */
             filament_presets?: components["schemas"]["PresetRef"][];
+            model_state?: components["schemas"]["ModelState"] | null;
             /**
              * Plate
              * @description Plate number to slice. ``None`` defaults to plate 1 on the sidecar (matches the pre-multi-plate behaviour). ``0`` is the sidecar's 'all plates' sentinel — produces a single multi-plate 3MF whose ``Metadata/plate_N.gcode`` entries cover every plate in the source. ``>= 1`` slices that one plate.
@@ -44039,12 +44321,61 @@ export interface components {
              * @description DEPRECATED: prefer printer_preset. LocalPreset id with preset_type='printer'.
              */
             printer_preset_id?: number | null;
+            /** Process Overrides */
+            process_overrides?: {
+                [key: string]: string | number | boolean | (string | number | boolean)[] | null;
+            };
             process_preset?: components["schemas"]["PresetRef"] | null;
             /**
              * Process Preset Id
              * @description DEPRECATED: prefer process_preset. LocalPreset id with preset_type='process'.
              */
             process_preset_id?: number | null;
+            /**
+             * Schema Hash
+             * @description Authoritative process schema hash used to validate workbench overrides.
+             */
+            schema_hash?: string | null;
+        };
+        /** SlicerCapabilities */
+        SlicerCapabilities: {
+            /** Cancel */
+            cancel: boolean;
+            /** Model State */
+            model_state: boolean;
+            /** Process Schema */
+            process_schema: boolean;
+            /** Progress */
+            progress: boolean;
+        };
+        /** SlicerCapabilitiesResponse */
+        SlicerCapabilitiesResponse: {
+            capabilities: components["schemas"]["SlicerCapabilities"];
+            /** Contract Version */
+            contract_version: string;
+            engine: components["schemas"]["SlicerEngineIdentity"];
+            image_identity: components["schemas"]["SlicerImageIdentity"];
+            /** Schema Hash */
+            schema_hash: string;
+            /** Supported Scopes */
+            supported_scopes: ("global" | "object")[];
+        };
+        /** SlicerEngineIdentity */
+        SlicerEngineIdentity: {
+            /** Commit */
+            commit: string;
+            /**
+             * Name
+             * @constant
+             */
+            name: "OrcaSlicer";
+            /** Version */
+            version: string;
+        };
+        /** SlicerImageIdentity */
+        SlicerImageIdentity: {
+            /** Digest */
+            digest: string;
         };
         /**
          * SlicerPipelineCreate
@@ -44151,6 +44482,46 @@ export interface components {
             target_model_class?: string | null;
             /** Target Printer Id */
             target_printer_id?: number | null;
+        };
+        /** SlicerProcessSchemaResponse */
+        SlicerProcessSchemaResponse: {
+            capabilities: components["schemas"]["SlicerCapabilities"];
+            /** Contract Version */
+            contract_version: string;
+            engine: components["schemas"]["SlicerEngineIdentity"];
+            image_identity: components["schemas"]["SlicerImageIdentity"];
+            /** Options */
+            options: {
+                [key: string]: unknown;
+            }[];
+            /** Pages */
+            pages: components["schemas"]["SlicerSchemaPage"][];
+            /** Samples */
+            samples: {
+                [key: string]: unknown;
+            };
+            /** Schema Hash */
+            schema_hash: string;
+            /** Scopes */
+            scopes: {
+                [key: string]: string | string[];
+            };
+            /** Supported Scopes */
+            supported_scopes: ("global" | "object")[];
+        };
+        /** SlicerSchemaGroup */
+        SlicerSchemaGroup: {
+            /** Name */
+            name: string;
+            /** Options */
+            options: string[];
+        };
+        /** SlicerSchemaPage */
+        SlicerSchemaPage: {
+            /** Groups */
+            groups: components["schemas"]["SlicerSchemaGroup"][];
+            /** Name */
+            name: string;
         };
         /**
          * SlicerSetting

@@ -59,6 +59,7 @@ import {
   History,
 } from 'lucide-react';
 import { api } from '../api/client';
+import { supportsSlicerWorkbench } from '../features/slicer-workbench/source';
 import { SliceModal } from '../components/SliceModal';
 import { RunWithPipelineModal } from '../components/RunWithPipelineModal';
 import { openInSlicer, type SlicerType } from '../utils/slicer';
@@ -156,6 +157,7 @@ function ArchiveCard({
   timeFormat = 'system',
   preferredSlicer = 'bambu_studio',
   useSlicerApi = false,
+  useWorkbench = false,
   currency,
   t,
   onNavigateToArchive,
@@ -170,6 +172,7 @@ function ArchiveCard({
   timeFormat?: TimeFormat;
   preferredSlicer?: SlicerType;
   useSlicerApi?: boolean;
+  useWorkbench?: boolean;
   currency: string;
   t: TFunction;
   onNavigateToArchive?: (archiveId: number) => void;
@@ -435,7 +438,9 @@ function ArchiveCard({
         label: t('archives.menu.slice'),
         icon: useSlicerApi ? <Cog className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />,
         onClick: () => {
-          if (useSlicerApi) {
+          if (useWorkbench) {
+            navigate(`/slicer/workbench?archive=${archive.id}`);
+          } else if (useSlicerApi) {
             setShowSliceModal(true);
           } else {
             const filename = archive.print_name || archive.filename || 'model';
@@ -1186,7 +1191,9 @@ function ArchiveCard({
               size="sm"
               className="flex-1 min-w-0 overflow-hidden"
               onClick={() => {
-                if (useSlicerApi) {
+                if (useWorkbench) {
+                  navigate(`/slicer/workbench?archive=${archive.id}`);
+                } else if (useSlicerApi) {
                   setShowSliceModal(true);
                 } else {
                   const filename = archive.print_name || archive.filename || 'model';
@@ -1574,6 +1581,7 @@ function ArchiveListRow({
   isHighlighted,
   preferredSlicer = 'bambu_studio',
   useSlicerApi = false,
+  useWorkbench = false,
   t,
   onNavigateToArchive,
 }: {
@@ -1586,6 +1594,7 @@ function ArchiveListRow({
   isHighlighted?: boolean;
   preferredSlicer?: SlicerType;
   useSlicerApi?: boolean;
+  useWorkbench?: boolean;
   t: TFunction;
   onNavigateToArchive?: (archiveId: number) => void;
 }) {
@@ -1818,7 +1827,9 @@ function ArchiveListRow({
         label: t('archives.menu.slice'),
         icon: useSlicerApi ? <Cog className="w-4 h-4" /> : <ExternalLink className="w-4 h-4" />,
         onClick: () => {
-          if (useSlicerApi) {
+          if (useWorkbench) {
+            navigate(`/slicer/workbench?archive=${archive.id}`);
+          } else if (useSlicerApi) {
             setShowSliceModal(true);
           } else {
             const filename = archive.print_name || archive.filename || 'model';
@@ -2791,6 +2802,13 @@ export function ArchivesPage() {
   // preferred_slicer for the sidecar.
   const preferredSlicer: SlicerType = settings?.open_in_slicer || settings?.preferred_slicer || 'bambu_studio';
   const useSlicerApi = settings?.use_slicer_api ?? false;
+  const { data: slicerCapabilities } = useQuery({
+    queryKey: ['slicer-capabilities'],
+    queryFn: api.getSlicerCapabilities,
+    enabled: useSlicerApi,
+    retry: false,
+  });
+  const useWorkbench = supportsSlicerWorkbench(slicerCapabilities);
   const currency = getCurrencySymbol(settings?.currency || 'USD');
 
   const bulkDeleteMutation = useMutation({
@@ -3722,6 +3740,7 @@ export function ArchivesPage() {
                 timeFormat={timeFormat}
                 preferredSlicer={preferredSlicer}
                 useSlicerApi={useSlicerApi}
+                useWorkbench={useWorkbench}
                 currency={currency}
                 t={t}
                 onNavigateToArchive={handleNavigateToArchive}
@@ -3764,6 +3783,7 @@ export function ArchivesPage() {
                   isHighlighted={archive.id === highlightedArchiveId}
                   preferredSlicer={preferredSlicer}
                   useSlicerApi={useSlicerApi}
+                useWorkbench={useWorkbench}
                   t={t}
                   onNavigateToArchive={handleNavigateToArchive}
                 />

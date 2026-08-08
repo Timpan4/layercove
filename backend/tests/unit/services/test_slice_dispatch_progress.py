@@ -12,11 +12,12 @@ import asyncio
 
 import pytest
 
+import backend.app.services.slice_dispatch as slice_dispatch_module
 from backend.app.services.slice_dispatch import SliceDispatchService
 
 
 @pytest.mark.asyncio
-async def test_set_progress_attaches_snapshot_to_running_job():
+async def test_set_progress_attaches_snapshot_to_running_job(async_client):
     dispatcher = SliceDispatchService()
 
     started = asyncio.Event()
@@ -37,15 +38,16 @@ async def test_set_progress_attaches_snapshot_to_running_job():
     await started.wait()
 
     # Without progress published yet, the job's progress is None.
-    assert dispatcher.get(job.id) is not None
-    assert dispatcher.get(job.id).progress is None
+    assert (await dispatcher.get(job.id)) is not None
+    assert (await dispatcher.get(job.id)).progress is None
 
     # First snapshot lands on the job.
     dispatcher.set_progress(
         job.id,
         {"stage": "Detecting perimeters", "total_percent": 12},
     )
-    snap = dispatcher.get(job.id).progress
+    await asyncio.sleep(0.05)
+    snap = (await dispatcher.get(job.id)).progress
     assert snap == {"stage": "Detecting perimeters", "total_percent": 12}
 
     # Second snapshot replaces, doesn't merge — the dispatcher just
@@ -55,7 +57,8 @@ async def test_set_progress_attaches_snapshot_to_running_job():
         job.id,
         {"stage": "Generating G-code", "total_percent": 75, "plate_index": 1},
     )
-    snap = dispatcher.get(job.id).progress
+    await asyncio.sleep(0.05)
+    snap = (await dispatcher.get(job.id)).progress
     assert snap == {
         "stage": "Generating G-code",
         "total_percent": 75,
@@ -70,7 +73,7 @@ async def test_set_progress_attaches_snapshot_to_running_job():
 
 
 @pytest.mark.asyncio
-async def test_set_progress_silently_ignores_unknown_job_id():
+async def test_set_progress_silently_ignores_unknown_job_id(async_client):
     """A late poll after retention sweep mustn't crash the polling task."""
     dispatcher = SliceDispatchService()
     # Should be a no-op, not an exception.
@@ -78,7 +81,7 @@ async def test_set_progress_silently_ignores_unknown_job_id():
 
 
 @pytest.mark.asyncio
-async def test_set_progress_can_clear_to_none():
+async def test_set_progress_can_clear_to_none(async_client):
     """Allow clearing — useful when the slice transitions to a final
     state and we want the toast to revert to the elapsed-time fallback
     on subsequent polls."""
@@ -100,10 +103,75 @@ async def test_set_progress_can_clear_to_none():
     await started.wait()
 
     dispatcher.set_progress(job.id, {"stage": "x", "total_percent": 50})
-    assert dispatcher.get(job.id).progress is not None
+    await asyncio.sleep(0.05)
+    assert (await dispatcher.get(job.id)).progress is not None
     dispatcher.set_progress(job.id, None)
-    assert dispatcher.get(job.id).progress is None
+    await asyncio.sleep(0.05)
+    assert (await dispatcher.get(job.id)).progress is None
 
     release.set()
     await asyncio.sleep(0)
     await asyncio.sleep(0)
+
+
+@pytest.mark.asyncio
+async def test_running_job_does_not_expire(async_client, monkeypatch):
+    dispatcher = SliceDispatchService()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(_job_id: int) -> dict:
+        started.set()
+        await release.wait()
+        return {"library_file_id": 1}
+
+    job = await dispatcher.enqueue(
+        kind="library_file",
+        source_id=1,
+        source_name="x.stl",
+        run=runner,
+    )
+    await started.wait()
+    created_at = job.created_at
+    monkeypatch.setattr(
+        slice_dispatch_module,
+        "_now",
+        lambda: created_at + slice_dispatch_module._RETENTION * 2,
+    )
+
+    stored = await dispatcher.get(job.id)
+    assert stored is not None
+    assert stored.status == "running"
+    assert stored.expires_at is None
+
+    release.set()
+    await asyncio.gather(dispatcher._tasks[job.id])
+
+
+@pytest.mark.asyncio
+async def test_restart_marks_running_job_failed(async_client):
+    dispatcher = SliceDispatchService()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(_job_id: int) -> dict:
+        started.set()
+        await release.wait()
+        return {"library_file_id": 1}
+
+    job = await dispatcher.enqueue(
+        kind="library_file",
+        source_id=1,
+        source_name="x.stl",
+        owner_id=7,
+        run=runner,
+    )
+    await started.wait()
+
+    assert await dispatcher.mark_interrupted_jobs_failed() == 1
+    stored = await dispatcher.get(job.id)
+    assert stored.status == "failed"
+    assert stored.error_code == "worker_restarted"
+
+    dispatcher._tasks[job.id].cancel()
+    await asyncio.gather(dispatcher._tasks[job.id], return_exceptions=True)

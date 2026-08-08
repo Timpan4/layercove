@@ -58,6 +58,7 @@ from backend.app.api.routes import (
     projects,
     settings as settings_routes,
     slice_jobs,
+    slicer,
     slicer_pipelines,
     slicer_presets,
     smart_plugs,
@@ -6220,6 +6221,12 @@ async def lifespan(app: FastAPI):
 
     await init_db()
 
+    from backend.app.services.slice_dispatch import slice_dispatch
+
+    interrupted_jobs = await slice_dispatch.mark_interrupted_jobs_failed()
+    if interrupted_jobs:
+        logging.getLogger(__name__).warning("Marked %d interrupted slice job(s) as failed", interrupted_jobs)
+
     # Register an app-scoped httpx client for Bambu Cloud services so
     # per-request BambuCloudService instances reuse the same connection pool
     # (important for routes like /cloud/filament-info that chain many
@@ -7004,6 +7011,7 @@ app.include_router(library.router, prefix=app_settings.api_prefix)
 app.include_router(library_tags.router, prefix=app_settings.api_prefix)
 app.include_router(library_trash.router, prefix=app_settings.api_prefix)
 app.include_router(slice_jobs.router, prefix=app_settings.api_prefix)
+app.include_router(slicer.router, prefix=app_settings.api_prefix)
 app.include_router(slicer_pipelines.router, prefix=app_settings.api_prefix)
 app.include_router(pipeline_runs.pipeline_run_create_router, prefix=app_settings.api_prefix)
 app.include_router(pipeline_runs.pipeline_run_router, prefix=app_settings.api_prefix)

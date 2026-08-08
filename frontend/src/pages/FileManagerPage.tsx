@@ -55,6 +55,7 @@ import type {
   Permission,
 } from '../api/client';
 import { Button } from '../components/Button';
+import { supportsSlicerWorkbench } from '../features/slicer-workbench/source';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { PrintModal } from '../components/PrintModal';
 import { ModelViewerModal } from '../components/ModelViewerModal';
@@ -1097,6 +1098,13 @@ export function FileManagerPage() {
     queryKey: ['settings'],
     queryFn: () => api.getSettings() as Promise<AppSettings>,
   });
+  const { data: slicerCapabilities } = useQuery({
+    queryKey: ['slicer-capabilities'],
+    queryFn: api.getSlicerCapabilities,
+    enabled: settings?.use_slicer_api === true,
+    retry: false,
+  });
+  const workbenchAvailable = supportsSlicerWorkbench(slicerCapabilities);
   const { data: folders, isLoading: foldersLoading } = useQuery({
     queryKey: ['library-folders'],
     queryFn: () => api.getLibraryFolders(),
@@ -2454,7 +2462,11 @@ export function FileManagerPage() {
                       )}
                       {(settings?.use_slicer_api ?? false) && isSliceableFilename(file.filename) && (
                         <button
-                          onClick={() => hasPermission('library:upload') && setSliceFile(file)}
+                          onClick={() => {
+                            if (!hasPermission('library:upload')) return;
+                            if (workbenchAvailable) navigate(`/slicer/workbench?library_file=${file.id}`);
+                            else setSliceFile(file);
+                          }}
                           className={`p-1.5 rounded transition-colors ${
                             hasPermission('library:upload')
                               ? 'hover:bg-bambu-dark text-bambu-gray hover:text-bambu-green'
@@ -2702,7 +2714,8 @@ export function FileManagerPage() {
               ? () => {
                   const f = viewerFile;
                   setViewerFile(null);
-                  setSliceFile(f);
+                  if (workbenchAvailable) navigate(`/slicer/workbench?library_file=${f.id}`);
+                  else setSliceFile(f);
                 }
               : undefined
           }

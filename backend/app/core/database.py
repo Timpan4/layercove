@@ -235,6 +235,7 @@ async def init_db():
         project_bom,
         settings,
         shopping_list,
+        slice_job,
         slicer_pipeline,
         slot_preset,
         smart_plug,

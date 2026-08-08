@@ -1,0 +1,18 @@
+# Custom Orca image build contract
+ARG ORCA_COMMIT=8500fcdccaa10b5099ac20d252af3a7c560046f1
+ARG ORCA_VERSION=2.4.2
+
+FROM python:3.12-slim AS schema
+ARG ORCA_COMMIT
+ARG ORCA_VERSION
+WORKDIR /build
+COPY schema_exporter.py build-metadata.json ./
+COPY schema-input ./schema-input
+RUN test "$(python -c 'import json; print(json.load(open("build-metadata.json"))["commit"])')" = "$ORCA_COMMIT" \
+ && python schema_exporter.py schema-input /schema.json --version "$ORCA_VERSION" --commit "$ORCA_COMMIT"
+
+# The pinned Orca CLI build is deliberately not fabricated here. Add the
+# reproducible upstream checkout/build stages once the extraction tool emits
+# schema-input/*.json from the same checkout.
+FROM scratch
+COPY --from=schema /schema.json /contract/schema.json

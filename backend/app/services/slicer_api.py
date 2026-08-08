@@ -9,11 +9,23 @@ under the hood, response body is raw G-code or 3MF with metadata in the
 """
 
 import asyncio
+import hashlib
+import json
 import logging
+import time
 from collections.abc import Callable
 from typing import NamedTuple
 
 import httpx
+from pydantic import ValidationError
+
+from backend.app.schemas.slicer_contract import (
+    ORCA_COMMIT,
+    ORCA_CONTRACT_VERSION,
+    ORCA_VERSION,
+    SlicerCapabilitiesResponse,
+    SlicerProcessSchemaResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +50,10 @@ class SlicerInputError(SlicerApiError):
     """Sidecar rejected the input as invalid (4xx)."""
 
 
+class SlicerSchemaMismatchError(SlicerApiError):
+    """Sidecar identity or process schema differs from the pinned contract."""
+
+
 class SliceResult(NamedTuple):
     """Result of a slice operation."""
 
@@ -48,6 +64,29 @@ class SliceResult(NamedTuple):
 
 
 _shared_http_client: httpx.AsyncClient | None = None
+_CAPABILITIES_TTL_SECONDS = 30.0
+_MAX_CONTRACT_BYTES = 8 * 1024 * 1024
+_capabilities_cache: dict[str, tuple[float, SlicerCapabilitiesResponse]] = {}
+_schema_cache: dict[tuple[str, str, str], SlicerProcessSchemaResponse] = {}
+
+
+def _process_schema_hash(schema: SlicerProcessSchemaResponse) -> str:
+    payload = schema.model_dump(mode="json", include={"pages", "options", "scopes", "samples"})
+    normalized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    return hashlib.sha256(normalized).hexdigest()
+
+
+def _validate_contract_identity(contract: SlicerCapabilitiesResponse) -> None:
+    if (
+        contract.contract_version != ORCA_CONTRACT_VERSION
+        or contract.engine.version != ORCA_VERSION
+        or contract.engine.commit != ORCA_COMMIT
+    ):
+        raise SlicerSchemaMismatchError(
+            "Pinned slicer contract mismatch: expected "
+            f"contract {ORCA_CONTRACT_VERSION}, Orca {ORCA_VERSION} ({ORCA_COMMIT}); got "
+            f"contract {contract.contract_version}, Orca {contract.engine.version} ({contract.engine.commit})"
+        )
 
 
 def _format_sidecar_error(response: httpx.Response) -> str:
@@ -134,6 +173,143 @@ class SlicerApiService:
             raise SlicerApiUnavailableError(f"Slicer sidecar /health returned {response.status_code}")
         return response.json()
 
+    async def capabilities(self, *, refresh: bool = False) -> SlicerCapabilitiesResponse:
+        cached = _capabilities_cache.get(self.base_url)
+        now = time.monotonic()
+        if not refresh and cached is not None and cached[0] > now:
+            return cached[1]
+        payload = await self._get_contract_json("/capabilities")
+        try:
+            contract = SlicerCapabilitiesResponse.model_validate(payload)
+        except ValidationError as exc:
+            raise SlicerSchemaMismatchError(f"Invalid slicer capability contract: {exc}") from exc
+        _validate_contract_identity(contract)
+        _capabilities_cache[self.base_url] = (now + _CAPABILITIES_TTL_SECONDS, contract)
+        return contract
+
+    async def process_schema(self, *, refresh: bool = False) -> SlicerProcessSchemaResponse:
+        capabilities = await self.capabilities(refresh=refresh)
+        key = (self.base_url, capabilities.engine.commit, capabilities.schema_hash)
+        if not refresh and key in _schema_cache:
+            return _schema_cache[key]
+        payload = await self._get_contract_json("/schema/process")
+        try:
+            schema = SlicerProcessSchemaResponse.model_validate(payload)
+        except ValidationError as exc:
+            raise SlicerSchemaMismatchError(f"Invalid slicer process schema: {exc}") from exc
+        _validate_contract_identity(schema)
+        if schema.schema_hash != capabilities.schema_hash:
+            raise SlicerSchemaMismatchError(
+                f"Slicer schema hash changed during discovery: {capabilities.schema_hash} != {schema.schema_hash}"
+            )
+        content_hash = _process_schema_hash(schema)
+        if content_hash != schema.schema_hash:
+            raise SlicerSchemaMismatchError(
+                f"Slicer schema content hash mismatch: declared {schema.schema_hash}, computed {content_hash}"
+            )
+        _schema_cache[key] = schema
+        return schema
+
+    async def validate_workbench_request(
+        self,
+        *,
+        schema_hash: str,
+        process_overrides: dict,
+        model_state: dict | None,
+    ) -> None:
+        schema = await self.process_schema()
+        if schema.schema_hash != schema_hash:
+            raise SlicerSchemaMismatchError(
+                f"Browser schema {schema_hash} does not match sidecar schema {schema.schema_hash}"
+            )
+
+        options = {
+            option.get("key"): option
+            for option in schema.options
+            if isinstance(option, dict) and isinstance(option.get("key"), str)
+        }
+        self._validate_override_scope(process_overrides, options, schema.scopes, "global")
+        if model_state is not None:
+            for obj in model_state.get("objects", []):
+                if isinstance(obj, dict):
+                    overrides = obj.get("overrides") or {}
+                    if isinstance(overrides, dict):
+                        self._validate_override_scope(overrides, options, schema.scopes, "object")
+
+    @staticmethod
+    def _validate_override_scope(
+        overrides: dict,
+        options: dict[str, dict],
+        scopes: dict[str, str | list[str]],
+        required_scope: str,
+    ) -> None:
+        for key, value in overrides.items():
+            option = options.get(key)
+            if option is None:
+                raise SlicerInputError(f"Unknown process setting: {key}")
+            allowed = scopes.get(key, [])
+            allowed_scopes = [allowed] if isinstance(allowed, str) else allowed
+            if required_scope not in allowed_scopes:
+                raise SlicerInputError(f"Process setting {key} does not support {required_scope} scope")
+            value_type = option.get("type")
+            if value_type in ("bool", "boolean") and not isinstance(value, bool):
+                raise SlicerInputError(f"Process setting {key} must be boolean")
+            if value_type in ("int", "integer") and (not isinstance(value, int) or isinstance(value, bool)):
+                raise SlicerInputError(f"Process setting {key} must be an integer")
+            if value_type in ("float", "number", "percent") and (
+                not isinstance(value, (int, float)) or isinstance(value, bool)
+            ):
+                raise SlicerInputError(f"Process setting {key} must be numeric")
+            if value_type in ("string", "enum") and not isinstance(value, str):
+                raise SlicerInputError(f"Process setting {key} must be a string")
+            if isinstance(value, (int, float)) and not isinstance(value, bool):
+                minimum = option.get("min", option.get("minimum"))
+                maximum = option.get("max", option.get("maximum"))
+                if minimum is not None and value < minimum:
+                    raise SlicerInputError(f"Process setting {key} is below its minimum")
+                if maximum is not None and value > maximum:
+                    raise SlicerInputError(f"Process setting {key} is above its maximum")
+            choices = option.get("choices", option.get("enum"))
+            if isinstance(choices, list) and value not in choices:
+                raise SlicerInputError(f"Process setting {key} is not an allowed choice")
+
+    async def cancel_slice(self, request_id: str) -> None:
+        capabilities = await self.capabilities()
+        if not capabilities.capabilities.cancel:
+            raise SlicerInputError("Slicer sidecar does not support cancellation")
+        try:
+            response = await self._client.post(f"{self.base_url}/slice/cancel/{request_id}", timeout=10.0)
+        except httpx.RequestError as exc:
+            raise SlicerApiUnavailableError(f"Slicer sidecar unreachable: {exc}") from exc
+        if response.status_code >= 500:
+            raise SlicerApiServerError(f"Slicer cancel failed ({response.status_code}): {_format_sidecar_error(response)}")
+        if response.status_code >= 400:
+            raise SlicerInputError(f"Slicer cancel rejected ({response.status_code}): {_format_sidecar_error(response)}")
+
+    async def _get_contract_json(self, path: str) -> dict:
+        try:
+            async with self._client.stream("GET", f"{self.base_url}{path}", timeout=10.0) as response:
+                if response.status_code >= 500:
+                    raise SlicerApiServerError(f"Slicer sidecar {path} failed ({response.status_code})")
+                if response.status_code >= 400:
+                    raise SlicerSchemaMismatchError(f"Slicer sidecar does not provide required {path} contract")
+                body = bytearray()
+                async for chunk in response.aiter_bytes():
+                    if len(body) + len(chunk) > _MAX_CONTRACT_BYTES:
+                        raise SlicerSchemaMismatchError(
+                            f"Slicer sidecar {path} contract exceeds {_MAX_CONTRACT_BYTES} bytes"
+                        )
+                    body.extend(chunk)
+        except httpx.RequestError as exc:
+            raise SlicerApiUnavailableError(f"Slicer sidecar unreachable: {exc}") from exc
+        try:
+            payload = json.loads(body)
+        except (ValueError, RecursionError) as exc:
+            raise SlicerSchemaMismatchError(f"Slicer sidecar {path} returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise SlicerSchemaMismatchError(f"Slicer sidecar {path} must return a JSON object")
+        return payload
+
     async def list_bundled_profiles(self) -> dict:
         """GET /profiles/bundled — return the slicer's stock profiles by slot.
 
@@ -206,6 +382,8 @@ class SlicerApiService:
         plate: int | None = None,
         export_3mf: bool = False,
         arrange: bool = False,
+        schema_hash: str | None = None,
+        model_state: dict | None = None,
         request_id: str | None = None,
         on_progress: Callable[[dict], None] | None = None,
     ) -> SliceResult:
@@ -258,10 +436,11 @@ class SlicerApiService:
         if export_3mf:
             data["exportType"] = "3mf"
         if arrange:
-            # Sidecar reads non-empty truthy strings as True; only send the
-            # field when we want the flag on, so default-off callers exactly
-            # match the previous wire payload.
             data["arrange"] = "true"
+        if schema_hash is not None:
+            data["schemaHash"] = schema_hash
+        if model_state is not None:
+            data["modelState"] = json.dumps(model_state, separators=(",", ":"))
         if request_id is not None:
             data["requestId"] = request_id
 
