@@ -568,6 +568,8 @@ class TestSliceWithProfilesProgress:
 
 
 class TestPinnedContract:
+    UNICODE_SCHEMA_HASH = "0d3ae4e6fc4e51c2fec63fec5467509d28134456fdc5cd8eb30b3eec4e7dea8d"
+
     @staticmethod
     def schema_payload() -> dict:
         return {
@@ -579,7 +581,7 @@ class TestPinnedContract:
 
     @staticmethod
     def schema_hash(payload: dict) -> str:
-        normalized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        normalized = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
         return hashlib.sha256(normalized).hexdigest()
 
     @classmethod
@@ -605,6 +607,22 @@ class TestPinnedContract:
             return httpx.Response(200, json={**contract, **payload})
 
         service = SlicerApiService("http://contract-ok", client=_mock_client(handler))
+        schema = await service.process_schema(refresh=True)
+        assert schema.schema_hash == self.schema_hash(payload)
+
+    @pytest.mark.asyncio
+    async def test_process_schema_hash_uses_utf8_canonical_json(self):
+        payload = self.schema_payload()
+        payload["options"][0]["label"] = "Temperature °C"
+        contract = self.contract(payload=payload)
+        assert contract["schema_hash"] == self.UNICODE_SCHEMA_HASH
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/capabilities":
+                return httpx.Response(200, json=contract)
+            return httpx.Response(200, json={**contract, **payload})
+
+        service = SlicerApiService("http://contract-unicode", client=_mock_client(handler))
         schema = await service.process_schema(refresh=True)
         assert schema.schema_hash == self.schema_hash(payload)
 
