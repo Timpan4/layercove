@@ -73,7 +73,12 @@ _schema_cache: dict[tuple[str, str, str], SlicerProcessSchemaResponse] = {}
 
 def _process_schema_hash(schema: SlicerProcessSchemaResponse) -> str:
     payload = schema.model_dump(mode="json", include={"pages", "options", "scopes", "samples"})
-    normalized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    normalized = json.dumps(
+        payload,
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode()
     return hashlib.sha256(normalized).hexdigest()
 
 
