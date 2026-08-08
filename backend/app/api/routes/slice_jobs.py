@@ -2,7 +2,7 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.core.auth import get_caller_identity_if_auth_enabled
+from backend.app.core.auth import require_caller_identity_if_auth_enabled
 from backend.app.core.identity import CallerIdentity
 from backend.app.core.permissions import Permission
 from backend.app.schemas.slicer_contract import SliceJobStateResponse
@@ -14,7 +14,7 @@ router = APIRouter(prefix="/slice-jobs", tags=["slice-jobs"])
 @router.get("/{job_id}", response_model=SliceJobStateResponse)
 async def get_slice_job(
     job_id: int,
-    caller: CallerIdentity = Depends(get_caller_identity_if_auth_enabled),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled()),
 ):
     job = await slice_dispatch.get(job_id)
     if job is None:
