@@ -568,6 +568,8 @@ class TestSliceWithProfilesProgress:
 
 
 class TestPinnedContract:
+    UNICODE_SCHEMA_HASH = "0d3ae4e6fc4e51c2fec63fec5467509d28134456fdc5cd8eb30b3eec4e7dea8d"
+
     @staticmethod
     def schema_payload() -> dict:
         return {
@@ -613,6 +615,7 @@ class TestPinnedContract:
         payload = self.schema_payload()
         payload["options"][0]["label"] = "Temperature °C"
         contract = self.contract(payload=payload)
+        assert contract["schema_hash"] == self.UNICODE_SCHEMA_HASH
 
         def handler(request: httpx.Request) -> httpx.Response:
             if request.url.path == "/capabilities":
