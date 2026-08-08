@@ -2,7 +2,14 @@ import type { SlicerContractIdentity } from '../../api/client';
 import type { WorkbenchSource } from './useSlicerWorkbench';
 
 export function supportsSlicerWorkbench(contract: SlicerContractIdentity | undefined): boolean {
-  return contract?.capabilities.process_schema === true && contract.capabilities.model_state === true;
+  return contract?.capabilities.process_schema === true;
+}
+
+export function resolveSettingsScope(
+  supportsModelState: boolean,
+  settingsView: 'global' | 'objects',
+): 'global' | 'object' {
+  return supportsModelState && settingsView === 'objects' ? 'object' : 'global';
 }
 
 export function parsePositiveInteger(value: string | null): number | null {

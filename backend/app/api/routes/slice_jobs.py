@@ -2,9 +2,9 @@
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from backend.app.core.auth import require_ownership_permission
+from backend.app.core.auth import get_caller_identity_if_auth_enabled
+from backend.app.core.identity import CallerIdentity
 from backend.app.core.permissions import Permission
-from backend.app.models.user import User
 from backend.app.schemas.slicer_contract import SliceJobStateResponse
 from backend.app.services.slice_dispatch import slice_dispatch
 
@@ -14,20 +14,20 @@ router = APIRouter(prefix="/slice-jobs", tags=["slice-jobs"])
 @router.get("/{job_id}", response_model=SliceJobStateResponse)
 async def get_slice_job(
     job_id: int,
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
-            Permission.LIBRARY_READ_ALL,
-            Permission.LIBRARY_READ_OWN,
-        )
-    ),
+    caller: CallerIdentity = Depends(get_caller_identity_if_auth_enabled),
 ):
     job = await slice_dispatch.get(job_id)
-    user, can_read_all = auth_result
-    if (
-        job is None
-        or (not can_read_all and user is None)
-        or (not can_read_all and (job.owner_id is None or job.owner_id != user.id))
-    ):
+    if job is None:
+        raise HTTPException(status_code=404, detail="Slice job not found or expired")
+
+    permissions = {
+        "archive": (Permission.ARCHIVES_READ_ALL, Permission.ARCHIVES_READ_OWN),
+        "library_file": (Permission.LIBRARY_READ_ALL, Permission.LIBRARY_READ_OWN),
+    }.get(job.source_kind)
+    if permissions is None:
+        raise HTTPException(status_code=404, detail="Slice job not found or expired")
+    decision = caller.require_ownership(*permissions)
+    if not decision.can_access_all and job.owner_id != decision.owner_id:
         raise HTTPException(status_code=404, detail="Slice job not found or expired")
 
     body: dict = {

@@ -229,6 +229,8 @@ class SlicerApiService:
             if isinstance(option, dict) and isinstance(option.get("key"), str)
         }
         self._validate_override_scope(process_overrides, options, schema.scopes, "global")
+        if model_state is not None and not (await self.capabilities()).capabilities.model_state:
+            raise SlicerInputError("Slicer sidecar does not support model_state")
         if model_state is not None:
             for obj in model_state.get("objects", []):
                 if isinstance(obj, dict):
@@ -282,9 +284,13 @@ class SlicerApiService:
         except httpx.RequestError as exc:
             raise SlicerApiUnavailableError(f"Slicer sidecar unreachable: {exc}") from exc
         if response.status_code >= 500:
-            raise SlicerApiServerError(f"Slicer cancel failed ({response.status_code}): {_format_sidecar_error(response)}")
+            raise SlicerApiServerError(
+                f"Slicer cancel failed ({response.status_code}): {_format_sidecar_error(response)}"
+            )
         if response.status_code >= 400:
-            raise SlicerInputError(f"Slicer cancel rejected ({response.status_code}): {_format_sidecar_error(response)}")
+            raise SlicerInputError(
+                f"Slicer cancel rejected ({response.status_code}): {_format_sidecar_error(response)}"
+            )
 
     async def _get_contract_json(self, path: str) -> dict:
         try:

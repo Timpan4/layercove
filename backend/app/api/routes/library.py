@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.routes.cloud import resolve_api_key_cloud_owner
+from backend.app.api.routes.slicer import resolve_orca_api_url
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     require_ownership_permission,
@@ -3487,14 +3488,11 @@ async def _run_slicer_with_fallback(
     if request.bed_type:
         presets["process"] = _patch_process_bed_type(presets["process"], request.bed_type)
 
-    # Slicer routing — pick the sidecar URL by preferred_slicer.
-    # The per-install URL setting (Settings UI → Slicer card) wins; an
-    # empty value falls back to the SLICER_API_URL / BAMBU_STUDIO_API_URL
-    # env defaults defined in core/config.py.
+    # Slicer routing — schema-bound workbench requests always use Orca, while
+    # legacy requests retain preferred_slicer routing.
     preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
-    if preferred == "orcaslicer":
-        configured = await get_setting(db, "orcaslicer_api_url")
-        api_url = (configured or app_settings.slicer_api_url).strip()
+    if request.schema_hash is not None or preferred == "orcaslicer":
+        api_url = await resolve_orca_api_url(db)
     elif preferred == "bambu_studio":
         configured = await get_setting(db, "bambu_studio_api_url")
         api_url = (configured or app_settings.bambu_studio_api_url).strip()

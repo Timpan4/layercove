@@ -2,10 +2,12 @@ import { describe, expect, it } from 'vitest';
 import type { SlicerContractIdentity } from '../../api/client';
 import {
   canonicalRequest,
+  normalizeWorkbenchRequest,
   shouldRefreshSlicerSchema,
 } from '../../features/slicer-workbench/useSlicerWorkbench';
 import {
   parsePositiveInteger,
+  resolveSettingsScope,
   resolveWorkbenchSource,
   supportsSlicerWorkbench,
 } from '../../features/slicer-workbench/source';
@@ -37,12 +39,32 @@ describe('slicer workbench capability gate', () => {
     supported_scopes: ['global', 'object'],
   };
 
-  it('requires process schema and model state support', () => {
-    expect(supportsSlicerWorkbench(contract)).toBe(true);
+  it('allows schema-only sidecars', () => {
     expect(supportsSlicerWorkbench({
       ...contract,
       capabilities: { ...contract.capabilities, model_state: false },
-    })).toBe(false);
+    })).toBe(true);
+  });
+
+  it('forces global scope when object state becomes unsupported', () => {
+    expect(resolveSettingsScope(false, 'objects')).toBe('global');
+    expect(resolveSettingsScope(true, 'objects')).toBe('object');
+  });
+
+  it('omits model state when unsupported', () => {
+    const request = {
+      printer_preset: { source: 'local', id: '1' },
+      process_preset: { source: 'local', id: '2' },
+      filament_preset: { source: 'local', id: '3' },
+      schema_hash: 'a'.repeat(64),
+      model_state: {
+        objects: [{ id: 'part-1' }],
+        hidden_object_ids: [],
+        lay_flat_object_ids: [],
+        arrange: false,
+      },
+    } as never;
+    expect(normalizeWorkbenchRequest(request, false)).not.toHaveProperty('model_state');
   });
 
   it('refreshes only failed schema-mismatch jobs', () => {

@@ -9,6 +9,8 @@ status-poll endpoint surfaces to the UI's persistent progress toast.
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 
 import pytest
 
@@ -175,3 +177,69 @@ async def test_restart_marks_running_job_failed(async_client):
 
     dispatcher._tasks[job.id].cancel()
     await asyncio.gather(dispatcher._tasks[job.id], return_exceptions=True)
+
+
+@pytest.mark.asyncio
+async def test_enqueue_fingerprints_unicode_as_utf8_json(async_client):
+    dispatcher = SliceDispatchService()
+
+    async def runner(_job_id: int) -> dict:
+        return {}
+
+    snapshot = {"name": "café"}
+    job = await dispatcher.enqueue(
+        kind="library_file",
+        source_id=1,
+        source_name="x.stl",
+        run=runner,
+        request_snapshot=snapshot,
+    )
+
+    canonical = json.dumps(snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    assert job.request_fingerprint == hashlib.sha256(canonical).hexdigest()
+    await asyncio.gather(dispatcher._tasks[job.id])
+
+
+@pytest.mark.asyncio
+async def test_restart_failure_cannot_be_overwritten_by_late_completion(async_client):
+    dispatcher = SliceDispatchService()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(_job_id: int) -> dict:
+        started.set()
+        await release.wait()
+        return {"library_file_id": 1}
+
+    job = await dispatcher.enqueue(kind="library_file", source_id=1, source_name="x.stl", run=runner)
+    await started.wait()
+    assert await dispatcher.mark_interrupted_jobs_failed() == 1
+
+    release.set()
+    await asyncio.gather(dispatcher._tasks[job.id])
+    stored = await dispatcher.get(job.id)
+    assert stored.status == "failed"
+    assert stored.error_code == "worker_restarted"
+
+
+@pytest.mark.asyncio
+async def test_restart_failure_cannot_be_overwritten_by_late_failure(async_client):
+    dispatcher = SliceDispatchService()
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def runner(_job_id: int) -> dict:
+        started.set()
+        await release.wait()
+        raise slice_dispatch_module._SliceJobError(422, "late failure")
+
+    job = await dispatcher.enqueue(kind="library_file", source_id=1, source_name="x.stl", run=runner)
+    await started.wait()
+    assert await dispatcher.mark_interrupted_jobs_failed() == 1
+
+    release.set()
+    await asyncio.gather(dispatcher._tasks[job.id])
+    stored = await dispatcher.get(job.id)
+    assert stored.status == "failed"
+    assert stored.error_code == "worker_restarted"
+    assert stored.error_status == 503

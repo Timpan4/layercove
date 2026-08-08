@@ -15,7 +15,7 @@ import {
   type SlicerSetting,
 } from '../features/slicer-workbench/SlicerSettingsSidebar';
 import { SlicerTopBar } from '../features/slicer-workbench/SlicerTopBar';
-import { parsePositiveInteger, resolveWorkbenchSource } from '../features/slicer-workbench/source';
+import { parsePositiveInteger, resolveSettingsScope, resolveWorkbenchSource } from '../features/slicer-workbench/source';
 import {
   type SettingValue,
   type WorkbenchSource,
@@ -88,9 +88,11 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
 
   const failedQuery = [model.capabilitiesQuery, model.schemaQuery, model.sourceQuery, model.platesQuery, model.presetsQuery].find((query) => query.isError);
   if (failedQuery) return <ErrorState message={failedQuery.error instanceof Error ? failedQuery.error.message : 'Required slicer data could not be loaded.'} onBack={onBack} />;
-  if (!model.capabilitiesQuery.data?.capabilities.process_schema || !model.capabilitiesQuery.data.capabilities.model_state) {
-    return <ErrorState message="Pinned sidecar does not advertise required schema and model-state capabilities." onBack={onBack} />;
+  if (!model.capabilitiesQuery.data?.capabilities.process_schema) {
+    return <ErrorState message="Pinned sidecar does not advertise required schema capability." onBack={onBack} />;
   }
+  const supportsModelState = model.capabilitiesQuery.data.capabilities.model_state === true;
+  const settingsScope: SettingsScope = resolveSettingsScope(supportsModelState, model.settingsView);
 
   const filename = model.sourceQuery.data?.filename ?? '';
   if (!/\.(stl|3mf|step|stp)$/i.test(filename)) {
@@ -102,7 +104,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
   const settingRows: SlicerSetting[] = schema.options.flatMap((option) => {
     const configuredScopes = schema.scopes[option.key];
     const scopes = (Array.isArray(configuredScopes) ? configuredScopes : [configuredScopes]).filter(Boolean) as SettingsScope[];
-    return scopes.map((scope) => {
+    return scopes.filter((scope) => supportsModelState || scope === 'global').map((scope) => {
       const rawValue = scope === 'global'
         ? model.processOverrides[option.key] ?? model.processProfileQuery.data?.values[option.key] ?? schema.samples[option.key] ?? option.default ?? ''
         : selectedObject?.overrides[option.key] ?? model.processProfileQuery.data?.values[option.key] ?? schema.samples[option.key] ?? option.default ?? '';
@@ -170,13 +172,14 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
           onModeChange={model.setMode}
           pageId={pageId}
           onPageChange={setPageId}
-          scope={model.settingsView === 'objects' ? 'object' : 'global'}
+          scope={settingsScope}
+          supportsObjectState={supportsModelState}
           onScopeChange={(scope) => model.setSettingsView(scope === 'object' ? 'objects' : 'global')}
           onSettingChange={(key, value) => {
             const option = model.schemaOptions.get(key);
             if (!option) return;
             const parsed = parseSettingValue(option, value);
-            if (model.settingsView === 'global') model.updateProcessOverride(key, parsed);
+            if (settingsScope === 'global') model.updateProcessOverride(key, parsed);
             else if (selectedObject && !selectedObject.locked) model.updateObject(selectedObject.id, { overrides: { ...selectedObject.overrides, [key]: parsed } });
           }}
           objects={model.objects.map((object) => ({ id: object.id, name: object.name, hidden: !object.visible, locked: object.locked }))}
@@ -190,6 +193,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       <SlicerCanvasWorkspace
         mode={previewMode}
         tool={tool}
+        supportsObjectState={supportsModelState}
         onToolChange={setTool}
         selectedObject={selectedObject ? { id: selectedObject.id, name: selectedObject.name, hidden: !selectedObject.visible, locked: selectedObject.locked } : undefined}
         transform={transform}

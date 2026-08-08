@@ -54,7 +54,12 @@ class SliceDispatchService:
         now = _now()
         request_fingerprint = None
         if request_snapshot is not None:
-            canonical_request = json.dumps(request_snapshot, sort_keys=True, separators=(",", ":")).encode()
+            canonical_request = json.dumps(
+                request_snapshot,
+                sort_keys=True,
+                separators=(",", ":"),
+                ensure_ascii=False,
+            ).encode()
             request_fingerprint = hashlib.sha256(canonical_request).hexdigest()
         async with database.async_session() as db:
             await db.execute(
@@ -122,7 +127,10 @@ class SliceDispatchService:
         async with database.async_session() as db:
             await db.execute(
                 update(SliceJobRecord)
-                .where(SliceJobRecord.id == job_id)
+                .where(
+                    SliceJobRecord.id == job_id,
+                    SliceJobRecord.status.not_in(("completed", "failed", "cancelled")),
+                )
                 .values(
                     status="completed",
                     result=result,
@@ -139,7 +147,10 @@ class SliceDispatchService:
         async with database.async_session() as db:
             await db.execute(
                 update(SliceJobRecord)
-                .where(SliceJobRecord.id == job_id)
+                .where(
+                    SliceJobRecord.id == job_id,
+                    SliceJobRecord.status.not_in(("completed", "failed", "cancelled")),
+                )
                 .values(
                     status="failed",
                     error_status=status,

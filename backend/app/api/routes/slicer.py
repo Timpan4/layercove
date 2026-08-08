@@ -28,9 +28,13 @@ from backend.app.services.slicer_api import (
 router = APIRouter(prefix="/slicer", tags=["slicer"])
 
 
-async def _orca_service(db: AsyncSession) -> SlicerApiService:
+async def resolve_orca_api_url(db: AsyncSession) -> str:
     configured = await get_setting(db, "orcaslicer_api_url")
-    return SlicerApiService((configured or settings.slicer_api_url).strip())
+    return (configured or settings.slicer_api_url).strip()
+
+
+async def _orca_service(db: AsyncSession) -> SlicerApiService:
+    return SlicerApiService(await resolve_orca_api_url(db))
 
 
 def _contract_error(exc: SlicerApiError) -> HTTPException:

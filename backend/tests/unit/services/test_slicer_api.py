@@ -651,6 +651,25 @@ class TestPinnedContract:
             await service.process_schema(refresh=True)
 
     @pytest.mark.asyncio
+    async def test_model_state_is_rejected_when_capability_is_disabled(self):
+        payload = self.schema_payload()
+        contract = self.contract(payload=payload)
+        contract["capabilities"]["model_state"] = False
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/capabilities":
+                return httpx.Response(200, json=contract)
+            return httpx.Response(200, json={**contract, **payload})
+
+        service = SlicerApiService("http://schema-only", client=_mock_client(handler))
+        with pytest.raises(SlicerInputError, match="model_state"):
+            await service.validate_workbench_request(
+                schema_hash=self.schema_hash(payload),
+                process_overrides={},
+                model_state={"objects": []},
+            )
+
+    @pytest.mark.asyncio
     async def test_contract_response_size_is_bounded(self, monkeypatch):
         monkeypatch.setattr(slicer_api_module, "_MAX_CONTRACT_BYTES", 100)
         service = SlicerApiService(

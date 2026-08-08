@@ -47,7 +47,7 @@ function sortValue(value: unknown): unknown {
   return value;
 }
 
-function normalizeRequest(request: SliceRequest): Record<string, unknown> {
+function normalizeRequest(request: SliceRequest, supportsModelState = true): Record<string, unknown> {
   const normalized: Record<string, unknown> = Object.fromEntries(
     Object.entries(request).filter(([, value]) => value !== null && value !== undefined),
   );
@@ -76,7 +76,12 @@ function normalizeRequest(request: SliceRequest): Record<string, unknown> {
     if (Object.keys(modelState).length > 0) normalized.model_state = modelState;
     else delete normalized.model_state;
   }
+  if (!supportsModelState) delete normalized.model_state;
   return normalized;
+}
+
+export function normalizeWorkbenchRequest(request: SliceRequest, supportsModelState: boolean): Record<string, unknown> {
+  return normalizeRequest(request, supportsModelState);
 }
 
 export function canonicalRequest(request: SliceRequest): string {
@@ -209,6 +214,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     if (jobId !== null && sourceName) trackJob(jobId, source.kind, sourceName);
   }, [jobId, source.kind, sourceName, trackJob]);
 
+  const supportsModelState = capabilitiesQuery.data?.capabilities.model_state === true;
   const request = useMemo<SliceRequest | null>(() => {
     const schemaHash = schemaQuery.data?.schema_hash;
     if (!schemaHash || !printerPreset || !processPreset || filamentPresets.length === 0) return null;
@@ -226,7 +232,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
       ...(bedType ? { bed_type: bedType } : {}),
       schema_hash: schemaHash,
       ...(Object.keys(processOverrides).length > 0 ? { process_overrides: processOverrides } : {}),
-      ...(modelObjects.length > 0 || arrange || layFlatObjectIds.length > 0
+      ...(supportsModelState && (modelObjects.length > 0 || arrange || layFlatObjectIds.length > 0)
         ? {
             model_state: {
               objects: modelObjects,
@@ -237,7 +243,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
           }
         : {}),
     };
-  }, [arrange, bedType, filamentPresets, layFlatObjectIds, objects, printerPreset, processOverrides, processPreset, schemaQuery.data?.schema_hash, selectedPlate]);
+  }, [arrange, bedType, filamentPresets, layFlatObjectIds, objects, printerPreset, processOverrides, processPreset, schemaQuery.data?.schema_hash, selectedPlate, supportsModelState]);
 
   useEffect(() => {
     let cancelled = false;

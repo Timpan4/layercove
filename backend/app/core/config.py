@@ -85,10 +85,11 @@ class Settings(BaseSettings):
     # API
     api_prefix: str = "/api/v1"
 
-    # Slicer API sidecars. Defaults match the docker-compose.yml ports in the
-    # orca-slicer-api fork (https://github.com/maziggy/orca-slicer-api):
-    #   OrcaSlicer  → port 3003 (default profile)
-    #   BambuStudio → port 3001 (built locally via Dockerfile.bambu-studio)
+    # Slicer API sidecars. The standalone Orca service lives at
+    # https://github.com/Timpan4/orca-slicer-api. Defaults preserve the legacy
+    # host ports used by existing LayerCove installations:
+    #   OrcaSlicer  → port 3003
+    #   BambuStudio → port 3001
     # The slice route picks which one based on the user's preferred_slicer
     # setting.
     slicer_api_url: str = "http://localhost:3003"
