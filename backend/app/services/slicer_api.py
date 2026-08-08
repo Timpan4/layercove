@@ -3,9 +3,10 @@
 Bambuddy stores user printer/process/filament profiles itself (cloud-synced
 or locally imported), so the slice flow always sends the model file plus an
 explicit JSON profile triplet to the sidecar's `/slice` endpoint. The sidecar
-shape mirrors `AFKFelix/orca-slicer-api` (multipart upload, `--load-settings`
-under the hood, response body is raw G-code or 3MF with metadata in the
-`X-Print-Time-Seconds` / `X-Filament-Used-G` / `X-Filament-Used-Mm` headers).
+shape follows the standalone API at https://github.com/Timpan4/orca-slicer-api
+(multipart upload, `--load-settings` under the hood, response body is raw G-code
+or 3MF with metadata in the `X-Print-Time-Seconds` / `X-Filament-Used-G` /
+`X-Filament-Used-Mm` headers).
 """
 
 import asyncio
