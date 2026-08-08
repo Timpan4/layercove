@@ -1,5 +1,8 @@
 """Pydantic schemas for slice requests."""
 
+import json
+import math
+import re
 from enum import Enum
 from typing import Literal
 
@@ -30,6 +33,73 @@ class DestinationArtifactKind(str, Enum):
 
     BAMBU_3MF = "bambu_3mf"
     KLIPPER_GCODE = "klipper_gcode"
+
+
+SettingValue = str | int | float | bool | None | list[str | int | float | bool]
+_SETTING_KEY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+
+
+def _validate_overrides(overrides: dict[str, SettingValue], *, field_name: str, max_bytes: int) -> None:
+    invalid_key = next((key for key in overrides if not _SETTING_KEY.fullmatch(key)), None)
+    if invalid_key is not None:
+        raise ValueError(f"{field_name} contains invalid setting key: {invalid_key!r}")
+    for value in overrides.values():
+        values = value if isinstance(value, list) else [value]
+        if any(isinstance(item, float) and not math.isfinite(item) for item in values):
+            raise ValueError(f"{field_name} values must be finite")
+    if len(json.dumps(overrides, separators=(",", ":")).encode()) > max_bytes:
+        raise ValueError(f"{field_name} exceeds {max_bytes} bytes")
+
+
+class ModelTransform(BaseModel):
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+
+    @model_validator(mode="after")
+    def validate_transform(self) -> "ModelTransform":
+        values = (*self.position, *self.rotation, *self.scale)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("transform values must be finite")
+        if any(value <= 0 for value in self.scale):
+            raise ValueError("scale values must be greater than zero")
+        return self
+
+
+class ModelObjectState(BaseModel):
+    id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    transform: ModelTransform | None = None
+    overrides: dict[str, SettingValue] = Field(default_factory=dict, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_object_overrides(self) -> "ModelObjectState":
+        _validate_overrides(self.overrides, field_name="object overrides", max_bytes=32 * 1024)
+        return self
+
+
+class ModelState(BaseModel):
+    objects: list[ModelObjectState] = Field(default_factory=list, max_length=256)
+    hidden_object_ids: list[str] = Field(default_factory=list, max_length=256)
+    lay_flat_object_ids: list[str] = Field(default_factory=list, max_length=256)
+    arrange: bool = False
+
+    @model_validator(mode="after")
+    def validate_object_ids(self) -> "ModelState":
+        object_ids = [obj.id for obj in self.objects]
+        if len(object_ids) != len(set(object_ids)):
+            raise ValueError("model_state object IDs must be unique")
+        known_ids = set(object_ids)
+        for field_name, ids in (
+            ("hidden_object_ids", self.hidden_object_ids),
+            ("lay_flat_object_ids", self.lay_flat_object_ids),
+        ):
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"{field_name} must contain unique IDs")
+            if unknown := set(ids) - known_ids:
+                raise ValueError(f"{field_name} contains unknown object ID: {sorted(unknown)[0]!r}")
+        if len(json.dumps(self.model_dump(mode="json"), separators=(",", ":")).encode()) > 256 * 1024:
+            raise ValueError("model_state exceeds 262144 bytes")
+        return self
 
 
 class SliceRequest(BaseModel):
@@ -105,6 +175,22 @@ class SliceRequest(BaseModel):
             "process preset unchanged (#1337)."
         ),
     )
+    schema_hash: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Authoritative process schema hash used to validate workbench overrides.",
+    )
+    process_overrides: dict[str, SettingValue] = Field(default_factory=dict, max_length=256)
+    model_state: ModelState | None = None
+
+    @model_validator(mode="after")
+    def validate_workbench_state(self) -> "SliceRequest":
+        _validate_overrides(self.process_overrides, field_name="process_overrides", max_bytes=64 * 1024)
+        if (self.process_overrides or self.model_state is not None) and self.schema_hash is None:
+            raise ValueError("schema_hash is required when process_overrides or model_state is provided")
+        return self
 
     @model_validator(mode="after")
     def normalise_preset_refs(self) -> "SliceRequest":
@@ -169,6 +255,7 @@ class PlateMetadata(BaseModel):
     index: int
     name: str | None
     objects: list[str]
+    object_ids: list[str] = Field(default_factory=list)
     object_count: int
     has_thumbnail: bool
     thumbnail_url: str | None

@@ -8,6 +8,10 @@ Tests the ownership permission model where users can have:
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import select
+
+from backend.app.core.permissions import Permission
+from backend.app.models.group import Group
 
 
 class TestOwnershipPermissionsSetup:
@@ -1461,3 +1465,122 @@ class TestReadIDORClosure(TestOwnershipPermissionsSetup):
         # change auth-enable/disable behavior. Pin not-404 to avoid masking a
         # regression where auth-disabled callers would lose access.
         assert response.status_code in (200, 401)
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_operator_cannot_poll_another_users_slice_job(
+        self,
+        async_client: AsyncClient,
+        auth_setup,
+        db_session,
+    ):
+        from backend.app.models.library import LibraryFile
+        from backend.app.services.slice_dispatch import slice_dispatch
+
+        source = LibraryFile(
+            filename="owned-model.stl",
+            file_path="library/owned-model.stl",
+            file_type="stl",
+            file_size=1024,
+            created_by_id=auth_setup["operator_user"]["id"],
+        )
+        db_session.add(source)
+        await db_session.commit()
+        await db_session.refresh(source)
+
+        async def finish(_job_id: int) -> dict:
+            return {"library_file_id": source.id}
+
+        job = await slice_dispatch.enqueue(
+            kind="library_file",
+            source_id=source.id,
+            source_name=source.filename,
+            owner_id=auth_setup["operator_user"]["id"],
+            run=finish,
+        )
+        response = await async_client.get(
+            f"/api/v1/slice-jobs/{job.id}",
+            headers={"Authorization": f"Bearer {auth_setup['operator2_token']}"},
+        )
+
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Slice job not found or expired"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_archive_owner_can_poll_with_archive_read_own_only(
+        self, async_client: AsyncClient, auth_setup, db_session
+    ):
+        """Archive jobs use archive ownership permissions, not library permissions."""
+        from backend.app.services.slice_dispatch import slice_dispatch
+
+        operators = await db_session.scalar(select(Group).where(Group.name == "Operators"))
+        operators.permissions = [
+            permission for permission in operators.permissions if not permission.startswith("library:")
+        ]
+        await db_session.commit()
+
+        job = await slice_dispatch.enqueue(
+            kind="archive",
+            source_id=42,
+            source_name="owned.gcode.3mf",
+            owner_id=auth_setup["operator_user"]["id"],
+            run=lambda _job_id: _completed_job(),
+        )
+        response = await async_client.get(
+            f"/api/v1/slice-jobs/{job.id}",
+            headers={"Authorization": f"Bearer {auth_setup['operator_token']}"},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["kind"] == "archive"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_library_only_user_cannot_poll_archive_job(self, async_client: AsyncClient, auth_setup, db_session):
+        """Library ownership permission must not grant archive job access."""
+        from backend.app.services.slice_dispatch import slice_dispatch
+
+        viewers = await db_session.scalar(select(Group).where(Group.name == "Viewers"))
+        viewers.permissions = [
+            permission for permission in viewers.permissions if not permission.startswith("archives:")
+        ]
+        await db_session.commit()
+
+        job = await slice_dispatch.enqueue(
+            kind="archive",
+            source_id=42,
+            source_name="someone-else.gcode.3mf",
+            owner_id=auth_setup["operator_user"]["id"],
+            run=lambda _job_id: _completed_job(),
+        )
+        response = await async_client.get(
+            f"/api/v1/slice-jobs/{job.id}",
+            headers={"Authorization": f"Bearer {auth_setup['viewer_token']}"},
+        )
+
+        assert response.status_code == 403
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_admin_can_poll_any_archive_job(self, async_client: AsyncClient, auth_setup, db_session):
+        """Archive read-all callers retain cross-owner access."""
+        from backend.app.services.slice_dispatch import slice_dispatch
+
+        job = await slice_dispatch.enqueue(
+            kind="archive",
+            source_id=42,
+            source_name="operator.gcode.3mf",
+            owner_id=auth_setup["operator_user"]["id"],
+            run=lambda _job_id: _completed_job(),
+        )
+        response = await async_client.get(
+            f"/api/v1/slice-jobs/{job.id}",
+            headers={"Authorization": f"Bearer {auth_setup['admin_token']}"},
+        )
+
+        assert response.status_code == 200
+
+
+async def _completed_job() -> dict:
+    return {"archive_id": 42}

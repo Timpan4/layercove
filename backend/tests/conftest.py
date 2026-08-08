@@ -43,9 +43,6 @@ atexit.register(_cleanup_test_plate_cal_dir)
 from backend.app.core.database import Base  # noqa: E402
 from backend.tests._fixtures.moonraker import FakeMoonraker  # noqa: E402
 
-# Use in-memory SQLite for tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
-
 
 @pytest.fixture
 async def fake_moonraker() -> AsyncGenerator[FakeMoonraker, None]:
@@ -121,9 +118,13 @@ def event_loop():
 
 
 @pytest.fixture
-async def test_engine():
+async def test_engine(tmp_path):
     """Create a test database engine."""
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+    # Background jobs and request polling need independent connections. A
+    # single in-memory SQLite connection lets one session's rollback erase
+    # another session's commit.
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
+    engine = create_async_engine(database_url, echo=False)
 
     # Import all models to register them
     from backend.app.models import (
@@ -148,6 +149,7 @@ async def test_engine():
         project,
         project_bom,
         settings,
+        slice_job,
         slot_preset,
         smart_plug,
         smart_plug_energy_snapshot,  # noqa: F401

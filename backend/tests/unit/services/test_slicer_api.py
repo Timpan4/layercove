@@ -3,16 +3,20 @@
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 
 import httpx
 import pytest
 
+import backend.app.services.slicer_api as slicer_api_module
 from backend.app.services.slicer_api import (
     SlicerApiServerError,
     SlicerApiService,
     SlicerApiUnavailableError,
     SliceResult,
     SlicerInputError,
+    SlicerSchemaMismatchError,
     _guess_model_content_type,
 )
 
@@ -561,3 +565,116 @@ class TestSliceWithProfilesProgress:
         assert result is not None
         # Sustained 404 → no snapshots ever forwarded.
         assert snapshots == []
+
+
+class TestPinnedContract:
+    @staticmethod
+    def schema_payload() -> dict:
+        return {
+            "pages": [{"name": "Quality", "groups": [{"name": "Layers", "options": ["layer_height"]}]}],
+            "options": [{"key": "layer_height", "type": "number", "min": 0.04, "max": 1.0}],
+            "scopes": {"layer_height": ["global", "object"]},
+            "samples": {"layer_height": 0.2},
+        }
+
+    @staticmethod
+    def schema_hash(payload: dict) -> str:
+        normalized = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+        return hashlib.sha256(normalized).hexdigest()
+
+    @classmethod
+    def contract(cls, *, payload: dict | None = None, commit: str = "8500fcdccaa10b5099ac20d252af3a7c560046f1") -> dict:
+        payload = payload or cls.schema_payload()
+        return {
+            "contract_version": "1",
+            "engine": {"name": "OrcaSlicer", "version": "2.4.2", "commit": commit},
+            "image_identity": {"digest": f"sha256:{'b' * 64}"},
+            "schema_hash": cls.schema_hash(payload),
+            "capabilities": {"process_schema": True, "model_state": True, "progress": True, "cancel": False},
+            "supported_scopes": ["global", "object"],
+        }
+
+    @pytest.mark.asyncio
+    async def test_process_schema_matches_capability_identity_and_hash(self):
+        payload = self.schema_payload()
+        contract = self.contract(payload=payload)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/capabilities":
+                return httpx.Response(200, json=contract)
+            return httpx.Response(200, json={**contract, **payload})
+
+        service = SlicerApiService("http://contract-ok", client=_mock_client(handler))
+        schema = await service.process_schema(refresh=True)
+        assert schema.schema_hash == self.schema_hash(payload)
+
+    @pytest.mark.asyncio
+    async def test_wrong_engine_commit_fails_closed(self):
+        service = SlicerApiService(
+            "http://contract-wrong-commit",
+            client=_mock_client(lambda request: httpx.Response(200, json=self.contract(commit="0" * 40))),
+        )
+        with pytest.raises(SlicerSchemaMismatchError, match="Pinned slicer contract mismatch"):
+            await service.capabilities(refresh=True)
+
+    @pytest.mark.asyncio
+    async def test_stale_browser_hash_fails_closed(self):
+        payload = self.schema_payload()
+        contract = self.contract(payload=payload)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/capabilities":
+                return httpx.Response(200, json=contract)
+            return httpx.Response(200, json={**contract, **payload})
+
+        service = SlicerApiService("http://contract-stale", client=_mock_client(handler))
+        with pytest.raises(SlicerSchemaMismatchError, match="Browser schema"):
+            await service.validate_workbench_request(
+                schema_hash="c" * 64,
+                process_overrides={},
+                model_state=None,
+            )
+
+    @pytest.mark.asyncio
+    async def test_schema_content_must_match_declared_hash(self):
+        payload = self.schema_payload()
+        contract = self.contract(payload=payload)
+        tampered = {**payload, "samples": {"layer_height": 0.3}}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/capabilities":
+                return httpx.Response(200, json=contract)
+            return httpx.Response(200, json={**contract, **tampered})
+
+        service = SlicerApiService("http://contract-tampered", client=_mock_client(handler))
+        with pytest.raises(SlicerSchemaMismatchError, match="content hash mismatch"):
+            await service.process_schema(refresh=True)
+
+    @pytest.mark.asyncio
+    async def test_model_state_is_rejected_when_capability_is_disabled(self):
+        payload = self.schema_payload()
+        contract = self.contract(payload=payload)
+        contract["capabilities"]["model_state"] = False
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/capabilities":
+                return httpx.Response(200, json=contract)
+            return httpx.Response(200, json={**contract, **payload})
+
+        service = SlicerApiService("http://schema-only", client=_mock_client(handler))
+        with pytest.raises(SlicerInputError, match="model_state"):
+            await service.validate_workbench_request(
+                schema_hash=self.schema_hash(payload),
+                process_overrides={},
+                model_state={"objects": []},
+            )
+
+    @pytest.mark.asyncio
+    async def test_contract_response_size_is_bounded(self, monkeypatch):
+        monkeypatch.setattr(slicer_api_module, "_MAX_CONTRACT_BYTES", 100)
+        service = SlicerApiService(
+            "http://contract-oversized",
+            client=_mock_client(lambda request: httpx.Response(200, json=self.contract())),
+        )
+        with pytest.raises(SlicerSchemaMismatchError, match="exceeds 100 bytes"):
+            await service.capabilities(refresh=True)

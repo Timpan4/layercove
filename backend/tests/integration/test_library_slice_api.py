@@ -28,6 +28,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from backend.app.api.routes.library import (
+    _run_slicer_with_fallback,
     _slicer_rejection_message,
     slice_and_persist,
     slice_and_persist_as_archive,
@@ -39,7 +40,6 @@ from backend.app.models.local_preset import LocalPreset
 from backend.app.models.settings import Settings as SettingsModel
 from backend.app.schemas.slicer import SliceRequest
 from backend.app.services import slicer_api as slicer_api_module
-from backend.app.services.slice_dispatch import slice_dispatch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -245,6 +245,56 @@ class TestSliceLibraryFile:
         assert final["result"]["library_file_id"] != slice_test_setup["src_file_id"]
         assert final["result"]["print_time_seconds"] == 656
         assert captured["url"].endswith("/slice")
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_schema_bound_requests_use_orca_but_legacy_requests_use_preferred_slicer(
+        self, db_session, slice_test_setup, monkeypatch
+    ):
+        preferred = await db_session.scalar(select(SettingsModel).where(SettingsModel.key == "preferred_slicer"))
+        assert preferred is not None
+        preferred.value = "bambu_studio"
+        db_session.add_all(
+            [
+                SettingsModel(key="orcaslicer_api_url", value="http://configured-orca:3000"),
+                SettingsModel(key="bambu_studio_api_url", value="http://configured-bambu:3001"),
+            ]
+        )
+        await db_session.commit()
+
+        captured_urls: list[str] = []
+
+        async def validate_workbench_request(self, **_kwargs):
+            return None
+
+        async def slice_with_profiles(self, **_kwargs):
+            captured_urls.append(self.base_url)
+            return slicer_api_module.SliceResult(b"gcode", 1, 2.0, 3.0)
+
+        monkeypatch.setattr(
+            slicer_api_module.SlicerApiService, "validate_workbench_request", validate_workbench_request
+        )
+        monkeypatch.setattr(slicer_api_module.SlicerApiService, "slice_with_profiles", slice_with_profiles)
+
+        request_kwargs = {
+            "printer_preset_id": slice_test_setup["printer_id"],
+            "process_preset_id": slice_test_setup["process_id"],
+            "filament_preset_id": slice_test_setup["filament_id"],
+        }
+        await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid cube",
+            model_filename="Cube.stl",
+            request=SliceRequest(**request_kwargs, schema_hash="a" * 64),
+        )
+        await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid cube",
+            model_filename="Cube.stl",
+            request=SliceRequest(**request_kwargs),
+        )
+
+        assert captured_urls == ["http://configured-orca:3000", "http://configured-bambu:3001"]
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -1111,8 +1161,6 @@ class TestSliceJobs:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_unknown_job_returns_404(self, async_client: AsyncClient):
-        # Sweep dispatcher state so a fresh ID is unknown.
-        slice_dispatch._jobs.clear()
         r = await async_client.get("/api/v1/slice-jobs/999999")
         assert r.status_code == 404
 

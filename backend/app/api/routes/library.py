@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.routes.cloud import resolve_api_key_cloud_owner
+from backend.app.api.routes.slicer import resolve_orca_api_url
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     require_ownership_permission,
@@ -2853,6 +2854,7 @@ async def get_library_file_plates(
                         "index": idx,
                         "name": plate_name,
                         "objects": objects,
+                        "object_ids": plate_object_ids.get(idx, []),
                         "object_count": len(objects),
                         "has_thumbnail": has_thumbnail,
                         "thumbnail_url": f"/api/v1/library/files/{file_id}/plate-thumbnail/{idx}"
@@ -3268,6 +3270,17 @@ def _sanitize_project_settings_sentinels(zip_bytes: bytes) -> bytes:
         return zip_bytes
 
 
+def _patch_process_overrides(process_json: str, overrides: dict) -> str:
+    """Merge validated sparse overrides into a copy of the resolved profile."""
+    try:
+        profile = json.loads(process_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Resolved process preset is not valid JSON") from exc
+    if not isinstance(profile, dict):
+        raise HTTPException(status_code=400, detail="Resolved process preset must be a JSON object")
+    return json.dumps({**profile, **overrides})
+
+
 def _patch_process_bed_type(process_json: str, bed_type: str) -> str:
     """Overwrite ``curr_bed_type`` in a process-profile JSON before forwarding
     to the slicer sidecar.
@@ -3436,6 +3449,7 @@ async def _run_slicer_with_fallback(
         SlicerApiService,
         SlicerApiUnavailableError,
         SlicerInputError,
+        SlicerSchemaMismatchError,
     )
 
     user: User | None = None
@@ -3462,6 +3476,9 @@ async def _run_slicer_with_fallback(
         assert ref is not None, "schema validator guarantees filament list is non-None"
         filament_jsons.append(await resolve_preset_ref(db, user, ref, "filament"))
 
+    if request.process_overrides:
+        presets["process"] = _patch_process_overrides(presets["process"], request.process_overrides)
+
     # Bed-type override (#1337): patch curr_bed_type onto the resolved
     # process JSON so the slicer's StaticPrintConfig pass picks up the
     # user's pick instead of whatever the process preset defaults to.
@@ -3471,14 +3488,11 @@ async def _run_slicer_with_fallback(
     if request.bed_type:
         presets["process"] = _patch_process_bed_type(presets["process"], request.bed_type)
 
-    # Slicer routing — pick the sidecar URL by preferred_slicer.
-    # The per-install URL setting (Settings UI → Slicer card) wins; an
-    # empty value falls back to the SLICER_API_URL / BAMBU_STUDIO_API_URL
-    # env defaults defined in core/config.py.
+    # Slicer routing — schema-bound workbench requests always use Orca, while
+    # legacy requests retain preferred_slicer routing.
     preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
-    if preferred == "orcaslicer":
-        configured = await get_setting(db, "orcaslicer_api_url")
-        api_url = (configured or app_settings.slicer_api_url).strip()
+    if request.schema_hash is not None or preferred == "orcaslicer":
+        api_url = await resolve_orca_api_url(db)
     elif preferred == "bambu_studio":
         configured = await get_setting(db, "bambu_studio_api_url")
         api_url = (configured or app_settings.bambu_studio_api_url).strip()
@@ -3605,6 +3619,12 @@ async def _run_slicer_with_fallback(
     use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and export_3mf
 
     try:
+        if request.schema_hash is not None:
+            await service.validate_workbench_request(
+                schema_hash=request.schema_hash,
+                process_overrides=request.process_overrides,
+                model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
+            )
         try:
             if use_cross_class_slice_all:
                 from backend.app.services.slicer_3mf_convert import (
@@ -3662,6 +3682,8 @@ async def _run_slicer_with_fallback(
                         plate=plate_num,
                         export_3mf=True,
                         arrange=True,
+                        schema_hash=request.schema_hash,
+                        model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
                         request_id=progress_request_id,
                         on_progress=plate_cb,
                     )
@@ -3694,7 +3716,9 @@ async def _run_slicer_with_fallback(
                     filament_profile_jsons=filament_jsons,
                     plate=request.plate,
                     export_3mf=export_3mf,
-                    arrange=cross_class_arrange,
+                    arrange=cross_class_arrange or bool(request.model_state and request.model_state.arrange),
+                    schema_hash=request.schema_hash,
+                    model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
                     request_id=progress_request_id,
                     on_progress=progress_callback,
                 )
@@ -3708,7 +3732,11 @@ async def _run_slicer_with_fallback(
                 # (e.g. re-slicing an H2D model for an X1C: the object is off
                 # the smaller bed). Surface the slicer's reason instead.
                 raise HTTPException(status_code=400, detail=rejection) from exc
-            if not is_3mf or request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE:
+            if (
+                not is_3mf
+                or request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
+                or request.schema_hash is not None
+            ):
                 raise
             logger.warning(
                 "Slicer CLI failed on the --load-settings path for %s (%s); retrying with embedded settings",
@@ -3734,6 +3762,11 @@ async def _run_slicer_with_fallback(
             used_embedded_settings = True
     except SlicerInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SlicerSchemaMismatchError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "slicer_schema_mismatch", "detail": str(exc)},
+        ) from exc
     except SlicerApiServerError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SlicerApiUnavailableError as exc:
@@ -4279,6 +4312,12 @@ async def slice_library_file(
     request: SliceRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_UPLOAD)),
+    auth_result: tuple[User | None, bool] = Depends(
+        require_ownership_permission(
+            Permission.LIBRARY_READ_ALL,
+            Permission.LIBRARY_READ_OWN,
+        )
+    ),
     api_key_cloud_owner: User | None = Depends(resolve_api_key_cloud_owner),
 ):
     """Enqueue a slice job for a library file. Returns 202 + job_id; the
@@ -4291,9 +4330,8 @@ async def slice_library_file(
     )
 
     src_result = await db.execute(LibraryFile.active().where(LibraryFile.id == file_id))
-    lib_file = src_result.scalar_one_or_none()
-    if not lib_file:
-        raise HTTPException(status_code=404, detail="File not found")
+    visibility_user, can_read_all = auth_result
+    lib_file = _ensure_library_file_visible(src_result.scalar_one_or_none(), visibility_user, can_read_all)
 
     src_lower = (lib_file.filename or "").lower()
     if not (
@@ -4365,6 +4403,9 @@ async def slice_library_file(
         kind="library_file",
         source_id=lib_file.id,
         source_name=lib_file.filename,
+        owner_id=user_id,
+        request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
+        schema_hash=request.schema_hash,
         run=_run,
     )
     return {

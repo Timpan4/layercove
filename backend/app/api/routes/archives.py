@@ -3695,6 +3695,7 @@ async def get_archive_plates(
                         "index": idx,
                         "name": plate_name,
                         "objects": objects,
+                        "object_ids": plate_object_ids.get(idx, []),
                         "object_count": len(objects),
                         "has_thumbnail": has_thumbnail,
                         "thumbnail_url": f"/api/v1/archives/{archive_id}/plate-thumbnail/{idx}"
@@ -3967,6 +3968,12 @@ async def slice_archive(
     request: SliceRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_UPLOAD),
+    auth_result: tuple[User | None, bool] = Depends(
+        require_ownership_permission(
+            Permission.ARCHIVES_READ_ALL,
+            Permission.ARCHIVES_READ_OWN,
+        )
+    ),
 ):
     """Enqueue a slice job for an archive's source. Returns 202 + job_id;
     the slice runs in the background, the caller polls `GET /slice-jobs/{id}`.
@@ -3982,9 +3989,8 @@ async def slice_archive(
         slice_dispatch,
     )
 
-    archive = await db.get(PrintArchive, archive_id)
-    if archive is None:
-        raise HTTPException(status_code=404, detail="Archive not found")
+    visibility_user, can_read_all = auth_result
+    archive = _ensure_archive_visible(await db.get(PrintArchive, archive_id), visibility_user, can_read_all)
 
     src_relative = archive.source_3mf_path or archive.file_path
     if not src_relative:
@@ -4055,6 +4061,9 @@ async def slice_archive(
         kind="archive",
         source_id=archive.id,
         source_name=archive.print_name or archive.filename or f"archive {archive.id}",
+        owner_id=user_id,
+        request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
+        schema_hash=request.schema_hash,
         run=_run,
     )
     return {
