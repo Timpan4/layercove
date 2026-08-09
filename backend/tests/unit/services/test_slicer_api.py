@@ -678,6 +678,23 @@ class TestPinnedContract:
             )
 
     @pytest.mark.asyncio
+    async def test_bed_type_profile_control_is_valid_when_process_schema_omits_it(self):
+        payload = self.schema_payload()
+        contract = self.contract(payload=payload)
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            if request.url.path == "/capabilities":
+                return httpx.Response(200, json=contract)
+            return httpx.Response(200, json={**contract, **payload})
+
+        service = SlicerApiService("http://contract-bed-type", client=_mock_client(handler))
+        await service.validate_workbench_request(
+            schema_hash=self.schema_hash(payload),
+            process_overrides={"curr_bed_type": "Textured PEI Plate"},
+            model_state=None,
+        )
+
+    @pytest.mark.asyncio
     async def test_schema_content_must_match_declared_hash(self):
         payload = self.schema_payload()
         contract = self.contract(payload=payload)

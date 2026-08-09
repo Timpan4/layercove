@@ -67,6 +67,7 @@ class SliceResult(NamedTuple):
 _shared_http_client: httpx.AsyncClient | None = None
 _CAPABILITIES_TTL_SECONDS = 30.0
 _MAX_CONTRACT_BYTES = 8 * 1024 * 1024
+_BED_TYPE_PROFILE_KEY = "curr_bed_type"
 _capabilities_cache: dict[str, tuple[float, SlicerCapabilitiesResponse]] = {}
 _schema_cache: dict[tuple[str, str, str], SlicerProcessSchemaResponse] = {}
 
@@ -254,6 +255,10 @@ class SlicerApiService:
         for key, value in overrides.items():
             option = options.get(key)
             if option is None:
+                if key == _BED_TYPE_PROFILE_KEY and required_scope == "global":
+                    if not isinstance(value, str):
+                        raise SlicerInputError(f"Process setting {key} must be a string")
+                    continue
                 raise SlicerInputError(f"Unknown process setting: {key}")
             allowed = scopes.get(key, [])
             allowed_scopes = [allowed] if isinstance(allowed, str) else allowed
