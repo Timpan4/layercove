@@ -116,6 +116,10 @@ function presetOptions(data: Awaited<ReturnType<typeof api.getSlicerPresets>> | 
   return [data.local, data.orca_cloud, data.cloud, data.standard].flatMap((tier) => tier[slot]);
 }
 
+function samePresetRef(left: PresetRef | null, right: PresetRef | null): boolean {
+  return left?.source === right?.source && left?.id === right?.id;
+}
+
 export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number | null) {
   const [, setSearchParams] = useSearchParams();
   const { trackJob, jobStates } = useSliceJobTracker();
@@ -124,7 +128,8 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
   const [selectedPlate, setSelectedPlate] = useState<number | null>(null);
   const [printerPreset, setPrinterPreset] = useState<PresetRef | null>(null);
   const [processPreset, setProcessPreset] = useState<PresetRef | null>(null);
-  const [filamentPresets, setFilamentPresets] = useState<PresetRef[]>([]);
+  const [filamentPresets, setFilamentPresetsState] = useState<PresetRef[]>([]);
+  const automaticFilamentPresets = useRef<Array<PresetRef | null>>([]);
   const [bedType, setBedType] = useState<string | null>(null);
   const [processOverrides, setProcessOverrides] = useState<Record<string, SettingValue>>({});
   const [objects, setObjects] = useState<WorkbenchObject[]>([]);
@@ -134,6 +139,10 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
   const [jobId, setJobId] = useState<number | null>(initialJobId);
   const [requestFingerprint, setRequestFingerprint] = useState<string | null>(null);
   const refreshedSchemaJobs = useRef(new Set<number>());
+  const setFilamentPresets = useCallback((presets: PresetRef[]) => {
+    automaticFilamentPresets.current = [];
+    setFilamentPresetsState(presets);
+  }, []);
 
   const capabilitiesQuery = useQuery({
     queryKey: ['slicer-capabilities'],
@@ -201,7 +210,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
 
   useEffect(() => {
     const data = presetsQuery.data;
-    if (!data || platesQuery.isPending) return;
+    if (!data || platesQuery.isPending || !printerModelsQuery.isSuccess) return;
     setProcessPreset((current) => {
       if (current) {
         const preset = findPreset(data, current, 'process');
@@ -211,7 +220,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
       }
       return pickProcessDefault(data, selectedPrinterName, compatIndex, embeddedProcess);
     });
-  }, [presetsQuery.data, selectedPrinterName, compatIndex, embeddedProcess, platesQuery.isPending]);
+  }, [presetsQuery.data, selectedPrinterName, compatIndex, embeddedProcess, platesQuery.isPending, printerModelsQuery.isSuccess]);
 
   useEffect(() => {
     if (selectedPlate === null && platesQuery.data?.plates[0]) {
@@ -221,24 +230,35 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
 
   useEffect(() => {
     const data = presetsQuery.data;
-    if (!data || platesQuery.isPending) return;
-    setFilamentPresets((current) => filamentSlots.flatMap((slot, index) => {
-      const selected = current[index] ?? null;
-      if (selected) {
-        const preset = findPreset(data, selected, 'filament');
-        if (preset && presetCompatibility(preset, 'filament', selectedPrinterName, compatIndex) !== 'mismatch') {
-          return [selected];
+    if (!data || platesQuery.isPending || !printerModelsQuery.isSuccess) return;
+    setFilamentPresetsState((current) => {
+      const nextAutomatic: Array<PresetRef | null> = [];
+      const next = filamentSlots.flatMap((slot, index) => {
+        const selected = current[index] ?? null;
+        const selectedAutomatically = samePresetRef(
+          selected,
+          automaticFilamentPresets.current[index] ?? null,
+        );
+        if (selected && !selectedAutomatically) {
+          const preset = findPreset(data, selected, 'filament');
+          if (preset && presetCompatibility(preset, 'filament', selectedPrinterName, compatIndex) !== 'mismatch') {
+            nextAutomatic[index] = null;
+            return [selected];
+          }
         }
-      }
-      const picked = pickFilamentForSlot(
-        data,
-        { type: slot.type, color: slot.color },
-        selectedPrinterName,
-        compatIndex,
-      );
-      return picked ? [picked] : [];
-    }));
-  }, [presetsQuery.data, filamentSlots, selectedPrinterName, compatIndex, platesQuery.isPending]);
+        const picked = pickFilamentForSlot(
+          data,
+          { type: slot.type, color: slot.color },
+          selectedPrinterName,
+          compatIndex,
+        );
+        nextAutomatic[index] = picked;
+        return picked ? [picked] : [];
+      });
+      automaticFilamentPresets.current = nextAutomatic;
+      return next;
+    });
+  }, [presetsQuery.data, filamentSlots, selectedPrinterName, compatIndex, platesQuery.isPending, printerModelsQuery.isSuccess]);
 
   useEffect(() => {
     const ids = selectedPlateMetadata?.object_ids ?? [];
@@ -275,7 +295,13 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
   const supportsModelState = capabilitiesQuery.data?.capabilities.model_state === true;
   const request = useMemo<SliceRequest | null>(() => {
     const schemaHash = schemaQuery.data?.schema_hash;
-    if (!schemaHash || !printerPreset || !processPreset || filamentPresets.length === 0) return null;
+    if (
+      !printerModelsQuery.isSuccess
+      || !schemaHash
+      || !printerPreset
+      || !processPreset
+      || filamentPresets.length === 0
+    ) return null;
     const modelObjects: SlicerModelObjectState[] = objects.map((object) => ({
       id: object.id,
       ...(JSON.stringify(object.transform) === JSON.stringify(identityTransform()) ? {} : { transform: object.transform }),
@@ -301,7 +327,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
           }
         : {}),
     };
-  }, [arrange, bedType, filamentPresets, layFlatObjectIds, objects, printerPreset, processOverrides, processPreset, schemaQuery.data?.schema_hash, selectedPlate, supportsModelState]);
+  }, [arrange, bedType, filamentPresets, layFlatObjectIds, objects, printerModelsQuery.isSuccess, printerPreset, processOverrides, processPreset, schemaQuery.data?.schema_hash, selectedPlate, supportsModelState]);
 
   useEffect(() => {
     let cancelled = false;
@@ -375,6 +401,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     sourceQuery,
     platesQuery,
     presetsQuery,
+    printerModelsQuery,
     processProfileQuery,
     sourceName,
     printerOptions,
