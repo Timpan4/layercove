@@ -75,6 +75,27 @@ async def test_set_progress_attaches_snapshot_to_running_job(async_client):
 
 
 @pytest.mark.asyncio
+async def test_fast_completed_job_persists_terminal_progress(async_client):
+    dispatcher = SliceDispatchService()
+
+    async def runner(_job_id: int) -> dict:
+        return {"library_file_id": 1}
+
+    job = await dispatcher.enqueue(
+        kind="library_file",
+        source_id=1,
+        source_name="x.stl",
+        run=runner,
+    )
+    task = dispatcher._tasks[job.id]
+    await task
+
+    stored = await dispatcher.get(job.id)
+    assert stored.status == "completed"
+    assert stored.progress == {"stage": "Completed", "total_percent": 100}
+
+
+@pytest.mark.asyncio
 async def test_set_progress_silently_ignores_unknown_job_id(async_client):
     """A late poll after retention sweep mustn't crash the polling task."""
     dispatcher = SliceDispatchService()

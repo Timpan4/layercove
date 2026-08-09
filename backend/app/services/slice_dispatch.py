@@ -133,6 +133,7 @@ class SliceDispatchService:
                 )
                 .values(
                     status="completed",
+                    progress={"stage": "Completed", "total_percent": 100},
                     result=result,
                     result_artifact_kind=artifact_kind,
                     result_artifact_id=artifact_id,
