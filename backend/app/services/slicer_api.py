@@ -391,6 +391,7 @@ class SlicerApiService:
         printer_profile_json: str,
         process_profile_json: str,
         filament_profile_jsons: list[str],
+        process_overrides: dict | None = None,
         plate: int | None = None,
         export_3mf: bool = False,
         arrange: bool = False,
@@ -443,6 +444,8 @@ class SlicerApiService:
             )
 
         data: dict[str, str] = {}
+        if process_overrides:
+            data["processOverrides"] = json.dumps(process_overrides, separators=(",", ":"))
         if plate is not None:
             data["plate"] = str(plate)
         if export_3mf:

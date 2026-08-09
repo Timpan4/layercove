@@ -83,10 +83,10 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
     if (!pageId && model.schemaQuery.data?.pages[0]) setPageId(model.schemaQuery.data.pages[0].name);
   }, [model.schemaQuery.data?.pages, pageId]);
 
-  const loading = model.capabilitiesQuery.isLoading || model.schemaQuery.isLoading || model.sourceQuery.isLoading || model.platesQuery.isLoading || model.presetsQuery.isLoading;
+  const loading = model.capabilitiesQuery.isLoading || model.schemaQuery.isLoading || model.sourceQuery.isLoading || model.platesQuery.isLoading || model.presetsQuery.isLoading || model.printerModelsQuery.isLoading;
   if (loading) return <div className="flex min-h-[60vh] items-center justify-center text-bambu-gray-light"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading slicer workbench…</div>;
 
-  const failedQuery = [model.capabilitiesQuery, model.schemaQuery, model.sourceQuery, model.platesQuery, model.presetsQuery].find((query) => query.isError);
+  const failedQuery = [model.capabilitiesQuery, model.schemaQuery, model.sourceQuery, model.platesQuery, model.presetsQuery, model.printerModelsQuery].find((query) => query.isError);
   if (failedQuery) return <ErrorState message={failedQuery.error instanceof Error ? failedQuery.error.message : 'Required slicer data could not be loaded.'} onBack={onBack} />;
   if (!model.capabilitiesQuery.data?.capabilities.process_schema) {
     return <ErrorState message="Pinned sidecar does not advertise required schema capability." onBack={onBack} />;

@@ -18,6 +18,8 @@ import json
 import zipfile
 from collections.abc import Callable
 from datetime import datetime, timezone
+from email.parser import BytesParser
+from email.policy import default
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -295,6 +297,139 @@ class TestSliceLibraryFile:
         )
 
         assert captured_urls == ["http://configured-orca:3000", "http://configured-bambu:3001"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_standard_process_3mf_overrides_bed_and_support_pass_sidecar_validation(
+        self, db_session, slice_test_setup, monkeypatch
+    ):
+        printer_name = "Bambu Lab X1 Carbon 0.4 nozzle"
+        process_name = "0.20mm Standard @BBL X1 Carbon"
+        filament_name = "Bambu PLA Basic"
+        captured: dict = {}
+
+        async def validate_workbench_request(self, **_kwargs):
+            return None
+
+        monkeypatch.setattr(
+            slicer_api_module.SlicerApiService,
+            "validate_workbench_request",
+            validate_workbench_request,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            message = BytesParser(policy=default).parsebytes(
+                f"Content-Type: {request.headers['content-type']}\r\n\r\n".encode() + request.content
+            )
+            profiles = {}
+            process_overrides = {}
+            for part in message.iter_parts():
+                field_name = part.get_param("name", header="content-disposition")
+                if field_name in {"printerProfile", "presetProfile", "filamentProfile"}:
+                    profiles[field_name] = json.loads(part.get_payload(decode=True))
+                elif field_name == "processOverrides":
+                    process_overrides = json.loads(part.get_payload(decode=True))
+
+            expected_profiles = (
+                ("printerProfile", "machine", printer_name),
+                ("presetProfile", "process", process_name),
+                ("filamentProfile", "filament", filament_name),
+            )
+            for field_name, expected_type, bundled_name in expected_profiles:
+                profile = profiles[field_name]
+                has_complete_identity = (
+                    profile.get("type") == expected_type
+                    and isinstance(profile.get("name"), str)
+                    and bool(profile["name"])
+                    and isinstance(profile.get("setting_id"), str)
+                    and bool(profile["setting_id"])
+                )
+                if has_complete_identity:
+                    continue
+
+                trusted_stub = (
+                    set(profile) == {"type", "name", "inherits", "from"}
+                    and profile.get("type") == expected_type
+                    and isinstance(profile.get("name"), str)
+                    and bool(profile["name"])
+                    and isinstance(profile.get("inherits"), str)
+                    and bool(profile["inherits"])
+                    and profile.get("from") == "system"
+                )
+                if trusted_stub:
+                    if profile["name"] != profile["inherits"]:
+                        detail = "bundled profile name must match inherits"
+                    elif profile["inherits"] != bundled_name:
+                        detail = f"unknown bundled {expected_type} profile"
+                    else:
+                        continue
+                else:
+                    detail = f"{expected_type} profile requires type, name, and setting_id"
+                return httpx.Response(
+                    status_code=400,
+                    json={"message": "Invalid slicer request", "details": detail},
+                )
+
+            invalid_override_type = (
+                not isinstance(process_overrides.get("enable_support"), bool)
+                or not isinstance(process_overrides.get("support_filament"), int)
+                or isinstance(process_overrides.get("support_filament"), bool)
+                or not isinstance(process_overrides.get("support_interface_filament"), int)
+                or isinstance(process_overrides.get("support_interface_filament"), bool)
+            )
+            if invalid_override_type:
+                return httpx.Response(
+                    status_code=400,
+                    json={"message": "Invalid slicer request", "details": "invalid support override type"},
+                )
+
+            process = dict(profiles["presetProfile"])
+            if "setting_id" not in process:
+                process["setting_id"] = "bundled-process"
+            process.update(process_overrides)
+            captured["process"] = process
+            return httpx.Response(
+                status_code=200,
+                content=b"PK\x03\x04 sliced-3mf",
+                headers={
+                    "x-print-time-seconds": "10",
+                    "x-filament-used-g": "0.1",
+                    "x-filament-used-mm": "1.0",
+                },
+            )
+
+        _install_mock_sidecar(handler)
+        result, used_embedded_settings = await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=_make_3mf_with_settings(
+                {
+                    "enable_support": "1",
+                    "support_filament": "2",
+                    "support_interface_filament": "3",
+                    "support_type": "tree",
+                }
+            ),
+            model_filename="source.3mf",
+            request=SliceRequest(
+                printer_preset={"source": "standard", "id": printer_name},
+                process_preset={"source": "standard", "id": process_name},
+                filament_preset={"source": "standard", "id": filament_name},
+                process_overrides={"layer_height": 0.16},
+                bed_type="Textured PEI Plate",
+                schema_hash="a" * 64,
+            ),
+        )
+
+        assert result.content == b"PK\x03\x04 sliced-3mf"
+        assert used_embedded_settings is False
+        assert captured["process"]["layer_height"] == 0.16
+        assert captured["process"]["curr_bed_type"] == "Textured PEI Plate"
+        assert captured["process"]["enable_support"] is True
+        assert type(captured["process"]["support_filament"]) is int
+        assert captured["process"]["support_filament"] == 2
+        assert type(captured["process"]["support_interface_filament"]) is int
+        assert captured["process"]["support_interface_filament"] == 3
+        assert captured["process"]["support_type"] == "tree"
 
     @pytest.mark.asyncio
     @pytest.mark.integration

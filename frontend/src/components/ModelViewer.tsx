@@ -15,6 +15,8 @@ interface BuildVolume {
   z: number;
 }
 
+const DEFAULT_BUILD_VOLUME: BuildVolume = { x: 256, y: 256, z: 256 };
+
 interface ModelViewerProps {
   url: string;
   fileType?: string;
@@ -622,7 +624,7 @@ function buildModelGroup(
 export function ModelViewer({
   url,
   fileType,
-  buildVolume = { x: 256, y: 256, z: 256 },
+  buildVolume = DEFAULT_BUILD_VOLUME,
   filamentColors,
   selectedPlateId = null,
   className = '',
