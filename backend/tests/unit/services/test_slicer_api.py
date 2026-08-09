@@ -256,6 +256,30 @@ class TestSliceWithProfiles:
         assert b"3mf" in body
 
     @pytest.mark.asyncio
+    async def test_process_overrides_are_sent_as_schema_bound_form_data(self):
+        captured: dict = {}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            captured["body"] = request.content
+            return httpx.Response(status_code=200, content=b"gcode")
+
+        service = SlicerApiService("http://sidecar:3000", client=_mock_client(handler))
+        await service.slice_with_profiles(
+            model_bytes=b"x",
+            model_filename="Cube.stl",
+            printer_profile_json="{}",
+            process_profile_json="{}",
+            filament_profile_jsons=["{}"],
+            process_overrides={"layer_height": 0.16},
+            schema_hash="a" * 64,
+        )
+
+        body = captured["body"]
+        assert b'name="processOverrides"' in body
+        assert b'{"layer_height":0.16}' in body
+        assert b'name="schemaHash"' in body
+
+    @pytest.mark.asyncio
     async def test_raw_gcode_omits_export_type_and_keeps_every_profile_part(self):
         captured: dict = {}
 

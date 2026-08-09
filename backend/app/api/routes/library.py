@@ -3320,7 +3320,29 @@ _SOURCE_PROCESS_SUPPORT_KEYS_TO_PRESERVE = (
 )
 
 
-def _patch_process_support_settings(process_json: str, source_3mf_bytes: bytes) -> str:
+def _schema_native_support_value(key: str, value: object) -> object:
+    if key == "enable_support":
+        if type(value) is int and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true"}:
+                return True
+            if normalized in {"0", "false"}:
+                return False
+    if key in {"support_filament", "support_interface_filament"} and isinstance(value, str):
+        normalized = value.strip()
+        if re.fullmatch(r"-?\d+", normalized):
+            return int(normalized)
+    return value
+
+
+def _patch_process_support_settings(
+    process_json: str,
+    source_3mf_bytes: bytes,
+    *,
+    schema_native: bool = False,
+) -> str:
     """Overlay the source 3MF's support configuration onto the process JSON.
 
     Only fires on 3MF sources — STL / STEP don't carry `project_settings.
@@ -3350,7 +3372,8 @@ def _patch_process_support_settings(process_json: str, source_3mf_bytes: bytes) 
 
     for key in _SOURCE_PROCESS_SUPPORT_KEYS_TO_PRESERVE:
         if key in src_cfg:
-            process_cfg[key] = src_cfg[key]
+            value = src_cfg[key]
+            process_cfg[key] = _schema_native_support_value(key, value) if schema_native else value
 
     return json.dumps(process_cfg)
 
@@ -3476,17 +3499,20 @@ async def _run_slicer_with_fallback(
         assert ref is not None, "schema validator guarantees filament list is non-None"
         filament_jsons.append(await resolve_preset_ref(db, user, ref, "filament"))
 
-    if request.process_overrides:
+    is_standard_process = request.process_preset is not None and request.process_preset.source == "standard"
+    process_overrides_for_sidecar: dict | None = dict(request.process_overrides) if is_standard_process else None
+
+    if request.process_overrides and not is_standard_process:
         presets["process"] = _patch_process_overrides(presets["process"], request.process_overrides)
 
-    # Bed-type override (#1337): patch curr_bed_type onto the resolved
-    # process JSON so the slicer's StaticPrintConfig pass picks up the
-    # user's pick instead of whatever the process preset defaults to.
-    # Without this, slicing an STL of ABS onto a process preset whose
-    # default is "Cool Plate" fails with "Plate 1: Cool Plate does not
-    # support filament 1" — the reporter's exact scenario.
+    # Bed-type override (#1337): patch curr_bed_type onto full profiles. Standard
+    # profiles remain exact trusted stubs; the sidecar applies this setting only
+    # after resolving the selected bundled profile.
     if request.bed_type:
-        presets["process"] = _patch_process_bed_type(presets["process"], request.bed_type)
+        if process_overrides_for_sidecar is not None:
+            process_overrides_for_sidecar["curr_bed_type"] = request.bed_type
+        else:
+            presets["process"] = _patch_process_bed_type(presets["process"], request.bed_type)
 
     # Slicer routing — schema-bound workbench requests always use Orca, while
     # legacy requests retain preferred_slicer routing.
@@ -3538,7 +3564,16 @@ async def _run_slicer_with_fallback(
         # assignments get discarded and the slice comes out single-material
         # with a PVA slot loaded but never used.
         if is_bambu_3mf:
-            presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
+            if process_overrides_for_sidecar is not None:
+                process_overrides_for_sidecar = json.loads(
+                    _patch_process_support_settings(
+                        json.dumps(process_overrides_for_sidecar),
+                        primary_bytes,
+                        schema_native=True,
+                    )
+                )
+            else:
+                presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
 
     used_embedded_settings = False
     service = SlicerApiService(api_url)
@@ -3619,10 +3654,17 @@ async def _run_slicer_with_fallback(
     use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and export_3mf
 
     try:
+        if process_overrides_for_sidecar and request.schema_hash is None:
+            raise HTTPException(
+                status_code=400,
+                detail="schema_hash is required when standard process settings are patched",
+            )
         if request.schema_hash is not None:
             await service.validate_workbench_request(
                 schema_hash=request.schema_hash,
-                process_overrides=request.process_overrides,
+                process_overrides=process_overrides_for_sidecar
+                if process_overrides_for_sidecar is not None
+                else request.process_overrides,
                 model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
             )
         try:
@@ -3679,6 +3721,7 @@ async def _run_slicer_with_fallback(
                         printer_profile_json=presets["printer"],
                         process_profile_json=presets["process"],
                         filament_profile_jsons=filament_jsons,
+                        process_overrides=process_overrides_for_sidecar,
                         plate=plate_num,
                         export_3mf=True,
                         arrange=True,
@@ -3714,6 +3757,7 @@ async def _run_slicer_with_fallback(
                     printer_profile_json=presets["printer"],
                     process_profile_json=presets["process"],
                     filament_profile_jsons=filament_jsons,
+                    process_overrides=process_overrides_for_sidecar,
                     plate=request.plate,
                     export_3mf=export_3mf,
                     arrange=cross_class_arrange or bool(request.model_state and request.model_state.arrange),
