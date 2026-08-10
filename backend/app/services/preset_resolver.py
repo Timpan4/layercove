@@ -247,7 +247,12 @@ async def _resolve_orca_cloud(db: AsyncSession, user: User | None, ref: PresetRe
         # source tier doesn't decide whether slicing works. `from` gets the
         # same forced pin to `"system"` for the same reason — see the
         # Bambu Cloud branch above.
-        content = {**content, "type": _SLOT_TO_PROFILE_TYPE[slot], "from": "system"}
+        content = {
+            **content,
+            "type": _SLOT_TO_PROFILE_TYPE[slot],
+            "from": "system",
+            "setting_id": content.get("setting_id") or profile.get("id") or ref.id,
+        }
     return json.dumps(content)
 
 
