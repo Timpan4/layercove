@@ -13,6 +13,8 @@ concurrency:
 permissions:
   contents: read
   packages: write
+  id-token: write
+  attestations: write
 
 jobs:
   publish:
@@ -47,6 +49,7 @@ jobs:
             type=semver,pattern={{major}}.{{minor}}
 
       - name: Build and publish
+        id: build
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -55,5 +58,15 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          sbom: true
+          provenance: mode=max
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+      - name: Attest build provenance
+        uses: actions/attest@v4
+        with:
+          subject-name: ${{ steps.meta.outputs.images }}
+          subject-digest: ${{ steps.build.outputs.digest }}
+          push-to-registry: true
+          create-storage-record: false

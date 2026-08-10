@@ -163,8 +163,18 @@ def test_container_publish_workflow_matches_documented_image():
     workflow = (root / ".github" / "workflows" / "publish-container.yml").read_text(encoding="utf-8")
 
     assert "packages: write" in workflow
+    assert "id-token: write" in workflow
+    assert "attestations: write" in workflow
     assert "ghcr.io/${{ github.repository_owner }}/layercove" in workflow
     assert "linux/amd64,linux/arm64" in workflow
+    assert "id: build" in workflow
+    assert "sbom: true" in workflow
+    assert "provenance: mode=max" in workflow
+    assert "uses: actions/attest@v4" in workflow
+    assert "subject-name: ${{ steps.meta.outputs.images }}" in workflow
+    assert "subject-digest: ${{ steps.build.outputs.digest }}" in workflow
+    assert "push-to-registry: true" in workflow
+    assert "create-storage-record: false" in workflow
 
 
 @pytest.mark.unit
