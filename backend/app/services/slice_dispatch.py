@@ -11,9 +11,11 @@ from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
 
 from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core import database
 from backend.app.models.slice_job import SliceJobRecord
+from backend.app.models.slicer_profile_catalog import SlicerJobProvenance
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +52,7 @@ class SliceDispatchService:
         owner_id: int | None = None,
         request_snapshot: dict[str, Any] | None = None,
         schema_hash: str | None = None,
+        before_commit: Callable[[AsyncSession, SliceJobRecord], Awaitable[None]] | None = None,
     ) -> SliceJobRecord:
         now = _now()
         request_fingerprint = None
@@ -81,6 +84,9 @@ class SliceDispatchService:
                 expires_at=None,
             )
             db.add(job)
+            await db.flush()
+            if before_commit is not None:
+                await before_commit(db, job)
             await db.commit()
             await db.refresh(job)
 
@@ -114,6 +120,15 @@ class SliceDispatchService:
             )
             await db.commit()
 
+    async def _expires_at(self, db: AsyncSession, job_id: int, now: datetime) -> datetime | None:
+        resolved = await db.scalar(
+            select(SlicerJobProvenance.id).where(
+                SlicerJobProvenance.slice_job_id == job_id,
+                SlicerJobProvenance.provenance_state == "resolved",
+            )
+        )
+        return None if resolved is not None else now + _RETENTION
+
     async def _set_completed(self, job_id: int, result: dict[str, Any]) -> None:
         now = _now()
         artifact_kind = None
@@ -125,6 +140,7 @@ class SliceDispatchService:
             artifact_kind = "archive"
             artifact_id = result["archive_id"]
         async with database.async_session() as db:
+            expires_at = await self._expires_at(db, job_id, now)
             await db.execute(
                 update(SliceJobRecord)
                 .where(
@@ -138,7 +154,7 @@ class SliceDispatchService:
                     result_artifact_kind=artifact_kind,
                     result_artifact_id=artifact_id,
                     completed_at=now,
-                    expires_at=now + _RETENTION,
+                    expires_at=expires_at,
                 )
             )
             await db.commit()
@@ -146,6 +162,7 @@ class SliceDispatchService:
     async def _set_failed(self, job_id: int, status: int, code: str, detail: str) -> None:
         now = _now()
         async with database.async_session() as db:
+            expires_at = await self._expires_at(db, job_id, now)
             await db.execute(
                 update(SliceJobRecord)
                 .where(
@@ -158,7 +175,7 @@ class SliceDispatchService:
                     error_code=code,
                     error_detail=detail,
                     completed_at=now,
-                    expires_at=now + _RETENTION,
+                    expires_at=expires_at,
                 )
             )
             await db.commit()
@@ -171,6 +188,10 @@ class SliceDispatchService:
                     (SliceJobRecord.expires_at.is_(None) | (SliceJobRecord.expires_at > _now())),
                 )
             )
+
+    async def get_provenance(self, job_id: int) -> SlicerJobProvenance | None:
+        async with database.async_session() as db:
+            return await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job_id))
 
     def set_progress(self, job_id: int, progress: dict[str, Any] | None) -> None:
         task = asyncio.create_task(self._persist_progress(job_id, progress), name=f"slice-progress-{job_id}")
@@ -193,20 +214,34 @@ class SliceDispatchService:
         """Fail jobs left non-terminal by a previous process."""
         now = _now()
         async with database.async_session() as db:
-            result = await db.execute(
+            retained_ids = select(SlicerJobProvenance.slice_job_id).where(
+                SlicerJobProvenance.provenance_state == "resolved"
+            )
+            values = {
+                "status": "failed",
+                "error_status": 503,
+                "error_code": "worker_restarted",
+                "error_detail": "Slicer worker restarted before the job completed",
+                "completed_at": now,
+            }
+            retained = await db.execute(
                 update(SliceJobRecord)
-                .where(SliceJobRecord.status.in_(("pending", "running", "cancel-requested")))
-                .values(
-                    status="failed",
-                    error_status=503,
-                    error_code="worker_restarted",
-                    error_detail="Slicer worker restarted before the job completed",
-                    completed_at=now,
-                    expires_at=now + _RETENTION,
+                .where(
+                    SliceJobRecord.status.in_(("pending", "running", "cancel-requested")),
+                    SliceJobRecord.id.in_(retained_ids),
                 )
+                .values(**values, expires_at=None)
+            )
+            expiring = await db.execute(
+                update(SliceJobRecord)
+                .where(
+                    SliceJobRecord.status.in_(("pending", "running", "cancel-requested")),
+                    SliceJobRecord.id.not_in(retained_ids),
+                )
+                .values(**values, expires_at=now + _RETENTION)
             )
             await db.commit()
-            return result.rowcount or 0
+            return (retained.rowcount or 0) + (expiring.rowcount or 0)
 
 
 class _SliceJobError(Exception):

@@ -237,6 +237,7 @@ async def init_db():
         shopping_list,
         slice_job,
         slicer_pipeline,
+        slicer_profile_catalog,
         slot_preset,
         smart_plug,
         smart_plug_energy_snapshot,
@@ -268,6 +269,12 @@ async def init_db():
     # doesn't share a transaction with the schema-DDL block above — required to
     # avoid SQLite "database is locked" contention on the WAL writer.
     await _migrate_encrypt_legacy_secrets()
+
+    async with async_session() as session:
+        from backend.app.services.slicer_catalog_migration import backfill_slicer_catalog_state
+
+        await backfill_slicer_catalog_state(session)
+        await session.commit()
 
     # Seed default notification templates
     await seed_notification_templates()

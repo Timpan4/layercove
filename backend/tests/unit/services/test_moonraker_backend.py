@@ -106,7 +106,11 @@ async def test_moonraker_subscribes_normalizes_live_status_and_ignores_partial_p
         "extruder": None,
         "heater_bed": None,
     }
-    assert [message["params"]["objects"] for message in connection.sent] == [expected_objects, expected_objects]
+    expected_query_objects = {**expected_objects, "configfile": ["settings"]}
+    assert [message["params"]["objects"] for message in connection.sent] == [
+        expected_query_objects,
+        expected_objects,
+    ]
     assert backend.snapshot().filename == "cube.gcode"
     assert backend.snapshot().progress == 12.5
     assert backend.snapshot().elapsed_seconds == 61
@@ -121,6 +125,103 @@ async def test_moonraker_subscribes_normalizes_live_status_and_ignores_partial_p
 
     await backend.disconnect()
     assert connection.closed is True
+
+
+def test_moonraker_reads_one_time_klipper_nozzle_configuration():
+    backend = MoonrakerBackend(printer(), emit=lambda _: None, transport_factory=lambda **_: None)
+
+    backend._merge_status(
+        {
+            "print_stats": {"state": "standby"},
+            "configfile": {
+                "settings": {
+                    "extruder": {"nozzle_diameter": 0.4},
+                    "extruder1": {"nozzle_diameter": "0.6"},
+                }
+            },
+        },
+        bootstrap=True,
+    )
+
+    assert [(nozzle.tool_index, nozzle.diameter, nozzle.status) for nozzle in backend.snapshot().nozzles] == [
+        (0, 0.4, "confirmed"),
+        (1, 0.6, "confirmed"),
+    ]
+    backend._emit_offline()
+    assert backend.snapshot().connected is False
+    assert backend.snapshot().nozzles[0].diameter == 0.4
+
+
+def test_moonraker_deduplicates_tool_zero_using_conventional_extruder_section():
+    backend = MoonrakerBackend(printer(), emit=lambda _: None, transport_factory=lambda **_: None)
+    backend._merge_status(
+        {
+            "print_stats": {"state": "standby"},
+            "configfile": {
+                "settings": {
+                    "extruder": {"nozzle_diameter": 0.4},
+                    "extruder0": {"nozzle_diameter": "invalid"},
+                }
+            },
+        },
+        bootstrap=True,
+    )
+
+    assert [(nozzle.tool_index, nozzle.diameter, nozzle.status) for nozzle in backend.snapshot().nozzles] == [
+        (0, 0.4, "confirmed")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_moonraker_refreshes_nozzle_configuration_when_klippy_becomes_ready():
+    connection = FakeConnection(
+        [
+            {
+                "id": 1,
+                "result": {
+                    "status": {
+                        "print_stats": {"state": "standby"},
+                        "configfile": {"settings": {"extruder": {"nozzle_diameter": 0.4}}},
+                    }
+                },
+            },
+            {"id": 2, "result": {"status": {"print_stats": {"state": "standby"}}}},
+            {"method": "notify_klippy_ready", "params": []},
+            {
+                "id": 3,
+                "result": {"status": {"configfile": {"settings": {"extruder": {"nozzle_diameter": 0.6}}}}},
+            },
+        ]
+    )
+    transport = FakeTransport([connection])
+    backend = MoonrakerBackend(printer(), emit=lambda _: None, transport_factory=lambda **_: transport)
+
+    await backend.connect()
+    await wait_for(lambda: backend.snapshot().nozzles and backend.snapshot().nozzles[0].diameter == 0.6)
+
+    assert [message["method"] for message in connection.sent] == [
+        "printer.objects.query",
+        "printer.objects.subscribe",
+        "printer.objects.query",
+    ]
+    await backend.disconnect()
+
+
+def test_moonraker_absent_and_malformed_nozzle_configuration_are_unknown():
+    absent = MoonrakerBackend(printer(), emit=lambda _: None, transport_factory=lambda **_: None)
+    absent._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)
+    assert absent.snapshot().nozzles == ()
+
+    malformed = MoonrakerBackend(printer(), emit=lambda _: None, transport_factory=lambda **_: None)
+    malformed._merge_status(
+        {
+            "print_stats": {"state": "standby"},
+            "configfile": {"settings": {"extruder": {"nozzle_diameter": "invalid"}}},
+        },
+        bootstrap=True,
+    )
+    assert malformed.snapshot().nozzles[0].status == "unknown"
+    assert malformed.snapshot().nozzles[0].diameter is None
 
 
 @pytest.mark.asyncio

@@ -28,6 +28,20 @@ from backend.app.models.printer_sensor_history import PrinterSensorHistory
 from backend.app.models.project import Project
 from backend.app.models.settings import Settings
 from backend.app.models.slicer_pipeline import SlicerPipeline
+from backend.app.models.slicer_profile_catalog import (
+    PrinterSlicerBinding,
+    SlicerCompatibilityMapping,
+    SlicerFilamentRule,
+    SlicerJobProvenance,
+    SlicerProfile,
+    SlicerProfileAccount,
+    SlicerProfileActivation,
+    SlicerProfileActivationEvent,
+    SlicerProfileReviewBatch,
+    SlicerProfileRevision,
+    SlicerSelectionEvaluation,
+    UserSlicerPreference,
+)
 from backend.app.models.smart_plug import SmartPlug
 from backend.app.models.smart_plug_energy_snapshot import SmartPlugEnergySnapshot
 from backend.app.models.sponsor_toast_state import SponsorToastState
@@ -79,6 +93,18 @@ __all__ = [
     "PipelineJob",
     "PipelineRun",
     "SlicerPipeline",
+    "SlicerProfileAccount",
+    "SlicerProfileReviewBatch",
+    "SlicerProfile",
+    "SlicerProfileRevision",
+    "SlicerProfileActivation",
+    "SlicerProfileActivationEvent",
+    "PrinterSlicerBinding",
+    "SlicerCompatibilityMapping",
+    "SlicerFilamentRule",
+    "UserSlicerPreference",
+    "SlicerSelectionEvaluation",
+    "SlicerJobProvenance",
     "Spool",
     "SpoolKProfile",
     "SpoolAssignment",

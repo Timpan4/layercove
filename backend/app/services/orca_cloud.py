@@ -28,6 +28,7 @@ import hashlib
 import json
 import logging
 import secrets
+from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Any
 
@@ -76,6 +77,14 @@ class OrcaCloudAuthError(OrcaCloudError):
     recover without re-authentication."""
 
     pass
+
+
+@dataclass(frozen=True, slots=True)
+class OrcaProfilePull:
+    next_cursor: str | None
+    upserts: list[dict[str, Any]]
+    deletes: list[str]
+    full_snapshot: bool
 
 
 _shared_http_client: httpx.AsyncClient | None = None
@@ -405,63 +414,70 @@ class OrcaCloudService:
             raise OrcaCloudError(f"Orca Cloud user fetch failed ({resp.status_code}): {resp.text[:200]}")
         return resp.json()
 
-    async def list_profiles(self) -> list[dict[str, Any]]:
-        """Return the user's Orca Cloud profiles as a flat list of
-        ``ProfileUpsert`` entries (``{id, name, content, updated_time,
-        created_time}``) — forwarded verbatim; callers pick the fields they
-        need.
+    async def pull_profiles(self, cursor: str | None = None) -> OrcaProfilePull:
+        """Pull one restart-safe sync page, preserving cursor and deletes.
 
-        Uses ``GET /api/v1/sync/pull`` with NO ``?cursor=`` parameter, which
-        is the same "first-sync bootstrap" path OrcaSlicer's own client
-        uses (``OrcaCloudServiceAgent.cpp::sync_pull``):
-
-            std::string path = ORCA_SYNC_PULL_PATH;
-            if (sync_state.last_sync_timestamp != 0) {
-                path += "?cursor=" + std::to_string(sync_state.last_sync_timestamp);
-            }
-            ...
-            // Handle 410 Gone — cursor too old, need full resync
-            if (http_code == 410) {
-                clear_sync_state();
-                path = ORCA_SYNC_PULL_PATH;  // retry without cursor
-                ...
-            }
-
-        Sending ``cursor=0`` explicitly trips ``410 cursor_too_old`` — the
-        server-side sync log doesn't reach back to the Unix epoch. Omitting
-        the parameter entirely is the documented "give me the full snapshot"
-        semantic. The previously-attempted ``/api/v1/sync/profiles`` is
-        declared as a constant in Orca's source but isn't deployed on the
-        production cloud (returns 404).
-
-        The pull response is a ``SyncPullResponse`` (``{next_cursor, upserts,
-        deletes}``); we extract ``upserts`` and ignore ``deletes`` (no prior
-        state on the client side to invalidate).
+        A 410 response means the stored cursor fell outside Orca's retention
+        window. Retry without a cursor and mark the result as a full snapshot
+        so mirror ingestion can reconcile prior rows safely.
         """
         url = f"{ORCA_API_BASE}/api/v1/sync/pull"
-        try:
-            resp = await self._client.get(url, headers=self._api_headers())
-        except httpx.HTTPError as e:
-            raise OrcaCloudError(f"Network error listing Orca Cloud profiles: {e}") from e
+
+        async def request(page_cursor: str | None):
+            kwargs: dict[str, Any] = {"headers": self._api_headers()}
+            if page_cursor is not None:
+                kwargs["params"] = {"cursor": page_cursor}
+            try:
+                return await self._client.get(url, **kwargs)
+            except httpx.HTTPError as e:
+                raise OrcaCloudError(f"Network error listing Orca Cloud profiles: {e}") from e
+
+        full_snapshot = cursor is None
+        resp = await request(cursor)
+        if resp.status_code == 410 and cursor is not None:
+            resp = await request(None)
+            full_snapshot = True
         if resp.status_code == 401:
             raise OrcaCloudAuthError("Orca Cloud profile list unauthorized — token expired or revoked")
         if resp.status_code >= 400:
             raise OrcaCloudError(f"Orca Cloud profile list failed ({resp.status_code}): {resp.text[:200]}")
+
         data = resp.json()
-        if isinstance(data, dict):
-            upserts = data.get("upserts")
-            if isinstance(upserts, list):
-                return upserts
-            # Tolerate the shape we'd see if Orca ever rolls out a flat-list
-            # endpoint at this path — forward whatever array is on the dict.
-            for key in ("profiles", "data"):
-                value = data.get(key)
-                if isinstance(value, list):
-                    return value
         if isinstance(data, list):
-            return data
-        logger.warning("Orca Cloud /sync/pull returned unexpected shape: %r", type(data).__name__)
-        return []
+            return OrcaProfilePull(
+                next_cursor=None,
+                upserts=[profile for profile in data if isinstance(profile, dict)],
+                deletes=[],
+                full_snapshot=True,
+            )
+        if not isinstance(data, dict):
+            raise OrcaCloudError(f"Orca Cloud /sync/pull returned unexpected shape: {type(data).__name__}")
+
+        upserts = data.get("upserts")
+        if not isinstance(upserts, list):
+            for key in ("profiles", "data"):
+                candidate = data.get(key)
+                if isinstance(candidate, list):
+                    upserts = candidate
+                    full_snapshot = True
+                    break
+        if not isinstance(upserts, list):
+            raise OrcaCloudError("Orca Cloud /sync/pull response missing upserts")
+
+        raw_deletes = data.get("deletes", [])
+        if not isinstance(raw_deletes, list):
+            raise OrcaCloudError("Orca Cloud /sync/pull response has invalid deletes")
+        next_cursor = data.get("next_cursor")
+        return OrcaProfilePull(
+            next_cursor=str(next_cursor) if next_cursor is not None else cursor,
+            upserts=[profile for profile in upserts if isinstance(profile, dict)],
+            deletes=[str(profile_id) for profile_id in raw_deletes if isinstance(profile_id, (str, int))],
+            full_snapshot=full_snapshot,
+        )
+
+    async def list_profiles(self) -> list[dict[str, Any]]:
+        """Return full Orca profiles for callers that do not maintain a mirror."""
+        return (await self.pull_profiles()).upserts
 
     async def get_profile(self, profile_id: str) -> dict[str, Any]:
         """Fetch a single profile's full content. Orca's sync API doesn't

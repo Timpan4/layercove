@@ -433,6 +433,57 @@ class TestSliceLibraryFile:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_pinned_standard_process_keeps_profile_immutable_and_passes_overrides_to_sidecar(
+        self, db_session, slice_test_setup, monkeypatch
+    ):
+        from backend.app.services import slicer_catalog_selection
+
+        process = {"type": "process", "name": "Standard", "inherits": "Standard", "from": "system"}
+
+        async def load_pinned_profile_content(_db, _job_id):
+            return SimpleNamespace(
+                printer=json.dumps({"type": "machine", "name": "Printer", "inherits": "Printer", "from": "system"}),
+                process=json.dumps(process),
+                filaments=(
+                    json.dumps({"type": "filament", "name": "Filament", "inherits": "Filament", "from": "system"}),
+                ),
+                process_source="standard",
+            )
+
+        captured: dict = {}
+
+        async def validate_workbench_request(self, **_kwargs):
+            return None
+
+        async def slice_with_profiles(self, **kwargs):
+            captured.update(kwargs)
+            return slicer_api_module.SliceResult(b"gcode", 1, 2.0, 3.0)
+
+        monkeypatch.setattr(slicer_catalog_selection, "load_pinned_profile_content", load_pinned_profile_content)
+        monkeypatch.setattr(
+            slicer_api_module.SlicerApiService, "validate_workbench_request", validate_workbench_request
+        )
+        monkeypatch.setattr(slicer_api_module.SlicerApiService, "slice_with_profiles", slice_with_profiles)
+
+        await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid cube",
+            model_filename="Cube.stl",
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+                process_overrides={"layer_height": 0.16},
+                schema_hash="a" * 64,
+            ),
+            job_id=73,
+        )
+
+        assert json.loads(captured["process_profile_json"]) == process
+        assert captured["process_overrides"] == {"layer_height": 0.16}
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     @pytest.mark.parametrize("source_ext", [".stl", ".step", ".3mf"])
     async def test_klipper_destination_persists_raw_gcode_for_supported_inputs(
         self, async_client: AsyncClient, db_session, slice_test_setup, source_ext
@@ -2478,3 +2529,123 @@ class TestNozzleClassGuard:
         if resp.status_code == 400:
             detail = resp.json().get("detail", "")
             assert "isn't supported" not in detail, f"guard still firing on preset path: {detail!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_archive_slice_rejects_catalog_incompatibility_before_enqueue(
+    async_client: AsyncClient,
+    db_session,
+    slice_test_setup,
+    printer_factory,
+    archive_factory,
+    monkeypatch,
+):
+    from decimal import Decimal
+
+    from backend.app.models.slicer_profile_catalog import PrinterSlicerBinding, SlicerProfile
+    from backend.app.services.printer_manager import printer_manager
+    from backend.app.services.printer_types import (
+        NormalizedPrinterState,
+        NozzleSnapshot,
+        PrinterProvider,
+        PrinterSnapshot,
+    )
+    from backend.app.services.slicer_catalog import (
+        CatalogInput,
+        CatalogProfile,
+        activate_revision,
+        approve_review_batch,
+        ingest_catalog,
+    )
+
+    tmp_path = slice_test_setup["tmp_path"]
+    src_dir = tmp_path / "archives" / "catalog"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    source_path = src_dir / "cube.3mf"
+    source_path.write_bytes(_make_3mf_with_settings())
+    printer = await printer_factory()
+    source = await archive_factory(
+        printer.id,
+        filename="cube.3mf",
+        file_path=str(source_path.relative_to(tmp_path)),
+        sliced_for_model=None,
+        with_run=False,
+    )
+    result = await ingest_catalog(
+        db_session,
+        CatalogInput(
+            source="standard",
+            remote_account_id="archive-catalog-enforcement",
+            profiles=[
+                CatalogProfile(
+                    "printer",
+                    "printer",
+                    "P1S 0.4",
+                    {"type": "printer"},
+                    metadata={"compatible_printers": None},
+                ),
+                CatalogProfile(
+                    "dremel",
+                    "process",
+                    "Dremel process",
+                    {"type": "process"},
+                    metadata={"compatible_printers": ["Dremel 3D40"]},
+                ),
+                CatalogProfile(
+                    "filament",
+                    "filament",
+                    "P1S filament",
+                    {"type": "filament"},
+                    metadata={"compatible_printers": ["P1S 0.4"]},
+                ),
+            ],
+        ),
+    )
+    await approve_review_batch(db_session, result.review_batch_id)
+    for revision_id in result.revision_ids:
+        await activate_revision(db_session, revision_id)
+    profiles = {
+        profile.remote_profile_id: profile
+        for profile in (await db_session.scalars(select(SlicerProfile))).all()
+        if profile.remote_profile_id in {"printer", "dremel", "filament"}
+    }
+    binding = PrinterSlicerBinding(
+        printer_id=printer.id,
+        profile_id=profiles["printer"].id,
+        expected_nozzle_diameter=Decimal("0.4"),
+        tool_index=0,
+        enforcement_state="enforced",
+        is_active=True,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _printer_id: PrinterSnapshot(
+            PrinterProvider.BAMBU,
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+
+    response = await async_client.post(
+        f"/api/v1/archives/{source.id}/slice",
+        json={
+            "printer_preset": {"source": "standard", "id": "printer"},
+            "process_preset": {"source": "standard", "id": "dremel"},
+            "filament_presets": [{"source": "standard", "id": "filament"}],
+            "catalog_printer_id": printer.id,
+            "catalog_binding_id": binding.id,
+            "catalog_process_profile_id": profiles["dremel"].id,
+            "catalog_filament_profile_ids": [profiles["filament"].id],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "slicer_profile_incompatible",
+        "reason_codes": ["resolved_metadata_mismatch"],
+    }

@@ -328,13 +328,11 @@ class SlicerApiService:
         return payload
 
     async def list_bundled_profiles(self) -> dict:
-        """GET /profiles/bundled — return the slicer's stock profiles by slot.
+        """GET /profiles/bundled — return the full standard-profile snapshot.
 
-        Powers the "Standard" tier of Bambuddy's SliceModal preset dropdowns.
-        The sidecar walks the slicer's read-only `resources/profiles/BBL/`
-        tree and returns ``{printer, process, filament}`` arrays of
-        ``{name, base_id}`` (alphabetised, instantiable presets only — abstract
-        bases like `fdm_filament_pla` are filtered out by the sidecar).
+        The sidecar returns ``{printer, process, filament}`` arrays. Each entry
+        includes a stable id (or content hash), resolved full ``content``, and
+        authoritative metadata such as ``compatible_printers``.
 
         Returns an empty-shaped dict when the sidecar is unreachable so the
         unified-presets endpoint can degrade to "no standard tier" without

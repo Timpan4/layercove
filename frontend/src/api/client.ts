@@ -144,7 +144,18 @@ async function request<T>(
       // to pick an i18n key, message is the English fallback, any extra
       // fields land on ApiError.detail (e.g. `deficit` for #1496).
       code = typeof detail.code === 'string' ? detail.code : null;
-      message = typeof detail.message === 'string' ? detail.message : `HTTP ${response.status}`;
+      const reasonCodes: string[] = Array.isArray(detail.reason_codes)
+        ? (detail.reason_codes as unknown[]).filter(
+            (reason: unknown): reason is string => typeof reason === 'string',
+          )
+        : [];
+      const readableCode = code?.replaceAll('_', ' ');
+      const readableReasons = reasonCodes.map((reason) => reason.replaceAll('_', ' '));
+      message = typeof detail.message === 'string'
+        ? detail.message
+        : readableCode
+          ? `${readableCode}${readableReasons.length ? `: ${readableReasons.join(', ')}` : ''}`
+          : `HTTP ${response.status}`;
     } else {
       message = `HTTP ${response.status}`;
     }
@@ -1577,6 +1588,15 @@ export interface SliceRequest {
   // backend validator promotes a singular into a one-element list when this
   // is omitted, so legacy single-color clients keep working unchanged.
   filament_presets?: PresetRef[];
+  catalog_printer_id?: number;
+  catalog_binding_id?: number;
+  catalog_process_profile_id?: number;
+  catalog_filament_profile_ids?: number[];
+  catalog_acknowledgement?: Record<string, unknown> | null;
+  catalog_selection_evidence?: Record<string, unknown>;
+  catalog_history_job_id?: number;
+  catalog_history_mode?: 'exact' | 'upgrade';
+  catalog_tombstone_acknowledgement?: Record<string, unknown> | null;
   plate?: number;
   export_3mf?: boolean;
   destination_artifact_kind?: 'bambu_3mf' | 'klipper_gcode';
@@ -1681,6 +1701,139 @@ export interface UnifiedPresetsResponse {
   standard: UnifiedPresetsBySlot;
   cloud_status: SlicerCloudStatus;
   orca_cloud_status: SlicerCloudStatus;
+}
+
+export interface SlicerCatalogProfile {
+  profile_id: number;
+  revision_id: number;
+  latest_revision_id?: number;
+  active_revision_id?: number | null;
+  active?: boolean;
+  review_state?: 'pending' | 'approved' | 'rejected';
+  source: PresetSource;
+  account_id: number;
+  account_name: string | null;
+  remote_profile_id: string;
+  profile_type: 'printer' | 'process' | 'filament';
+  display_name: string;
+  content_hash: string;
+  compatibility_metadata: Record<string, unknown>;
+  tombstoned: boolean;
+  stale: boolean;
+  sharing_state: 'private' | 'pending' | 'shared';
+}
+
+export interface SlicerCatalogRevision {
+  id: number;
+  content_hash: string;
+  review_state: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  active: boolean;
+}
+
+export interface SlicerCatalogAccount {
+  id: number;
+  source: PresetSource;
+  remote_account_id: string;
+  display_name: string | null;
+  sharing_state: 'private' | 'pending' | 'shared';
+  consent_at: string | null;
+  sync_cursor: string | null;
+  last_sync_at: string | null;
+  last_successful_sync_at: string | null;
+  last_sync_error: string | null;
+  sync_frozen: boolean;
+}
+
+export interface SlicerCatalogReviewBatch {
+  id: number;
+  status: 'pending' | 'approved' | 'rejected' | 'superseded';
+  summary: { profiles?: number; revisions?: number } | null;
+  revisions: Array<{ id: number; profile_id: number; display_name: string }>;
+  sync_cursor_before: string | null;
+  sync_cursor_after: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export type SlicerReadinessState = 'ready' | 'acknowledgement_required' | 'blocked';
+export interface SlicerCatalogBinding {
+  id: number;
+  printer_id: number;
+  printer_name: string | null;
+  profile_id: number;
+  profile_name: string;
+  expected_nozzle_diameter: number;
+  tool_index: number;
+  default_process_profile_id: number | null;
+  default_filament_profile_id: number | null;
+  enforcement_state: 'shadow' | 'enforced';
+  is_active: boolean;
+  confirmed_at: string | null;
+  readiness: { state: SlicerReadinessState; reason_codes: string[] };
+  nozzle: { status: 'confirmed' | 'offline' | 'stale' | 'unknown'; diameter: number | null; tool_index: number };
+}
+
+export interface SlicerCatalogBindingInput {
+  printer_id: number;
+  profile_id: number;
+  expected_nozzle_diameter: number;
+  tool_index?: number;
+  default_process_profile_id?: number | null;
+  default_filament_profile_id?: number | null;
+  enforcement_state?: 'shadow' | 'enforced';
+}
+
+export interface SlicerCatalogClassification {
+  profile_id: number;
+  revision_id: number;
+  profile_type: 'process' | 'filament';
+  display_name: string;
+  source: PresetSource;
+  account_id: number;
+  account_name: string | null;
+  stale: boolean;
+  classification: {
+    group: 'selected_printer' | 'other_installed_printers' | 'unclassified' | 'incompatible';
+    compatibility: 'match' | 'mismatch' | 'unknown';
+    readiness: SlicerReadinessState;
+    reason_codes: string[];
+    reason_details: string[];
+    selectable: boolean;
+    auto_selectable: boolean;
+    acknowledgement_required: boolean;
+  };
+}
+
+export type SlicerCatalogGroups = Record<
+  'selected_printer' | 'other_installed_printers' | 'unclassified' | 'incompatible',
+  SlicerCatalogClassification[]
+>;
+
+export interface SlicerCompatibilityMapping {
+  id: number;
+  profile_id: number;
+  printer_id: number;
+}
+
+export interface SlicerCatalogPreference {
+  id: number;
+  key: 'process_profile' | 'filament_profile';
+  value: { profile_id: number };
+}
+
+export interface SlicerFilamentRule {
+  id: number;
+  scope: 'exact_external' | 'signature';
+  filament_profile_id: number;
+  binding_id: number | null;
+  external_source: string | null;
+  external_identity: string | null;
+  material_type: string | null;
+  vendor: string | null;
+  nozzle_diameter_min: number | null;
+  nozzle_diameter_max: number | null;
+  is_active: boolean;
 }
 
 // Slicer Pipelines (#1425) — named bundles of preset slots the SliceModal
@@ -1880,6 +2033,24 @@ export interface SliceJobState {
   error_status?: number;
   error_code?: string;
   error_detail?: string;
+  provenance: SliceJobProvenance | null;
+}
+
+export interface SliceJobProvenance {
+  state: 'provenance_unknown' | 'resolved';
+  printer_revision_id: number | null;
+  process_revision_id: number | null;
+  filament_revision_ids: number[] | null;
+  selection_evidence: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ResliceRequestResponse {
+  source_kind: 'library_file' | 'archive';
+  source_id: number;
+  request: SliceRequest;
+  tombstoned: boolean;
+  revision_ids: { printer: number; process: number; filaments: number[] };
 }
 
 // Local preset types (OrcaSlicer imports)
@@ -6544,6 +6715,14 @@ export const api = {
     }),
   getSliceJob: (jobId: number) =>
     request<SliceJobState>(`/slice-jobs/${jobId}`),
+  prepareResliceRequest: (jobId: number, body: {
+    mode: 'exact' | 'upgrade';
+    catalog_acknowledgement?: Record<string, unknown>;
+    catalog_tombstone_acknowledgement?: Record<string, unknown>;
+  }) => request<ResliceRequestResponse>(`/slice-jobs/${jobId}/reslice-request`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
 
   // Unified slicer-preset listing — cloud + local + standard, deduped by name.
   // Used by the SliceModal; see UnifiedPresetsResponse for the shape and
@@ -6555,6 +6734,122 @@ export const api = {
     request<UnifiedPresetsResponse>(
       options?.refresh ? '/slicer/presets?refresh=true' : '/slicer/presets',
     ),
+
+  // Persistent installed-printer slicer catalog.
+  listSlicerCatalogProfiles: (options?: { includeInactive?: boolean }) =>
+    request<SlicerCatalogProfile[]>(
+      options?.includeInactive ? '/slicer/catalog/profiles?include_inactive=true' : '/slicer/catalog/profiles',
+    ),
+  listSlicerCatalogProfileRevisions: (profileId: number) =>
+    request<SlicerCatalogRevision[]>(`/slicer/catalog/profiles/${profileId}/revisions`),
+  listSlicerCatalogAccounts: () =>
+    request<SlicerCatalogAccount[]>('/slicer/catalog/accounts'),
+  syncOrcaCatalog: () =>
+    request<{ account_id: number; review_batch_id: number | null; revision_ids: number[]; cursor: string | null }>(
+      '/slicer/catalog/orca/sync',
+      { method: 'POST' },
+    ),
+  syncCloudCatalog: () =>
+    request<{ account_id: number; review_batch_id: number | null; revision_ids: number[]; cursor: string | null }>(
+      '/slicer/catalog/cloud/sync',
+      { method: 'POST' },
+    ),
+  syncStandardCatalog: () =>
+    request<{ account_id: number; review_batch_id: number | null; revision_ids: number[]; cursor: string | null }>(
+      '/slicer/catalog/standard/sync',
+      { method: 'POST' },
+    ),
+  setSlicerCatalogSharing: (accountId: number, shared: boolean) =>
+    request<SlicerCatalogAccount>(`/slicer/catalog/accounts/${accountId}/sharing`, {
+      method: 'PUT',
+      body: JSON.stringify({ shared }),
+    }),
+  listSlicerCatalogReviews: (accountId: number) =>
+    request<SlicerCatalogReviewBatch[]>(`/slicer/catalog/accounts/${accountId}/reviews`),
+  reviewSlicerCatalogBatch: (batchId: number, approved: boolean, revisionIds?: number[]) =>
+    request<{ id: number; status: string }>(`/slicer/catalog/reviews/${batchId}`, {
+      method: 'POST',
+      body: JSON.stringify({ approved, revision_ids: revisionIds }),
+    }),
+  activateSlicerCatalogRevision: (profileId: number, revisionId: number) =>
+    request<{ profile_id: number; revision_id: number }>(`/slicer/catalog/profiles/${profileId}/activate`, {
+      method: 'POST',
+      body: JSON.stringify({ revision_id: revisionId }),
+    }),
+  rollbackSlicerCatalogRevision: (profileId: number, revisionId: number) =>
+    request<{ profile_id: number; revision_id: number }>(`/slicer/catalog/profiles/${profileId}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ revision_id: revisionId }),
+    }),
+  retireSlicerCatalogProfile: (
+    profileId: number,
+    options: { replacementProfileId?: number; disableReferences?: boolean } = {},
+  ) => request<{
+    profile_id: number;
+    replacement_profile_id: number | null;
+    disabled_binding_ids: number[];
+    retired: boolean;
+  }>(`/slicer/catalog/profiles/${profileId}/retire`, {
+    method: 'POST',
+    body: JSON.stringify({
+      replacement_profile_id: options.replacementProfileId,
+      disable_references: options.disableReferences ?? false,
+    }),
+  }),
+  freezeSlicerCatalogAccount: (accountId: number) =>
+    request<{ id: number; stale: boolean }>(`/slicer/catalog/accounts/${accountId}/freeze`, { method: 'POST' }),
+  resumeSlicerCatalogAccount: (accountId: number) =>
+    request<{ id: number; stale: boolean }>(`/slicer/catalog/accounts/${accountId}/resume`, { method: 'POST' }),
+  listSlicerCatalogBindings: (printerId?: number) =>
+    request<SlicerCatalogBinding[]>(`/slicer/catalog/bindings${printerId == null ? '' : `?printer_id=${printerId}`}`),
+  createSlicerCatalogBinding: (data: SlicerCatalogBindingInput) =>
+    request<SlicerCatalogBinding>('/slicer/catalog/bindings', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateSlicerCatalogBinding: (bindingId: number, data: Partial<SlicerCatalogBindingInput> & { is_active?: boolean }) =>
+    request<SlicerCatalogBinding>(`/slicer/catalog/bindings/${bindingId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  disableSlicerCatalogBinding: (bindingId: number) =>
+    request<{ id: number; is_active: false }>(`/slicer/catalog/bindings/${bindingId}/disable`, { method: 'POST' }),
+  getSlicerCatalogBindingSuggestion: (printerId: number) =>
+    request<{ printer_id: number; suggested_profile_ids: number[]; requires_confirmation: boolean; readiness: string }>(
+      `/slicer/catalog/printers/${printerId}/suggestion`,
+    ),
+  getSlicerCatalogGroups: (printerId: number, bindingId: number) =>
+    request<SlicerCatalogGroups>(`/slicer/catalog/printers/${printerId}/classification?binding_id=${bindingId}`),
+  listSlicerCompatibilityMappings: () =>
+    request<SlicerCompatibilityMapping[]>('/slicer/catalog/mappings'),
+  createSlicerCompatibilityMapping: (profileId: number, printerId: number) =>
+    request<SlicerCompatibilityMapping>('/slicer/catalog/mappings', {
+      method: 'POST',
+      body: JSON.stringify({ profile_id: profileId, printer_id: printerId }),
+    }),
+  deleteSlicerCompatibilityMapping: (mappingId: number) =>
+    request<void>(`/slicer/catalog/mappings/${mappingId}`, { method: 'DELETE' }),
+  listSlicerFilamentRules: () =>
+    request<SlicerFilamentRule[]>('/slicer/catalog/filament-rules'),
+  createSlicerFilamentRule: (data: Omit<SlicerFilamentRule, 'id' | 'is_active'>) =>
+    request<Pick<SlicerFilamentRule, 'id' | 'scope' | 'filament_profile_id'>>('/slicer/catalog/filament-rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  deleteSlicerFilamentRule: (ruleId: number) =>
+    request<void>(`/slicer/catalog/filament-rules/${ruleId}`, { method: 'DELETE' }),
+  listSlicerCatalogPreferences: (bindingId: number) =>
+    request<SlicerCatalogPreference[]>(`/slicer/catalog/preferences/${bindingId}`),
+  saveSlicerCatalogPreference: (
+    bindingId: number,
+    profileId: number,
+    profileType: 'process' | 'filament',
+  ) => request<SlicerCatalogPreference>('/slicer/catalog/preferences', {
+    method: 'PUT',
+    body: JSON.stringify({ binding_id: bindingId, profile_id: profileId, profile_type: profileType }),
+  }),
+  deleteSlicerCatalogPreference: (preferenceId: number) =>
+    request<void>(`/slicer/catalog/preferences/${preferenceId}`, { method: 'DELETE' }),
 
   // Slicer Pipelines (#1425) — preset bundles the SliceModal can apply in
   // one click. CRUD is gated on PIPELINES_READ / PIPELINES_WRITE.

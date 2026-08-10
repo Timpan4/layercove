@@ -59,6 +59,8 @@ from backend.app.api.routes import (
     settings as settings_routes,
     slice_jobs,
     slicer,
+    slicer_catalog,
+    slicer_catalog_bindings,
     slicer_pipelines,
     slicer_presets,
     smart_plugs,
@@ -7012,6 +7014,8 @@ app.include_router(library_tags.router, prefix=app_settings.api_prefix)
 app.include_router(library_trash.router, prefix=app_settings.api_prefix)
 app.include_router(slice_jobs.router, prefix=app_settings.api_prefix)
 app.include_router(slicer.router, prefix=app_settings.api_prefix)
+app.include_router(slicer_catalog.router, prefix=app_settings.api_prefix)
+app.include_router(slicer_catalog_bindings.router, prefix=app_settings.api_prefix)
 app.include_router(slicer_pipelines.router, prefix=app_settings.api_prefix)
 app.include_router(pipeline_runs.pipeline_run_create_router, prefix=app_settings.api_prefix)
 app.include_router(pipeline_runs.pipeline_run_router, prefix=app_settings.api_prefix)

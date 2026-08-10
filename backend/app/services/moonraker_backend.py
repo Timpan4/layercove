@@ -28,6 +28,7 @@ from backend.app.services.printer_backend import (
 )
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
+    NozzleSnapshot,
     PrinterCapabilities,
     PrinterProvider,
     PrinterSnapshot,
@@ -41,6 +42,7 @@ _OBJECTS = {
     "extruder": None,
     "heater_bed": None,
 }
+_QUERY_OBJECTS = {**_OBJECTS, "configfile": ["settings"]}
 _BACKOFF_SECONDS = (1, 2, 4, 8, 16, 30)
 _BOOTSTRAP_RESPONSE_TIMEOUT_SECONDS = 10.0
 _STABLE_CONNECTION_SECONDS = 30
@@ -100,6 +102,29 @@ def _seconds(value: object) -> int | None:
 def _layer(value: object) -> int | None:
     number = _finite_number(value)
     return max(0, int(number)) if number is not None else None
+
+
+def _configured_nozzles(configfile: object) -> tuple[NozzleSnapshot, ...]:
+    if not isinstance(configfile, dict) or not isinstance(configfile.get("settings"), dict):
+        return ()
+    settings = configfile["settings"]
+    nozzles: dict[int, NozzleSnapshot] = {}
+    for name, values in settings.items():
+        if name == "extruder":
+            tool_index = 0
+        elif isinstance(name, str) and name.startswith("extruder") and name[8:].isdigit():
+            tool_index = int(name[8:])
+        else:
+            continue
+        diameter = _finite_number(values.get("nozzle_diameter")) if isinstance(values, dict) else None
+        nozzle = (
+            NozzleSnapshot(tool_index, None, "unknown")
+            if diameter is None or diameter <= 0
+            else NozzleSnapshot(tool_index, diameter, "confirmed")
+        )
+        if tool_index not in nozzles or name == "extruder":
+            nozzles[tool_index] = nozzle
+    return tuple(nozzles[index] for index in sorted(nozzles))
 
 
 class MoonrakerBackend:
@@ -268,15 +293,28 @@ class MoonrakerBackend:
                 self._connection = connection
                 connected_at = self._clock()
                 await asyncio.wait_for(
-                    self._request(connection, 1, "printer.objects.query"), timeout=self._bootstrap_timeout
+                    self._request(connection, 1, "printer.objects.query", _QUERY_OBJECTS),
+                    timeout=self._bootstrap_timeout,
                 )
                 await asyncio.wait_for(
-                    self._request(connection, 2, "printer.objects.subscribe"), timeout=self._bootstrap_timeout
+                    self._request(connection, 2, "printer.objects.subscribe", _OBJECTS), timeout=self._bootstrap_timeout
                 )
                 while True:
                     if self._clock() - connected_at >= self._stable_connection_seconds:
                         attempt = 0
-                    self._process_message(await connection.receive_json(), bootstrap=False)
+                    message = await connection.receive_json()
+                    if isinstance(message, dict) and message.get("method") == "notify_klippy_ready":
+                        await asyncio.wait_for(
+                            self._request(
+                                connection,
+                                3,
+                                "printer.objects.query",
+                                {"configfile": ["settings"]},
+                            ),
+                            timeout=self._bootstrap_timeout,
+                        )
+                    else:
+                        self._process_message(message, bootstrap=False)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -295,9 +333,15 @@ class MoonrakerBackend:
                 if self._connection is connection:
                     self._connection = None
 
-    async def _request(self, connection: _MoonrakerConnection, request_id: int, method: str) -> None:
+    async def _request(
+        self,
+        connection: _MoonrakerConnection,
+        request_id: int,
+        method: str,
+        objects: dict[str, list[str] | None],
+    ) -> None:
         await connection.send_json(
-            {"jsonrpc": "2.0", "method": method, "params": {"objects": _OBJECTS}, "id": request_id}
+            {"jsonrpc": "2.0", "method": method, "params": {"objects": objects}, "id": request_id}
         )
         while True:
             message = await connection.receive_json()
@@ -401,6 +445,7 @@ class MoonrakerBackend:
             current_layer=_layer(info.get("current_layer")),
             total_layers=_layer(info.get("total_layer")),
             temperatures=temperatures,
+            nozzles=_configured_nozzles(self._objects.get("configfile")),
             provider_detail={"print_state": str(raw_state).lower()} if raw_state is not None else {},
         )
 

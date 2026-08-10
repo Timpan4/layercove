@@ -365,6 +365,45 @@ class TestListProfiles:
         assert [p["id"] for p in result] == ["a", "b"]
 
     @pytest.mark.asyncio
+    async def test_incremental_pull_preserves_cursor_and_deletes(self, svc):
+        svc.access_token = "ACCESS"
+        svc.token_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        svc._client.get = AsyncMock(
+            return_value=_mock_response(
+                json_data={
+                    "next_cursor": 12345,
+                    "upserts": [{"id": "a", "name": "A", "content": {"x": 1}}],
+                    "deletes": ["gone"],
+                }
+            )
+        )
+
+        pull = await svc.pull_profiles("12000")
+
+        assert pull.next_cursor == "12345"
+        assert [profile["id"] for profile in pull.upserts] == ["a"]
+        assert pull.deletes == ["gone"]
+        assert pull.full_snapshot is False
+        assert svc._client.get.call_args.kwargs["params"] == {"cursor": "12000"}
+
+    @pytest.mark.asyncio
+    async def test_expired_cursor_retries_as_full_snapshot(self, svc):
+        svc.access_token = "ACCESS"
+        svc.token_expiry = datetime.now(timezone.utc) + timedelta(hours=1)
+        svc._client.get = AsyncMock(
+            side_effect=[
+                _mock_response(status_code=410, json_data={"error": "cursor_too_old"}),
+                _mock_response(json_data={"next_cursor": 99, "upserts": [], "deletes": []}),
+            ]
+        )
+
+        pull = await svc.pull_profiles("1")
+
+        assert pull.full_snapshot is True
+        assert pull.next_cursor == "99"
+        assert "params" not in svc._client.get.call_args_list[1].kwargs
+
+    @pytest.mark.asyncio
     async def test_pull_hits_path_without_cursor(self, svc):
         """Regression guard: ``cursor=0`` trips ``410 cursor_too_old`` on
         the production endpoint. The first-sync bootstrap must hit

@@ -125,6 +125,7 @@ import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/Co
 import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
 import { networkSiteHostname, networkSiteMoonrakerUrls } from '../utils/networkSites';
 import { PrintersPagePrototype } from './PrintersPagePrototype';
+import { PrinterSlicerBindings } from '../components/PrinterSlicerBindings';
 
 export interface SpoolmanSlotAssignmentRow {
   printer_id: number;
@@ -8984,6 +8985,8 @@ export function PrintersPage() {
           )}
         </div>
       </div>
+
+      {!isLoading && printers && printers.length > 0 && <PrinterSlicerBindings printers={printers} />}
 
       {isLoading ? (
         <div className="text-center py-12 text-bambu-gray">{t('common.loading')}</div>
