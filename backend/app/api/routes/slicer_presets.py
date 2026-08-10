@@ -259,6 +259,7 @@ async def _fetch_orca_cloud_presets(
                     filament_colour = fc[0]
                 elif isinstance(fc, str):
                     filament_colour = fc
+            compatible_printers = _string_list(content.get("compatible_printers"))
             slots[slot].append(
                 UnifiedPreset(
                     id=str(preset_id),
@@ -266,6 +267,7 @@ async def _fetch_orca_cloud_presets(
                     source="orca_cloud",
                     filament_type=filament_type,
                     filament_colour=filament_colour,
+                    compatible_printers=compatible_printers,
                 )
             )
         _orca_cloud_cache[cache_key] = (now, slots)
@@ -307,10 +309,14 @@ def _parse_compatible_printers(raw: str | None) -> list[str] | None:
         data = json.loads(raw)
     except (ValueError, TypeError):
         return None
-    if not isinstance(data, list):
+    return _string_list(data)
+
+
+def _string_list(value: object) -> list[str] | None:
+    if not isinstance(value, list):
         return None
-    names = [s for s in data if isinstance(s, str) and s.strip()]
-    return names or None
+    values = [item.strip() for item in value if isinstance(item, str) and item.strip()]
+    return values or None
 
 
 def _parse_filament_metadata(setting_json: str | None) -> tuple[str | None, str | None]:
@@ -373,12 +379,17 @@ async def _fetch_bundled_presets(db: AsyncSession, *, refresh: bool = False) -> 
                 continue
             # Bundled presets are addressed by name (the slicer resolves them
             # by name during the `inherits:` walk), so name doubles as id.
-            extra: dict[str, str | None] = {}
-            if slot == "filament":
-                extra["filament_type"] = entry.get("filament_type")
-                extra["filament_colour"] = entry.get("filament_colour")
+            filament_type = entry.get("filament_type") if slot == "filament" else None
+            filament_colour = entry.get("filament_colour") if slot == "filament" else None
             slots[slot].append(
-                UnifiedPreset(id=name, name=name, source="standard", **extra),
+                UnifiedPreset(
+                    id=name,
+                    name=name,
+                    source="standard",
+                    filament_type=filament_type,
+                    filament_colour=filament_colour,
+                    compatible_printers=_string_list(entry.get("compatible_printers")),
+                ),
             )
 
     _bundled_cache = (now, slots)

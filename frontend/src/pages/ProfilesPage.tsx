@@ -52,9 +52,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { KProfilesView } from '../components/KProfilesView';
 import { LocalProfilesView } from '../components/LocalProfilesView';
 import { OrcaCloudView } from '../components/OrcaCloudView';
+import { SlicerCatalogAdmin } from '../components/SlicerCatalogAdmin';
 
 type TFunction = (key: string, options?: Record<string, unknown>) => string;
-type ProfileTab = 'cloud' | 'orca_cloud' | 'local' | 'kprofiles';
+type ProfileTab = 'cloud' | 'orca_cloud' | 'local' | 'kprofiles' | 'catalog';
 type LoginStep = 'email' | 'code' | 'token';
 type PresetType = 'all' | 'filament' | 'printer' | 'process';
 
@@ -2927,6 +2928,15 @@ export function ProfilesPage() {
           <Gauge className="w-4 h-4" />
           {t('profiles.tabs.kprofiles')}
         </button>
+        <button
+          onClick={() => setActiveTab('catalog')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === 'catalog' ? 'text-bambu-green border-bambu-green' : 'text-bambu-gray hover:text-white border-transparent'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          Shared catalog
+        </button>
       </div>
 
       {/* Cloud Profiles Tab */}
@@ -3000,6 +3010,9 @@ export function ProfilesPage() {
 
       {/* K-Profiles Tab */}
       {activeTab === 'kprofiles' && <KProfilesView />}
+
+      {/* Shared catalog administration */}
+      {activeTab === 'catalog' && <SlicerCatalogAdmin />}
 
       {/* Scroll to Top Button */}
       <ScrollToTop />

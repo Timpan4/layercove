@@ -3478,28 +3478,30 @@ async def _run_slicer_with_fallback(
     user: User | None = None
     presets: dict[str, str] = {}
     filament_jsons: list[str] = []
-    # Resolve each slot via the source-aware resolver. The schema
-    # validator has already normalised legacy `*_preset_id: int`
-    # fields into `PresetRef(source='local', id=str(int))`, so all
-    # three are guaranteed non-None here.
     if current_user_id is not None:
         user = await db.get(User, current_user_id)
 
-    refs = {
-        "printer": request.printer_preset,
-        "process": request.process_preset,
-    }
-    for slot, ref in refs.items():
-        assert ref is not None, "schema validator guarantees PresetRef is set"
-        presets[slot] = await resolve_preset_ref(db, user, ref, slot)
-    # Multi-color: resolve each filament slot in plate order. The schema
-    # validator backfilled `filament_presets` from the legacy `filament_preset`
-    # field for single-color callers, so this list is always non-empty.
-    for ref in request.filament_presets:
-        assert ref is not None, "schema validator guarantees filament list is non-None"
-        filament_jsons.append(await resolve_preset_ref(db, user, ref, "filament"))
+    from backend.app.services.slicer_catalog_selection import load_pinned_profile_content
 
-    is_standard_process = request.process_preset is not None and request.process_preset.source == "standard"
+    pinned = await load_pinned_profile_content(db, job_id)
+    if pinned is not None:
+        presets = {"printer": pinned.printer, "process": pinned.process}
+        filament_jsons = list(pinned.filaments)
+    else:
+        refs = {
+            "printer": request.printer_preset,
+            "process": request.process_preset,
+        }
+        for slot, ref in refs.items():
+            assert ref is not None, "schema validator guarantees PresetRef is set"
+            presets[slot] = await resolve_preset_ref(db, user, ref, slot)
+        for ref in request.filament_presets:
+            assert ref is not None, "schema validator guarantees filament list is non-None"
+            filament_jsons.append(await resolve_preset_ref(db, user, ref, "filament"))
+
+    is_standard_process = (
+        pinned is None and request.process_preset is not None and request.process_preset.source == "standard"
+    )
     process_overrides_for_sidecar: dict | None = dict(request.process_overrides) if is_standard_process else None
 
     if request.process_overrides and not is_standard_process:
@@ -3600,7 +3602,15 @@ async def _run_slicer_with_fallback(
         from backend.app.utils.printer_models import is_dual_nozzle_model
 
         source_model = extract_source_printer_model(primary_bytes)
-        target_model = await _resolve_target_printer_model(db, user, request)
+        try:
+            target_data = json.loads(presets["printer"])
+            target_model = _canonical_printer_model(
+                target_data.get("printer_model")
+                or target_data.get("printer_settings_id")
+                or target_data.get("name")
+            )
+        except (AttributeError, TypeError, ValueError):
+            target_model = None
         if source_model and target_model and is_dual_nozzle_model(source_model) != is_dual_nozzle_model(target_model):
             logger.info(
                 "Cross-nozzle-class re-slice (%s -> %s): enabling --arrange so BS reconciles "
@@ -4372,6 +4382,7 @@ async def slice_library_file(
         http_exception_to_job_error,
         slice_dispatch,
     )
+    from backend.app.services.slicer_catalog_selection import CatalogSelectionError, persist_catalog_selection
 
     src_result = await db.execute(LibraryFile.active().where(LibraryFile.id == file_id))
     visibility_user, can_read_all = auth_result
@@ -4443,15 +4454,25 @@ async def slice_library_file(
                 raise http_exception_to_job_error(exc) from exc
         return response.model_dump()
 
-    job = await slice_dispatch.enqueue(
-        kind="library_file",
-        source_id=lib_file.id,
-        source_name=lib_file.filename,
-        owner_id=user_id,
-        request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
-        schema_hash=request.schema_hash,
-        run=_run,
-    )
+    async def _before_commit(job_db: AsyncSession, job_record) -> None:
+        await persist_catalog_selection(job_db, job_record, request)
+
+    try:
+        job = await slice_dispatch.enqueue(
+            kind="library_file",
+            source_id=lib_file.id,
+            source_name=lib_file.filename,
+            owner_id=user_id,
+            request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
+            schema_hash=request.schema_hash,
+            run=_run,
+            before_commit=_before_commit,
+        )
+    except CatalogSelectionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "reason_codes": error.reason_codes},
+        ) from error
     return {
         "job_id": job.id,
         "status": job.status,

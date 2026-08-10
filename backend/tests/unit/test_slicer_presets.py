@@ -274,6 +274,44 @@ class TestFetchOrcaCloudPresets:
         assert filament[0].filament_colour == "#000000"
 
     @pytest.mark.asyncio
+    async def test_full_profile_content_preserves_compatible_printers(self):
+        """Orca's full sync payload must retain process/filament compatibility."""
+        sp._orca_cloud_cache.clear()
+        svc_mock = MagicMock()
+        svc_mock.list_profiles = AsyncMock(
+            return_value=[
+                {
+                    "id": "dremel-process",
+                    "name": ".05mm Super Detail @Dremel 3D40 0.4",
+                    "content": {
+                        "type": "print",
+                        "compatible_printers": ["Dremel 3D40"],
+                    },
+                },
+                {
+                    "id": "afinia-filament",
+                    "name": "Afinia ABS+@HS",
+                    "content": {
+                        "type": "filament",
+                        "compatible_printers": ["Afinia H+1(HS)"],
+                    },
+                },
+            ]
+        )
+        svc_mock.close = AsyncMock()
+        user = MagicMock(id=1)
+        user.has_permission = MagicMock(return_value=True)
+        with (
+            patch.object(sp, "_load_orca_credentials", AsyncMock(return_value=self._orca_creds("tok"))),
+            patch.object(sp, "_build_orca_service", AsyncMock(return_value=svc_mock)),
+        ):
+            slots, status = await sp._fetch_orca_cloud_presets(MagicMock(), user)
+
+        assert status == "ok"
+        assert slots["process"][0].compatible_printers == ["Dremel 3D40"]
+        assert slots["filament"][0].compatible_printers == ["Afinia H+1(HS)"]
+
+    @pytest.mark.asyncio
     async def test_cache_hit_skips_orca_call(self):
         """A second call within TTL must reuse the cached slots and NOT
         hit the Orca service again — same TTL as Bambu Cloud (5 min)."""
@@ -574,6 +612,41 @@ class TestFetchBundledPresets:
         # Bundled presets are addressed by name (the slicer's inheritance
         # walker resolves them by name), so id == name.
         assert slots["printer"][0].id == "Bambu X1C 0.4"
+
+    @pytest.mark.asyncio
+    async def test_full_sidecar_entries_preserve_compatible_printers(self):
+        """Bundled process/filament entries must retain sidecar compatibility."""
+        sp._bundled_cache = None
+        svc_mock = MagicMock()
+        svc_mock.list_bundled_profiles = AsyncMock(
+            return_value={
+                "printer": [],
+                "process": [
+                    {
+                        "name": ".05mm Super Detail @Dremel 3D40 0.4",
+                        "base_id": "fdm_process_common",
+                        "compatible_printers": ["Dremel 3D40"],
+                    }
+                ],
+                "filament": [
+                    {
+                        "name": "Afinia ABS+@HS",
+                        "base_id": "fdm_filament_abs",
+                        "compatible_printers": ["Afinia H+1(HS)"],
+                    }
+                ],
+            }
+        )
+        svc_mock.__aenter__ = AsyncMock(return_value=svc_mock)
+        svc_mock.__aexit__ = AsyncMock(return_value=False)
+        with (
+            patch.object(sp, "_resolve_slicer_api_url", AsyncMock(return_value="http://ok")),
+            patch.object(sp, "SlicerApiService", return_value=svc_mock),
+        ):
+            slots = await sp._fetch_bundled_presets(MagicMock())
+
+        assert slots["process"][0].compatible_printers == ["Dremel 3D40"]
+        assert slots["filament"][0].compatible_printers == ["Afinia H+1(HS)"]
 
     @pytest.mark.asyncio
     async def test_cache_hit_skips_sidecar(self):

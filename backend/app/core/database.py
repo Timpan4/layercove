@@ -237,6 +237,7 @@ async def init_db():
         shopping_list,
         slice_job,
         slicer_pipeline,
+        slicer_profile_catalog,
         slot_preset,
         smart_plug,
         smart_plug_energy_snapshot,
@@ -261,6 +262,12 @@ async def init_db():
 
         # Run migrations for new columns (SQLite doesn't auto-add columns)
         await run_migrations(conn)
+
+    async with async_session() as session:
+        from backend.app.services.slicer_catalog_migration import backfill_slicer_catalog_state
+
+        await backfill_slicer_catalog_state(session)
+        await session.commit()
 
     # Re-encrypt any legacy plaintext OIDC client_secret / TOTP secret rows
     # that exist from before the encryption key was configured.

@@ -76,6 +76,13 @@ def capabilities_for_provider(
 
 
 @dataclass(frozen=True)
+class NozzleSnapshot:
+    tool_index: int
+    diameter: float | None
+    status: str
+
+
+@dataclass(frozen=True)
 class PrinterSnapshot:
     provider: PrinterProvider
     connected: bool
@@ -88,5 +95,7 @@ class PrinterSnapshot:
     current_layer: int | None = None
     total_layers: int | None = None
     temperatures: dict[str, float | None] = field(default_factory=dict)
+    nozzles: tuple[NozzleSnapshot, ...] = ()
+    telemetry_stale: bool = False
     provider_detail: dict[str, Any] = field(default_factory=dict, repr=False)
     developer_mode: bool | None = None

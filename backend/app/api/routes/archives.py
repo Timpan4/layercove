@@ -3988,6 +3988,7 @@ async def slice_archive(
         http_exception_to_job_error,
         slice_dispatch,
     )
+    from backend.app.services.slicer_catalog_selection import CatalogSelectionError, persist_catalog_selection
 
     visibility_user, can_read_all = auth_result
     archive = _ensure_archive_visible(await db.get(PrintArchive, archive_id), visibility_user, can_read_all)
@@ -4057,15 +4058,25 @@ async def slice_archive(
                 raise http_exception_to_job_error(exc) from exc
         return response.model_dump()
 
-    job = await slice_dispatch.enqueue(
-        kind="archive",
-        source_id=archive.id,
-        source_name=archive.print_name or archive.filename or f"archive {archive.id}",
-        owner_id=user_id,
-        request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
-        schema_hash=request.schema_hash,
-        run=_run,
-    )
+    async def _before_commit(job_db: AsyncSession, job_record) -> None:
+        await persist_catalog_selection(job_db, job_record, request)
+
+    try:
+        job = await slice_dispatch.enqueue(
+            kind="archive",
+            source_id=archive.id,
+            source_name=archive.print_name or archive.filename or f"archive {archive.id}",
+            owner_id=user_id,
+            request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
+            schema_hash=request.schema_hash,
+            run=_run,
+            before_commit=_before_commit,
+        )
+    except CatalogSelectionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "reason_codes": error.reason_codes},
+        ) from error
     return {
         "job_id": job.id,
         "status": job.status,

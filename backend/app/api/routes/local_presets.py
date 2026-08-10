@@ -28,8 +28,18 @@ from backend.app.services.orca_profiles import (
     refresh_base_cache,
     resolve_preset,
 )
+from backend.app.services.slicer_catalog_sync import LocalCatalogReferenceError, sync_local_catalog
 
 logger = logging.getLogger(__name__)
+
+
+async def _sync_catalog(db: AsyncSession, current_user: User | None) -> None:
+    try:
+        await sync_local_catalog(db, actor_user_id=current_user.id if current_user is not None else None)
+    except LocalCatalogReferenceError as error:
+        raise HTTPException(409, error.references.detail()) from error
+    except ValueError as error:
+        raise HTTPException(422, str(error)) from error
 
 router = APIRouter(prefix="/local-presets", tags=["Local Presets"])
 
@@ -80,7 +90,7 @@ async def get_local_preset(
 @router.post("/import", response_model=ImportResponse)
 async def import_presets(
     file: UploadFile,
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Import presets from an OrcaSlicer export file (.json, .orca_filament, .bbscfg, .bbsflmt, .zip)."""
@@ -92,13 +102,14 @@ async def import_presets(
         raise HTTPException(400, "Empty file")
 
     result = await import_orca_file(file.filename, content, db)
+    await _sync_catalog(db, current_user)
     return ImportResponse(**result)
 
 
 @router.post("/", response_model=LocalPresetResponse)
 async def create_local_preset(
     data: LocalPresetCreate,
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Manually create a local preset."""
@@ -118,6 +129,7 @@ async def create_local_preset(
     db.add(preset)
     await db.flush()
     await db.refresh(preset)
+    await _sync_catalog(db, current_user)
     return LocalPresetResponse.model_validate(preset)
 
 
@@ -125,7 +137,7 @@ async def create_local_preset(
 async def update_local_preset(
     preset_id: int,
     data: LocalPresetUpdate,
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a local preset's name or settings."""
@@ -154,13 +166,14 @@ async def update_local_preset(
 
     await db.flush()
     await db.refresh(preset)
+    await _sync_catalog(db, current_user)
     return LocalPresetResponse.model_validate(preset)
 
 
 @router.delete("/{preset_id}")
 async def delete_local_preset(
     preset_id: int,
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a local preset."""
@@ -170,6 +183,8 @@ async def delete_local_preset(
         raise HTTPException(404, "Local preset not found")
 
     await db.delete(preset)
+    await db.flush()
+    await _sync_catalog(db, current_user)
     return {"success": True}
 
 
@@ -193,8 +208,10 @@ async def refresh_cache(
 
 @router.post("/reclassify")
 async def reclassify(
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Re-evaluate preset types for all local presets using the improved heuristic."""
-    return await reclassify_presets(db)
+    result = await reclassify_presets(db)
+    await _sync_catalog(db, current_user)
+    return result

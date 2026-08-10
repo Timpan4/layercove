@@ -9,15 +9,16 @@ export type SlicerSettingsPage = { id: string; label: string; groups: Array<{ id
 export type SlicerObject = { id: string; name: string; hidden: boolean; locked: boolean };
 
 export interface SlicerSettingsSidebarProps {
-  printerName: string;
-  printerOptions: string[];
-  onPrinterChange: (value: string) => void;
-  filamentName: string;
-  filamentOptions: string[];
-  onFilamentChange: (value: string) => void;
-  processName: string;
-  processOptions: string[];
-  onProcessChange: (value: string) => void;
+  printerName?: string;
+  printerOptions?: string[];
+  onPrinterChange?: (value: string) => void;
+  filamentName?: string;
+  filamentOptions?: string[];
+  onFilamentChange?: (value: string) => void;
+  processName?: string;
+  processOptions?: string[];
+  onProcessChange?: (value: string) => void;
+  selectionPanel?: ReactNode;
   pages: SlicerSettingsPage[];
   settings: SlicerSetting[];
   mode: SettingsMode;
@@ -55,11 +56,13 @@ export function SlicerSettingsSidebar(props: SlicerSettingsSidebarProps) {
   const visible = props.settings.filter((setting) => allowed.has(setting.key) && setting.scope === props.scope && modes.indexOf(setting.mode) <= modes.indexOf(props.mode));
   const scopes: SettingsScope[] = props.supportsObjectState ? ['global', 'object'] : ['global'];
   return <aside className="flex h-full min-h-0 flex-col gap-2 overflow-hidden bg-transparent p-2 text-white">
-    <section className="rounded-md border border-white/10 bg-[#292a2e] p-3 shadow-md shadow-black/15"><div className="mb-2 flex items-center gap-2 text-base font-semibold"><Printer className="h-4 w-4 text-bambu-green" />Printer</div><Preset label="Machine preset" value={props.printerName} options={props.printerOptions} onChange={props.onPrinterChange} /></section>
-    <section className="rounded-md border border-white/10 bg-[#292a2e] p-3 shadow-md shadow-black/15"><div className="mb-2 flex items-center gap-2 text-base font-semibold"><span className="h-4 w-1.5 rounded-sm bg-bambu-green" />Filament</div><Preset label="Filament preset" value={props.filamentName} options={props.filamentOptions} onChange={props.onFilamentChange} /></section>
+    {props.selectionPanel ? <section className="rounded-md border border-white/10 bg-[#292a2e] p-3 shadow-md shadow-black/15">{props.selectionPanel}</section> : <>
+      <section className="rounded-md border border-white/10 bg-[#292a2e] p-3 shadow-md shadow-black/15"><div className="mb-2 flex items-center gap-2 text-base font-semibold"><Printer className="h-4 w-4 text-bambu-green" />Printer</div><Preset label="Machine preset" value={props.printerName ?? ''} options={props.printerOptions ?? []} onChange={(value) => props.onPrinterChange?.(value)} /></section>
+      <section className="rounded-md border border-white/10 bg-[#292a2e] p-3 shadow-md shadow-black/15"><div className="mb-2 flex items-center gap-2 text-base font-semibold"><span className="h-4 w-1.5 rounded-sm bg-bambu-green" />Filament</div><Preset label="Filament preset" value={props.filamentName ?? ''} options={props.filamentOptions ?? []} onChange={(value) => props.onFilamentChange?.(value)} /></section>
+    </>}
     <section className="flex min-h-0 flex-1 flex-col overflow-hidden rounded-md border border-white/10 bg-[#292a2e] shadow-md shadow-black/15">
       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2"><div className="flex items-center gap-2 text-base font-semibold"><Layers3 className="h-4 w-4 text-bambu-green" />Process</div><div className="flex rounded-md border border-white/10 bg-black/20 p-0.5">{modes.map((item) => <button key={item} type="button" onClick={() => props.onModeChange(item)} className={`min-h-7 rounded-sm px-2 text-[10px] capitalize ${props.mode === item ? 'bg-white/10 text-white' : 'text-bambu-gray'}`}>{item}</button>)}</div></div>
-      <div className="border-b border-white/10 p-3"><Preset label="Process preset" value={props.processName} options={props.processOptions} onChange={props.onProcessChange} /></div>
+      {!props.selectionPanel && <div className="border-b border-white/10 p-3"><Preset label="Process preset" value={props.processName ?? ''} options={props.processOptions ?? []} onChange={(value) => props.onProcessChange?.(value)} /></div>}
       <div className="flex border-b border-white/10 px-2">{scopes.map((item) => <button key={item} type="button" onClick={() => props.onScopeChange(item)} className={`min-h-10 flex-1 text-xs capitalize ${props.scope === item ? 'border-b-2 border-bambu-green text-white' : 'text-bambu-gray'}`}>{item}</button>)}</div>
       {props.supportsObjectState && props.scope === 'object' && props.objects ? <div className="min-h-0 flex-1 overflow-auto p-2">{props.objects.map((object) => <div key={object.id} className={`mb-1 flex min-h-11 items-center gap-2 rounded-sm px-2 ${props.selectedObjectId === object.id ? 'bg-bambu-green/15' : ''}`}><button type="button" onClick={() => props.onObjectSelect?.(object.id)} className="min-w-0 flex-1 truncate text-left text-xs text-bambu-gray-light">{object.name}</button><button type="button" aria-label={`${object.hidden ? 'Show' : 'Hide'} ${object.name}`} onClick={() => props.onObjectVisibilityChange?.(object.id, !object.hidden)} className="text-xs text-bambu-gray">{object.hidden ? 'Show' : 'Hide'}</button><button type="button" aria-label={`${object.locked ? 'Unlock' : 'Lock'} ${object.name}`} onClick={() => props.onObjectLockChange?.(object.id, !object.locked)} className="text-xs text-bambu-gray">{object.locked ? 'Unlock' : 'Lock'}</button></div>)}{visible.map((field) => <label key={field.key} title={field.description} className="flex min-h-12 items-center justify-between gap-3 border-t border-white/8 py-2 text-xs text-bambu-gray-light"><span className="min-w-0 flex-1 truncate">{field.label}</span>{field.kind === 'boolean' ? <input type="checkbox" checked={field.value === 'true'} onChange={(event) => props.onSettingChange(field.key, String(event.target.checked))} className="h-5 w-5 accent-bambu-green" /> : <input type={field.kind === 'number' ? 'number' : 'text'} value={field.value} min={field.min} max={field.max} onChange={(event) => props.onSettingChange(field.key, event.target.value)} className="min-h-9 w-24 rounded-sm border border-white/10 bg-[#35363b] px-2 text-right text-xs text-white outline-none focus:border-bambu-green" />}</label>)}</div> : <><div className="flex shrink-0 overflow-x-auto border-b border-white/10 px-2">{props.pages.map((item) => <button key={item.id} type="button" onClick={() => props.onPageChange(item.id)} className={`min-h-11 shrink-0 border-b-2 px-3 text-xs ${page?.id === item.id ? 'border-bambu-green text-white' : 'border-transparent text-bambu-gray'}`}>{item.label}</button>)}</div><div className="min-h-0 flex-1 overflow-auto px-3 pb-8">{page?.groups.map((group) => { const fields = visible.filter((setting) => group.options.includes(setting.key)); return fields.length ? <section key={group.id} className="pt-3"><h3 className="border-b border-white/10 pb-1.5 text-[11px] font-semibold text-white">{group.label}</h3>{fields.map((field) => <label key={field.key} title={field.description} className="flex min-h-12 items-center justify-between gap-3 border-b border-white/8 py-2 text-xs text-bambu-gray-light"><span className="min-w-0 flex-1 truncate">{field.label}</span>{field.kind === 'boolean' ? <input type="checkbox" checked={field.value === 'true'} onChange={(event) => props.onSettingChange(field.key, String(event.target.checked))} className="h-5 w-5 accent-bambu-green" /> : field.kind === 'select' ? <select value={field.value} onChange={(event) => props.onSettingChange(field.key, event.target.value)} className="min-h-9 max-w-40 rounded-sm border border-white/10 bg-[#35363b] px-2 text-xs text-white outline-none focus:border-bambu-green">{field.choices?.map((choice) => <option key={choice.value} value={choice.value}>{choice.label}</option>)}</select> : <input type={field.kind === 'number' ? 'number' : 'text'} value={field.value} min={field.min} max={field.max} onChange={(event) => props.onSettingChange(field.key, event.target.value)} className="min-h-9 w-24 rounded-sm border border-white/10 bg-[#35363b] px-2 text-right text-xs text-white outline-none focus:border-bambu-green" />}</label>)}</section> : null; })}</div></>}
       {props.children}

@@ -20,6 +20,8 @@ async def test_bambu_backend_emits_typed_events_and_delegates_async_commands():
     client.state.total_layers = 20
     client.state.subtask_id = "task-42"
     client.state.temperatures = {"nozzle": 220.0}
+    client.state.nozzles = [SimpleNamespace(nozzle_diameter="0.4"), SimpleNamespace(nozzle_diameter="")]
+    client.is_stale.return_value = False
     client.state.raw_data = {"private": "not in normalized detail"}
     events = []
 
@@ -35,6 +37,11 @@ async def test_bambu_backend_emits_typed_events_and_delegates_async_commands():
     assert backend.snapshot().state is NormalizedPrinterState.PRINTING
     assert backend.snapshot().filename == "cube.3mf"
     assert backend.snapshot().provider_detail == {}
+    assert [(nozzle.tool_index, nozzle.diameter, nozzle.status) for nozzle in backend.snapshot().nozzles] == [
+        (0, 0.4, "confirmed"),
+        (1, None, "unknown"),
+    ]
+    assert backend.snapshot().telemetry_stale is False
     assert await backend.pause() is client.pause_print.return_value
     assert await backend.resume() is client.resume_print.return_value
     assert await backend.cancel() is client.stop_print.return_value

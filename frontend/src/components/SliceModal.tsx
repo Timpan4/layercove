@@ -1,36 +1,18 @@
-import { Cloud, CloudOff, Cog, Loader2, RefreshCw, X } from 'lucide-react';
+import { Cog, Loader2, X } from 'lucide-react';
 import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   api,
-  type PresetRef,
-  type PresetSource,
   type SliceJobProgress,
   type SliceRequest,
-  type SlicerCloudStatus,
-  type UnifiedPreset,
-  type UnifiedPresetsBySlot,
-  type UnifiedPresetsResponse,
 } from '../api/client';
 import { useSliceJobTracker } from '../contexts/SliceJobTrackerContext';
 import { useToast } from '../contexts/ToastContext';
 import { PlatePickerModal } from './PlatePickerModal';
+import { CatalogSliceSelector } from './CatalogSliceSelector';
+import { useCatalogSliceSelection } from '../hooks/useCatalogSliceSelection';
 import type { PlateFilament } from '../types/plates';
-import {
-  presetCompatibility,
-  buildCompatibilityIndex,
-  EMPTY_COMPATIBILITY_INDEX,
-  type PrinterCompatibilityIndex,
-} from '../utils/slicerPrinterMatch';
-import {
-  findPreset,
-  findPresetByName,
-  pickDefault,
-  pickFilamentForSlot,
-  pickProcessDefault,
-  type Slot,
-} from '../utils/slicePresetPicker';
 
 export type SliceSource =
   | { kind: 'libraryFile'; id: number; filename: string }
@@ -39,22 +21,6 @@ export type SliceSource =
 interface SliceModalProps {
   source: SliceSource;
   onClose: () => void;
-}
-
-function toRefValue(ref: PresetRef | null): string {
-  // The HTML `<select>` value space is flat strings; encode source + id so
-  // the same preset name can live in multiple tiers without collision.
-  return ref ? `${ref.source}:${ref.id}` : '';
-}
-
-function fromRefValue(raw: string): PresetRef | null {
-  if (!raw) return null;
-  const idx = raw.indexOf(':');
-  if (idx < 0) return null;
-  const source = raw.slice(0, idx) as PresetSource;
-  const id = raw.slice(idx + 1);
-  if (source !== 'orca_cloud' && source !== 'cloud' && source !== 'local' && source !== 'standard') return null;
-  return { source, id };
 }
 
 // Inline spinner for the filament-requirements query. The backend runs a
@@ -189,15 +155,7 @@ function formatElapsed(seconds: number): string {
 export function SliceModal({ source, onClose }: SliceModalProps) {
   const { t } = useTranslation();
   const { trackJob } = useSliceJobTracker();
-  const queryClient = useQueryClient();
 
-  const [printerPreset, setPrinterPreset] = useState<PresetRef | null>(null);
-  const [processPreset, setProcessPreset] = useState<PresetRef | null>(null);
-  // One filament ref per plate slot, in plate order. For STL / single-plate /
-  // single-color sources this is a one-element array; multi-color 3MFs get one
-  // entry per AMS slot the plate uses. Pre-pick (effect below) initialises
-  // each slot from the source plate's required (type, colour).
-  const [filamentPresets, setFilamentPresets] = useState<(PresetRef | null)[]>([]);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   // null = plate not yet picked (or single-plate / non-3MF — picker is skipped
   // and we'll backfill 1 at submit time). Set to a 1-indexed plate number once
@@ -220,35 +178,6 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // user had no way to switch plates without cloning the preset.
   const [bedType, setBedType] = useState<string | null>(null);
   const [destinationArtifactKind, setDestinationArtifactKind] = useState<'bambu_3mf' | 'klipper_gcode'>('bambu_3mf');
-
-  // Slicer Pipelines (#1425) — apply a saved preset bundle to all four slots
-  // with one pick, or save the current selection as a new pipeline.
-  const pipelinesQuery = useQuery({
-    queryKey: ['slicer-pipelines'],
-    queryFn: () => api.listSlicerPipelines(),
-    staleTime: 60_000,
-  });
-  const [savePipelineOpen, setSavePipelineOpen] = useState(false);
-  const [pipelineDraftName, setPipelineDraftName] = useState('');
-  const { showToast } = useToast();
-  const createPipelineMutation = useMutation({
-    mutationFn: (body: {
-      name: string;
-      printer_preset: PresetRef;
-      process_preset: PresetRef;
-      filament_presets: PresetRef[];
-      bed_type: string | null;
-    }) => api.createSlicerPipeline(body),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['slicer-pipelines'] });
-      showToast(t('slice.pipelines.toast.saved', 'Pipeline saved'), 'success');
-      setSavePipelineOpen(false);
-      setPipelineDraftName('');
-    },
-    onError: (err: Error) => {
-      showToast(err.message || t('slice.pipelines.toast.saveFailed', 'Save failed'), 'error');
-    },
-  });
 
   const platesQuery = useQuery({
     queryKey: ['slicePlates', source.kind, source.id],
@@ -321,124 +250,8 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
     }
     return base;
   }, [sliceAllPlates, filamentReqsQuery.data]);
-
-  const presetsQuery = useQuery({
-    queryKey: ['slicerPresets'],
-    queryFn: () => api.getSlicerPresets(),
-    staleTime: 60_000,
-    // Don't fetch presets while the plate picker is on screen — saves a
-    // round-trip if the user cancels out of the plate step.
-    enabled: !platesQuery.isLoading && !needsPlatePicker,
-  });
-
-  // Manual refresh — bypasses the backend's 5-minute cloud cache and 1-hour
-  // bundled cache for one call so users who deleted a preset in Bambu
-  // Studio / Bambu Handy see the change immediately (#1581). The cache write
-  // inside _fetch_cloud_presets / _fetch_bundled_presets refills with the
-  // fresh result so subsequent normal callers still get cached responses.
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const handleRefreshPresets = async () => {
-    if (isRefreshing) return;
-    setIsRefreshing(true);
-    try {
-      const fresh = await api.getSlicerPresets({ refresh: true });
-      queryClient.setQueryData(['slicerPresets'], fresh);
-    } catch {
-      // Fall through to invalidate so React Query retries via its normal
-      // path on the next render — surfacing the failure through the existing
-      // presetsQuery.isError banner instead of duplicating error UI here.
-      queryClient.invalidateQueries({ queryKey: ['slicerPresets'] });
-    } finally {
-      setIsRefreshing(false);
-    }
-  };
-
-  // Canonical Bambu printer-model registry — drives the @BBL <code> name
-  // fallback in slicerPrinterMatch for cloud / standard presets (#1325).
-  // Long staleTime: the registry only changes across backend releases.
-  const printerModelsQuery = useQuery({
-    queryKey: ['slicerPrinterModels'],
-    queryFn: api.getSlicerPrinterModels,
-    staleTime: Infinity,
-  });
-
-  // Selected-printer context for the process / filament filter (#1325).
-  const selectedPrinterName = useMemo<string | null>(() => {
-    if (!presetsQuery.data || !printerPreset) return null;
-    return findPreset(presetsQuery.data, printerPreset, 'printer')?.name ?? null;
-  }, [presetsQuery.data, printerPreset]);
-  // Compatibility ground truth: the slicer's own `compatible_printers` list
-  // on local-imported presets, plus the @BBL <code> name fallback for cloud
-  // / standard presets via the backend Bambu printer-model registry.
-  const compatIndex = useMemo<PrinterCompatibilityIndex>(
-    () => buildCompatibilityIndex(printerModelsQuery.data ?? {}),
-    [printerModelsQuery.data],
-  );
-
-  // Printer / process preset names the source 3MF was prepared with. The
-  // plates query resolves before the presets query (the latter is gated on
-  // it), so these are known by the time the pre-pick effects run.
-  const embeddedPrinter = platesQuery.data?.embedded_printer ?? null;
   const embeddedProcess = platesQuery.data?.embedded_process ?? null;
-
-  // Printer pre-pick: defaults to the printer the 3MF was prepared for when
-  // that preset is available, else the first listed printer. Runs once when
-  // presets first arrive; later re-renders preserve any manual choice.
-  useEffect(() => {
-    const data = presetsQuery.data;
-    if (!data) return;
-    if (printerPreset == null) {
-      setPrinterPreset(
-        findPresetByName(data, 'printer', embeddedPrinter) ?? pickDefault(data, 'printer'),
-      );
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [presetsQuery.data, embeddedPrinter]);
-
-  // Process pre-pick / re-pick (#1325): defaults to a process compatible with
-  // the selected printer, and re-defaults when a printer change leaves the
-  // current process incompatible. A compatible or unknown manual pick is kept.
-  useEffect(() => {
-    const data = presetsQuery.data;
-    if (!data) return;
-    setProcessPreset((current) => {
-      if (current) {
-        const p = findPreset(data, current, 'process');
-        if (p && presetCompatibility(p, 'process', selectedPrinterName, compatIndex) !== 'mismatch') {
-          return current;
-        }
-      }
-      return pickProcessDefault(data, selectedPrinterName, compatIndex, embeddedProcess);
-    });
-  }, [presetsQuery.data, selectedPrinterName, compatIndex, embeddedProcess]);
-
-  // Filament pre-pick: re-runs when the active filament-slot count changes
-  // (plate selection, single-plate metadata arriving) or the selected printer
-  // changes. Each slot scores every available filament preset against the
-  // slot's required (type, colour); an existing pick (incl. a user override)
-  // is kept as long as it's still compatible with the selected printer, while
-  // null slots and printer-incompatible picks are re-picked (#1325).
-  useEffect(() => {
-    const data = presetsQuery.data;
-    if (!data) return;
-    setFilamentPresets((current) => {
-      return filamentSlots.map((slot, i) => {
-        const cur = current[i] ?? null;
-        if (cur) {
-          const p = findPreset(data, cur, 'filament');
-          if (p && presetCompatibility(p, 'filament', selectedPrinterName, compatIndex) !== 'mismatch') {
-            return cur;
-          }
-        }
-        return pickFilamentForSlot(
-          data,
-          { type: slot.type, color: slot.color },
-          selectedPrinterName,
-          compatIndex,
-        );
-      });
-    });
-  }, [presetsQuery.data, filamentSlots, selectedPrinterName, compatIndex]);
+  const catalogSelection = useCatalogSliceSelection({ filamentSlots, embeddedProcess });
 
   const enqueueMutation = useMutation({
     mutationFn: async (plate: number | null) => {
@@ -462,20 +275,22 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // is the 1-indexed plate number to slice, or ``null`` for STL / single-
   // plate 3MF sources where the field is omitted entirely.
   function buildSliceBody(plate: number | null): SliceRequest {
-    if (
-      !printerPreset ||
-      !processPreset ||
-      filamentPresets.length === 0 ||
-      filamentPresets.some((r) => r == null)
-    ) {
+    const catalog = catalogSelection.resolvedSelection;
+    if (!catalog) {
       throw new Error(t('slice.allPresetsRequired'));
     }
     return {
       destination_artifact_kind: destinationArtifactKind,
-      printer_preset: printerPreset,
-      process_preset: processPreset,
-      filament_preset: filamentPresets[0] as PresetRef,
-      filament_presets: filamentPresets as PresetRef[],
+      printer_preset: catalog.printerPreset,
+      process_preset: catalog.processPreset,
+      filament_preset: catalog.filamentPresets[0],
+      filament_presets: catalog.filamentPresets,
+      catalog_printer_id: catalog.printerId,
+      catalog_binding_id: catalog.bindingId,
+      catalog_process_profile_id: catalog.processProfileId,
+      catalog_filament_profile_ids: catalog.filamentProfileIds,
+      catalog_acknowledgement: catalog.acknowledgement,
+      catalog_selection_evidence: catalog.evidence,
       ...(plate != null ? { plate } : {}),
       ...(bedType != null ? { bed_type: bedType } : {}),
     };
@@ -486,11 +301,8 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // read has succeeded (filamentReqsQuery.isSuccess) and every filament slot
   // has a picked profile.
   const isReady =
-    printerPreset != null &&
-    processPreset != null &&
-    filamentReqsQuery.isSuccess &&
-    filamentPresets.length > 0 &&
-    filamentPresets.every((r) => r != null);
+    catalogSelection.resolvedSelection !== null &&
+    filamentReqsQuery.isSuccess;
   const isEnqueuing = enqueueMutation.isPending;
   const totalPlateCount = platesQuery.data?.plates?.length ?? 0;
   const canSliceAll = isMultiPlate && totalPlateCount > 1 && !needsPlatePicker;
@@ -551,178 +363,18 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
           {/* Preset listing loader — printer/process dropdowns can't render
               without it. Plate query reuses the same spinner since it's
               also blocking. */}
-          {(platesQuery.isLoading || presetsQuery.isLoading) && (
+          {(platesQuery.isLoading || catalogSelection.loading) && (
             <div className="flex items-center gap-2 text-bambu-gray text-sm">
               <Loader2 className="w-4 h-4 animate-spin" />
               {t('slice.loadingPresets')}
             </div>
           )}
 
-          {presetsQuery.isError && (
-            <div className="text-sm text-red-700 dark:text-red-400" role="alert">
-              {t(
-                'slice.presetsLoadFailed',
-                'Failed to load presets. Open Settings → Profiles to import them, or sign in to Bambu Cloud.',
-              )}
-            </div>
-          )}
-
-          {presetsQuery.data && (
-            <>
-              <div className="flex items-start justify-between gap-2">
-                <div className="flex-1 space-y-2">
-                  <CloudStatusBanner status={presetsQuery.data.cloud_status} cloudName="bambu" />
-                  <CloudStatusBanner status={presetsQuery.data.orca_cloud_status} cloudName="orca" />
-                </div>
-                <button
-                  type="button"
-                  onClick={handleRefreshPresets}
-                  disabled={isRefreshing || isEnqueuing}
-                  className="flex-shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-xs text-bambu-gray hover:text-white hover:bg-bambu-dark-tertiary/40 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
-                  title={t('slice.refreshPresetsTitle')}
-                  aria-label={t('slice.refreshPresets')}
-                >
-                  <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
-                  {t('slice.refreshPresets')}
-                </button>
-              </div>
-              {/* CloudStatusBanner above is hidden via flex-1 wrapper when
-                  status === 'ok' (returns null in that case), but the Refresh
-                  button stays visible regardless so users can pick up cloud /
-                  bundled changes even when sign-in is healthy. */}
-              {/* Slicer Pipelines (#1425): apply a saved preset bundle to all
-                  four slots, or save the current selection as a pipeline.
-                  Pipelines are managed in Settings → Workflow → Pipelines. */}
-              <div className="flex flex-wrap items-center gap-2 px-2 py-1.5 rounded-md bg-bambu-dark/40 border border-bambu-dark-tertiary">
-                <span className="text-xs font-medium text-bambu-gray flex items-center gap-1">
-                  <Cog className="w-3.5 h-3.5" /> {t('slice.pipelines.label', 'Pipeline')}
-                </span>
-                <select
-                  value=""
-                  disabled={isEnqueuing || (pipelinesQuery.data?.pipelines.length ?? 0) === 0}
-                  onChange={(e) => {
-                    const id = parseInt(e.target.value, 10);
-                    if (Number.isNaN(id)) return;
-                    const picked = pipelinesQuery.data?.pipelines.find((p) => p.id === id);
-                    if (!picked) return;
-                    // Apply slot state. The filament list is right-padded from
-                    // current state so a pipeline with fewer entries than the
-                    // current source's slot count keeps the existing tail.
-                    setPrinterPreset(picked.printer_preset);
-                    setProcessPreset(picked.process_preset);
-                    setBedType(picked.bed_type);
-                    setFilamentPresets((current) => {
-                      const next = current.length > 0 ? [...current] : picked.filament_presets.map(() => null);
-                      for (let i = 0; i < next.length; i++) {
-                        if (i < picked.filament_presets.length) {
-                          next[i] = picked.filament_presets[i];
-                        }
-                      }
-                      return next;
-                    });
-                    showToast(t('slice.pipelines.toast.applied', 'Applied "{{name}}"', { name: picked.name }), 'success');
-                    // Reset the dropdown so the user can re-apply the same
-                    // pipeline if needed (selects don't fire onChange when
-                    // value reselects the same option).
-                    e.target.value = '';
-                  }}
-                  className="text-xs px-2 py-1 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white disabled:opacity-50 disabled:cursor-not-allowed flex-1 min-w-[10ch]"
-                  aria-label={t('slice.pipelines.applyAria', 'Apply pipeline')}
-                >
-                  <option value="">
-                    {(pipelinesQuery.data?.pipelines.length ?? 0) === 0
-                      ? t('slice.pipelines.empty', 'No saved pipelines')
-                      : t('slice.pipelines.applyPrompt', 'Apply pipeline…')}
-                  </option>
-                  {pipelinesQuery.data?.pipelines.map((p) => (
-                    <option key={p.id} value={p.id}>
-                      {p.name}
-                    </option>
-                  ))}
-                </select>
-                {!savePipelineOpen ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setPipelineDraftName('');
-                      setSavePipelineOpen(true);
-                    }}
-                    disabled={
-                      isEnqueuing ||
-                      !printerPreset ||
-                      !processPreset ||
-                      filamentPresets.length === 0 ||
-                      filamentPresets.some((f) => f === null)
-                    }
-                    className="text-xs px-2 py-1 bg-bambu-green/20 hover:bg-bambu-green/30 text-bambu-green border border-bambu-green/40 rounded disabled:opacity-50 disabled:cursor-not-allowed"
-                    title={t('slice.pipelines.saveTitle', 'Save the current four-slot selection as a reusable pipeline')}
-                  >
-                    {t('slice.pipelines.saveButton', 'Save as pipeline')}
-                  </button>
-                ) : (
-                  <div className="flex items-center gap-1 flex-1 min-w-[16ch]">
-                    <input
-                      autoFocus
-                      value={pipelineDraftName}
-                      onChange={(e) => setPipelineDraftName(e.target.value)}
-                      placeholder={t('slice.pipelines.namePlaceholder', 'Pipeline name')}
-                      aria-label={t('slice.pipelines.nameAria', 'New pipeline name')}
-                      className="flex-1 text-xs px-2 py-1 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => {
-                        const trimmed = pipelineDraftName.trim();
-                        if (!trimmed || !printerPreset || !processPreset) return;
-                        const nonNull = filamentPresets.filter((f): f is PresetRef => f !== null);
-                        if (nonNull.length === 0) return;
-                        createPipelineMutation.mutate({
-                          name: trimmed,
-                          printer_preset: printerPreset,
-                          process_preset: processPreset,
-                          filament_presets: nonNull,
-                          bed_type: bedType,
-                        });
-                      }}
-                      disabled={createPipelineMutation.isPending || !pipelineDraftName.trim()}
-                      className="text-xs px-2 py-1 bg-bambu-green hover:bg-bambu-green/80 text-white rounded disabled:opacity-50"
-                    >
-                      {createPipelineMutation.isPending ? (
-                        <Loader2 className="w-3 h-3 animate-spin" />
-                      ) : (
-                        t('common.save', 'Save')
-                      )}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSavePipelineOpen(false);
-                        setPipelineDraftName('');
-                      }}
-                      className="text-xs px-2 py-1 text-bambu-gray hover:text-white"
-                    >
-                      {t('common.cancel', 'Cancel')}
-                    </button>
-                  </div>
-                )}
-              </div>
-              <PresetDropdown
-                label={t('slice.printer')}
-                slot="printer"
-                data={presetsQuery.data}
-                value={printerPreset}
-                onChange={setPrinterPreset}
+          <>
+              <CatalogSliceSelector
+                selection={catalogSelection}
+                filamentSlots={filamentSlots}
                 disabled={isEnqueuing}
-              />
-              <PresetDropdown
-                label={t('slice.process')}
-                slot="process"
-                data={presetsQuery.data}
-                value={processPreset}
-                onChange={setProcessPreset}
-                disabled={isEnqueuing}
-                selectedPrinterName={selectedPrinterName}
-                compatIndex={compatIndex}
               />
               {/* Bed-type override (#1337). Always visible, always enabled.
                   The backend patches curr_bed_type on the resolved process
@@ -755,61 +407,13 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
                   {t('slice.destination.klipper', 'Klipper G-code')}
                 </label>
               </fieldset>
-              {/* Filament reqs may need a server-side preview-slice for
-                  unsliced project files (single-pass, then cached). Show a
-                  scoped spinner so the user sees the printer/process
-                  dropdowns instead of an opaque "Loading presets…" wait. */}
-              {filamentReqsQuery.isLoading ? (
+              {filamentReqsQuery.isLoading && (
                 <FilamentAnalysisSpinner
                   requestId={previewRequestId}
                   sourceName={source.filename}
                 />
-              ) : (
-                filamentSlots.map((slot, idx) => {
-                  // Slots flagged by the backend as not used by the
-                  // picked plate are auto-picked from project metadata
-                  // and disabled — the slicer CLI still needs a
-                  // profile per project slot, but the user shouldn't
-                  // have to think about slots their plate doesn't
-                  // paint with. used_in_plate defaults to true when
-                  // missing (sliced 3MFs and the no-flag legacy path).
-                  const isUsed = slot.used_in_plate !== false;
-                  const baseLabel =
-                    filamentSlots.length > 1
-                      ? t('slice.filamentSlot', {
-                          index: idx + 1,
-                          type: slot.type,
-                        })
-                      : t('slice.filament');
-                  const label = isUsed
-                    ? baseLabel
-                    : `${baseLabel} ${t('slice.notUsedByPlate')}`;
-                  return (
-                    <PresetDropdown
-                      key={`filament-${idx}`}
-                      label={label}
-                      slot="filament"
-                      data={presetsQuery.data}
-                      value={filamentPresets[idx] ?? null}
-                      onChange={(ref) =>
-                        setFilamentPresets((current) => {
-                          const next = current.length === filamentSlots.length
-                            ? [...current]
-                            : filamentSlots.map((_, i) => current[i] ?? null);
-                          next[idx] = ref;
-                          return next;
-                        })
-                      }
-                      disabled={isEnqueuing || !isUsed}
-                      swatchColor={filamentSlots.length > 1 ? slot.color : undefined}
-                      selectedPrinterName={selectedPrinterName}
-                      compatIndex={compatIndex}
-                    />
-                  );
-                })
               )}
             </>
-          )}
 
           {errorMessage && (
             <div className="text-sm text-red-700 dark:text-red-400 bg-red-900/20 border border-red-900/40 rounded p-2" role="alert">
@@ -873,68 +477,6 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   );
 }
 
-function CloudStatusBanner({
-  status,
-  cloudName = 'bambu',
-}: {
-  status: SlicerCloudStatus;
-  cloudName?: 'bambu' | 'orca';
-}) {
-  const { t } = useTranslation();
-  // `ok` is the happy path. `not_authenticated` is silenced too: a user who
-  // hasn't signed in (or has explicitly logged out — #1712) doesn't need a
-  // permanent nag at the top of the modal; sign-in lives on the Profiles
-  // page if they want it. Only `expired` and `unreachable` surface — those
-  // are real breakage states a previously-signed-in user needs to see.
-  if (status === 'ok' || status === 'not_authenticated') return null;
-
-  // Same status vocabulary for both Bambu and Orca Cloud — only the
-  // user-facing text varies. The fallbacks below name each cloud explicitly
-  // so the banner makes sense without translation when i18n hasn't been
-  // updated for a new locale.
-  const messages =
-    cloudName === 'orca'
-      ? {
-          expired: {
-            key: 'slice.orcaCloud.expired',
-            fallback: 'Orca Cloud session expired — sign in again to refresh your Orca presets.',
-          },
-          unreachable: {
-            key: 'slice.orcaCloud.unreachable',
-            fallback: 'Orca Cloud is unreachable right now. Other presets still work.',
-          },
-        }
-      : {
-          expired: {
-            key: 'slice.cloud.expired',
-            fallback: 'Bambu Cloud session expired — sign in again to refresh your cloud presets.',
-          },
-          unreachable: {
-            key: 'slice.cloud.unreachable',
-            fallback: 'Bambu Cloud is unreachable right now. Local and standard presets still work.',
-          },
-        };
-
-  const tones: Record<'expired' | 'unreachable', { tone: string; icon: typeof Cloud }> = {
-    expired: {
-      tone: 'border-amber-300 dark:border-amber-700/40 bg-amber-50 dark:bg-amber-900/20 text-amber-800 dark:text-amber-200',
-      icon: CloudOff,
-    },
-    unreachable: {
-      tone: 'border-bambu-dark-tertiary/40 bg-bambu-dark text-bambu-gray',
-      icon: CloudOff,
-    },
-  };
-  const { tone, icon: Icon } = tones[status];
-  const { key, fallback } = messages[status];
-  return (
-    <div className={`flex items-start gap-2 text-xs rounded-md border p-2 ${tone}`} role="status">
-      <Icon className="w-4 h-4 flex-shrink-0 mt-0.5" />
-      <span>{t(key, fallback)}</span>
-    </div>
-  );
-}
-
 // Build-plate options offered in the SliceModal (#1337). Values are the
 // canonical strings the slicer's StaticPrintConfig validator accepts as
 // `curr_bed_type` — BambuStudio is the default sidecar, so this matches its
@@ -980,130 +522,6 @@ function BedTypeDropdown({
             {t(opt.labelKey, opt.fallback)}
           </option>
         ))}
-      </select>
-    </label>
-  );
-}
-
-interface PresetDropdownProps {
-  label: string;
-  slot: Slot;
-  data: UnifiedPresetsResponse;
-  value: PresetRef | null;
-  onChange: (ref: PresetRef | null) => void;
-  disabled?: boolean;
-  // Optional colour swatch shown next to the label — used for multi-color
-  // filament slots so the user can see at a glance which slot they're
-  // configuring against the source 3MF's per-slot colour.
-  swatchColor?: string;
-  // Selected printer context (#1325). When provided for a process / filament
-  // slot, presets that resolve to a different printer (per compatIndex) move
-  // into a trailing "Other printers" group instead of the main tier list.
-  selectedPrinterName?: string | null;
-  compatIndex?: PrinterCompatibilityIndex;
-}
-
-function PresetDropdown({
-  label,
-  slot,
-  data,
-  value,
-  onChange,
-  disabled,
-  swatchColor,
-  selectedPrinterName,
-  compatIndex,
-}: PresetDropdownProps) {
-  const { t } = useTranslation();
-
-  // Tier sections (imported → cloud → standard), plus — for a process /
-  // filament slot with a selected printer — a trailing group of presets that
-  // resolve to a different printer (#1325). Compatibility-unknown presets
-  // stay in their tier, so a custom / untagged preset is never hidden, and
-  // empty sections collapse out.
-  const { sections, otherEntries } = useMemo(() => {
-    const tiers: { key: keyof UnifiedPresetsResponse; label: string; fallback: string }[] = [
-      { key: 'local', label: 'slice.tier.local', fallback: 'Imported' },
-      { key: 'orca_cloud', label: 'slice.tier.orcaCloud', fallback: 'Orca Cloud' },
-      { key: 'cloud', label: 'slice.tier.cloud', fallback: 'Bambu Cloud' },
-      { key: 'standard', label: 'slice.tier.standard', fallback: 'Standard' },
-    ];
-    const filterByPrinter = slot !== 'printer';
-    const compatSections: { tierLabel: string; entries: UnifiedPreset[] }[] = [];
-    const other: UnifiedPreset[] = [];
-    for (const { key, label: lk, fallback } of tiers) {
-      const entries = (data[key] as UnifiedPresetsBySlot)[slot];
-      if (!filterByPrinter) {
-        if (entries.length > 0) compatSections.push({ tierLabel: t(lk, fallback), entries });
-        continue;
-      }
-      const compatible: UnifiedPreset[] = [];
-      for (const p of entries) {
-        if (
-          presetCompatibility(
-            p,
-            // filterByPrinter is true here, so slot is never 'printer'.
-            slot as 'process' | 'filament',
-            selectedPrinterName ?? null,
-            compatIndex ?? EMPTY_COMPATIBILITY_INDEX,
-          ) === 'mismatch'
-        ) {
-          other.push(p);
-        } else {
-          compatible.push(p);
-        }
-      }
-      if (compatible.length > 0) {
-        compatSections.push({ tierLabel: t(lk, fallback), entries: compatible });
-      }
-    }
-    return { sections: compatSections, otherEntries: other };
-  }, [data, slot, t, selectedPrinterName, compatIndex]);
-
-  const totalEntries =
-    sections.reduce((sum, s) => sum + s.entries.length, 0) + otherEntries.length;
-
-  return (
-    <label className="block">
-      <span className="flex items-center gap-2 text-xs text-bambu-gray mb-1">
-        {swatchColor && (
-          <span
-            className="inline-block w-3 h-3 rounded-full border border-bambu-dark-tertiary"
-            style={{ backgroundColor: swatchColor || 'transparent' }}
-            aria-hidden
-          />
-        )}
-        <span>{label}</span>
-      </span>
-      <select
-        value={toRefValue(value)}
-        onChange={(e) => onChange(fromRefValue(e.target.value))}
-        disabled={disabled || totalEntries === 0}
-        className="w-full px-3 py-2 rounded-md bg-bambu-dark border border-bambu-dark-tertiary text-white text-sm focus:outline-none focus:border-bambu-gray disabled:opacity-50"
-      >
-        <option value="">
-          {totalEntries === 0
-            ? t('slice.noPresetsForSlot')
-            : t('slice.selectPreset')}
-        </option>
-        {sections.map((section) => (
-          <optgroup key={section.tierLabel} label={section.tierLabel}>
-            {section.entries.map((p) => (
-              <option key={`${p.source}:${p.id}`} value={`${p.source}:${p.id}`}>
-                {p.name}
-              </option>
-            ))}
-          </optgroup>
-        ))}
-        {otherEntries.length > 0 && (
-          <optgroup label={t('slice.otherPrinters')}>
-            {otherEntries.map((p) => (
-              <option key={`${p.source}:${p.id}`} value={`${p.source}:${p.id}`}>
-                {p.name}
-              </option>
-            ))}
-          </optgroup>
-        )}
       </select>
     </label>
   );

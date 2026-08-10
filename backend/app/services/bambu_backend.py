@@ -1,6 +1,7 @@
 """Bambu implementation of the printer backend boundary."""
 
 import asyncio
+import math
 from collections.abc import Callable
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
@@ -20,6 +21,7 @@ from backend.app.services.printer_backend import (
 )
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
+    NozzleSnapshot,
     PrinterCapabilities,
     PrinterProvider,
     PrinterSnapshot,
@@ -36,6 +38,21 @@ _BAMBU_STATES = {
     "FAILED": NormalizedPrinterState.ERROR,
     "STOPPED": NormalizedPrinterState.CANCELLED,
 }
+
+
+def _nozzle_snapshots(state: PrinterState) -> tuple[NozzleSnapshot, ...]:
+    raw_nozzles = state.nozzles if isinstance(state.nozzles, (list, tuple)) else ()
+    snapshots = []
+    for tool_index, nozzle in enumerate(raw_nozzles):
+        try:
+            diameter = float(nozzle.nozzle_diameter)
+        except (AttributeError, TypeError, ValueError):
+            diameter = None
+        if diameter is None or not math.isfinite(diameter) or diameter <= 0:
+            snapshots.append(NozzleSnapshot(tool_index, None, "unknown"))
+        else:
+            snapshots.append(NozzleSnapshot(tool_index, diameter, "confirmed"))
+    return tuple(snapshots)
 
 
 class BambuBackend:
@@ -168,6 +185,7 @@ class BambuBackend:
         normalized = _BAMBU_STATES.get(state.state, NormalizedPrinterState.UNKNOWN)
         if not state.connected:
             normalized = NormalizedPrinterState.OFFLINE
+        stale = self.client.is_stale()
         return PrinterSnapshot(
             provider=self.provider,
             connected=state.connected,
@@ -178,6 +196,8 @@ class BambuBackend:
             current_layer=state.layer_num,
             total_layers=state.total_layers,
             temperatures=dict(state.temperatures),
+            nozzles=_nozzle_snapshots(state),
+            telemetry_stale=stale if isinstance(stale, bool) else False,
         )
 
     async def start(self, job: StartJob) -> StartResult:

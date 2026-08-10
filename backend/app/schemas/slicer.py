@@ -4,7 +4,7 @@ import json
 import math
 import re
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -184,6 +184,47 @@ class SliceRequest(BaseModel):
     )
     process_overrides: dict[str, SettingValue] = Field(default_factory=dict, max_length=256)
     model_state: ModelState | None = None
+    catalog_printer_id: int | None = Field(default=None, gt=0)
+    catalog_binding_id: int | None = Field(default=None, gt=0)
+    catalog_process_profile_id: int | None = Field(default=None, gt=0)
+    catalog_filament_profile_ids: list[int] = Field(default_factory=list, max_length=64)
+    catalog_acknowledgement: dict[str, Any] | None = None
+    catalog_selection_evidence: dict[str, Any] = Field(default_factory=dict)
+    catalog_history_job_id: int | None = Field(default=None, gt=0)
+    catalog_history_mode: Literal["exact", "upgrade"] | None = None
+    catalog_tombstone_acknowledgement: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_catalog_history(self) -> "SliceRequest":
+        if (self.catalog_history_job_id is None) != (self.catalog_history_mode is None):
+            raise ValueError("catalog_history_job_id and catalog_history_mode are required together")
+        if (
+            self.catalog_tombstone_acknowledgement is not None
+            and self.catalog_history_mode != "exact"
+        ):
+            raise ValueError("catalog_tombstone_acknowledgement is valid only for exact historical re-slicing")
+        return self
+
+    @model_validator(mode="after")
+    def validate_catalog_selection(self) -> "SliceRequest":
+        supplied = (
+            self.catalog_printer_id is not None
+            or self.catalog_binding_id is not None
+            or self.catalog_process_profile_id is not None
+            or bool(self.catalog_filament_profile_ids)
+        )
+        if supplied and (
+            self.catalog_printer_id is None
+            or self.catalog_binding_id is None
+            or self.catalog_process_profile_id is None
+        ):
+            raise ValueError(
+                "catalog_printer_id, catalog_binding_id, catalog_process_profile_id, "
+                "and catalog_filament_profile_ids are required together"
+            )
+        if len(json.dumps(self.catalog_selection_evidence, separators=(",", ":")).encode()) > 64 * 1024:
+            raise ValueError("catalog_selection_evidence exceeds 65536 bytes")
+        return self
 
     @model_validator(mode="after")
     def validate_workbench_state(self) -> "SliceRequest":
@@ -235,7 +276,40 @@ class SliceRequest(BaseModel):
             # Multi-color caller: backfill the singular from the first slot
             # so callers that still read the legacy field see a stable value.
             self.filament_preset = self.filament_presets[0]
+        if (
+            self.catalog_printer_id is not None
+            or self.catalog_binding_id is not None
+            or self.catalog_process_profile_id is not None
+            or self.catalog_filament_profile_ids
+        ) and len(self.catalog_filament_profile_ids) != len(self.filament_presets):
+            raise ValueError("catalog_filament_profile_ids must match filament_presets")
         return self
+
+
+class HistoricalReslicePrepareRequest(BaseModel):
+    mode: Literal["exact", "upgrade"]
+    catalog_acknowledgement: dict[str, Any] | None = None
+    catalog_tombstone_acknowledgement: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_tombstone_acknowledgement(self) -> "HistoricalReslicePrepareRequest":
+        if self.catalog_tombstone_acknowledgement is not None and self.mode != "exact":
+            raise ValueError("catalog_tombstone_acknowledgement is valid only for exact historical re-slicing")
+        return self
+
+
+class HistoricalRevisionIds(BaseModel):
+    printer: int
+    process: int
+    filaments: list[int]
+
+
+class HistoricalReslicePrepareResponse(BaseModel):
+    source_kind: Literal["library_file", "archive"]
+    source_id: int
+    request: SliceRequest
+    tombstoned: bool
+    revision_ids: HistoricalRevisionIds
 
 
 class PlateFilament(BaseModel):

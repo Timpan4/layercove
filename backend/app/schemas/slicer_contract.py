@@ -93,6 +93,15 @@ class ResolvedSlicerProfileResponse(BaseModel):
     values: dict[str, Any]
 
 
+class SliceJobProvenanceResponse(BaseModel):
+    state: Literal["provenance_unknown", "resolved"]
+    printer_revision_id: int | None = None
+    process_revision_id: int | None = None
+    filament_revision_ids: list[int] | None = None
+    selection_evidence: dict[str, Any] | None = None
+    created_at: datetime
+
+
 class SliceJobStateResponse(BaseModel):
     job_id: int
     status: Literal["pending", "running", "completed", "failed", "cancel-requested", "cancelled"]
@@ -105,6 +114,7 @@ class SliceJobStateResponse(BaseModel):
     started_at: datetime | None = None
     completed_at: datetime | None = None
     progress: dict[str, Any] | None = None
+    provenance: SliceJobProvenanceResponse | None = None
     result: dict[str, Any] | None = None
     error_status: int | None = None
     error_code: str | None = None
