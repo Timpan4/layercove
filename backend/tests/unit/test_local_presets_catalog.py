@@ -49,9 +49,7 @@ async def test_local_create_update_and_delete_mirror_attributed_catalog_history(
         actor,
         db,
     )
-    profile = await db.scalar(
-        select(SlicerProfile).where(SlicerProfile.remote_profile_id == str(created.id))
-    )
+    profile = await db.scalar(select(SlicerProfile).where(SlicerProfile.remote_profile_id == str(created.id)))
     assert profile is not None
     revisions = (
         await db.scalars(

@@ -69,8 +69,6 @@ async def test_password_connection_runs_initial_persistent_catalog_sync(db, monk
         user,
     )
 
-    profile = await db.scalar(
-        select(SlicerProfile).where(SlicerProfile.remote_profile_id == "remote-process-1")
-    )
+    profile = await db.scalar(select(SlicerProfile).where(SlicerProfile.remote_profile_id == "remote-process-1"))
     assert response.connected is True
     assert profile is not None

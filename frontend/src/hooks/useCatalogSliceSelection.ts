@@ -247,6 +247,15 @@ export function useCatalogSliceSelection({
       || selectedFilamentPresets.some((preset) => preset === null)
     ) return null;
     const processClassification = catalogClassification(groupsQuery.data, processChoice.id);
+    const filamentClassifications = filamentChoices.map((choice) =>
+      catalogClassification(groupsQuery.data, choice!.id));
+    if (
+      !processClassification
+      || !selectableCatalogProfile(processClassification)
+      || filamentClassifications.some(
+        (classification) => !classification || !selectableCatalogProfile(classification),
+      )
+    ) return null;
     return {
       printerId,
       bindingId: selectedBinding.id,
@@ -266,7 +275,7 @@ export function useCatalogSliceSelection({
           reason_codes: processClassification?.classification.reason_codes ?? [],
         },
         filaments: filamentChoices.map((choice, index) => {
-          const classification = catalogClassification(groupsQuery.data, choice!.id);
+          const classification = filamentClassifications[index];
           return {
             slot_id: filamentSlots[index]?.slot_id ?? index + 1,
             profile_id: choice!.id,

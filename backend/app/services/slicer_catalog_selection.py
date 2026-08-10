@@ -46,6 +46,7 @@ class PinnedProfileContent:
     printer: str
     process: str
     filaments: tuple[str, ...]
+    process_source: str
 
 
 @dataclass(frozen=True)
@@ -190,9 +191,7 @@ async def _load_history_source(
         or source_job.source_id != job.source_id
     ):
         raise CatalogSelectionError("historical_job_unavailable", ["historical_job_unavailable"], 404)
-    provenance = await db.scalar(
-        select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == source_job.id)
-    )
+    provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == source_job.id))
     if provenance is None or provenance.provenance_state != "resolved":
         raise CatalogSelectionError(
             "historical_provenance_unknown",
@@ -216,8 +215,7 @@ async def _historical_rows(
     printer_row = await _exact_revision(db, provenance.printer_revision_id, "printer")
     process_row = await _exact_revision(db, provenance.process_revision_id, "process")
     filament_rows = [
-        await _exact_revision(db, revision_id, "filament")
-        for revision_id in provenance.filament_revision_ids or []
+        await _exact_revision(db, revision_id, "filament") for revision_id in provenance.filament_revision_ids or []
     ]
     if not filament_rows:
         raise CatalogSelectionError(
@@ -280,9 +278,7 @@ async def _persist_profile_rows(
         printer_profile_id=binding_profile.id,
         printer_profile_name=binding_profile.display_name,
         expected_nozzle_diameter=binding.expected_nozzle_diameter,
-        aliases=tuple(
-            item for item in printer_metadata.get("aliases", []) if isinstance(item, str) and item.strip()
-        ),
+        aliases=tuple(item for item in printer_metadata.get("aliases", []) if isinstance(item, str) and item.strip()),
         active=True,
         profile_available=True,
         defaults_available=True,
@@ -358,9 +354,7 @@ async def _persist_profile_rows(
     profile_evidence = {
         "printer": _profile_provenance(printer_profile, printer_revision, printer_account),
         "process": _profile_provenance(process_profile, process_revision, process_account),
-        "filaments": [
-            _profile_provenance(profile, revision, account) for profile, revision, account in filament_rows
-        ],
+        "filaments": [_profile_provenance(profile, revision, account) for profile, revision, account in filament_rows],
     }
     selection_evidence = {
         "printer_id": printer.id,
@@ -445,9 +439,7 @@ async def persist_catalog_selection(
             request.catalog_filament_profile_ids = [row[0].id for row in filament_rows]
         else:
             process_row = await _active_revision(db, process_row[0].id, "process", job.owner_id)
-            filament_rows = [
-                await _active_revision(db, row[0].id, "filament", job.owner_id) for row in filament_rows
-            ]
+            filament_rows = [await _active_revision(db, row[0].id, "filament", job.owner_id) for row in filament_rows]
             request.catalog_printer_id = printer_id
             request.catalog_binding_id = binding_id
             request.catalog_process_profile_id = process_row[0].id
@@ -502,9 +494,7 @@ async def prepare_historical_reslice(
     source_job: SliceJobRecord,
     body: HistoricalReslicePrepareRequest,
 ) -> HistoricalRequestPreview:
-    provenance = await db.scalar(
-        select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == source_job.id)
-    )
+    provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == source_job.id))
     if provenance is None or provenance.provenance_state != "resolved":
         raise CatalogSelectionError(
             "historical_provenance_unknown",
@@ -521,8 +511,7 @@ async def prepare_historical_reslice(
         printer_row = await _active_revision(db, binding.profile_id, "printer", source_job.owner_id)
         process_row = await _active_revision(db, process_row[0].id, "process", source_job.owner_id)
         filament_rows = [
-            await _active_revision(db, row[0].id, "filament", source_job.owner_id)
-            for row in filament_rows
+            await _active_revision(db, row[0].id, "filament", source_job.owner_id) for row in filament_rows
         ]
         tombstoned = False
 
@@ -549,9 +538,7 @@ async def prepare_historical_reslice(
                 "source": filament_rows[0][2].source,
                 "id": filament_rows[0][0].remote_profile_id,
             },
-            "filament_presets": [
-                {"source": row[2].source, "id": row[0].remote_profile_id} for row in filament_rows
-            ],
+            "filament_presets": [{"source": row[2].source, "id": row[0].remote_profile_id} for row in filament_rows],
             "catalog_printer_id": printer_id,
             "catalog_binding_id": binding_id,
             "catalog_process_profile_id": process_row[0].id,
@@ -594,16 +581,23 @@ async def load_pinned_profile_content(db: AsyncSession, job_id: int | None) -> P
     ]
     if any(revision_id is None for revision_id in revision_ids):
         raise RuntimeError("Catalog provenance is missing pinned revisions")
-    revisions = {
-        revision.id: revision
-        for revision in (
-            await db.scalars(select(SlicerProfileRevision).where(SlicerProfileRevision.id.in_(revision_ids)))
-        ).all()
-    }
+    revision_rows = (
+        await db.execute(
+            select(SlicerProfileRevision, SlicerProfileAccount.source)
+            .join(SlicerProfile, SlicerProfile.id == SlicerProfileRevision.profile_id)
+            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+            .where(SlicerProfileRevision.id.in_(revision_ids))
+        )
+    ).all()
+    revisions = {revision.id: revision for revision, _source in revision_rows}
+    sources = {revision.id: source for revision, source in revision_rows}
     if len(revisions) != len(set(revision_ids)):
         raise RuntimeError("Pinned catalog revision is unavailable")
     return PinnedProfileContent(
         printer=json.dumps(revisions[provenance.printer_revision_id].content),
         process=json.dumps(revisions[provenance.process_revision_id].content),
-        filaments=tuple(json.dumps(revisions[revision_id].content) for revision_id in provenance.filament_revision_ids or []),
+        filaments=tuple(
+            json.dumps(revisions[revision_id].content) for revision_id in provenance.filament_revision_ids or []
+        ),
+        process_source=sources[provenance.process_revision_id],
     )

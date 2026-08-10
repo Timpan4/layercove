@@ -148,9 +148,7 @@ class SlicerProfileActivationEvent(Base):
 
     id: Mapped[int] = mapped_column(primary_key=True)
     profile_id: Mapped[int] = mapped_column(ForeignKey("slicer_profiles.id", ondelete="CASCADE"), index=True)
-    revision_id: Mapped[int] = mapped_column(
-        ForeignKey("slicer_profile_revisions.id", ondelete="RESTRICT"), index=True
-    )
+    revision_id: Mapped[int] = mapped_column(ForeignKey("slicer_profile_revisions.id", ondelete="RESTRICT"), index=True)
     action: Mapped[str] = mapped_column(String(16))
     activated_by_user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
     activated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())

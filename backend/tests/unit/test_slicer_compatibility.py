@@ -66,9 +66,7 @@ def test_unclassified_profile_still_applies_nozzle_readiness():
 
 
 def test_unclassified_profile_cannot_acknowledge_binding_failure():
-    broken = BindingEvidence(
-        1, 1, 10, "Bambu Lab P1S 0.4 nozzle", Decimal("0.4"), profile_available=False
-    )
+    broken = BindingEvidence(1, 1, 10, "Bambu Lab P1S 0.4 nozzle", Decimal("0.4"), profile_available=False)
 
     result = classify_profile(profile(None), broken, (broken,), NozzleEvidence("offline"))
 
@@ -154,7 +152,6 @@ def test_p1s_and_voron_shadow_oracle_has_all_four_authoritative_groups():
     assert p1s_results[105].auto_selectable is False
     assert voron_result.group == "selected_printer"
     assert voron_result.auto_selectable is True
-
 
 
 def test_p1s_suggestion_uses_explicit_model_metadata_and_requires_confirmation_elsewhere():

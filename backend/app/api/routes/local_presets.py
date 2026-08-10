@@ -41,6 +41,7 @@ async def _sync_catalog(db: AsyncSession, current_user: User | None) -> None:
     except ValueError as error:
         raise HTTPException(422, str(error)) from error
 
+
 router = APIRouter(prefix="/local-presets", tags=["Local Presets"])
 
 

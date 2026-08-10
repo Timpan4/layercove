@@ -433,6 +433,57 @@ class TestSliceLibraryFile:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_pinned_standard_process_keeps_profile_immutable_and_passes_overrides_to_sidecar(
+        self, db_session, slice_test_setup, monkeypatch
+    ):
+        from backend.app.services import slicer_catalog_selection
+
+        process = {"type": "process", "name": "Standard", "inherits": "Standard", "from": "system"}
+
+        async def load_pinned_profile_content(_db, _job_id):
+            return SimpleNamespace(
+                printer=json.dumps({"type": "machine", "name": "Printer", "inherits": "Printer", "from": "system"}),
+                process=json.dumps(process),
+                filaments=(
+                    json.dumps({"type": "filament", "name": "Filament", "inherits": "Filament", "from": "system"}),
+                ),
+                process_source="standard",
+            )
+
+        captured: dict = {}
+
+        async def validate_workbench_request(self, **_kwargs):
+            return None
+
+        async def slice_with_profiles(self, **kwargs):
+            captured.update(kwargs)
+            return slicer_api_module.SliceResult(b"gcode", 1, 2.0, 3.0)
+
+        monkeypatch.setattr(slicer_catalog_selection, "load_pinned_profile_content", load_pinned_profile_content)
+        monkeypatch.setattr(
+            slicer_api_module.SlicerApiService, "validate_workbench_request", validate_workbench_request
+        )
+        monkeypatch.setattr(slicer_api_module.SlicerApiService, "slice_with_profiles", slice_with_profiles)
+
+        await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid cube",
+            model_filename="Cube.stl",
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+                process_overrides={"layer_height": 0.16},
+                schema_hash="a" * 64,
+            ),
+            job_id=73,
+        )
+
+        assert json.loads(captured["process_profile_json"]) == process
+        assert captured["process_overrides"] == {"layer_height": 0.16}
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     @pytest.mark.parametrize("source_ext", [".stl", ".step", ".3mf"])
     async def test_klipper_destination_persists_raw_gcode_for_supported_inputs(
         self, async_client: AsyncClient, db_session, slice_test_setup, source_ext

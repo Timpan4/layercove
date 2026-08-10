@@ -379,8 +379,8 @@ async def _fetch_bundled_presets(db: AsyncSession, *, refresh: bool = False) -> 
                 continue
             # Bundled presets are addressed by name (the slicer resolves them
             # by name during the `inherits:` walk), so name doubles as id.
-            filament_type = entry.get("filament_type") if slot == "filament" else None
-            filament_colour = entry.get("filament_colour") if slot == "filament" else None
+            filament_type = _first_scalar(entry.get("filament_type")) if slot == "filament" else None
+            filament_colour = _first_scalar(entry.get("filament_colour")) if slot == "filament" else None
             slots[slot].append(
                 UnifiedPreset(
                     id=name,

@@ -198,10 +198,7 @@ class SliceRequest(BaseModel):
     def validate_catalog_history(self) -> "SliceRequest":
         if (self.catalog_history_job_id is None) != (self.catalog_history_mode is None):
             raise ValueError("catalog_history_job_id and catalog_history_mode are required together")
-        if (
-            self.catalog_tombstone_acknowledgement is not None
-            and self.catalog_history_mode != "exact"
-        ):
+        if self.catalog_tombstone_acknowledgement is not None and self.catalog_history_mode != "exact":
             raise ValueError("catalog_tombstone_acknowledgement is valid only for exact historical re-slicing")
         return self
 

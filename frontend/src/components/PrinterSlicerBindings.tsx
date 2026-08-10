@@ -276,6 +276,10 @@ function BindingEditor({
 }) {
   const processProfiles = compatibleProfiles.filter((profile) => profile.profile_type === 'process');
   const filamentProfiles = compatibleProfiles.filter((profile) => profile.profile_type === 'filament');
+  const missingProcessDefault = binding.default_process_profile_id != null
+    && !processProfiles.some((profile) => profile.profile_id === binding.default_process_profile_id);
+  const missingFilamentDefault = binding.default_filament_profile_id != null
+    && !filamentProfiles.some((profile) => profile.profile_id === binding.default_filament_profile_id);
 
   return (
     <div className="rounded border border-bambu-dark-tertiary p-3" data-testid={`binding-${binding.id}`}>
@@ -303,6 +307,11 @@ function BindingEditor({
             onChange={(event) => onUpdate({ default_process_profile_id: event.target.value ? Number(event.target.value) : null })}
           >
             <option value="">None</option>
+            {missingProcessDefault && (
+              <option value={binding.default_process_profile_id ?? ''}>
+                Unavailable profile #{binding.default_process_profile_id}
+              </option>
+            )}
             {processProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.display_name}</option>)}
           </select>
         </label>
@@ -316,6 +325,11 @@ function BindingEditor({
             onChange={(event) => onUpdate({ default_filament_profile_id: event.target.value ? Number(event.target.value) : null })}
           >
             <option value="">None</option>
+            {missingFilamentDefault && (
+              <option value={binding.default_filament_profile_id ?? ''}>
+                Unavailable profile #{binding.default_filament_profile_id}
+              </option>
+            )}
             {filamentProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.display_name}</option>)}
           </select>
         </label>

@@ -168,6 +168,22 @@ async def test_freeze_blocks_remote_cloud_pull_until_resumed(db, monkeypatch):
     assert resumed == {"id": result.account_id, "stale": True, "sync_frozen": False}
 
 
+async def test_resume_returns_current_stale_state_when_already_resumed(db):
+    result = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="cloud",
+            remote_account_id="global:ready@example.com",
+            profiles=[CatalogProfile("process", "process", "Process", {})],
+        ),
+    )
+    await db.commit()
+
+    resumed = await resume_catalog_account(result.account_id, db, None)
+
+    assert resumed == {"id": result.account_id, "stale": False, "sync_frozen": False}
+
+
 async def test_standard_sync_reads_full_sidecar_snapshot_into_mirror(db, monkeypatch):
     content = {"type": "print", "compatible_printers": ["Bambu Lab P1S 0.4 nozzle"]}
     service = MagicMock()

@@ -597,7 +597,14 @@ class TestFetchBundledPresets:
             return_value={
                 "printer": [{"name": "Bambu X1C 0.4", "base_id": None}],
                 "process": [{"name": "0.20mm Standard", "base_id": "fdm_process_common"}],
-                "filament": [{"name": "Bambu PLA Basic", "base_id": "fdm_filament_pla"}],
+                "filament": [
+                    {
+                        "name": "Bambu PLA Basic",
+                        "base_id": "fdm_filament_pla",
+                        "filament_type": ["PLA"],
+                        "filament_colour": ["#FFFFFF"],
+                    }
+                ],
             }
         )
         svc_mock.__aenter__ = AsyncMock(return_value=svc_mock)
@@ -612,6 +619,8 @@ class TestFetchBundledPresets:
         # Bundled presets are addressed by name (the slicer's inheritance
         # walker resolves them by name), so id == name.
         assert slots["printer"][0].id == "Bambu X1C 0.4"
+        assert slots["filament"][0].filament_type == "PLA"
+        assert slots["filament"][0].filament_colour == "#FFFFFF"
 
     @pytest.mark.asyncio
     async def test_full_sidecar_entries_preserve_compatible_printers(self):

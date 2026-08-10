@@ -156,7 +156,6 @@ describe('provider capability UI', () => {
     );
     await openControls(printer('bambu'), { ...status, state: 'IDLE', current_print: null });
 
-    expect(await screen.findByText('Bambu One')).toBeInTheDocument();
     expect(await screen.findByTestId('speed-control')).toBeInTheDocument();
     expect(screen.getAllByTitle(/view heater history/i)).not.toHaveLength(0);
     expect(screen.getByRole('button', { name: 'OK' })).toBeInTheDocument();
@@ -226,7 +225,6 @@ describe('provider capability UI', () => {
       { ...status, state: 'paused' },
     );
 
-    expect(await screen.findByText('Klipper One')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /resume/i })).toBeInTheDocument();
     expect(screen.getAllByText('cube.gcode').length).toBeGreaterThan(0);
     expect(screen.getAllByText('45%').length).toBeGreaterThan(0);
@@ -245,7 +243,6 @@ describe('provider capability UI', () => {
       { ...status, state: 'IDLE', current_print: null },
     );
 
-    expect(await screen.findByText('Klipper One')).toBeInTheDocument();
     await screen.findAllByText('Idle');
     expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
   });

@@ -3500,7 +3500,9 @@ async def _run_slicer_with_fallback(
             filament_jsons.append(await resolve_preset_ref(db, user, ref, "filament"))
 
     is_standard_process = (
-        pinned is None and request.process_preset is not None and request.process_preset.source == "standard"
+        pinned.process_source == "standard"
+        if pinned is not None
+        else request.process_preset is not None and request.process_preset.source == "standard"
     )
     process_overrides_for_sidecar: dict | None = dict(request.process_overrides) if is_standard_process else None
 
@@ -3605,9 +3607,7 @@ async def _run_slicer_with_fallback(
         try:
             target_data = json.loads(presets["printer"])
             target_model = _canonical_printer_model(
-                target_data.get("printer_model")
-                or target_data.get("printer_settings_id")
-                or target_data.get("name")
+                target_data.get("printer_model") or target_data.get("printer_settings_id") or target_data.get("name")
             )
         except (AttributeError, TypeError, ValueError):
             target_model = None

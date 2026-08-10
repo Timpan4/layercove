@@ -2,7 +2,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrinterSlicerBindings } from '../../components/PrinterSlicerBindings';
-import { api, type Printer, type SlicerCatalogBinding } from '../../api/client';
+import { api, type Printer, type SlicerCatalogBinding, type SlicerCatalogClassification } from '../../api/client';
 
 const auth = vi.hoisted(() => ({ enabled: true, update: true }));
 vi.mock('../../contexts/AuthContext', () => ({
@@ -77,6 +77,45 @@ describe('PrinterSlicerBindings', () => {
     expect(screen.getByTestId('binding-2')).toHaveTextContent('P1S 0.6 profile');
     fireEvent.click(screen.getByRole('button', { name: 'Add binding' }));
     expect(screen.getByRole('heading', { name: 'Create slicer binding' })).toBeInTheDocument();
+  });
+
+  it('keeps configured defaults visible when they are no longer compatible', async () => {
+    const classification = (profileId: number, profileType: 'process' | 'filament'): SlicerCatalogClassification => ({
+      profile_id: profileId,
+      revision_id: profileId,
+      profile_type: profileType,
+      display_name: `${profileType} ${profileId}`,
+      source: 'local',
+      account_id: 1,
+      account_name: null,
+      stale: false,
+      classification: {
+        group: 'selected_printer',
+        compatibility: 'match',
+        readiness: 'ready',
+        reason_codes: [],
+        reason_details: [],
+        selectable: true,
+        auto_selectable: true,
+        acknowledgement_required: false,
+      },
+    });
+    vi.spyOn(api, 'listSlicerCatalogBindings').mockResolvedValue([{
+      ...binding(1, 'P1S 0.4 profile'),
+      default_process_profile_id: 31,
+      default_filament_profile_id: 41,
+    }]);
+    vi.spyOn(api, 'getSlicerCatalogGroups').mockResolvedValue({
+      ...emptyGroups,
+      selected_printer: [classification(30, 'process'), classification(40, 'filament')],
+    });
+
+    renderPanel([printer(1, 'P1S', 'P1S')]);
+
+    expect(await screen.findByRole('option', { name: 'Unavailable profile #31' })).toBeInTheDocument();
+    expect(screen.getByRole('option', { name: 'Unavailable profile #41' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: /Process default/ })).toHaveValue('31');
+    expect(screen.getByRole('combobox', { name: /Filament default/ })).toHaveValue('41');
   });
 
   it('surfaces create errors without hiding other printers', async () => {

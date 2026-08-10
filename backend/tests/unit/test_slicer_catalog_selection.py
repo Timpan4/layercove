@@ -169,9 +169,7 @@ async def test_enqueue_pins_revision_atomically_and_dispatches_old_content(catal
         before_commit=before_commit,
     )
     async with catalog_db() as db:
-        provenance = await db.scalar(
-            select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id)
-        )
+        provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id))
         pinned_process_revision = provenance.process_revision_id
         update = await ingest_catalog(
             db,
@@ -393,9 +391,7 @@ async def test_offline_requires_acknowledgement_but_shadow_never_blocks(catalog_
         await db.flush()
         await persist_catalog_selection(db, job, request_for(ids, process="dremel"))
         await db.commit()
-        provenance = await db.scalar(
-            select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id)
-        )
+        provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id))
         assert provenance.selection_evidence["enforcement_state"] == "shadow"
         assert provenance.selection_evidence["compatibility"][0]["classification"]["selectable"] is False
         assert await load_pinned_profile_content(db, job.id) is not None
@@ -422,16 +418,12 @@ async def _persist_original_job(factory, ids: dict[str, int]) -> tuple[int, int]
         await db.flush()
         await persist_catalog_selection(db, job, original_request)
         await db.commit()
-        provenance = await db.scalar(
-            select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id)
-        )
+        provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id))
         return job.id, provenance.process_revision_id
 
 
 @pytest.mark.asyncio
-async def test_exact_history_uses_retained_tombstone_revision_and_records_acknowledgement(
-    catalog_db, monkeypatch
-):
+async def test_exact_history_uses_retained_tombstone_revision_and_records_acknowledgement(catalog_db, monkeypatch):
     ids = await setup_catalog(catalog_db)
     monkeypatch.setattr(
         printer_manager,
@@ -485,9 +477,7 @@ async def test_exact_history_uses_retained_tombstone_revision_and_records_acknow
         await persist_catalog_selection(db, job, replay)
         await db.commit()
 
-        provenance = await db.scalar(
-            select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id)
-        )
+        provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id))
         assert provenance.process_revision_id == old_process_revision_id
         assert provenance.selection_evidence["history"] == {
             "source_job_id": source_job_id,
@@ -674,9 +664,7 @@ async def test_history_upgrade_pins_current_active_revision(catalog_db, monkeypa
         replay.catalog_history_mode = "upgrade"
         await persist_catalog_selection(db, job, replay)
         await db.commit()
-        provenance = await db.scalar(
-            select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id)
-        )
+        provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id))
         assert provenance.process_revision_id == update.revision_ids[0]
         assert provenance.process_revision_id != old_process_revision_id
         assert provenance.selection_evidence["history"]["mode"] == "upgrade"
@@ -779,9 +767,7 @@ async def test_failed_catalog_job_keeps_complete_provenance(catalog_db, monkeypa
 
     async with catalog_db() as db:
         failed = await db.get(SliceJobRecord, job.id)
-        provenance = await db.scalar(
-            select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id)
-        )
+        provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id))
         assert failed.status == "failed"
         assert failed.expires_at is None
         assert provenance.provenance_state == "resolved"

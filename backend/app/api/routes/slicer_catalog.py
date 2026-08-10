@@ -167,14 +167,18 @@ async def list_catalog_profile_revisions(
         )
     ).all()
     rows = (
-        await db.execute(
-            select(SlicerProfileRevision)
-            .join(SlicerProfile, SlicerProfile.id == SlicerProfileRevision.profile_id)
-            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-            .where(SlicerProfileRevision.profile_id == profile_id, visibility)
-            .order_by(SlicerProfileRevision.id)
+        (
+            await db.execute(
+                select(SlicerProfileRevision)
+                .join(SlicerProfile, SlicerProfile.id == SlicerProfileRevision.profile_id)
+                .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+                .where(SlicerProfileRevision.profile_id == profile_id, visibility)
+                .order_by(SlicerProfileRevision.id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     return [
         {
             "id": revision.id,
@@ -373,9 +377,7 @@ async def set_account_sharing(
     account_id: int,
     request: SharingRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = RequireAnyPermissionIfAuthEnabled(
-        Permission.CLOUD_AUTH, Permission.ORCA_CLOUD_AUTH
-    ),
+    current_user: User | None = RequireAnyPermissionIfAuthEnabled(Permission.CLOUD_AUTH, Permission.ORCA_CLOUD_AUTH),
 ) -> dict[str, Any]:
     account = await db.get(SlicerProfileAccount, account_id)
     if account is None:
@@ -544,4 +546,4 @@ async def resume_catalog_account(
         raise HTTPException(status_code=404, detail="Catalog account not found")
     account.sync_frozen = False
     await db.commit()
-    return {"id": account_id, "stale": True, "sync_frozen": False}
+    return {"id": account_id, "stale": account.last_sync_error is not None, "sync_frozen": False}

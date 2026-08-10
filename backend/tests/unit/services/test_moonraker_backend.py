@@ -152,6 +152,61 @@ def test_moonraker_reads_one_time_klipper_nozzle_configuration():
     assert backend.snapshot().nozzles[0].diameter == 0.4
 
 
+def test_moonraker_deduplicates_tool_zero_using_conventional_extruder_section():
+    backend = MoonrakerBackend(printer(), emit=lambda _: None, transport_factory=lambda **_: None)
+    backend._merge_status(
+        {
+            "print_stats": {"state": "standby"},
+            "configfile": {
+                "settings": {
+                    "extruder": {"nozzle_diameter": 0.4},
+                    "extruder0": {"nozzle_diameter": "invalid"},
+                }
+            },
+        },
+        bootstrap=True,
+    )
+
+    assert [(nozzle.tool_index, nozzle.diameter, nozzle.status) for nozzle in backend.snapshot().nozzles] == [
+        (0, 0.4, "confirmed")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_moonraker_refreshes_nozzle_configuration_when_klippy_becomes_ready():
+    connection = FakeConnection(
+        [
+            {
+                "id": 1,
+                "result": {
+                    "status": {
+                        "print_stats": {"state": "standby"},
+                        "configfile": {"settings": {"extruder": {"nozzle_diameter": 0.4}}},
+                    }
+                },
+            },
+            {"id": 2, "result": {"status": {"print_stats": {"state": "standby"}}}},
+            {"method": "notify_klippy_ready", "params": []},
+            {
+                "id": 3,
+                "result": {"status": {"configfile": {"settings": {"extruder": {"nozzle_diameter": 0.6}}}}},
+            },
+        ]
+    )
+    transport = FakeTransport([connection])
+    backend = MoonrakerBackend(printer(), emit=lambda _: None, transport_factory=lambda **_: transport)
+
+    await backend.connect()
+    await wait_for(lambda: backend.snapshot().nozzles and backend.snapshot().nozzles[0].diameter == 0.6)
+
+    assert [message["method"] for message in connection.sent] == [
+        "printer.objects.query",
+        "printer.objects.subscribe",
+        "printer.objects.query",
+    ]
+    await backend.disconnect()
+
+
 def test_moonraker_absent_and_malformed_nozzle_configuration_are_unknown():
     absent = MoonrakerBackend(printer(), emit=lambda _: None, transport_factory=lambda **_: None)
     absent._merge_status({"print_stats": {"state": "standby"}}, bootstrap=True)

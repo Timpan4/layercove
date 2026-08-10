@@ -191,9 +191,7 @@ class SliceDispatchService:
 
     async def get_provenance(self, job_id: int) -> SlicerJobProvenance | None:
         async with database.async_session() as db:
-            return await db.scalar(
-                select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job_id)
-            )
+            return await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job_id))
 
     def set_progress(self, job_id: int, progress: dict[str, Any] | None) -> None:
         task = asyncio.create_task(self._persist_progress(job_id, progress), name=f"slice-progress-{job_id}")

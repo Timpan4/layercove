@@ -126,8 +126,7 @@ async def test_review_batch_can_approve_selected_revisions(db):
     await approve_review_batch(db, result.review_batch_id, revision_ids=[result.revision_ids[0]])
 
     revisions = {
-        revision.id: revision.review_state
-        for revision in (await db.scalars(select(SlicerProfileRevision))).all()
+        revision.id: revision.review_state for revision in (await db.scalars(select(SlicerProfileRevision))).all()
     }
     assert revisions == {
         result.revision_ids[0]: "approved",

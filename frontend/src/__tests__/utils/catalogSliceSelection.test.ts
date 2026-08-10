@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type {
   SpoolAssignment,
   SlicerCatalogBinding,
@@ -89,6 +89,21 @@ describe('catalog slice defaulting', () => {
     });
     expect(pickCatalogProcess(choices, null, 11, 12)?.id).toBe(11);
     expect(pickCatalogProcess(choices, null, null, 12)?.id).toBe(12);
+  });
+
+  it('matches embedded process names independently of browser locale', () => {
+    const localeLower = vi.spyOn(String.prototype, 'toLocaleLowerCase').mockImplementation(function () {
+      return String(this).replaceAll('I', 'ı').toLowerCase();
+    });
+
+    expect(pickCatalogProcess(
+      groups([classified(10, 'process', 'I Process')]),
+      'i process',
+      null,
+      null,
+    )).toEqual({ id: 10, reason: 'embedded_process', manual: false });
+
+    localeLower.mockRestore();
   });
 
   it('never auto-selects an unclassified process', () => {

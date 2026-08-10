@@ -288,9 +288,7 @@ async def test_referenced_retirement_requires_atomic_replacement_or_explicit_dis
     await approve_review_batch(db, update.review_batch_id)
     await activate_revision(db, update.revision_ids[0])
     await db.commit()
-    replacement = await db.scalar(
-        select(SlicerProfile).where(SlicerProfile.remote_profile_id == "replacement-process")
-    )
+    replacement = await db.scalar(select(SlicerProfile).where(SlicerProfile.remote_profile_id == "replacement-process"))
 
     with pytest.raises(HTTPException) as unresolved:
         await retire_profile(profiles["p1s-process"].id, RetirementRequest(), None, db)
@@ -317,6 +315,24 @@ async def test_referenced_retirement_requires_atomic_replacement_or_explicit_dis
     await db.refresh(stored_binding)
     assert disabled["disabled_binding_ids"] == [stored_binding.id]
     assert stored_binding.is_active is False
+
+
+async def test_retirement_reports_only_bindings_disabled_by_that_request(db, monkeypatch):
+    profiles = await install_profiles(db)
+    monkeypatch.setattr(printer_manager, "get_snapshot", lambda _printer_id: None)
+    created = await create_binding(binding_request(1, profiles, "p1s"), None, db)
+    stored = await db.get(PrinterSlicerBinding, created["id"])
+    stored.is_active = False
+    await db.commit()
+
+    retired = await retire_profile(
+        profiles["p1s-process"].id,
+        RetirementRequest(disable_references=True),
+        None,
+        db,
+    )
+
+    assert retired["disabled_binding_ids"] == []
 
 
 async def test_private_cloud_profile_is_visible_and_preferred_only_by_owner(db, monkeypatch):
@@ -356,9 +372,7 @@ async def test_private_cloud_profile_is_visible_and_preferred_only_by_owner(db, 
     await approve_review_batch(db, result.review_batch_id, owner.id)
     await activate_revision(db, result.revision_ids[0], owner.id)
     await db.commit()
-    private_profile = await db.scalar(
-        select(SlicerProfile).where(SlicerProfile.remote_profile_id == "private-process")
-    )
+    private_profile = await db.scalar(select(SlicerProfile).where(SlicerProfile.remote_profile_id == "private-process"))
 
     owner_groups = await classify_catalog(1, binding["id"], owner, db)
     outsider_groups = await classify_catalog(1, binding["id"], outsider, db)
@@ -373,9 +387,7 @@ async def test_private_cloud_profile_is_visible_and_preferred_only_by_owner(db, 
     )
 
     assert private_profile.id in {item["profile_id"] for item in owner_groups["selected_printer"]}
-    assert private_profile.id not in {
-        item["profile_id"] for group in outsider_groups.values() for item in group
-    }
+    assert private_profile.id not in {item["profile_id"] for group in outsider_groups.values() for item in group}
     assert preference["value"] == {"profile_id": private_profile.id}
     with pytest.raises(HTTPException):
         await save_preference(

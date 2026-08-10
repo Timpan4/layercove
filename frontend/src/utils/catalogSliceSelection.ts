@@ -62,7 +62,7 @@ function autoCandidate(
 }
 
 function normalizedName(value: string | null | undefined) {
-  return value?.trim().replace(/\s+/g, ' ').toLocaleLowerCase() ?? '';
+  return value?.trim().replace(/\s+/g, ' ').toLowerCase() ?? '';
 }
 
 export function pickCatalogProcess(

@@ -770,6 +770,11 @@ async def retire_profile(
 
     references = await catalog_profile_references(db, profile.id)
     bindings = references.bindings
+    disabled_binding_ids = (
+        sorted(binding.id for binding in bindings if binding.is_active)
+        if data.replacement_profile_id is None and data.disable_references
+        else []
+    )
     mappings = references.mappings
     rules = references.rules
     preferences = references.preferences
@@ -844,7 +849,7 @@ async def retire_profile(
     return {
         "profile_id": profile.id,
         "replacement_profile_id": replacement.id if replacement is not None else None,
-        "disabled_binding_ids": sorted(binding.id for binding in bindings if not binding.is_active),
+        "disabled_binding_ids": disabled_binding_ids,
         "retired": True,
     }
 

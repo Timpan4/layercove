@@ -108,7 +108,7 @@ def _configured_nozzles(configfile: object) -> tuple[NozzleSnapshot, ...]:
     if not isinstance(configfile, dict) or not isinstance(configfile.get("settings"), dict):
         return ()
     settings = configfile["settings"]
-    nozzles = []
+    nozzles: dict[int, NozzleSnapshot] = {}
     for name, values in settings.items():
         if name == "extruder":
             tool_index = 0
@@ -117,11 +117,14 @@ def _configured_nozzles(configfile: object) -> tuple[NozzleSnapshot, ...]:
         else:
             continue
         diameter = _finite_number(values.get("nozzle_diameter")) if isinstance(values, dict) else None
-        if diameter is None or diameter <= 0:
-            nozzles.append(NozzleSnapshot(tool_index, None, "unknown"))
-        else:
-            nozzles.append(NozzleSnapshot(tool_index, diameter, "confirmed"))
-    return tuple(sorted(nozzles, key=lambda nozzle: nozzle.tool_index))
+        nozzle = (
+            NozzleSnapshot(tool_index, None, "unknown")
+            if diameter is None or diameter <= 0
+            else NozzleSnapshot(tool_index, diameter, "confirmed")
+        )
+        if tool_index not in nozzles or name == "extruder":
+            nozzles[tool_index] = nozzle
+    return tuple(nozzles[index] for index in sorted(nozzles))
 
 
 class MoonrakerBackend:
@@ -299,7 +302,19 @@ class MoonrakerBackend:
                 while True:
                     if self._clock() - connected_at >= self._stable_connection_seconds:
                         attempt = 0
-                    self._process_message(await connection.receive_json(), bootstrap=False)
+                    message = await connection.receive_json()
+                    if isinstance(message, dict) and message.get("method") == "notify_klippy_ready":
+                        await asyncio.wait_for(
+                            self._request(
+                                connection,
+                                3,
+                                "printer.objects.query",
+                                {"configfile": ["settings"]},
+                            ),
+                            timeout=self._bootstrap_timeout,
+                        )
+                    else:
+                        self._process_message(message, bootstrap=False)
             except asyncio.CancelledError:
                 raise
             except Exception:

@@ -82,9 +82,7 @@ async def test_cloud_full_snapshot_is_namespaced_private_and_unclassified(db):
         display_name="two@example.com",
         user_id=None,
     )
-    accounts = (
-        await db.scalars(select(SlicerProfileAccount).where(SlicerProfileAccount.source == "cloud"))
-    ).all()
+    accounts = (await db.scalars(select(SlicerProfileAccount).where(SlicerProfileAccount.source == "cloud"))).all()
     revisions = (await db.scalars(select(SlicerProfileRevision))).all()
     assert first.account_id != second.account_id
     assert {account.sharing_state for account in accounts} == {"private"}
@@ -176,6 +174,13 @@ def test_source_adapters_preserve_authority_without_name_inference():
 
     with pytest.raises(ValueError, match="stable_id or content_hash"):
         standard_profile_adapter("process", {"name": "display-only stub", "base_id": "base"})
+
+
+def test_cloud_adapter_rejects_oversized_identity_and_name():
+    with pytest.raises(ValueError, match="id exceeds catalog limit"):
+        cloud_profile_adapter("process", {"id": "x" * 513, "name": "Process"})
+    with pytest.raises(ValueError, match="name exceeds catalog limit"):
+        cloud_profile_adapter("process", {"id": "process", "name": "x" * 513})
 
 
 def test_source_adapter_rejects_credentials_in_untrusted_profile():

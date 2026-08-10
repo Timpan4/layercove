@@ -81,9 +81,7 @@ class CatalogProfileReferences:
         }
 
 
-async def catalog_profile_references(
-    session: AsyncSession, profile_id: int
-) -> CatalogProfileReferences:
+async def catalog_profile_references(session: AsyncSession, profile_id: int) -> CatalogProfileReferences:
     bindings = tuple(
         (
             await session.scalars(
@@ -133,9 +131,7 @@ def _dependency_refs(value: Any) -> set[str]:
     refs: set[str] = set()
     if isinstance(value, Mapping):
         for key, item in value.items():
-            if key in {"dependency_id", "profile_id", "remote_profile_id", "source_inherits"} and isinstance(
-                item, str
-            ):
+            if key in {"dependency_id", "profile_id", "remote_profile_id", "source_inherits"} and isinstance(item, str):
                 refs.add(item)
             elif key in {"dependency_ids", "dependencies"}:
                 refs.update(_dependency_refs(item))

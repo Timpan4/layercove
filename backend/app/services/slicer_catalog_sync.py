@@ -197,14 +197,8 @@ async def sync_local_catalog(
         return None
     seen = {(profile.remote_profile_id, profile.profile_type) for profile in profiles}
     if account is not None:
-        existing = (
-            await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))
-        ).all()
-        removed = [
-            profile
-            for profile in existing
-            if (profile.remote_profile_id, profile.profile_type) not in seen
-        ]
+        existing = (await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))).all()
+        removed = [profile for profile in existing if (profile.remote_profile_id, profile.profile_type) not in seen]
         if protect_references:
             for profile in removed:
                 references = await catalog_profile_references(session, profile.id)
@@ -236,15 +230,21 @@ def cloud_profile_adapter(profile_type: str, entry: Mapping[str, Any]) -> Catalo
     remote_id = entry.get("setting_id") or entry.get("id")
     if not isinstance(remote_id, (str, int)) or not str(remote_id):
         raise ValueError("cloud profile is missing a stable id")
+    remote_id = str(remote_id)
+    if len(remote_id) > 512:
+        raise ValueError("cloud profile id exceeds catalog limit")
     if profile_type not in {"printer", "process", "filament"}:
         raise ValueError("unsupported cloud profile type")
     content = entry.get("content")
     normalized_content = dict(content) if isinstance(content, Mapping) else {}
     _validate_profile_content(normalized_content)
+    name = str(entry.get("name") or remote_id)
+    if len(name) > 512:
+        raise ValueError("cloud profile name exceeds catalog limit")
     return CatalogProfile(
-        remote_profile_id=str(remote_id),
+        remote_profile_id=remote_id,
         profile_type=profile_type,
-        display_name=str(entry.get("name") or remote_id),
+        display_name=name,
         content=normalized_content,
         metadata={"compatible_printers": _string_list(normalized_content.get("compatible_printers"))},
     )
@@ -316,9 +316,7 @@ async def sync_cloud_account(
     )
     account_id = account.id if account is not None else None
     existing = (
-        (
-            await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))
-        ).all()
+        (await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))).all()
         if account is not None
         else []
     )
@@ -528,9 +526,7 @@ async def sync_orca_account(
                 for profile in await _existing_orca_profiles(session, account)
                 if profile.remote_profile_id not in pull.deletes
             }
-            snapshot.update(
-                {(profile.profile_type, profile.remote_profile_id): profile for profile in upserts}
-            )
+            snapshot.update({(profile.profile_type, profile.remote_profile_id): profile for profile in upserts})
             profiles = resolve_profile_inheritance(list(snapshot.values()))
         else:
             profiles = resolve_profile_inheritance(upserts)
