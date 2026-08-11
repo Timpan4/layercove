@@ -109,6 +109,59 @@ describe('SlicerCatalogAdmin', () => {
     await waitFor(() => expect(api.resumeSlicerCatalogAccount).toHaveBeenCalledWith(1));
   });
 
+  it('loads one catalog profile page at a time', async () => {
+    const profiles = Array.from({ length: 27 }, (_, index) => ({
+      profile_id: index + 1,
+      revision_id: index + 1,
+      latest_revision_id: index + 1,
+      active_revision_id: index + 1,
+      active: true,
+      review_state: 'approved',
+      source: 'standard',
+      account_id: 1,
+      account_name: 'Standard',
+      remote_profile_id: `profile-${index + 1}`,
+      profile_type: 'process',
+      display_name: `Profile ${index + 1}`,
+      content_hash: `hash-${index + 1}`,
+      compatibility_metadata: {},
+      tombstoned: false,
+      stale: false,
+      sharing_state: 'shared',
+    }));
+    api.listSlicerCatalogProfiles.mockImplementation((options: { offset?: number; limit?: number } = {}) => {
+      const { offset = 0, limit } = options;
+      return Promise.resolve(profiles.slice(offset, limit === undefined ? undefined : offset + limit));
+    });
+    api.listSlicerCatalogProfileRevisions.mockResolvedValue([]);
+
+    renderAdmin();
+
+    expect(await screen.findByRole('article', { name: 'Profile 1' })).toBeInTheDocument();
+    await waitFor(() => expect(api.listSlicerCatalogProfiles).toHaveBeenCalledWith({ includeInactive: true, limit: 26, offset: 0 }));
+    await waitFor(() => expect(api.listSlicerCatalogProfileRevisions).toHaveBeenCalledTimes(25));
+    expect(screen.queryByRole('article', { name: 'Profile 26' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(await screen.findByRole('article', { name: 'Profile 26' })).toBeInTheDocument();
+    expect(screen.getByRole('article', { name: 'Profile 27' })).toBeInTheDocument();
+    expect(screen.queryByRole('article', { name: 'Profile 1' })).not.toBeInTheDocument();
+    expect(api.listSlicerCatalogProfiles).toHaveBeenLastCalledWith({ includeInactive: true, limit: 26, offset: 25 });
+  });
+
+  it('collapses catalog sections', async () => {
+    renderAdmin();
+    const section = await screen.findByRole('button', { name: 'Catalog profiles' });
+    expect(section).toHaveAttribute('aria-expanded', 'true');
+    expect(await screen.findByRole('article', { name: 'Printer profile' })).toBeInTheDocument();
+
+    fireEvent.click(section);
+
+    expect(section).toHaveAttribute('aria-expanded', 'false');
+    expect(screen.queryByRole('article', { name: 'Printer profile' })).not.toBeInTheDocument();
+  });
+
   it('shows stale and tombstoned profiles', async () => {
     renderAdmin();
     expect(await screen.findByText('stale')).toBeInTheDocument();
