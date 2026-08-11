@@ -20,7 +20,6 @@ from backend.app.services.moonraker_http import (
     unwrap_ipv4_mapped,
 )
 
-_MAX_MESSAGE_BYTES = 64 * 1024
 _TOTAL_TIMEOUT_SECONDS = 10.0
 _HEARTBEAT_SECONDS = 30.0
 
@@ -225,7 +224,6 @@ class MoonrakerWebSocketTransport:
                 self._url,
                 headers=headers,
                 heartbeat=self._heartbeat,
-                max_msg_size=_MAX_MESSAGE_BYTES,
             )
             if _connected_peer(websocket) not in peers:
                 await websocket.close()
