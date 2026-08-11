@@ -1,4 +1,5 @@
 import asyncio
+import json
 import socket
 
 import pytest
@@ -113,6 +114,51 @@ async def test_websocket_transport_handshake_auth_and_pinned_local_peer(monkeypa
         assert received_headers == ["stored-secret", "stored-secret"]
         await reconnected.close()
     finally:
+        await runner.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_websocket_transport_accepts_production_sized_moonraker_snapshot(monkeypatch):
+    from backend.app.services import moonraker_websocket
+
+    production_snapshot_size = 98_768
+    snapshot = {"result": {"status": {"configfile": {"settings": {"printer": ""}}}}}
+    empty_snapshot_size = len(json.dumps(snapshot).encode())
+    snapshot["result"]["status"]["configfile"]["settings"]["printer"] = "x" * (
+        production_snapshot_size - empty_snapshot_size
+    )
+    encoded_snapshot = json.dumps(snapshot)
+    assert len(encoded_snapshot.encode()) == production_snapshot_size
+
+    async def handler(request):
+        websocket = web.WebSocketResponse()
+        await websocket.prepare(request)
+        await websocket.send_str(encoded_snapshot)
+        return websocket
+
+    app = web.Application()
+    app.router.add_get("/websocket", handler)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "127.0.0.1", 0)
+    await site.start()
+    port = site._server.sockets[0].getsockname()[1]
+
+    async def resolver(host, resolved_port):
+        assert (host, resolved_port) == ("printer.test", port)
+        return ["127.0.0.1"]
+
+    monkeypatch.setattr(moonraker_websocket, "_is_safe_peer", lambda _: True)
+    transport = moonraker_websocket.MoonrakerWebSocketTransport(
+        base_url=f"http://printer.test:{port}", resolver=resolver
+    )
+    connection = None
+    try:
+        connection = await transport.connect()
+        assert await connection.receive_json() == snapshot
+    finally:
+        if connection is not None:
+            await connection.close()
         await runner.cleanup()
 
 
