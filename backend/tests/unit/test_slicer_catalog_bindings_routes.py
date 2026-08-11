@@ -215,9 +215,7 @@ async def test_binding_defaults_can_be_set_one_at_a_time(db, monkeypatch):
     selected_ids = {item["profile_id"] for item in grouped["selected_printer"]}
     assert profiles["p1s-process"].id in selected_ids
     assert profiles["p1s-filament"].id in selected_ids
-    assert profiles["unknown-process"].id in {
-        item["profile_id"] for item in grouped["incompatible"]
-    }
+    assert profiles["unknown-process"].id in {item["profile_id"] for item in grouped["incompatible"]}
 
     updated = await update_binding(
         binding["id"],
