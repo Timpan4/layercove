@@ -154,7 +154,7 @@ def classify_profile(
         )
     if not selected_match:
         if compatibility == "unknown":
-            readiness = evaluate_nozzle(candidate_binding, nozzle)
+            readiness = evaluate_nozzle(selected, nozzle)
             if readiness.state == "blocked":
                 return Classification(
                     "incompatible",
