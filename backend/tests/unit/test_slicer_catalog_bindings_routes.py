@@ -11,6 +11,7 @@ from sqlalchemy.orm import sessionmaker
 import backend.app.models  # noqa: F401
 from backend.app.api.routes.slicer_catalog_bindings import (
     BindingRequest,
+    BindingUpdate,
     EvaluationRequest,
     FilamentRuleRequest,
     MappingRequest,
@@ -26,6 +27,7 @@ from backend.app.api.routes.slicer_catalog_bindings import (
     retire_profile,
     save_preference,
     suggest_binding,
+    update_binding,
 )
 from backend.app.core.database import Base
 from backend.app.models.printer import Printer
@@ -185,6 +187,50 @@ async def test_four_groups_mapping_nozzle_and_shadow_authority(db, monkeypatch):
     evaluation = await db.get(SlicerSelectionEvaluation, shadow["evaluation_id"])
     assert evaluation.selected_revision_ids["process"] == p1s_item["revision_id"]
     assert evaluation.compatibility_evidence["legacy_eligible"] is True
+
+
+async def test_binding_defaults_can_be_set_one_at_a_time(db, monkeypatch):
+    profiles = await install_profiles(db)
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _printer_id: PrinterSnapshot(
+            PrinterProvider.BAMBU,
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+    binding = await create_binding(
+        BindingRequest(
+            printer_id=1,
+            profile_id=profiles["p1s-printer"].id,
+            expected_nozzle_diameter=Decimal("0.4"),
+        ),
+        None,
+        db,
+    )
+
+    grouped = await classify_catalog(1, binding["id"], None, db)
+    selected_ids = {item["profile_id"] for item in grouped["selected_printer"]}
+    assert profiles["p1s-process"].id in selected_ids
+    assert profiles["p1s-filament"].id in selected_ids
+
+    updated = await update_binding(
+        binding["id"],
+        BindingUpdate(default_process_profile_id=profiles["p1s-process"].id),
+        None,
+        db,
+    )
+    assert updated["readiness"] == {"state": "blocked", "reason_codes": ("default_unavailable",)}
+
+    updated = await update_binding(
+        binding["id"],
+        BindingUpdate(default_filament_profile_id=profiles["p1s-filament"].id),
+        None,
+        db,
+    )
+    assert updated["readiness"] == {"state": "ready", "reason_codes": ("nozzle_match",)}
 
 
 async def test_exact_filament_rules_and_preferences_stay_binding_scoped(db, monkeypatch):

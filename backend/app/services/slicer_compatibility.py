@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Literal
 
@@ -109,6 +109,7 @@ def classify_profile(
     if not profile.approved:
         return Classification("incompatible", "mismatch", "blocked", ("revision_unreviewed",), False, False, False)
 
+    candidate_binding = replace(selected, defaults_available=True)
     compatible = profile.compatible_printers
     selected_match = False
     other_match = False
@@ -153,7 +154,7 @@ def classify_profile(
         )
     if not selected_match:
         if compatibility == "unknown":
-            readiness = evaluate_nozzle(selected, nozzle)
+            readiness = evaluate_nozzle(candidate_binding, nozzle)
             if readiness.state == "blocked":
                 return Classification(
                     "incompatible",
@@ -175,7 +176,7 @@ def classify_profile(
             )
         return Classification("incompatible", "mismatch", "blocked", (authority_reason,), False, False, False)
 
-    readiness = evaluate_nozzle(selected, nozzle)
+    readiness = evaluate_nozzle(candidate_binding, nozzle)
     if readiness.state == "blocked":
         return Classification(
             "incompatible",
