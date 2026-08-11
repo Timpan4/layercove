@@ -1,10 +1,11 @@
 """Binding, classification, readiness, mapping, and shadow API contracts."""
 
+from collections import Counter
 from decimal import Decimal
 
 import pytest
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import event, select
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 
@@ -187,6 +188,89 @@ async def test_four_groups_mapping_nozzle_and_shadow_authority(db, monkeypatch):
     evaluation = await db.get(SlicerSelectionEvaluation, shadow["evaluation_id"])
     assert evaluation.selected_revision_ids["process"] == p1s_item["revision_id"]
     assert evaluation.compatibility_evidence["legacy_eligible"] is True
+
+
+async def test_classification_excludes_inactive_profiles(db, monkeypatch):
+    profiles = await install_profiles(db)
+    monkeypatch.setattr(printer_manager, "get_snapshot", lambda _printer_id: None)
+    binding = await create_binding(binding_request(1, profiles, "p1s"), None, db)
+    await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="inactive-installation",
+            profiles=[
+                CatalogProfile(
+                    remote_profile_id="inactive-process",
+                    profile_type="process",
+                    display_name="Inactive process",
+                    content={"type": "process"},
+                    metadata={"compatible_printers": ["Bambu Lab P1S 0.4 nozzle"]},
+                )
+            ],
+        ),
+    )
+    await db.commit()
+    inactive = await db.scalar(select(SlicerProfile).where(SlicerProfile.remote_profile_id == "inactive-process"))
+
+    grouped = await classify_catalog(1, binding["id"], None, db)
+
+    returned_ids = {item["profile_id"] for group in grouped.values() for item in group}
+    assert inactive.id not in returned_ids
+
+
+async def test_classification_query_count_does_not_grow_per_active_profile(db, monkeypatch):
+    profiles = await install_profiles(db)
+    monkeypatch.setattr(printer_manager, "get_snapshot", lambda _printer_id: None)
+    binding = await create_binding(binding_request(1, profiles, "p1s"), None, db)
+
+    async def classify_with_query_counts():
+        counts: Counter[str] = Counter()
+
+        def increment(_connection, _cursor, statement, *_args):
+            tables = (
+                "slicer_profile_activations",
+                "slicer_profile_revisions",
+                "printer_slicer_bindings",
+                "slicer_compatibility_mappings",
+            )
+            counts[next((table for table in tables if table in statement), "other")] += 1
+
+        engine = db.bind.sync_engine
+        event.listen(engine, "before_cursor_execute", increment)
+        try:
+            grouped = await classify_catalog(1, binding["id"], None, db)
+        finally:
+            event.remove(engine, "before_cursor_execute", increment)
+        return counts, grouped
+
+    baseline, _grouped = await classify_with_query_counts()
+    added = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="expanded-installation",
+            profiles=[
+                CatalogProfile(
+                    remote_profile_id="extra-p1s-process",
+                    profile_type="process",
+                    display_name="Extra P1S process",
+                    content={"type": "process"},
+                    metadata={"compatible_printers": ["Bambu Lab P1S 0.4 nozzle"]},
+                )
+            ],
+        ),
+    )
+    await approve_review_batch(db, added.review_batch_id)
+    await activate_revision(db, added.revision_ids[0])
+    await db.commit()
+    extra = await db.scalar(select(SlicerProfile).where(SlicerProfile.remote_profile_id == "extra-p1s-process"))
+
+    expanded, grouped = await classify_with_query_counts()
+
+    returned_ids = {item["profile_id"] for group in grouped.values() for item in group}
+    assert extra.id in returned_ids
+    assert expanded == baseline, f"one active profile added classification queries: {expanded - baseline}"
 
 
 async def test_binding_defaults_can_be_set_one_at_a_time(db, monkeypatch):
