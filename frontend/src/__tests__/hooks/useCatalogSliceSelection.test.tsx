@@ -104,6 +104,40 @@ describe('useCatalogSliceSelection', () => {
     });
   });
 
+  it('resolves explicit profiles when binding defaults are unset', async () => {
+    vi.mocked(api.listSlicerCatalogBindings).mockResolvedValue([{
+      ...binding,
+      default_process_profile_id: null,
+      default_filament_profile_id: null,
+      readiness: { state: 'blocked', reason_codes: ['default_unavailable'] },
+    }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => useCatalogSliceSelection({ filamentSlots }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.activePrinters).toHaveLength(1));
+    act(() => result.current.setPrinterId(1));
+    await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
+    act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.groups).toEqual(groups));
+
+    act(() => {
+      result.current.chooseProcess(classification(12, 'process'));
+      result.current.chooseFilament(0, classification(22, 'filament'));
+    });
+
+    await waitFor(() => expect(result.current.resolvedSelection).toMatchObject({
+      bindingId: 5,
+      processProfileId: 12,
+      filamentProfileIds: [22],
+    }));
+  });
+
   it('blocks resolution when a selected profile has no current classification', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: { children: ReactNode }) => (
