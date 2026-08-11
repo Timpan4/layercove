@@ -238,7 +238,6 @@ export function useCatalogSliceSelection({
       || !processChoice
       || filamentChoices.length !== filamentSlots.length
       || filamentChoices.some((choice) => choice === null)
-      || selectedBinding.readiness.state === 'blocked'
       || (needsAcknowledgement && !acknowledged)
     ) return null;
     if (
