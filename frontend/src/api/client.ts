@@ -6736,10 +6736,14 @@ export const api = {
     ),
 
   // Persistent installed-printer slicer catalog.
-  listSlicerCatalogProfiles: (options?: { includeInactive?: boolean }) =>
-    request<SlicerCatalogProfile[]>(
-      options?.includeInactive ? '/slicer/catalog/profiles?include_inactive=true' : '/slicer/catalog/profiles',
-    ),
+  listSlicerCatalogProfiles: (options?: { includeInactive?: boolean; limit?: number; offset?: number }) => {
+    const search = new URLSearchParams();
+    if (options?.includeInactive) search.set('include_inactive', 'true');
+    if (options?.limit !== undefined) search.set('limit', String(options.limit));
+    if (options?.offset !== undefined) search.set('offset', String(options.offset));
+    const query = search.toString();
+    return request<SlicerCatalogProfile[]>(`/slicer/catalog/profiles${query ? `?${query}` : ''}`);
+  },
   listSlicerCatalogProfileRevisions: (profileId: number) =>
     request<SlicerCatalogRevision[]>(`/slicer/catalog/profiles/${profileId}/revisions`),
   listSlicerCatalogAccounts: () =>
