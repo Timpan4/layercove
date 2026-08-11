@@ -4,11 +4,20 @@ on:
   push:
     branches: [main]
     tags: ['v*']
+    paths:
+      - 'backend/**'
+      - 'deploy/**'
+      - 'frontend/**'
+      - 'gcode_viewer/**'
+      - 'spoolbuddy/**'
+      - 'Dockerfile'
+      - 'requirements.txt'
+      - '.github/workflows/publish-container.yml'
   workflow_dispatch:
 
 concurrency:
   group: publish-container-${{ github.ref }}
-  cancel-in-progress: false
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 env:
   IMAGE_NAME: ghcr.io/timpan4/layercove
@@ -63,8 +72,8 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
           provenance: mode=max
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          cache-from: type=gha,scope=production
+          cache-to: type=gha,scope=production,mode=max
 
       - name: Attest build provenance
         uses: actions/attest@v4
