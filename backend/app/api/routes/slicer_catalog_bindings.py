@@ -492,7 +492,7 @@ async def classify_catalog(
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, list[dict[str, Any]]]:
     await _printer(db, printer_id)
-    binding, _profile, _revision = await _binding_row(db, binding_id)
+    binding, binding_profile, binding_revision = await _binding_row(db, binding_id)
     if binding.printer_id != printer_id:
         raise HTTPException(422, "Binding does not target printer")
     visibility = SlicerProfileAccount.sharing_state == "shared"
@@ -500,27 +500,55 @@ async def classify_catalog(
         visibility = or_(visibility, SlicerProfileAccount.user_id == current_user.id)
     profiles = (
         await db.execute(
-            select(SlicerProfile, SlicerProfileAccount)
+            select(SlicerProfile, SlicerProfileRevision, SlicerProfileAccount)
             .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-            .where(SlicerProfile.profile_type.in_(["process", "filament"]), visibility)
+            .join(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
+            .join(SlicerProfileRevision, SlicerProfileRevision.id == SlicerProfileActivation.revision_id)
+            .where(
+                SlicerProfile.profile_type.in_(["process", "filament"]),
+                SlicerProfile.tombstoned_at.is_(None),
+                SlicerProfileRevision.review_state == "approved",
+                visibility,
+            )
             .order_by(SlicerProfile.display_name, SlicerProfile.id)
         )
     ).all()
+    installed = await _installed_bindings(db)
+    selected_binding = next((item for item in installed if item.id == binding.id), None)
+    if selected_binding is None:
+        selected_binding = await _binding_evidence(db, binding, binding_profile, binding_revision)
+    mappings: dict[int, set[int]] = {}
+    profile_ids = [profile.id for profile, _revision, _account in profiles]
+    if profile_ids:
+        for profile_id, mapped_printer_id in (
+            await db.execute(
+                select(SlicerCompatibilityMapping.profile_id, SlicerCompatibilityMapping.printer_id).where(
+                    SlicerCompatibilityMapping.profile_id.in_(profile_ids)
+                )
+            )
+        ).all():
+            mappings.setdefault(profile_id, set()).add(mapped_printer_id)
+    nozzle = _nozzle(binding.printer_id, binding.tool_index)
     groups: dict[str, list[dict[str, Any]]] = {
         "selected_printer": [],
         "other_installed_printers": [],
         "unclassified": [],
         "incompatible": [],
     }
-    for profile, account in profiles:
-        _profile, revision, active = await _profile_revision(
-            db,
-            profile.id,
-            owner_id=current_user.id if current_user is not None else None,
+    for profile, revision, account in profiles:
+        compatible = _metadata(revision).get("compatible_printers")
+        classification = classify_profile(
+            ProfileEvidence(
+                profile_id=profile.id,
+                revision_id=revision.id,
+                display_name=profile.display_name,
+                compatible_printers=tuple(compatible) if compatible else None,
+            ),
+            selected_binding,
+            installed,
+            nozzle,
+            frozenset(mappings.get(profile.id, set())),
         )
-        if revision is None:
-            continue
-        classification, _installed = await _classify_one(db, binding, profile, revision, active)
         groups[classification.group].append(
             {
                 "profile_id": profile.id,
