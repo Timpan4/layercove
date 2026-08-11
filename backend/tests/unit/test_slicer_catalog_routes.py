@@ -257,6 +257,26 @@ async def test_management_listing_and_revision_history_show_lifecycle_state(db):
     assert latest["review_state"] == "pending"
 
 
+async def test_management_listing_paginates_profiles(db):
+    await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="standard",
+            profiles=[
+                CatalogProfile("a", "process", "Alpha", {"version": 1}),
+                CatalogProfile("b", "process", "Bravo", {"version": 1}),
+                CatalogProfile("c", "process", "Charlie", {"version": 1}),
+            ],
+        ),
+    )
+    await db.commit()
+
+    page = await list_catalog_profiles(db, None, True, limit=2, offset=1)
+
+    assert [profile["display_name"] for profile in page] == ["Bravo", "Charlie"]
+
+
 async def test_review_route_approves_only_selected_revisions(db):
     result = await ingest_catalog(
         db,

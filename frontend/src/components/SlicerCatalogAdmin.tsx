@@ -9,9 +9,11 @@ import {
 } from '../api/client';
 import { Button } from './Button';
 import { Card, CardContent } from './Card';
+import { Collapsible } from './Collapsible';
 import { useAuth } from '../contexts/AuthContext';
 
 const disabledTitle = 'Requires SETTINGS_UPDATE permission';
+const PROFILE_PAGE_SIZE = 25;
 
 export function SlicerCatalogAdmin() {
   const { hasPermission, authEnabled } = useAuth();
@@ -26,13 +28,24 @@ export function SlicerCatalogAdmin() {
   const [selectedRevisions, setSelectedRevisions] = useState<Record<number, number[]>>({});
   const [profileId, setProfileId] = useState('');
   const [printerId, setPrinterId] = useState('');
+  const [profileOffset, setProfileOffset] = useState(0);
 
   const profiles = useQuery({
-    queryKey: ['slicerCatalogProfiles', 'management'],
-    queryFn: () => api.listSlicerCatalogProfiles({ includeInactive: true }),
+    queryKey: ['slicerCatalogProfiles', 'management', profileOffset],
+    queryFn: () => api.listSlicerCatalogProfiles({
+      includeInactive: true,
+      limit: PROFILE_PAGE_SIZE + 1,
+      offset: profileOffset,
+    }),
+  });
+  const visibleProfiles = (profiles.data ?? []).slice(0, PROFILE_PAGE_SIZE);
+  const hasNextProfilePage = (profiles.data?.length ?? 0) > PROFILE_PAGE_SIZE;
+  const mappingProfiles = useQuery({
+    queryKey: ['slicerCatalogProfiles', 'mapping'],
+    queryFn: () => api.listSlicerCatalogProfiles(),
   });
   const revisionQueries = useQueries({
-    queries: (profiles.data ?? []).map((profile) => ({
+    queries: visibleProfiles.map((profile) => ({
       queryKey: ['slicerCatalogProfileRevisions', profile.profile_id],
       queryFn: () => api.listSlicerCatalogProfileRevisions(profile.profile_id),
     })),
@@ -90,19 +103,26 @@ export function SlicerCatalogAdmin() {
     account.source === 'orca_cloud' ? canOrca : account.source === 'cloud' ? canCloud : false;
 
   return <div className="space-y-6" aria-label="Shared Profiles catalog administration">
-    <Card><CardContent>
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><div><h2 className="text-lg font-semibold text-white">Shared Profiles catalog</h2><p className="text-sm text-bambu-gray">Accounts, health, revisions, and compatibility.</p></div><div className="flex gap-2">{syncButton('Sync standard', sync, canUpdate)}{syncButton('Sync cloud', syncCloud, canCloud)}{syncButton('Sync Orca', syncOrca, canOrca)}</div></div>
+    <Card><CardContent><Collapsible defaultOpen summary={<h2 className="text-lg font-semibold text-white">Shared Profiles catalog</h2>}>
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4"><p className="text-sm text-bambu-gray">Accounts, health, revisions, and compatibility.</p><div className="flex gap-2">{syncButton('Sync standard', sync, canUpdate)}{syncButton('Sync cloud', syncCloud, canCloud)}{syncButton('Sync Orca', syncOrca, canOrca)}</div></div>
       <div className="space-y-3">{(accounts.data || []).map(account => <div key={account.id} className="rounded-lg border border-bambu-dark-tertiary p-3">
         <div className="flex flex-wrap items-center gap-2"><strong className="text-white">{account.display_name || account.remote_account_id}</strong><span className="text-xs text-bambu-gray">{account.source} · {account.sharing_state}</span><span className={`text-xs ${account.last_sync_error ? 'text-red-400' : 'text-bambu-gray'}`}>{account.last_sync_error || (account.last_successful_sync_at ? `healthy · ${account.last_successful_sync_at}` : 'not synced')}</span><span className="text-xs text-bambu-gray">{account.sync_frozen && 'frozen'}</span><span className="ml-auto flex gap-2"><label className="flex items-center gap-1 text-sm text-bambu-gray"><input type="checkbox" checked={account.sharing_state === 'shared'} disabled={!canShareAccount(account)} onChange={() => { setSelectedAccount(account.id); if (account.sharing_state === 'shared') { unshare.mutate(account.id); } else { setConsentAccount(account); setConsentChecked(false); } }} /> Share</label><Button size="sm" variant="secondary" disabled={!canUpdate} title={updateTitle} onClick={() => { setSelectedAccount(account.id); (account.sync_frozen ? resume : freeze).mutate(account.id); }}>{account.sync_frozen ? 'Resume' : 'Freeze'}</Button></span></div>
         <p className="mt-2 text-xs text-bambu-gray">Consent: {account.consent_at || 'none'} · Cursor: {account.sync_cursor || 'none'}</p>
       </div>)}</div>
-    </CardContent></Card>
+    </Collapsible></CardContent></Card>
 
-    <Card><CardContent><h3 className="text-base font-semibold text-white mb-3">Catalog profiles</h3><div className="space-y-2">{(profiles.data || []).map((profile, index) => <ProfileRow key={profile.profile_id} profile={profile} revisions={revisionQueries[index]?.data ?? []} revisionsLoading={revisionQueries[index]?.isLoading ?? false} canUpdate={canUpdate} updateTitle={updateTitle} onLifecycle={(revision, rollback) => lifecycle.mutate({ profile: profile.profile_id, revision, rollback })} onRetire={() => { retire.reset(); setRetireProfile(profile); }} />)}</div></CardContent></Card>
+    <Card><CardContent><Collapsible defaultOpen summary={<h3 className="text-base font-semibold text-white">Catalog profiles</h3>}>
+      <div className="space-y-2">{visibleProfiles.map((profile, index) => <ProfileRow key={profile.profile_id} profile={profile} revisions={revisionQueries[index]?.data ?? []} revisionsLoading={revisionQueries[index]?.isLoading ?? false} canUpdate={canUpdate} updateTitle={updateTitle} onLifecycle={(revision, rollback) => lifecycle.mutate({ profile: profile.profile_id, revision, rollback })} onRetire={() => { retire.reset(); setRetireProfile(profile); }} />)}</div>
+      {(profileOffset > 0 || hasNextProfilePage) && <div className="mt-4 flex items-center justify-between gap-3"><Button size="sm" variant="secondary" disabled={profileOffset === 0} onClick={() => setProfileOffset(Math.max(0, profileOffset - PROFILE_PAGE_SIZE))}>Previous</Button><span className="text-sm text-bambu-gray">Page {Math.floor(profileOffset / PROFILE_PAGE_SIZE) + 1}</span><Button size="sm" variant="secondary" disabled={!hasNextProfilePage} onClick={() => setProfileOffset(profileOffset + PROFILE_PAGE_SIZE)}>Next</Button></div>}
+    </Collapsible></CardContent></Card>
 
-    <Card><CardContent><div className="flex items-center justify-between mb-3"><h3 className="text-base font-semibold text-white">Pending review batches</h3><select aria-label="Review account" className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1" value={selectedAccount ?? ''} onChange={e => setSelectedAccount(e.target.value ? Number(e.target.value) : undefined)}><option value="">Select account</option>{(accounts.data || []).map(a => <option key={a.id} value={a.id}>{a.display_name || a.remote_account_id}</option>)}</select></div>{(reviews.data || []).filter(r => r.status === 'pending').map(batch => { const selected = selectedRevisions[batch.id] || []; return <div key={batch.id} className="flex flex-wrap items-center gap-2 text-sm text-white py-2"><span>Batch {batch.id} · {batch.summary?.profiles || 0} profiles</span><div className="flex flex-wrap gap-2">{batch.revisions.map(revision => <label key={revision.id} className="flex items-center gap-1"><input type="checkbox" aria-label={revision.display_name} checked={selected.includes(revision.id)} onChange={e => setSelectedRevisions(current => ({ ...current, [batch.id]: e.target.checked ? [...selected, revision.id] : selected.filter(id => id !== revision.id) }))} /> {revision.display_name}</label>)}</div><Button size="sm" disabled={!canUpdate || selected.length === 0} title={updateTitle} onClick={() => review.mutate({ id: batch.id, approved: true, revisionIds: selected })}>Approve selected</Button><Button size="sm" variant="danger" disabled={!canUpdate} title={updateTitle} onClick={() => review.mutate({ id: batch.id, approved: false })}>Reject</Button></div>; })}</CardContent></Card>
+    <Card><CardContent><Collapsible defaultOpen summary={<h3 className="text-base font-semibold text-white">Pending review batches</h3>}>
+      <div className="flex justify-end mb-3"><select aria-label="Review account" className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1" value={selectedAccount ?? ''} onChange={e => setSelectedAccount(e.target.value ? Number(e.target.value) : undefined)}><option value="">Select account</option>{(accounts.data || []).map(a => <option key={a.id} value={a.id}>{a.display_name || a.remote_account_id}</option>)}</select></div>{(reviews.data || []).filter(r => r.status === 'pending').map(batch => { const selected = selectedRevisions[batch.id] || []; return <div key={batch.id} className="flex flex-wrap items-center gap-2 text-sm text-white py-2"><span>Batch {batch.id} · {batch.summary?.profiles || 0} profiles</span><div className="flex flex-wrap gap-2">{batch.revisions.map(revision => <label key={revision.id} className="flex items-center gap-1"><input type="checkbox" aria-label={revision.display_name} checked={selected.includes(revision.id)} onChange={e => setSelectedRevisions(current => ({ ...current, [batch.id]: e.target.checked ? [...selected, revision.id] : selected.filter(id => id !== revision.id) }))} /> {revision.display_name}</label>)}</div><Button size="sm" disabled={!canUpdate || selected.length === 0} title={updateTitle} onClick={() => review.mutate({ id: batch.id, approved: true, revisionIds: selected })}>Approve selected</Button><Button size="sm" variant="danger" disabled={!canUpdate} title={updateTitle} onClick={() => review.mutate({ id: batch.id, approved: false })}>Reject</Button></div>; })}
+    </Collapsible></CardContent></Card>
 
-    <Card><CardContent><h3 className="text-base font-semibold text-white mb-3">Compatibility mappings</h3><div className="flex flex-wrap gap-2 mb-3"><select aria-label="Catalog profile" value={profileId} onChange={e => setProfileId(e.target.value)} className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1"><option value="">Profile</option>{(profiles.data || []).filter(p => !p.tombstoned).map(p => <option key={p.profile_id} value={p.profile_id}>{p.display_name}</option>)}</select><select aria-label="Physical printer" value={printerId} onChange={e => setPrinterId(e.target.value)} className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1"><option value="">Printer</option>{(printers.data || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><Button size="sm" disabled={!canUpdate || !profileId || !printerId} title={updateTitle} onClick={() => createMapping.mutate()}>Create mapping</Button></div>{(mappings.data || []).map(mapping => <div key={mapping.id} className="flex items-center gap-2 text-sm text-white py-1"><span>Profile {mapping.profile_id} → Printer {mapping.printer_id}</span><Button size="sm" variant="danger" disabled={!canUpdate} title={updateTitle} onClick={() => deleteMapping.mutate(mapping.id)}>Delete</Button></div>)}</CardContent></Card>
+    <Card><CardContent><Collapsible defaultOpen summary={<h3 className="text-base font-semibold text-white">Compatibility mappings</h3>}>
+      <div className="flex flex-wrap gap-2 mb-3"><select aria-label="Catalog profile" value={profileId} onChange={e => setProfileId(e.target.value)} className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1"><option value="">Profile</option>{(mappingProfiles.data || []).filter(p => !p.tombstoned).map(p => <option key={p.profile_id} value={p.profile_id}>{p.display_name}</option>)}</select><select aria-label="Physical printer" value={printerId} onChange={e => setPrinterId(e.target.value)} className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1"><option value="">Printer</option>{(printers.data || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><Button size="sm" disabled={!canUpdate || !profileId || !printerId} title={updateTitle} onClick={() => createMapping.mutate()}>Create mapping</Button></div>{(mappings.data || []).map(mapping => <div key={mapping.id} className="flex items-center gap-2 text-sm text-white py-1"><span>Profile {mapping.profile_id} → Printer {mapping.printer_id}</span><Button size="sm" variant="danger" disabled={!canUpdate} title={updateTitle} onClick={() => deleteMapping.mutate(mapping.id)}>Delete</Button></div>)}
+    </Collapsible></CardContent></Card>
 
     {consentAccount && <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"><Card className="max-w-md"><CardContent><h3 className="text-lg font-semibold text-white">Share catalog account?</h3><p className="text-sm text-bambu-gray my-3">Sharing sends this account's catalog profiles to other authorized users.</p><label className="flex gap-2 text-sm text-white"><input type="checkbox" checked={consentChecked} onChange={e => setConsentChecked(e.target.checked)} /> I consent to sharing this account.</label><div className="flex gap-2 mt-4"><Button variant="secondary" onClick={() => setConsentAccount(null)}>Cancel</Button><Button disabled={!consentChecked || share.isPending} onClick={() => share.mutate()}>Confirm sharing</Button></div></CardContent></Card></div>}
     {retireProfile && <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4" role="dialog" aria-modal="true" aria-labelledby="retire-profile-title"><Card className="max-w-md"><CardContent><h3 id="retire-profile-title" className="text-lg font-semibold text-white">Retire {retireProfile.display_name}?</h3><p className="text-sm text-bambu-gray my-3">This tombstones the profile and disables bindings, defaults, rules, and preferences that still reference it. Historical jobs retain exact revisions.</p>{retire.error && <p className="mb-3 text-sm text-red-400" role="alert">{retire.error instanceof Error ? retire.error.message : 'Unable to retire profile'}</p>}<div className="flex gap-2"><Button variant="secondary" disabled={retire.isPending} onClick={() => setRetireProfile(null)}>Cancel</Button><Button variant="danger" disabled={retire.isPending} onClick={() => retire.mutate(retireProfile)}>Retire profile</Button></div></CardContent></Card></div>}
@@ -131,7 +151,7 @@ function ProfileRow({
     .join(' · ');
   const activeRevisionId = profile.active_revision_id ?? revisions.find((revision) => revision.active)?.id ?? null;
 
-  return <div className="rounded border border-bambu-dark-tertiary p-2 text-sm">
+  return <article aria-label={profile.display_name} className="rounded border border-bambu-dark-tertiary p-2 text-sm">
     <div className="flex flex-wrap items-center gap-2">
       <span className="text-white font-medium">{profile.display_name}</span>
       <span className="text-bambu-gray">{profile.source} · {profile.account_name || profile.account_id}</span>
@@ -154,5 +174,5 @@ function ProfileRow({
         </div>;
       })}
     </div>
-  </div>;
+  </article>;
 }

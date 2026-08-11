@@ -61,23 +61,30 @@ async def list_catalog_profiles(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),
     include_inactive: bool = False,
+    limit: int | None = None,
+    offset: int = 0,
 ) -> list[dict[str, Any]]:
+    if limit is not None:
+        limit = max(1, min(limit, 100))
+    offset = max(0, offset)
     visibility = SlicerProfileAccount.sharing_state == "shared"
     if current_user is not None:
         visibility = or_(visibility, SlicerProfileAccount.user_id == current_user.id)
     else:
         visibility = or_(visibility, SlicerProfileAccount.user_id.is_(None))
     if not include_inactive:
-        rows = (
-            await db.execute(
-                select(SlicerProfile, SlicerProfileRevision, SlicerProfileAccount)
-                .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-                .join(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
-                .join(SlicerProfileRevision, SlicerProfileRevision.id == SlicerProfileActivation.revision_id)
-                .where(visibility)
-                .order_by(SlicerProfile.display_name, SlicerProfile.id)
-            )
-        ).all()
+        statement = (
+            select(SlicerProfile, SlicerProfileRevision, SlicerProfileAccount)
+            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+            .join(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
+            .join(SlicerProfileRevision, SlicerProfileRevision.id == SlicerProfileActivation.revision_id)
+            .where(visibility)
+            .order_by(SlicerProfile.display_name, SlicerProfile.id)
+            .offset(offset)
+        )
+        if limit is not None:
+            statement = statement.limit(limit)
+        rows = (await db.execute(statement)).all()
         return [
             {
                 "profile_id": profile.id,
@@ -103,16 +110,18 @@ async def list_catalog_profiles(
         .correlate(SlicerProfile)
         .scalar_subquery()
     )
-    rows = (
-        await db.execute(
-            select(SlicerProfile, SlicerProfileAccount, SlicerProfileRevision, SlicerProfileActivation)
-            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-            .outerjoin(SlicerProfileRevision, SlicerProfileRevision.id == latest_revision)
-            .outerjoin(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
-            .where(visibility)
-            .order_by(SlicerProfile.display_name, SlicerProfile.id)
-        )
-    ).all()
+    statement = (
+        select(SlicerProfile, SlicerProfileAccount, SlicerProfileRevision, SlicerProfileActivation)
+        .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+        .outerjoin(SlicerProfileRevision, SlicerProfileRevision.id == latest_revision)
+        .outerjoin(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
+        .where(visibility)
+        .order_by(SlicerProfile.display_name, SlicerProfile.id)
+        .offset(offset)
+    )
+    if limit is not None:
+        statement = statement.limit(limit)
+    rows = (await db.execute(statement)).all()
     return [
         {
             "profile_id": profile.id,
