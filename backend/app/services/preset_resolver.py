@@ -25,6 +25,8 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Mapping
+from typing import Any
 
 from fastapi import HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -66,6 +68,25 @@ _SLOT_TO_PROFILE_TYPE = {
     "process": "process",
     "filament": "filament",
 }
+
+
+def materialize_orca_profile(
+    content: Mapping[str, Any],
+    *,
+    slot: str,
+    stable_id: str,
+    stable_name: str,
+) -> dict[str, Any]:
+    """Build sidecar-ready Orca content without changing stored source data."""
+    name = content.get("name")
+    setting_id = content.get("setting_id")
+    return {
+        **content,
+        "type": _SLOT_TO_PROFILE_TYPE[slot],
+        "name": name if isinstance(name, str) and name.strip() else stable_name,
+        "from": "system",
+        "setting_id": setting_id if isinstance(setting_id, str) and setting_id.strip() else stable_id,
+    }
 
 
 async def resolve_preset_ref(
@@ -247,12 +268,12 @@ async def _resolve_orca_cloud(db: AsyncSession, user: User | None, ref: PresetRe
         # source tier doesn't decide whether slicing works. `from` gets the
         # same forced pin to `"system"` for the same reason — see the
         # Bambu Cloud branch above.
-        content = {
-            **content,
-            "type": _SLOT_TO_PROFILE_TYPE[slot],
-            "from": "system",
-            "setting_id": content.get("setting_id") or profile.get("id") or ref.id,
-        }
+        content = materialize_orca_profile(
+            content,
+            slot=slot,
+            stable_id=str(profile.get("id") or ref.id),
+            stable_name=str(profile.get("name") or ref.id),
+        )
     return json.dumps(content)
 
 
