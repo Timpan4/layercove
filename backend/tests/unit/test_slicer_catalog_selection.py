@@ -1,6 +1,7 @@
 """Durable catalog selection, enforcement, and revision-pinning contracts."""
 
 import asyncio
+import json
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -18,6 +19,7 @@ from backend.app.models.slicer_profile_catalog import (
     PrinterSlicerBinding,
     SlicerJobProvenance,
     SlicerProfile,
+    SlicerProfileAccount,
     SlicerProfileRevision,
 )
 from backend.app.schemas.slicer import HistoricalReslicePrepareRequest, PresetRef, SliceRequest
@@ -201,6 +203,79 @@ async def test_enqueue_pins_revision_atomically_and_dispatches_old_content(catal
         completed = await db.get(SliceJobRecord, job.id)
         assert completed.status == "completed"
         assert completed.expires_at is None
+
+
+@pytest.mark.asyncio
+async def test_pinned_orca_profiles_include_sidecar_identity(catalog_db, monkeypatch):
+    ids = await setup_catalog(catalog_db, source="orca_cloud")
+    async with catalog_db() as db:
+        account = await db.scalar(select(SlicerProfileAccount))
+        account.sharing_state = "shared"
+        account.consent_at = datetime.now(timezone.utc)
+        await db.commit()
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _printer_id: PrinterSnapshot(
+            PrinterProvider.BAMBU,
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+    request = request_for(ids)
+    service = SliceDispatchService()
+    release = asyncio.Event()
+
+    async def run(_job_id):
+        await release.wait()
+        return {"library_file_id": 10}
+
+    async def before_commit(db, job):
+        await persist_catalog_selection(db, job, request)
+
+    job = await service.enqueue(
+        kind="library_file",
+        source_id=1,
+        source_name="model.3mf",
+        request_snapshot=request.model_dump(mode="json"),
+        run=run,
+        before_commit=before_commit,
+    )
+    try:
+        async with catalog_db() as db:
+            pinned = await load_pinned_profile_content(db, job.id)
+            assert pinned is not None
+            assert json.loads(pinned.printer) == {
+                "type": "machine",
+                "printer_model": "P1S",
+                "name": "Bambu Lab P1S 0.4 nozzle",
+                "from": "system",
+                "setting_id": "printer",
+            }
+            assert json.loads(pinned.process) == {
+                "type": "process",
+                "version": 1,
+                "name": "P1S process",
+                "from": "system",
+                "setting_id": "process",
+            }
+            assert json.loads(pinned.filaments[0]) == {
+                "type": "filament",
+                "name": "P1S filament",
+                "from": "system",
+                "setting_id": "filament",
+            }
+
+            revisions = (await db.scalars(select(SlicerProfileRevision).order_by(SlicerProfileRevision.id))).all()
+            assert [revision.content for revision in revisions[:3]] == [
+                {"type": "printer", "printer_model": "P1S"},
+                {"type": "process", "version": 1},
+                {"type": "filament"},
+            ]
+    finally:
+        release.set()
+        await service._tasks[job.id]
 
 
 @pytest.mark.asyncio

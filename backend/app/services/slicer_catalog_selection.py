@@ -24,6 +24,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerSelectionEvaluation,
 )
 from backend.app.schemas.slicer import HistoricalReslicePrepareRequest, SliceRequest
+from backend.app.services.preset_resolver import materialize_orca_profile
 from backend.app.services.printer_manager import printer_manager
 from backend.app.services.slicer_compatibility import (
     BindingEvidence,
@@ -583,21 +584,31 @@ async def load_pinned_profile_content(db: AsyncSession, job_id: int | None) -> P
         raise RuntimeError("Catalog provenance is missing pinned revisions")
     revision_rows = (
         await db.execute(
-            select(SlicerProfileRevision, SlicerProfileAccount.source)
+            select(SlicerProfile, SlicerProfileRevision, SlicerProfileAccount.source)
             .join(SlicerProfile, SlicerProfile.id == SlicerProfileRevision.profile_id)
             .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
             .where(SlicerProfileRevision.id.in_(revision_ids))
         )
     ).all()
-    revisions = {revision.id: revision for revision, _source in revision_rows}
-    sources = {revision.id: source for revision, source in revision_rows}
-    if len(revisions) != len(set(revision_ids)):
+    rows = {revision.id: (profile, revision, source) for profile, revision, source in revision_rows}
+    if len(rows) != len(set(revision_ids)):
         raise RuntimeError("Pinned catalog revision is unavailable")
+
+    def serialized(revision_id: int) -> str:
+        profile, revision, source = rows[revision_id]
+        content = revision.content
+        if source == "orca_cloud":
+            content = materialize_orca_profile(
+                content,
+                slot=profile.profile_type,
+                stable_id=profile.remote_profile_id,
+                stable_name=profile.display_name,
+            )
+        return json.dumps(content)
+
     return PinnedProfileContent(
-        printer=json.dumps(revisions[provenance.printer_revision_id].content),
-        process=json.dumps(revisions[provenance.process_revision_id].content),
-        filaments=tuple(
-            json.dumps(revisions[revision_id].content) for revision_id in provenance.filament_revision_ids or []
-        ),
-        process_source=sources[provenance.process_revision_id],
+        printer=serialized(provenance.printer_revision_id),
+        process=serialized(provenance.process_revision_id),
+        filaments=tuple(serialized(revision_id) for revision_id in provenance.filament_revision_ids or []),
+        process_source=rows[provenance.process_revision_id][2],
     )
