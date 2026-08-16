@@ -491,6 +491,72 @@ class TestCameraAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_api_key_stream_token_stays_within_printer_scope(
+        self, async_client: AsyncClient, db_session, printer_factory
+    ):
+        from backend.app.core.auth import generate_api_key
+        from backend.app.models.api_key import APIKey
+        from backend.app.models.printer_camera import PrinterCamera
+        from backend.app.models.settings import Settings
+
+        allowed_printer = await printer_factory(provider="moonraker")
+        blocked_printer = await printer_factory(provider="moonraker")
+        allowed_camera = PrinterCamera(
+            printer_id=allowed_printer.id,
+            source="moonraker",
+            source_uid="allowed-camera",
+            name="Allowed camera",
+            camera_type="mjpeg",
+            stream_url="http://allowed.lan/stream",
+        )
+        blocked_camera = PrinterCamera(
+            printer_id=blocked_printer.id,
+            source="moonraker",
+            source_uid="blocked-camera",
+            name="Blocked camera",
+            camera_type="mjpeg",
+            stream_url="http://blocked.lan/stream",
+        )
+        full_key, key_hash, key_prefix = generate_api_key()
+        db_session.add_all([Settings(key="auth_enabled", value="true"), allowed_camera, blocked_camera])
+        db_session.add(
+            APIKey(
+                name="camera-scoped",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                can_read_status=True,
+                printer_ids=[allowed_printer.id],
+                enabled=True,
+            )
+        )
+        await db_session.commit()
+
+        token_response = await async_client.post(
+            "/api/v1/printers/camera/stream-token",
+            headers={"X-API-Key": full_key},
+        )
+        assert token_response.status_code == 200
+        stream_token = token_response.json()["token"]
+
+        with patch(
+            "backend.app.api.routes.camera._camera_stream_response",
+            new=AsyncMock(return_value=Response(status_code=204)),
+        ) as mocked_handler:
+            allowed = await async_client.get(
+                f"/api/v1/printers/{allowed_printer.id}/cameras/{allowed_camera.id}/stream",
+                params={"token": stream_token},
+            )
+            blocked = await async_client.get(
+                f"/api/v1/printers/{blocked_printer.id}/cameras/{blocked_camera.id}/stream",
+                params={"token": stream_token},
+            )
+
+        assert allowed.status_code == 204
+        assert blocked.status_code == 401
+        mocked_handler.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_camera_management_routes_require_gateway_auth_when_enabled(
         self, async_client: AsyncClient, db_session, printer_factory
     ):

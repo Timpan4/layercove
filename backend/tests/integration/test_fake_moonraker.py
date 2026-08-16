@@ -39,10 +39,7 @@ def _printer(fake: FakeMoonraker, *, api_key: str | None = None):
 
 
 def _allow_test_peer(monkeypatch):
-    from backend.app.services import moonraker_http, moonraker_websocket
-
-    monkeypatch.setattr(moonraker_http, "_is_safe_peer", lambda _: True)
-    monkeypatch.setattr(moonraker_websocket, "_is_safe_peer", lambda _: True)
+    monkeypatch.setattr("backend.app.services.printer_network.is_safe_peer", lambda _: True)
 
 
 def _http_client(fake: FakeMoonraker, **options) -> MoonrakerHTTPClient:
@@ -225,8 +222,12 @@ async def test_printer_manager_forwards_fake_backed_lifecycle_once(fake_moonrake
     manager = PrinterManager(registry)
     started = []
     completed = []
-    manager.set_print_start_callback(lambda printer_id, data: started.append((printer_id, data)))
-    manager.set_print_complete_callback(lambda printer_id, data: completed.append((printer_id, data)))
+
+    def on_lifecycle(event):
+        target = started if event.kind == "started" else completed
+        target.append((event.printer_id, event.data))
+
+    manager.set_print_lifecycle_callback(on_lifecycle)
     printer = SimpleNamespace(
         id=7,
         name="Voron",
@@ -306,14 +307,13 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
     start_outcomes = []
     terminal_outcomes = []
 
-    async def on_started(printer_id, data):
-        start_outcomes.append(await scheduler.bind_moonraker_observed(printer_id, data))
+    async def on_lifecycle(event):
+        if event.kind == "started":
+            start_outcomes.append(await scheduler.bind_moonraker_observed(event.printer_id, event.data))
+        else:
+            terminal_outcomes.append(await scheduler.finalize_moonraker_job(event.printer_id, event.data))
 
-    async def on_completed(printer_id, data):
-        terminal_outcomes.append(await scheduler.finalize_moonraker_job(printer_id, data))
-
-    manager.set_print_start_callback(on_started)
-    manager.set_print_complete_callback(on_completed)
+    manager.set_print_lifecycle_callback(on_lifecycle)
     manager_printer = SimpleNamespace(
         id=ids.printer,
         name=printer.name,

@@ -99,8 +99,7 @@ Both docs repos can be edited directly in the browser, no `git clone` required:
 ### Prerequisites
 
 - Python 3.11+
-- Node.js 20+
-- npm
+- Bun 1.3.14 (pinned in `frontend/package.json`)
 
 ### Backend Setup
 
@@ -127,11 +126,11 @@ DEBUG=true uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000 --lo
 ```bash
 cd frontend
 
-# Install dependencies
-npm install
+# Install the locked dependencies
+bun install --frozen-lockfile
 
 # Run development server
-npm run dev
+bun run dev
 ```
 
 The frontend will be available at `http://localhost:5173` and will proxy API requests to the backend.
@@ -197,16 +196,16 @@ ruff format --check backend/
 
 ### Frontend (TypeScript/React)
 
-We use ESLint for linting and TypeScript for type checking:
+We use Oxlint for linting and TypeScript for type checking:
 
 ```bash
 cd frontend
 
 # Lint
-npm run lint
+bun run lint
 
 # Type check
-npx tsc --noEmit
+bun x tsc --noEmit
 ```
 
 ### Pre-commit Hooks
@@ -322,7 +321,7 @@ reprint eligibility. Archive reprint still needs `queue:create` before it can en
 The easiest way to run tests is with the provided scripts in the project root:
 
 ```bash
-./test_frontend.sh    # TypeScript check + ESLint + Vitest
+./test_frontend.sh    # TypeScript check + Oxlint + Vitest
 ./test_backend.sh     # Ruff lint/format + pytest (parallel)
 ./test_docker.sh      # Full Docker build, unit tests, and integration tests
 ./test_all.sh         # All of the above (frontend → backend → docker)
@@ -347,9 +346,9 @@ pytest backend/tests/ --cov=backend  # With coverage
 
 ```bash
 cd frontend
-npm run test:run       # Single run
-npm test               # Watch mode
-npm run test:coverage  # With coverage
+bun run test:run       # Single run
+bun run test           # Watch mode
+bun run test:coverage  # With coverage
 ```
 
 ## CI Pipeline
@@ -357,7 +356,7 @@ npm run test:coverage  # With coverage
 Pull requests trigger automated CI checks via GitHub Actions (`.github/workflows/ci.yml`):
 
 - **Backend**: Ruff lint + format check, unit/integration tests, pip-audit
-- **Frontend**: ESLint, TypeScript type check, Vitest tests, production build
+- **Frontend**: Oxlint, TypeScript type check, Vitest tests, production build
 - **Docker**: Full image build, backend/frontend tests in Docker, integration health checks
 - **Security**: CodeQL analysis, dependency audits
 

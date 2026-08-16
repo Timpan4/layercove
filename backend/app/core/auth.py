@@ -590,7 +590,7 @@ async def verify_slicer_download_token(token: str, resource_type: str, resource_
 CAMERA_STREAM_TOKEN_EXPIRE_MINUTES = 60
 
 
-async def create_camera_stream_token() -> str:
+async def create_camera_stream_token(*, api_key_id: int | None = None) -> str:
     """Create a reusable token for camera stream/snapshot access."""
     now = datetime.now(timezone.utc)
     expires_at = now + timedelta(minutes=CAMERA_STREAM_TOKEN_EXPIRE_MINUTES)
@@ -607,6 +607,7 @@ async def create_camera_stream_token() -> str:
             AuthEphemeralToken(
                 token=token,
                 token_type="camera_stream",
+                username=f"api_key:{api_key_id}" if api_key_id is not None else None,
                 expires_at=expires_at,
             )
         )
@@ -680,7 +681,7 @@ async def verify_websocket_token(token: str) -> str | None:
         return row.username or ""
 
 
-async def verify_camera_stream_token(token: str) -> bool:
+async def verify_camera_stream_token(token: str, printer_id: int | None = None) -> bool:
     """Verify a camera stream token is valid (reusable — does not consume it).
 
     Tries the ephemeral 60-minute token first (the common, browser-bound case)
@@ -696,7 +697,29 @@ async def verify_camera_stream_token(token: str) -> bool:
                 AuthEphemeralToken.expires_at > now,
             )
         )
-        if result.scalar_one_or_none() is not None:
+        row = result.scalar_one_or_none()
+        if row is not None:
+            if not row.username:
+                return True
+            if printer_id is None or not row.username.startswith("api_key:"):
+                return False
+            try:
+                api_key_id = int(row.username.removeprefix("api_key:"))
+            except ValueError:
+                return False
+            api_key = await db.get(APIKey, api_key_id)
+            if api_key is None or not api_key.enabled:
+                return False
+            if api_key.expires_at is not None:
+                expires = api_key.expires_at
+                if expires.tzinfo is None:
+                    expires = expires.replace(tzinfo=timezone.utc)
+                if expires <= now:
+                    return False
+            try:
+                check_printer_access(api_key, printer_id)
+            except HTTPException:
+                return False
             return True
 
         # Long-lived path. Imported lazily so the auth module stays importable
@@ -1470,7 +1493,10 @@ def require_permission(*permissions: str | Permission):
     return permission_checker
 
 
-def require_permission_if_auth_enabled(*permissions: str | Permission):
+def require_permission_if_auth_enabled(
+    *permissions: str | Permission,
+    return_api_key: bool = False,
+):
     """Dependency factory that checks permissions only if auth is enabled.
 
     This provides backward compatibility - when auth is disabled, all access is allowed.
@@ -1489,7 +1515,7 @@ def require_permission_if_auth_enabled(*permissions: str | Permission):
     async def permission_checker(
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
         x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
-    ) -> User | None:
+    ) -> User | APIKey | None:
         async with async_session() as db:
             auth_enabled = await is_auth_enabled(db)
             if not auth_enabled:
@@ -1507,7 +1533,7 @@ def require_permission_if_auth_enabled(*permissions: str | Permission):
                 api_key = await _validate_api_key(db, x_api_key)
                 if api_key:
                     _check_apikey_permissions(api_key, perm_strings)
-                    return None  # API key valid, allow access
+                    return api_key if return_api_key else None
 
             # Check for Bearer token (could be JWT or API key)
             if credentials is not None:
@@ -1517,7 +1543,7 @@ def require_permission_if_auth_enabled(*permissions: str | Permission):
                     api_key = await _validate_api_key(db, token)
                     if api_key:
                         _check_apikey_permissions(api_key, perm_strings)
-                        return None  # API key valid, allow access
+                        return api_key if return_api_key else None
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="Invalid API key",
@@ -1585,9 +1611,12 @@ def RequirePermission(*permissions: str | Permission):
     return Depends(require_permission(*permissions))
 
 
-def RequirePermissionIfAuthEnabled(*permissions: str | Permission):
+def RequirePermissionIfAuthEnabled(
+    *permissions: str | Permission,
+    return_api_key: bool = False,
+):
     """Convenience dependency that requires permissions if auth is enabled."""
-    return Depends(require_permission_if_auth_enabled(*permissions))
+    return Depends(require_permission_if_auth_enabled(*permissions, return_api_key=return_api_key))
 
 
 def require_any_permission_if_auth_enabled(*permissions: str | Permission):
@@ -1692,11 +1721,11 @@ def require_camera_stream_token_if_auth_enabled():
     POST /printers/camera/stream-token and appends it as ?token=xxx.
     """
 
-    async def checker(token: str | None = None) -> None:
+    async def checker(printer_id: int, token: str | None = None) -> None:
         async with async_session() as db:
             if not await is_auth_enabled(db):
                 return  # Auth disabled, allow access
-        if not token or not await verify_camera_stream_token(token):
+        if not token or not await verify_camera_stream_token(token, printer_id):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Valid camera stream token required. Obtain one from POST /api/v1/printers/camera/stream-token",

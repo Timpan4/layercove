@@ -4,13 +4,13 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { RefreshCw, AlertTriangle, Camera, Maximize, Minimize, WifiOff, ZoomIn, ZoomOut, Stethoscope } from 'lucide-react';
-import { api, getAuthToken, getStreamToken, withStreamToken } from '../api/client';
+import { api, getAuthToken } from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useCameraSession } from '../hooks/useCameraSession';
 import { ChamberLight } from '../components/icons/ChamberLight';
 import { SkipObjectsModal, SkipObjectsIcon } from '../components/SkipObjectsModal';
 import { CameraDiagnoseModal } from '../components/CameraDiagnoseModal';
-import { resolveMoonrakerCameraId } from '../utils/moonrakerCameras';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const INITIAL_RECONNECT_DELAY = 2000; // 2 seconds
@@ -21,25 +21,14 @@ export function CameraPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission, authEnabled, user, loading: authLoading } = useAuth();
+  const { hasPermission } = useAuth();
   const { printerId } = useParams<{ printerId: string }>();
   const id = parseInt(printerId || '0', 10);
   const [searchParams] = useSearchParams();
   const fpsParam = parseInt(searchParams.get('fps') || '15', 10);
   const fps = Math.min(Math.max(isNaN(fpsParam) ? 15 : fpsParam, 1), 30);
 
-  // Subscribe to the shared stream-token query so this page re-renders once the
-  // token arrives. App uses the same key, so React Query deduplicates the fetch.
-  const { data: streamTokenData } = useQuery({
-    queryKey: ['camera-stream-token', user?.id ?? null],
-    queryFn: () => api.getCameraStreamToken(),
-    enabled: !authLoading && (!authEnabled || user !== null),
-    staleTime: 50 * 60 * 1000,
-  });
-  const streamTokenValue = streamTokenData?.token ?? getStreamToken();
-
   const [streamMode, setStreamMode] = useState<'stream' | 'snapshot'>('stream');
-  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [showSkipObjectsModal, setShowSkipObjectsModal] = useState(false);
   const [showDiagnoseModal, setShowDiagnoseModal] = useState(false);
   const [streamError, setStreamError] = useState(false);
@@ -74,12 +63,12 @@ export function CameraPage() {
     enabled: id > 0 && printer?.provider === 'moonraker',
     staleTime: 30_000,
   });
-
-  useEffect(() => {
-    if (printer?.provider !== 'moonraker' || cameras.length === 0) return;
-    const nextCameraId = resolveMoonrakerCameraId(cameras, selectedCameraId);
-    if (nextCameraId !== selectedCameraId) setSelectedCameraId(nextCameraId);
-  }, [cameras, printer?.provider, selectedCameraId]);
+  const cameraSession = useCameraSession({
+    printerId: id,
+    provider: printer?.provider,
+    cameras,
+  });
+  const { selectedCameraId, setSelectedCameraId } = cameraSession;
 
   // Fetch printer status for light toggle and skip objects
   const { data: status } = useQuery({
@@ -604,24 +593,11 @@ export function CameraPage() {
     setPanOffset({ x: 0, y: 0 });
   };
 
-  // When auth is enabled, wait for the stream token before rendering the <img>
-  // src — otherwise the first request fires without ?token= and the backend
-  // rejects it with "Valid camera stream token required" (see #979). We append
-  // the token directly from the reactive query value instead of relying on the
-  // module-level cache in withStreamToken(), because that cache is updated in a
-  // useEffect that runs after render.
-  const waitingForStreamToken = authLoading || (authEnabled && !streamTokenValue);
-  const appendToken = (url: string) =>
-    streamTokenValue ? `${url}&token=${encodeURIComponent(streamTokenValue)}` : withStreamToken(url);
-  const currentUrl = transitioning || waitingForStreamToken
+  const currentUrl = transitioning
     ? ''
     : streamMode === 'stream'
-      ? appendToken(selectedCameraId
-        ? `/api/v1/printers/${id}/cameras/${selectedCameraId}/stream?fps=${fps}&t=${imageKey}`
-        : `/api/v1/printers/${id}/camera/stream?fps=${fps}&t=${imageKey}`)
-      : appendToken(selectedCameraId
-        ? `/api/v1/printers/${id}/cameras/${selectedCameraId}/snapshot?t=${imageKey}`
-        : `/api/v1/printers/${id}/camera/snapshot?t=${imageKey}`);
+      ? cameraSession.streamUrl(fps, imageKey)
+      : cameraSession.snapshotUrl(imageKey);
 
   const isDisabled = streamLoading || transitioning || isReconnecting;
 

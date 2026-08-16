@@ -3,13 +3,13 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { X, RefreshCw, AlertTriangle, Maximize2, Minimize2, GripVertical, WifiOff, ZoomIn, ZoomOut, Fullscreen, Minimize, Stethoscope } from 'lucide-react';
-import { api, getAuthToken, withStreamToken } from '../api/client';
+import { api, getAuthToken } from '../api/client';
+import { useCameraSession } from '../hooks/useCameraSession';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import { ChamberLight } from './icons/ChamberLight';
 import { SkipObjectsModal, SkipObjectsIcon } from './SkipObjectsModal';
 import { CameraDiagnoseModal } from './CameraDiagnoseModal';
-import { resolveMoonrakerCameraId } from '../utils/moonrakerCameras';
 
 interface EmbeddedCameraViewerProps {
   printerId: number;
@@ -88,7 +88,6 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
 
   // Stream state
   const [streamError, setStreamError] = useState(false);
-  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [streamLoading, setStreamLoading] = useState(true);
   const [imageKey, setImageKey] = useState(Date.now());
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
@@ -119,12 +118,12 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     enabled: printer?.provider === 'moonraker',
     staleTime: 30_000,
   });
-
-  useEffect(() => {
-    if (printer?.provider !== 'moonraker' || cameras.length === 0) return;
-    const nextCameraId = resolveMoonrakerCameraId(cameras, selectedCameraId);
-    if (nextCameraId !== selectedCameraId) setSelectedCameraId(nextCameraId);
-  }, [cameras, printer?.provider, selectedCameraId]);
+  const cameraSession = useCameraSession({
+    printerId,
+    provider: printer?.provider,
+    cameras,
+  });
+  const { selectedCameraId, setSelectedCameraId } = cameraSession;
 
   // Fetch printer status for light toggle and skip objects
   const { data: status } = useQuery({
@@ -570,9 +569,7 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     }
   }, [isDragging, isResizing, dragOffset]);
 
-  const streamUrl = withStreamToken(selectedCameraId
-    ? `/api/v1/printers/${printerId}/cameras/${selectedCameraId}/stream?fps=15&t=${imageKey}`
-    : `/api/v1/printers/${printerId}/camera/stream?fps=15&t=${imageKey}`);
+  const streamUrl = cameraSession.streamUrl(15, imageKey);
 
   return (
     <div

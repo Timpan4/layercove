@@ -210,6 +210,18 @@ async def test_force_shutdown_signals_subscribers():
     assert bc.stopped is True
 
 
+async def test_force_shutdown_signals_subscriber_with_full_queue():
+    bc = MjpegBroadcaster("p1", _make_factory([], delay=1.0))
+    queue = await bc.subscribe()
+    for index in range(camera_fanout._SUBSCRIBER_QUEUE_SIZE):
+        queue.put_nowait(f"frame-{index}".encode())
+
+    await bc.force_shutdown()
+
+    queued = [queue.get_nowait() for _ in range(queue.qsize())]
+    assert queued[-1] == camera_fanout._UPSTREAM_GONE
+
+
 # ---------------------------------------------------------------------------
 # iter_subscriber helper exits cleanly on upstream-gone and disconnect
 # ---------------------------------------------------------------------------

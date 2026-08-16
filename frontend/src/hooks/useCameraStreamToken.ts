@@ -1,32 +1,7 @@
-import { useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, setStreamToken, getStreamToken, withStreamToken } from '../api/client';
+import { api, setStreamToken, getAuthToken, getStreamToken } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
-
-/**
- * Walks the DOM and updates every <img>/<video> pointing at /api/v1/ so its
- * src carries the current stream token. Exported for unit testing; called
- * from useStreamTokenSync when the token arrives after first render.
- */
-export function rewriteMediaSrcWithToken(root: ParentNode, token: string): number {
-  const tokenParam = `token=${encodeURIComponent(token)}`;
-  let updated = 0;
-  root
-    .querySelectorAll<HTMLImageElement | HTMLVideoElement>(
-      'img[src*="/api/v1/"], video[src*="/api/v1/"]'
-    )
-    .forEach((el) => {
-      const src = el.getAttribute('src') || '';
-      if (src.includes(tokenParam)) return;
-      const withoutToken = src.replace(/([?&])token=[^&]*(&|$)/, (_m, pre, post) =>
-        post === '&' ? pre : pre === '?' ? '' : ''
-      );
-      const sep = withoutToken.includes('?') ? '&' : '?';
-      el.src = `${withoutToken}${sep}${tokenParam}`;
-      updated += 1;
-    });
-  return updated;
-}
 
 /**
  * Fetches and caches a stream token for <img>/<video> src URLs.
@@ -67,12 +42,6 @@ export function useStreamTokenSync() {
     const newToken = data?.token ?? null;
     setStreamToken(newToken);
 
-    // Images/videos that rendered before the token arrived have src URLs
-    // without ?token=…; update them in place so they reload with auth.
-    if (newToken) {
-      rewriteMediaSrcWithToken(document, newToken);
-    }
-
     return () => setStreamToken(null);
   }, [data?.token]);
 
@@ -91,11 +60,15 @@ export function useStreamTokenSync() {
       const token = getStreamToken();
       if (!token || !src.includes(`token=${encodeURIComponent(token)}`)) return;
 
-      // This image/video used our stream token and failed — token likely invalid
       if (refreshingRef.current) return;
+      // Keep token-owned media mounted while the shared query replaces the
+      // stale credential. A repeated failure during that refresh is allowed
+      // through to the component's normal error state.
+      event.stopPropagation();
       refreshingRef.current = true;
 
       setStreamToken(null);
+      queryClient.setQueriesData({ queryKey: ['camera-stream-token'] }, undefined);
       queryClient.invalidateQueries({ queryKey: ['camera-stream-token'] });
 
       // Reset after a delay so future errors can trigger another refresh
@@ -115,5 +88,27 @@ export function useStreamTokenSync() {
  * Returns a withToken function that appends ?token=xxx when auth is enabled.
  */
 export function useCameraStreamToken() {
-  return { withToken: withStreamToken };
+  const { authEnabled, user, loading: authLoading } = useAuth();
+  const { data } = useQuery({
+    queryKey: ['camera-stream-token', user?.id ?? null],
+    queryFn: () => api.getCameraStreamToken(),
+    enabled: !authLoading && (!authEnabled || user !== null),
+    staleTime: 50 * 60 * 1000,
+    refetchInterval: 50 * 60 * 1000,
+  });
+  const token = data?.token ?? getStreamToken();
+  const withToken = useCallback(
+    (url: string) => {
+      if (!token) return url;
+      const separator = url.includes('?') ? '&' : '?';
+      return `${url}${separator}token=${encodeURIComponent(token)}`;
+    },
+    [token],
+  );
+
+  return {
+    token,
+    waitingForToken: (authEnabled || getAuthToken() !== null) && !token,
+    withToken,
+  };
 }

@@ -2,8 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { act, fireEvent, screen, waitFor } from '@testing-library/react';
 import { render } from '../utils';
 import { CameraTile } from '../../components/CameraTile';
-import { setAuthToken, setStreamToken } from '../../api/client';
-import { rewriteMediaSrcWithToken } from '../../hooks/useCameraStreamToken';
+import { api, setAuthToken, setStreamToken } from '../../api/client';
 
 // The shared render() util mounts AuthProvider, which fires an async
 // /auth/me probe on mount. Each test absorbs that settle with a single
@@ -47,6 +46,13 @@ describe('CameraTile', () => {
   });
 
   it('keeps authenticated media mounted until the stream token arrives', async () => {
+    vi.useRealTimers();
+    let resolveToken!: (value: { token: string }) => void;
+    vi.spyOn(api, 'getCameraStreamToken').mockReturnValue(
+      new Promise((resolve) => {
+        resolveToken = resolve;
+      }),
+    );
     setAuthToken('auth-token');
 
     render(
@@ -64,13 +70,9 @@ describe('CameraTile', () => {
     fireEvent.error(img);
 
     expect(screen.getByAltText('X1C-Token-Race')).toBe(img);
-    expect(rewriteMediaSrcWithToken(document, 'stream-token')).toBeGreaterThan(0);
-    expect(img.src).toContain('token=stream-token');
+    await act(async () => resolveToken({ token: 'stream-token' }));
+    await waitFor(() => expect(img.src).toContain('token=stream-token'));
     fireEvent.load(img);
-
-    await act(async () => {
-      vi.advanceTimersByTime(5000);
-    });
     expect(screen.getByAltText('X1C-Token-Race')).toBe(img);
   });
 

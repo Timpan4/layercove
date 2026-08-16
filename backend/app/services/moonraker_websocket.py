@@ -3,21 +3,22 @@
 from __future__ import annotations
 
 import asyncio
-import ipaddress
-import socket
 from collections.abc import Iterable
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 import aiohttp
-from aiohttp.abc import AbstractResolver
 
 from backend.app.services.moonraker_http import (
-    IPAddress,
-    Resolver,
-    _is_safe_peer,
     resolve_moonraker_host,
-    unwrap_ipv4_mapped,
+)
+from backend.app.services.printer_network import (
+    IPAddress,
+    PinnedResolver as _PinnedResolver,
+    PrinterNetworkError,
+    Resolver,
+    approved_peers,
+    connected_peer,
 )
 
 _TOTAL_TIMEOUT_SECONDS = 10.0
@@ -69,49 +70,17 @@ def moonraker_websocket_url(base_url: str, override: str | None = None) -> str:
     return urlunsplit((parsed.scheme, parsed.netloc, parsed.path or "/websocket", "", ""))
 
 
-class _PinnedResolver(AbstractResolver):
-    """Only returns already-approved DNS answers for this WebSocket connection."""
-
-    def __init__(self, host: str, peers: frozenset[IPAddress]):
-        self._host = host.lower()
-        self._peers = peers
-
-    async def resolve(self, host: str, port: int = 0, family: int = socket.AF_UNSPEC) -> list[dict[str, Any]]:
-        if host.lower() != self._host:
-            raise OSError("unexpected connection host")
-        return [
-            {
-                "hostname": host,
-                "host": str(peer),
-                "port": port,
-                "family": socket.AF_INET6 if peer.version == 6 else socket.AF_INET,
-                "proto": 0,
-                "flags": 0,
-            }
-            for peer in sorted(self._peers, key=str)
-            if family in {socket.AF_UNSPEC, socket.AF_INET6 if peer.version == 6 else socket.AF_INET}
-        ]
-
-    async def close(self) -> None:
-        return None
-
-
 def _approved_peers(values: Iterable[str | IPAddress]) -> frozenset[IPAddress]:
-    peers = frozenset(unwrap_ipv4_mapped(ipaddress.ip_address(value)) for value in values)
-    if not peers or any(not _is_safe_peer(peer) for peer in peers):
-        raise MoonrakerWebSocketError("unsafe_target", "Moonraker host resolved to a blocked address.")
-    return peers
+    try:
+        return approved_peers(values)
+    except PrinterNetworkError as exc:
+        raise MoonrakerWebSocketError(
+            "unsafe_target", "Moonraker host resolved to a blocked address."
+        ) from exc
 
 
 def _connected_peer(websocket: aiohttp.ClientWebSocketResponse) -> IPAddress | None:
-    response = websocket._response  # aiohttp has no public peer accessor for client WebSockets.
-    connection = response.connection
-    transport = connection.transport if connection is not None else None
-    peer = transport.get_extra_info("peername") if transport is not None else None
-    try:
-        return unwrap_ipv4_mapped(ipaddress.ip_address(peer[0])) if peer else None
-    except ValueError:
-        return None
+    return connected_peer(websocket._response)  # aiohttp has no public peer accessor for client WebSockets.
 
 
 async def _reject_redirect(*_: object) -> None:
