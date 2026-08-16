@@ -717,6 +717,7 @@ async def verify_camera_stream_token(token: str, printer_id: int | None = None) 
                 if expires <= now:
                     return False
             try:
+                _check_apikey_permissions(api_key, [Permission.CAMERA_VIEW.value])
                 check_printer_access(api_key, printer_id)
             except HTTPException:
                 return False

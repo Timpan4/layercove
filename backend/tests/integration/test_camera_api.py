@@ -519,16 +519,15 @@ class TestCameraAPI:
         )
         full_key, key_hash, key_prefix = generate_api_key()
         db_session.add_all([Settings(key="auth_enabled", value="true"), allowed_camera, blocked_camera])
-        db_session.add(
-            APIKey(
-                name="camera-scoped",
-                key_hash=key_hash,
-                key_prefix=key_prefix,
-                can_read_status=True,
-                printer_ids=[allowed_printer.id],
-                enabled=True,
-            )
+        api_key = APIKey(
+            name="camera-scoped",
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            can_read_status=True,
+            printer_ids=[allowed_printer.id],
+            enabled=True,
         )
+        db_session.add(api_key)
         await db_session.commit()
 
         token_response = await async_client.post(
@@ -550,9 +549,16 @@ class TestCameraAPI:
                 f"/api/v1/printers/{blocked_printer.id}/cameras/{blocked_camera.id}/stream",
                 params={"token": stream_token},
             )
+            api_key.can_read_status = False
+            await db_session.commit()
+            revoked = await async_client.get(
+                f"/api/v1/printers/{allowed_printer.id}/cameras/{allowed_camera.id}/stream",
+                params={"token": stream_token},
+            )
 
         assert allowed.status_code == 204
         assert blocked.status_code == 401
+        assert revoked.status_code == 401
         mocked_handler.assert_awaited_once()
 
     @pytest.mark.asyncio
