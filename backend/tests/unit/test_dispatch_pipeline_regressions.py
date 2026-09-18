@@ -354,3 +354,54 @@ async def test_bambu_qos_disconnect_keeps_the_uncertain_command_for_reconciliati
     assert scheduler_module.delete_file_async.await_count == 1
     notices = scheduler_module.notification_service.on_queue_job_started
     assert [call.kwargs["printer_id"] for call in notices.await_args_list] == [2]
+
+
+@pytest.mark.asyncio
+async def test_confirmed_bambu_claim_is_not_failed_as_legacy_work(pipeline):
+    await pipeline.scheduler.check_queue()
+    async with pipeline.sessions() as db:
+        item = await db.get(PrintQueueItem, pipeline.item_ids[0])
+        item.start_reconcile_after = None
+        item.started_at = datetime.now(timezone.utc) - timedelta(minutes=10)
+        await db.commit()
+    # The terminal lifecycle callback owns completion; recovery must not race
+    # it by treating a confirmed modern claim as an abandoned legacy upload.
+    pipeline.bambu.client.state.state = "FINISH"
+    await pipeline.scheduler._reconcile_persisted_bambu_starts()
+    async with pipeline.sessions() as db:
+        assert (await db.get(PrintQueueItem, pipeline.item_ids[0])).status == "printing"
+
+
+@pytest.mark.asyncio
+async def test_confirmation_wins_over_an_expired_bambu_watchdog(pipeline):
+    await pipeline.scheduler.check_queue()
+    subtask = pipeline.bambu.client.last_dispatch_subtask_id
+    pipeline.bambu.client.state.state = "RUNNING"
+    pipeline.bambu.client.state.subtask_id = subtask
+    await pipeline.scheduler._watchdog_print_start(
+        pipeline.item_ids[0], 1, "IDLE", timeout=0.1, poll_interval=0.01, expected_subtask_id=subtask
+    )
+    pipeline.bambu.client.state.state = "IDLE"
+    await pipeline.scheduler._watchdog_print_start(
+        pipeline.item_ids[0], 1, "IDLE", timeout=0, expected_subtask_id=subtask
+    )
+    async with pipeline.sessions() as db:
+        item = await db.get(PrintQueueItem, pipeline.item_ids[0])
+        assert item.status == "printing"
+        assert item.start_reconcile_after is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("state", ["RUNNING", "IDLE"])
+async def test_stale_bambu_watchdog_cannot_change_a_new_dispatch_attempt(pipeline, state):
+    await pipeline.scheduler.check_queue()
+    pipeline.bambu.client.state.state = state
+    pipeline.bambu.client.state.subtask_id = "previous-attempt"
+    await pipeline.scheduler._watchdog_print_start(
+        pipeline.item_ids[0], 1, "IDLE", timeout=0.1, poll_interval=0.01, expected_subtask_id="previous-attempt"
+    )
+    async with pipeline.sessions() as db:
+        item = await db.get(PrintQueueItem, pipeline.item_ids[0])
+        assert item.status == "printing"
+        assert item.start_reconcile_after is not None
+        assert item.provider_correlation_id == pipeline.bambu.client.last_dispatch_subtask_id

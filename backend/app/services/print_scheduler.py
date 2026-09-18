@@ -3692,11 +3692,23 @@ class PrintScheduler:
 
             await self._power_off_if_needed(db, item)
 
-    async def _confirm_bambu_start(self, item_id: int, printer_id: int, created_by_id: int | None = None) -> bool:
+    async def _confirm_bambu_start(
+        self,
+        item_id: int,
+        printer_id: int,
+        created_by_id: int | None = None,
+        *,
+        expected_subtask_id: str | None = None,
+    ) -> bool:
         """Record observed acceptance once; never announce a local publish as success."""
         async with async_session() as db:
             item = await db.get(PrintQueueItem, item_id)
-            if item is None or item.status != "printing" or item.printer_id != printer_id:
+            if (
+                item is None
+                or item.status != "printing"
+                or item.printer_id != printer_id
+                or item.provider_correlation_id != expected_subtask_id
+            ):
                 return False
             changed = await db.execute(
                 update(PrintQueueItem)
@@ -3704,6 +3716,8 @@ class PrintScheduler:
                     PrintQueueItem.id == item_id,
                     PrintQueueItem.status == "printing",
                     PrintQueueItem.start_reconcile_after.is_not(None),
+                    PrintQueueItem.printer_id == printer_id,
+                    PrintQueueItem.provider_correlation_id == expected_subtask_id,
                 )
                 .values(start_reconcile_after=None, error_message=None)
             )
@@ -3741,7 +3755,13 @@ class PrintScheduler:
                 self._log_dispatch_error(item_id, exc)
             return True
 
-    async def _fail_unconfirmed_start(self, item_id: int, printer_id: int) -> bool:
+    async def _fail_unconfirmed_start(
+        self,
+        item_id: int,
+        printer_id: int,
+        *,
+        expected_subtask_id: str | None = None,
+    ) -> bool:
         reason = (
             f"Queue job {item_id}: could not confirm the print on printer {printer_id}. "
             "Check the printer and its print history before retrying; the command may have arrived. "
@@ -3753,7 +3773,18 @@ class PrintScheduler:
                 return False
             changed = await db.execute(
                 update(PrintQueueItem)
-                .where(PrintQueueItem.id == item_id, PrintQueueItem.status == "printing")
+                .where(
+                    PrintQueueItem.id == item_id,
+                    PrintQueueItem.status == "printing",
+                    PrintQueueItem.printer_id == printer_id,
+                    PrintQueueItem.provider_correlation_id == expected_subtask_id,
+                    # A confirmed attempt must beat an expired watchdog. Only
+                    # legacy claims without an identity can lack a deadline.
+                    or_(
+                        PrintQueueItem.start_reconcile_after.is_not(None),
+                        PrintQueueItem.provider_correlation_id.is_(None),
+                    ),
+                )
                 .values(
                     status="failed",
                     completed_at=datetime.now(timezone.utc),
@@ -3805,11 +3836,16 @@ class PrintScheduler:
                 )
                 if item.start_reconcile_after is not None:
                     if active and matches:
-                        resolved += await self._confirm_bambu_start(item.id, item.printer_id)
+                        resolved += await self._confirm_bambu_start(
+                            item.id, item.printer_id, expected_subtask_id=item.provider_correlation_id
+                        )
                     elif now >= item.start_reconcile_after.replace(tzinfo=timezone.utc):
-                        resolved += await self._fail_unconfirmed_start(item.id, item.printer_id)
+                        resolved += await self._fail_unconfirmed_start(
+                            item.id, item.printer_id, expected_subtask_id=item.provider_correlation_id
+                        )
                 elif (
-                    fresh
+                    item.provider_correlation_id is None
+                    and fresh
                     and status is not None
                     and status.state in {"IDLE", "FINISH", "FAILED"}
                     and item.started_at is not None
@@ -3818,7 +3854,9 @@ class PrintScheduler:
                     # Older releases could strand a claim without a durable
                     # acknowledgement deadline. Only fresh non-active telemetry
                     # permits recovery; do not fail an offline long-running print.
-                    resolved += await self._fail_unconfirmed_start(item.id, item.printer_id)
+                    resolved += await self._fail_unconfirmed_start(
+                        item.id, item.printer_id, expected_subtask_id=item.provider_correlation_id
+                    )
             except Exception as exc:
                 self._log_dispatch_error(item.id, exc)
         return resolved
@@ -3856,7 +3894,9 @@ class PrintScheduler:
             if status.state in _ACTIVE_PRINT_STATES and (
                 expected_subtask_id is None or status.subtask_id == expected_subtask_id
             ):
-                await scheduler._confirm_bambu_start(queue_item_id, printer_id, created_by_id)
+                await scheduler._confirm_bambu_start(
+                    queue_item_id, printer_id, created_by_id, expected_subtask_id=expected_subtask_id
+                )
                 return
             if pre_subtask_id is not None and status.subtask_id is not None and status.subtask_id != pre_subtask_id:
                 # Phase A exit — printer accepted the file (subtask_id flipped
@@ -3878,12 +3918,16 @@ class PrintScheduler:
                 if status.state in _ACTIVE_PRINT_STATES and (
                     expected_subtask_id is None or status.subtask_id == expected_subtask_id
                 ):
-                    await scheduler._confirm_bambu_start(queue_item_id, printer_id, created_by_id)
+                    await scheduler._confirm_bambu_start(
+                        queue_item_id, printer_id, created_by_id, expected_subtask_id=expected_subtask_id
+                    )
                     return
 
         # Do not resubmit an operation whose physical outcome is uncertain.
         # CAS preserves completion/cancellation that arrived during the wait.
-        if not await scheduler._fail_unconfirmed_start(queue_item_id, printer_id):
+        if not await scheduler._fail_unconfirmed_start(
+            queue_item_id, printer_id, expected_subtask_id=expected_subtask_id
+        ):
             return
         logger.warning("Queue item %s: printer %d start unconfirmed; manual review required", queue_item_id, printer_id)
 

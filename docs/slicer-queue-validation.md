@@ -56,7 +56,10 @@ acceptance. Started notifications follow that confirmation, not local publish.
 The watchdog retains the 90-second initial wait and up to 180 additional seconds
 for slow firmware parsing. It now fails with an inspect-before-retry error rather
 than returning the job to pending forever. Persisted deadlines recover lost
-watchdogs after restart. Older unmarked Bambu claims are recovered only with
+watchdogs after restart. Confirmation and timeout updates compare the dispatch
+subtask identity, so an older watchdog cannot change a newer attempt or fail a
+confirmed print. Confirmed modern claims are not treated as legacy work while
+terminal lifecycle callbacks are pending. Older unmarked Bambu claims are recovered only with
 fresh non-active telemetry after the grace period; an offline long-running print
 is not declared failed just because its connection is down.
 
