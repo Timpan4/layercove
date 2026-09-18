@@ -38,6 +38,9 @@ from backend.app.services.slicer_compatibility import (
     ProfileEvidence,
     classify_profile,
     evaluate_nozzle,
+    profile_aliases,
+    profile_compatible_printers,
+    profile_nozzle_diameter,
     shadow_evaluate,
     suggest_p1s_binding,
 )
@@ -205,7 +208,7 @@ async def _binding_evidence(
     elif revision is not None:
         _profile, _revision, available = await _profile_revision(db, profile.id, "printer")
     metadata = _metadata(revision)
-    aliases = tuple(item for item in metadata.get("aliases", []) if isinstance(item, str))
+    aliases = profile_aliases(revision.content if revision else {}, metadata)
     return BindingEvidence(
         id=binding.id or 0,
         printer_id=binding.printer_id,
@@ -213,6 +216,8 @@ async def _binding_evidence(
         printer_profile_name=profile.display_name if profile is not None else "Unavailable profile",
         expected_nozzle_diameter=binding.expected_nozzle_diameter,
         aliases=aliases,
+        tool_index=binding.tool_index,
+        profile_nozzle_diameter=profile_nozzle_diameter(revision.content if revision else {}, binding.tool_index),
         active=binding.is_active,
         profile_available=available,
         defaults_available=await _defaults_available(db, binding),
@@ -290,7 +295,7 @@ async def _classify_one(
 ) -> tuple[Classification, tuple[BindingEvidence, ...]]:
     selected_profile, selected_revision, _available = await _profile_revision(db, binding.profile_id, "printer")
     installed = await _installed_bindings(db)
-    compatible = _metadata(revision).get("compatible_printers")
+    compatible = profile_compatible_printers(revision.content, _metadata(revision))
     classification = classify_profile(
         ProfileEvidence(
             profile_id=profile.id,
@@ -536,7 +541,7 @@ async def classify_catalog(
         "incompatible": [],
     }
     for profile, revision, account in profiles:
-        compatible = _metadata(revision).get("compatible_printers")
+        compatible = profile_compatible_printers(revision.content, _metadata(revision))
         classification = classify_profile(
             ProfileEvidence(
                 profile_id=profile.id,

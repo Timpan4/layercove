@@ -374,3 +374,19 @@ async def test_orca_outage_freezes_active_mirror(db):
     assert profile.stale_at is not None
     assert activation.revision_id == revision.id
     assert account.last_sync_error == "sync_failed"
+
+
+def test_local_profile_preserves_compatibility_from_full_content():
+    import json
+
+    from backend.app.models.local_preset import LocalPreset
+    from backend.app.services.slicer_catalog_sync import local_preset_adapter
+
+    preset = LocalPreset(
+        id=91,
+        name="Imported process",
+        preset_type="process",
+        setting=json.dumps({"compatible_printers": ["Machine 0.4"]}),
+        compatible_printers=None,
+    )
+    assert local_preset_adapter(preset).metadata["compatible_printers"] == ["Machine 0.4"]

@@ -7,7 +7,7 @@ import type {
   SlicerCatalogProfile,
   SlicerFilamentRule,
 } from '../../api/client';
-import { pickCatalogFilament, pickCatalogProcess } from '../../utils/catalogSliceSelection';
+import { catalogSelectionReadiness, pickCatalogFilament, pickCatalogProcess } from '../../utils/catalogSliceSelection';
 
 const classified = (
   profileId: number,
@@ -193,5 +193,41 @@ describe('catalog slice defaulting', () => {
       [],
       null,
     )).toBeNull();
+  });
+});
+
+
+describe('selected combination readiness', () => {
+  const process = classified(12, 'process', 'Process');
+  const filaments = [classified(22, 'filament', 'Filament')];
+  const noDefaults: SlicerCatalogBinding = {
+    ...binding,
+    default_process_profile_id: null,
+    default_filament_profile_id: null,
+    readiness: { state: 'blocked', reason_codes: ['default_unavailable'] },
+  };
+  const evaluate = (selected = noDefaults) => catalogSelectionReadiness({
+    binding: selected, process, filaments, filamentCount: 1,
+  });
+
+  it('requires real selections, not fallback defaults', () => {
+    expect(evaluate().state).toBe('ready');
+    expect(catalogSelectionReadiness({ binding: noDefaults, process: undefined, filaments, filamentCount: 1 }).state).toBe('blocked');
+    expect(catalogSelectionReadiness({ binding: noDefaults, process, filaments: [], filamentCount: 1 }).state).toBe('blocked');
+  });
+
+  it('does not mask nozzle or tool mismatches with a missing-default error', () => {
+    expect(evaluate({ ...noDefaults, nozzle: { ...binding.nozzle, diameter: 0.6 } }).reason_codes).toContain('nozzle_mismatch');
+    expect(evaluate({ ...noDefaults, tool_index: 1 }).reason_codes).toContain('tool_mismatch');
+  });
+
+  it('preserves unavailable binding and incompatible profile blocks', () => {
+    expect(evaluate({ ...noDefaults, readiness: { state: 'blocked', reason_codes: ['profile_unavailable'] } }).state).toBe('blocked');
+    expect(catalogSelectionReadiness({ binding, process: classified(30, 'process', 'Other machine', 'incompatible'), filaments, filamentCount: 1 }).state).toBe('blocked');
+  });
+
+  it('requires explicit acknowledgement for unknown compatibility and stale telemetry', () => {
+    expect(catalogSelectionReadiness({ binding: noDefaults, process: classified(30, 'process', 'Unknown', 'unclassified'), filaments, filamentCount: 1 }).state).toBe('acknowledgement_required');
+    expect(evaluate({ ...noDefaults, nozzle: { ...binding.nozzle, status: 'stale' } }).reason_codes).toContain('telemetry_stale');
   });
 });
