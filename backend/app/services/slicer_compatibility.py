@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass, replace
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from typing import Literal
 
 CatalogGroup = Literal["selected_printer", "other_installed_printers", "unclassified", "incompatible"]
@@ -24,6 +25,8 @@ class BindingEvidence:
     active: bool = True
     profile_available: bool = True
     defaults_available: bool = True
+    tool_index: int = 0
+    profile_nozzle_diameter: Decimal | None = None
 
 
 @dataclass(frozen=True)
@@ -69,6 +72,42 @@ class ShadowEvaluation:
     dispatch_eligible: bool
 
 
+def profile_compatible_printers(content: Mapping, metadata: Mapping) -> tuple[str, ...] | None:
+    """Read canonical content first; older mirrors may lack denormalized metadata."""
+    value = content.get("compatible_printers", metadata.get("compatible_printers"))
+    if not isinstance(value, (list, tuple)):
+        return None
+    return tuple(name.strip() for name in value if isinstance(name, str) and name.strip()) or None
+
+
+def profile_aliases(content: Mapping, metadata: Mapping) -> tuple[str, ...]:
+    """A display label may differ from the machine name used by slicer declarations."""
+    aliases = metadata.get("aliases", [])
+    names = [content.get("name"), *(aliases if isinstance(aliases, (list, tuple)) else [])]
+    return tuple(dict.fromkeys(name.strip() for name in names if isinstance(name, str) and name.strip()))
+
+
+def profile_nozzle_diameter(content: Mapping, tool_index: int) -> Decimal | None:
+    """Resolve a known machine nozzle without inferring it from profile names.
+
+    Single-tool profiles can bind to either physical tool. A multi-tool profile
+    must contain that tool's diameter. Missing optional metadata remains absent;
+    malformed declared metadata is represented by NaN and rejected by readiness.
+    """
+    raw = content.get("nozzle_diameter")
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple)):
+        index = tool_index if len(raw) > 1 else 0
+        if not 0 <= index < len(raw):
+            return Decimal("NaN")
+        raw = raw[index]
+    try:
+        return Decimal(str(raw))
+    except (InvalidOperation, ValueError):
+        return Decimal("NaN")
+
+
 def _normalize(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip().casefold()
 
@@ -82,6 +121,14 @@ def evaluate_nozzle(binding: BindingEvidence, nozzle: NozzleEvidence) -> Readine
         return Readiness("blocked", ("binding_inactive",))
     if not binding.profile_available:
         return Readiness("blocked", ("profile_unavailable",))
+    if nozzle.tool_index != binding.tool_index:
+        return Readiness("blocked", ("tool_mismatch",))
+    if binding.profile_nozzle_diameter is not None:
+        diameter = binding.profile_nozzle_diameter
+        if not diameter.is_finite() or diameter <= 0:
+            return Readiness("blocked", ("profile_nozzle_invalid",))
+        if diameter != binding.expected_nozzle_diameter:
+            return Readiness("blocked", ("profile_nozzle_mismatch",))
     if not binding.defaults_available:
         return Readiness("blocked", ("default_unavailable",))
     if nozzle.status == "offline":
@@ -154,7 +201,7 @@ def classify_profile(
         )
     if not selected_match:
         if compatibility == "unknown":
-            readiness = evaluate_nozzle(selected, nozzle)
+            readiness = evaluate_nozzle(candidate_binding, nozzle)
             if readiness.state == "blocked":
                 return Classification(
                     "incompatible",

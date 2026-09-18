@@ -206,8 +206,9 @@ async def test_enqueue_pins_revision_atomically_and_dispatches_old_content(catal
 
 
 @pytest.mark.asyncio
-async def test_pinned_orca_profiles_include_sidecar_identity(catalog_db, monkeypatch):
-    ids = await setup_catalog(catalog_db, source="orca_cloud")
+@pytest.mark.parametrize("source", ["orca_cloud", "cloud"])
+async def test_pinned_cloud_profiles_include_sidecar_identity(catalog_db, monkeypatch, source):
+    ids = await setup_catalog(catalog_db, source=source)
     async with catalog_db() as db:
         account = await db.scalar(select(SlicerProfileAccount))
         account.sharing_state = "shared"

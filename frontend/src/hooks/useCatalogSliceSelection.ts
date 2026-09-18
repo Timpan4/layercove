@@ -9,6 +9,7 @@ import {
 import {
   catalogClassification,
   catalogClassifications,
+  catalogSelectionReadiness,
   pickCatalogFilament,
   pickCatalogProcess,
   selectableCatalogProfile,
@@ -52,7 +53,7 @@ export function useCatalogSliceSelection({
   const [bindingId, setBindingIdState] = useState<number | null>(null);
   const [processChoice, setProcessChoice] = useState<CatalogProfileChoice | null>(null);
   const [filamentChoices, setFilamentChoices] = useState<Array<CatalogProfileChoice | null>>([]);
-  const [acknowledged, setAcknowledged] = useState(false);
+  const [acknowledgementKey, setAcknowledgementKey] = useState<string | null>(null);
 
   const printersQuery = useQuery({
     queryKey: ['printers'],
@@ -70,11 +71,13 @@ export function useCatalogSliceSelection({
     queryKey: ['slicerCatalogBindings', printerId],
     queryFn: () => api.listSlicerCatalogBindings(printerId!),
     enabled: printerId !== null,
+    refetchInterval: 30_000,
   });
   const groupsQuery = useQuery({
     queryKey: ['slicerCatalogGroups', printerId, bindingId],
     queryFn: () => api.getSlicerCatalogGroups(printerId!, bindingId!),
     enabled: printerId !== null && bindingId !== null,
+    refetchInterval: 30_000,
   });
   const preferencesQuery = useQuery({
     queryKey: ['slicerCatalogPreferences', bindingId],
@@ -116,13 +119,13 @@ export function useCatalogSliceSelection({
     setBindingIdState(null);
     setProcessChoice(null);
     setFilamentChoices([]);
-    setAcknowledged(false);
+    setAcknowledgementKey(null);
   }, []);
   const setBindingId = useCallback((next: number | null) => {
     setBindingIdState(next);
     setProcessChoice(null);
     setFilamentChoices([]);
-    setAcknowledged(false);
+    setAcknowledgementKey(null);
   }, []);
 
   useEffect(() => {
@@ -182,7 +185,7 @@ export function useCatalogSliceSelection({
   const chooseProcess = useCallback((profile: SlicerCatalogClassification) => {
     if (!selectableCatalogProfile(profile)) return;
     setProcessChoice({ id: profile.profile_id, reason: 'manual', manual: true });
-    setAcknowledged(false);
+    setAcknowledgementKey(null);
     if (bindingId !== null) savePreference.mutate({ profileId: profile.profile_id, profileType: 'process' });
   }, [bindingId, savePreference]);
   const chooseFilament = useCallback((index: number, profile: SlicerCatalogClassification) => {
@@ -192,7 +195,7 @@ export function useCatalogSliceSelection({
       next[index] = { id: profile.profile_id, reason: 'manual', manual: true };
       return next;
     });
-    setAcknowledged(false);
+    setAcknowledgementKey(null);
     if (bindingId !== null) savePreference.mutate({ profileId: profile.profile_id, profileType: 'filament' });
   }, [bindingId, filamentSlots, savePreference]);
 
@@ -203,17 +206,29 @@ export function useCatalogSliceSelection({
       ...filamentChoices.map((choice) => choice && catalogClassification(groups, choice.id)),
     ].filter((profile): profile is SlicerCatalogClassification => profile !== undefined && profile !== null);
   }, [filamentChoices, groupsQuery.data, processChoice]);
-  const acknowledgementReasons = useMemo(() => [
-    ...(selectedBinding?.readiness.state === 'acknowledgement_required'
-      ? selectedBinding.readiness.reason_codes
-      : []),
-    ...selectedClassifications.flatMap((profile) =>
-      profile.classification.acknowledgement_required
-        ? profile.classification.reason_codes
-        : [],
-    ),
-  ].filter((reason, index, all) => all.indexOf(reason) === index), [selectedBinding, selectedClassifications]);
-  const needsAcknowledgement = acknowledgementReasons.length > 0;
+  const unconfirmedReadiness = useMemo(() => catalogSelectionReadiness({
+    binding: selectedBinding,
+    process: processChoice ? catalogClassification(groupsQuery.data, processChoice.id) : undefined,
+    filaments: filamentChoices.map((choice) => choice && catalogClassification(groupsQuery.data, choice.id)),
+    filamentCount: filamentSlots.length,
+    unavailable: profilesQuery.isError || bindingsQuery.isError || groupsQuery.isError,
+  }), [selectedBinding, processChoice, filamentChoices, filamentSlots.length, groupsQuery.data,
+    profilesQuery.isError, bindingsQuery.isError, groupsQuery.isError]);
+  const acknowledgementContext = JSON.stringify({
+    binding: selectedBinding,
+    profiles: selectedClassifications.map((profile) => [profile.profile_id, profile.revision_id, profile.classification]),
+  });
+  // Consent applies only to the exact evidence that was displayed, never a later revision/nozzle.
+  const acknowledged = acknowledgementKey === acknowledgementContext;
+  const setAcknowledged = useCallback((confirmed: boolean) => {
+    setAcknowledgementKey(confirmed ? acknowledgementContext : null);
+  }, [acknowledgementContext]);
+  const needsAcknowledgement = unconfirmedReadiness.state === 'acknowledgement_required';
+  const acknowledgementReasons = useMemo(() => needsAcknowledgement ? unconfirmedReadiness.reason_codes : [],
+    [needsAcknowledgement, unconfirmedReadiness.reason_codes]);
+  const selectionReadiness = useMemo(() => acknowledged && needsAcknowledgement
+    ? { state: 'ready' as const, reason_codes: [] }
+    : unconfirmedReadiness, [acknowledged, needsAcknowledgement, unconfirmedReadiness]);
 
   const selectedPrinterPreset = useMemo<PresetRef | null>(() => {
     const profile = (profilesQuery.data ?? []).find((item) => item.profile_id === selectedBinding?.profile_id);
@@ -238,7 +253,7 @@ export function useCatalogSliceSelection({
       || !processChoice
       || filamentChoices.length !== filamentSlots.length
       || filamentChoices.some((choice) => choice === null)
-      || (needsAcknowledgement && !acknowledged)
+      || selectionReadiness.state !== 'ready'
     ) return null;
     if (
       !selectedPrinterPreset
@@ -284,11 +299,11 @@ export function useCatalogSliceSelection({
           };
         }),
         binding_readiness: selectedBinding.readiness,
+        selection_readiness: selectionReadiness,
         nozzle: selectedBinding.nozzle,
       },
     };
   }, [
-    acknowledged,
     acknowledgementReasons,
     filamentChoices,
     filamentSlots,
@@ -300,6 +315,7 @@ export function useCatalogSliceSelection({
     selectedFilamentPresets,
     selectedPrinterPreset,
     selectedProcessPreset,
+    selectionReadiness,
   ]);
 
   const loading = printersQuery.isLoading
@@ -334,6 +350,7 @@ export function useCatalogSliceSelection({
     needsAcknowledgement,
     acknowledgementReasons,
     resolvedSelection,
+    selectionReadiness,
     loading,
     error,
   };

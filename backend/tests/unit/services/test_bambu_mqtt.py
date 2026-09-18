@@ -8,6 +8,7 @@ import json
 import time
 
 import pytest
+from paho.mqtt.client import MQTT_ERR_SUCCESS
 
 
 class TestTimelapseTracking:
@@ -3675,6 +3676,7 @@ class TestSendDryingCommand:
             access_code="12345678",
         )
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         return client
 
     def test_rotate_tray_false_by_default(self, mqtt_client):
@@ -3777,6 +3779,7 @@ class TestStartPrintAmsMapping:
             access_code="12345678",
         )
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         client.state.connected = True
         return client
 
@@ -4132,6 +4135,7 @@ class TestStartPrintUniqueIdentityFields:
             access_code="12345678",
         )
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         client.state.connected = True
         return client
 
@@ -4256,6 +4260,7 @@ class TestDeleteKProfileDualNozzleDetection:
             access_code="12345678",
         )
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         client.state.connected = True
         client.model = model
         client._is_dual_nozzle = dual_runtime
@@ -5026,6 +5031,7 @@ class TestForceReconnectRouting:
         )
         client.state.connected = True
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         return client
 
     def test_routing_falls_back_to_socket_close_without_running_loop(self, mqtt_client):
@@ -5083,6 +5089,7 @@ class TestHardResetClientDirect:
         )
         client.state.connected = True
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         # Stub connect() so the rebuild doesn't open a real socket.
         client.connect = lambda loop=None: None
         return client
@@ -5138,6 +5145,7 @@ class TestStartPrintRecordsDispatchedPlate:
             access_code="12345678",
         )
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         client.state.connected = True
         return client
 
@@ -5209,6 +5217,7 @@ class TestStartPrintNozzleMappingDispatch:
             access_code="12345678",
         )
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         client.state.connected = True
         return client
 
@@ -5380,6 +5389,7 @@ class TestAmsLoadFilamentEncoding:
         )
         # Pretend the MQTT layer is connected so the publish path is reached.
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         client.state.connected = True
         return client
 
@@ -5475,6 +5485,7 @@ class TestAmsFilamentSettingExternalSpoolEncoding:
             access_code="12345678",
         )
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         client.state.connected = True
         return client
 
@@ -5953,6 +5964,7 @@ class TestAmsFilamentBackupHoldTimer:
         # Pretend we're connected so _set_print_option actually publishes.
         client.state.connected = True
         client._client = MagicMock()
+        client._client.publish.return_value.rc = MQTT_ERR_SUCCESS
         return client
 
     def test_cfg_push_with_old_value_is_ignored_during_hold(self, mqtt_client):

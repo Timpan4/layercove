@@ -99,26 +99,33 @@ class SliceDispatchService:
         job_id: int,
         run: Callable[[int], Awaitable[dict[str, Any]]],
     ) -> None:
-        await self._set_running(job_id)
         try:
+            if not await self._set_running(job_id):
+                return
             result = await run(job_id)
             await self._set_completed(job_id, result)
         except _SliceJobError as exc:
             await self._set_failed(job_id, exc.status_code, exc.code, exc.detail)
         except Exception as exc:
-            logger.exception("Slice job %s failed unexpectedly", job_id)
-            await self._set_failed(job_id, 500, "unexpected_error", f"Unexpected error: {exc}")
+            logger.error("Slice job %s failed unexpectedly (%s)", job_id, type(exc).__name__)
+            await self._set_failed(
+                job_id,
+                500,
+                "unexpected_error",
+                f"Slice job {job_id} failed internally. Check the selected profiles, slicer service and server logs before retrying.",
+            )
         finally:
             self._tasks.pop(job_id, None)
 
-    async def _set_running(self, job_id: int) -> None:
+    async def _set_running(self, job_id: int) -> bool:
         async with database.async_session() as db:
-            await db.execute(
+            result = await db.execute(
                 update(SliceJobRecord)
                 .where(SliceJobRecord.id == job_id, SliceJobRecord.status == "pending")
                 .values(status="running", started_at=_now(), sidecar_request_id=str(job_id))
             )
             await db.commit()
+            return result.rowcount == 1
 
     async def _expires_at(self, db: AsyncSession, job_id: int, now: datetime) -> datetime | None:
         resolved = await db.scalar(

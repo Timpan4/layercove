@@ -164,7 +164,7 @@ def local_preset_adapter(preset: LocalPreset) -> CatalogProfile:
         display_name=preset.name,
         content=dict(content),
         remote_revision_id=preset.version,
-        metadata={"compatible_printers": _string_list(compatibility)},
+        metadata={"compatible_printers": _string_list(content.get("compatible_printers", compatibility))},
     )
 
 

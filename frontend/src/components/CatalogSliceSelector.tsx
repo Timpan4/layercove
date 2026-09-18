@@ -60,9 +60,9 @@ export function CatalogSliceSelector({
       </select>
     </label>}
 
-    {selection.selectedBinding && <div className={`rounded border px-2 py-1.5 text-xs ${selection.selectedBinding.readiness.state === 'blocked' ? 'border-red-500/40 text-red-300' : selection.selectedBinding.readiness.state === 'acknowledgement_required' ? 'border-amber-400/40 text-amber-300' : 'border-green-500/30 text-green-300'}`}>
-      Readiness: {selection.selectedBinding.readiness.state}
-      {selection.selectedBinding.readiness.reason_codes.length > 0 && ` · ${selection.selectedBinding.readiness.reason_codes.join(', ')}`}
+    {selection.selectedBinding && <div className={`rounded border px-2 py-1.5 text-xs ${selection.selectionReadiness.state === 'blocked' ? 'border-red-500/40 text-red-300' : selection.selectionReadiness.state === 'acknowledgement_required' ? 'border-amber-400/40 text-amber-300' : 'border-green-500/30 text-green-300'}`}>
+      Readiness: {selection.selectionReadiness.state}
+      {selection.selectionReadiness.reason_codes.length > 0 && ` · ${selection.selectionReadiness.reason_codes.join(', ')}`}
       {' · '}Nozzle {selection.selectedBinding.nozzle.status}
       {selection.selectedBinding.nozzle.diameter != null && ` ${selection.selectedBinding.nozzle.diameter} mm`}
     </div>}

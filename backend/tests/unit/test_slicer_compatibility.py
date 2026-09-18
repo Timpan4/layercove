@@ -173,3 +173,60 @@ def test_p1s_suggestion_uses_explicit_model_metadata_and_requires_confirmation_e
         )
         == ()
     )
+
+
+def test_missing_defaults_do_not_make_an_unknown_candidate_incompatible():
+    from dataclasses import replace
+
+    binding = replace(VORON, defaults_available=False)
+    result = classify_profile(profile(None), binding, (binding,), MATCHING_NOZZLE)
+    assert result.group == "unclassified"
+    assert result.selectable
+    assert result.acknowledgement_required
+    assert "default_unavailable" not in result.reason_codes
+
+
+def test_missing_defaults_do_not_hide_an_unknown_candidates_nozzle_mismatch():
+    from dataclasses import replace
+
+    binding = replace(VORON, defaults_available=False)
+    result = classify_profile(profile(None), binding, (binding,), NozzleEvidence("confirmed", Decimal("0.6")))
+    assert not result.selectable
+    assert "nozzle_mismatch" in result.reason_codes
+
+
+def test_canonical_content_survives_missing_mirror_metadata():
+    from dataclasses import replace
+
+    from backend.app.services.slicer_compatibility import profile_aliases, profile_compatible_printers
+
+    binding = replace(
+        P1S, printer_profile_name="My display label", aliases=profile_aliases({"name": "Canonical machine"}, {})
+    )
+    candidate = profile(profile_compatible_printers({"compatible_printers": ["Canonical machine"]}, {}))
+    result = classify_profile(candidate, binding, (binding,), MATCHING_NOZZLE)
+    assert result.compatibility == "match"
+    assert result.selectable
+    # An explicit declaration wins over an out-of-date denormalized mirror.
+    assert profile_compatible_printers(
+        {"compatible_printers": ["Different machine"]}, {"compatible_printers": ["Canonical machine"]}
+    ) == ("Different machine",)
+
+
+def test_declared_machine_nozzle_and_tool_must_match_the_binding():
+    from dataclasses import replace
+
+    from backend.app.services.slicer_compatibility import profile_nozzle_diameter
+
+    binding = replace(
+        P1S, tool_index=1, profile_nozzle_diameter=profile_nozzle_diameter({"nozzle_diameter": ["0.6", "0.4"]}, 1)
+    )
+    assert evaluate_nozzle(binding, NozzleEvidence("confirmed", Decimal("0.4"), tool_index=1)).state == "ready"
+    assert evaluate_nozzle(binding, MATCHING_NOZZLE).reason_codes == ("tool_mismatch",)
+    mismatch = replace(binding, profile_nozzle_diameter=Decimal("0.6"))
+    assert evaluate_nozzle(mismatch, NozzleEvidence("confirmed", Decimal("0.4"), tool_index=1)).reason_codes == (
+        "profile_nozzle_mismatch",
+    )
+    invalid = replace(P1S, profile_nozzle_diameter=profile_nozzle_diameter({"nozzle_diameter": []}, 0))
+    assert evaluate_nozzle(invalid, MATCHING_NOZZLE).reason_codes == ("profile_nozzle_invalid",)
+    assert profile_nozzle_diameter({}, 0) is None

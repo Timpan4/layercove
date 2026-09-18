@@ -31,6 +31,9 @@ from backend.app.services.slicer_compatibility import (
     NozzleEvidence,
     ProfileEvidence,
     classify_profile,
+    profile_aliases,
+    profile_compatible_printers,
+    profile_nozzle_diameter,
 )
 
 
@@ -279,7 +282,9 @@ async def _persist_profile_rows(
         printer_profile_id=binding_profile.id,
         printer_profile_name=binding_profile.display_name,
         expected_nozzle_diameter=binding.expected_nozzle_diameter,
-        aliases=tuple(item for item in printer_metadata.get("aliases", []) if isinstance(item, str) and item.strip()),
+        aliases=profile_aliases(binding_revision.content, printer_metadata),
+        tool_index=binding.tool_index,
+        profile_nozzle_diameter=profile_nozzle_diameter(binding_revision.content, binding.tool_index),
         active=True,
         profile_available=True,
         defaults_available=True,
@@ -292,7 +297,7 @@ async def _persist_profile_rows(
 
     for profile, revision, _account in [(process_profile, process_revision, process_account), *filament_rows]:
         metadata = _metadata(revision)
-        compatibility = metadata.get("compatible_printers")
+        compatibility = profile_compatible_printers(revision.content, metadata)
         mapping_ids = await _mapping_ids(db, profile.id)
         classification = classify_profile(
             ProfileEvidence(
@@ -597,7 +602,7 @@ async def load_pinned_profile_content(db: AsyncSession, job_id: int | None) -> P
     def serialized(revision_id: int) -> str:
         profile, revision, source = rows[revision_id]
         content = revision.content
-        if source == "orca_cloud":
+        if source in {"orca_cloud", "cloud"}:
             content = materialize_orca_profile(
                 content,
                 slot=profile.profile_type,

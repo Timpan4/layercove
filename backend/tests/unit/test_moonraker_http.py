@@ -852,3 +852,43 @@ async def test_public_pinned_transport_wires_http_https_sni_and_peer(
     assert f"Host: {expected_host}:7125".encode() in b"".join(connector.stream.writes)
     assert connector.stream.sni == expected_sni
     assert connector.stream.verify_mode == expected_verify_mode
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [b"{}", b'{"result": false}', b"<html>proxy login</html>"])
+async def test_start_requires_a_valid_moonraker_acknowledgement(body):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(_host, _port):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, content=body)
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.start_print("queue/cube.gcode")
+    assert error.value.code == "invalid_response"
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_start_accepts_moonraker_ok_response():
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    async def resolver(_host, _port):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(lambda _request: httpx.Response(200, json={"result": "ok"})),
+    )
+    await client.start_print("queue/cube.gcode")

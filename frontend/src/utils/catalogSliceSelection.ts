@@ -204,3 +204,57 @@ export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
     && (profile.classification.group === 'selected_printer'
       || profile.classification.group === 'unclassified');
 }
+
+/** Readiness of the chosen combination, not the binding's fallback defaults. */
+export function catalogSelectionReadiness({
+  binding,
+  process,
+  filaments,
+  filamentCount,
+  unavailable = false,
+}: {
+  binding: SlicerCatalogBinding | null | undefined;
+  process: SlicerCatalogClassification | undefined;
+  filaments: Array<SlicerCatalogClassification | null | undefined>;
+  filamentCount: number;
+  unavailable?: boolean;
+}): SlicerCatalogBinding['readiness'] {
+  const blocked = (reason_codes: string[]): SlicerCatalogBinding['readiness'] => ({
+    state: 'blocked', reason_codes: [...new Set(reason_codes)],
+  });
+  if (unavailable) return blocked(['catalog_unavailable']);
+  if (!binding) return blocked(['binding_unavailable']);
+  if (!binding.is_active) return blocked(['binding_inactive']);
+  if (!process) return blocked(['process_selection_required']);
+  if (filaments.length !== filamentCount || filaments.some((profile) => !profile)) {
+    return blocked(['filament_selection_required']);
+  }
+  const profiles = [process, ...filaments.filter((profile): profile is SlicerCatalogClassification => !!profile)];
+  // Only a missing fallback is irrelevant to a complete explicit selection.
+  const hardReasons = binding.readiness.state === 'blocked'
+    ? binding.readiness.reason_codes.filter((reason) => reason !== 'default_unavailable')
+    : [];
+  if (binding.readiness.state === 'blocked' && binding.readiness.reason_codes.length === 0) {
+    hardReasons.push('binding_unavailable');
+  }
+  const warnings: string[] = binding.readiness.state === 'acknowledgement_required'
+    ? [...binding.readiness.reason_codes] : [];
+  const nozzle = binding.nozzle;
+  if (nozzle.tool_index !== binding.tool_index) hardReasons.push('tool_mismatch');
+  if (nozzle.status === 'confirmed' && nozzle.diameter != null) {
+    if (nozzle.diameter !== binding.expected_nozzle_diameter) hardReasons.push('nozzle_mismatch');
+  } else {
+    warnings.push(nozzle.status === 'offline' ? 'offline_unknown' : nozzle.status === 'stale' ? 'telemetry_stale' : 'nozzle_unknown');
+  }
+  for (const profile of profiles) {
+    if (!selectableCatalogProfile(profile) || profile.classification.readiness === 'blocked') {
+      hardReasons.push(...profile.classification.reason_codes, 'profile_not_selectable');
+    } else if (profile.classification.acknowledgement_required) {
+      warnings.push(...(profile.classification.reason_codes.length ? profile.classification.reason_codes : ['compatibility_unknown']));
+    }
+  }
+  if (hardReasons.length > 0) return blocked(hardReasons);
+  return warnings.length > 0
+    ? { state: 'acknowledgement_required', reason_codes: [...new Set(warnings)] }
+    : { state: 'ready', reason_codes: [] };
+}

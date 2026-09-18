@@ -82,6 +82,33 @@ const groups: SlicerCatalogGroups = {
 };
 
 describe('useCatalogSliceSelection', () => {
+  it('invalidates acknowledged evidence when the active revision changes', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useCatalogSliceSelection({ filamentSlots }), { wrapper });
+    await waitFor(() => expect(result.current.activePrinters).toHaveLength(1));
+    act(() => result.current.setPrinterId(1));
+    await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
+    act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.selectionReadiness.state).toBe('ready'));
+    act(() => client.setQueryData(['slicerCatalogBindings', 1], [{
+      ...binding,
+      readiness: { state: 'acknowledgement_required', reason_codes: ['telemetry_stale'] },
+      nozzle: { ...binding.nozzle, status: 'stale' },
+    }]));
+    await waitFor(() => expect(result.current.selectionReadiness.state).toBe('acknowledgement_required'));
+    act(() => result.current.setAcknowledged(true));
+    await waitFor(() => expect(result.current.resolvedSelection).not.toBeNull());
+    act(() => client.setQueryData(['slicerCatalogGroups', 1, 5], {
+      ...groups,
+      selected_printer: groups.selected_printer.map((item) => ({ ...item, revision_id: item.revision_id + 100 })),
+    }));
+    await waitFor(() => expect(result.current.acknowledged).toBe(false));
+    expect(result.current.resolvedSelection).toBeNull();
+  });
+
   beforeEach(() => {
     vi.restoreAllMocks();
     vi.spyOn(api, 'getPrinters').mockResolvedValue([{ id: 1, name: 'P1S', is_active: true } as Printer]);
@@ -136,6 +163,7 @@ describe('useCatalogSliceSelection', () => {
       processProfileId: 12,
       filamentProfileIds: [22],
     }));
+    expect(result.current.selectionReadiness).toEqual({ state: 'ready', reason_codes: [] });
   });
 
   it('blocks resolution when a selected profile has no current classification', async () => {
