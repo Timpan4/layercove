@@ -249,7 +249,9 @@ async def _binding_json(db: AsyncSession, binding: PrinterSlicerBinding) -> dict
         "printer_name": printer.name if printer is not None else None,
         "profile_id": binding.profile_id,
         "profile_name": profile.display_name,
-        "expected_nozzle_diameter": binding.expected_nozzle_diameter,
+        # Keep the wire type aligned with nozzle.diameter and the TypeScript client.
+        # Pydantic serializes an unconverted Decimal in dict[str, Any] as a string.
+        "expected_nozzle_diameter": float(binding.expected_nozzle_diameter),
         "tool_index": binding.tool_index,
         "default_process_profile_id": binding.default_process_profile_id,
         "default_filament_profile_id": binding.default_filament_profile_id,
