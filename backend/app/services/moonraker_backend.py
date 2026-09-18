@@ -65,6 +65,17 @@ _STATE_MAP = {
 }
 
 
+# Klipper retains complete/cancelled until SDCARD_RESET_FILE or a new print.
+# These states are ready for a new job; errors, paused and unknown are not.
+MOONRAKER_STARTABLE_STATES = frozenset(
+    {
+        NormalizedPrinterState.IDLE,
+        NormalizedPrinterState.COMPLETED,
+        NormalizedPrinterState.CANCELLED,
+    }
+)
+
+
 class _MoonrakerConnection(Protocol):
     async def send_json(self, data: dict[str, Any]) -> None: ...
 
@@ -230,7 +241,7 @@ class MoonrakerBackend:
     async def start(self, job: StartJob) -> StartResult:
         if not isinstance(job, MoonrakerStartJob):
             raise BackendError("Moonraker start job is invalid", code="invalid_start_job")
-        self._require_command("start_print", {NormalizedPrinterState.IDLE})
+        self._require_command("start_print", MOONRAKER_STARTABLE_STATES)
         await self._run_command(self._http.start_print(job.filename))
         return StartResult(started=True)
 
@@ -257,22 +268,24 @@ class MoonrakerBackend:
     async def upload(self, job: UploadJob) -> UploadResult:
         if not isinstance(job, UploadJob):
             raise BackendError("Moonraker upload job is invalid", code="invalid_upload_job")
-        self._require_command("upload_gcode", {NormalizedPrinterState.IDLE})
+        self._require_command("upload_gcode", MOONRAKER_STARTABLE_STATES)
         path = await self._run_command(self._http.upload_gcode(job.file, filename=job.filename, size=job.size))
         return UploadResult(path)
 
     async def upload_gcode(self, file, *, filename: str, start: bool, size: int | None) -> str:
         upload = await self.upload(UploadJob(file, filename, size))
         if start:
-            await self._run_command(self._http.start_print(upload.path))
+            await self.start(MoonrakerStartJob(upload.path))
         return upload.path
 
     async def emergency_stop(self) -> bool:
         await self._run_command(self._http.emergency_stop())
         return True
 
-    def _require_command(self, capability: str, states: set[NormalizedPrinterState]) -> None:
-        if not getattr(self.capabilities, capability) or not self._snapshot.connected:
+    def _require_command(
+        self, capability: str, states: set[NormalizedPrinterState] | frozenset[NormalizedPrinterState]
+    ) -> None:
+        if not getattr(self.capabilities, capability) or not self._snapshot.connected or self._snapshot.telemetry_stale:
             raise BackendError("Moonraker command is unavailable.", code="command_unavailable")
         if self._snapshot.state not in states:
             raise BackendError("Moonraker command is not valid for the current printer state.", code="invalid_state")

@@ -404,7 +404,13 @@ class MoonrakerHTTPClient:
     async def start_print(self, filename: str) -> None:
         if not _safe_moonraker_gcode_path(filename):
             raise MoonrakerHTTPError("invalid_filename", "Moonraker print requires a safe G-code path.")
-        await self._request("POST", "/printer/print/start", params={"filename": filename})
+        response = await self._request("POST", "/printer/print/start", params={"filename": filename})
+        try:
+            payload = json.loads(response.body)
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        if not isinstance(payload, dict) or payload.get("result") != "ok":
+            raise MoonrakerHTTPError("invalid_response", "Moonraker did not acknowledge the print start.")
 
     async def pause_print(self) -> None:
         await self._request("POST", "/printer/print/pause")
