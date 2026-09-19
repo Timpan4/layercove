@@ -203,3 +203,19 @@ describe('useSlicerWorkbench catalog selection', () => {
     });
   });
 });
+
+
+describe('workbench destination contract', () => {
+  it.each([
+    ['bambu', 'bambu_3mf'],
+    ['moonraker', 'klipper_gcode'],
+  ] as const)('submits %s output through the real selection and request hooks', async (provider, destination) => {
+    vi.mocked(api.getPrinters).mockResolvedValue([{ id: 1, name: 'Printer', provider, is_active: true } as Awaited<ReturnType<typeof api.getPrinters>>[number]]);
+    const submit = vi.spyOn(api, 'sliceLibraryFile').mockResolvedValue({ job_id: 55, status: 'pending', status_url: '/jobs/55' });
+    const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper() });
+    await chooseTarget(result);
+    await waitFor(() => expect(result.current.request).not.toBeNull());
+    await act(async () => { await result.current.slice(); });
+    expect(submit).toHaveBeenCalledWith(42, expect.objectContaining({ destination_artifact_kind: destination }));
+  });
+});

@@ -405,3 +405,31 @@ async def test_stale_bambu_watchdog_cannot_change_a_new_dispatch_attempt(pipelin
         assert item.status == "printing"
         assert item.start_reconcile_after is not None
         assert item.provider_correlation_id == pipeline.bambu.client.last_dispatch_subtask_id
+
+
+@pytest.mark.parametrize("flavor", ["marlin", None])
+async def test_unverified_3mf_fails_before_moonraker_io_but_other_printer_dispatches(pipeline, tmp_path, flavor):
+    path = tmp_path / "legacy.gcode.3mf"
+    with zipfile.ZipFile(path, "w") as bundle:
+        bundle.writestr("Metadata/plate_1.gcode", "G28\n")
+        if flavor:
+            bundle.writestr("Metadata/project_settings.config", json.dumps({"gcode_flavor": flavor}))
+    async with pipeline.sessions() as db:
+        item = await db.get(PrintQueueItem, pipeline.item_ids[1])
+        archive = await db.get(PrintArchive, item.archive_id)
+        archive.file_path = path.name
+        archive.filename = path.name
+        archive.extra_data = None  # Legacy archives did not record the output contract.
+        await db.commit()
+    await pipeline.scheduler.check_queue()
+    async with pipeline.sessions() as db:
+        item = await db.get(PrintQueueItem, pipeline.item_ids[1])
+        assert item.status == "failed"
+        assert item.completed_at is not None
+        assert "Re-slice" in item.error_message
+        assert str(item.id) in item.error_message
+        assert (await db.get(PrintQueueItem, pipeline.item_ids[0])).status == "printing"
+    pipeline.http.upload_gcode.assert_not_awaited()
+    pipeline.http.start_print.assert_not_awaited()
+    await pipeline.scheduler.check_queue()
+    pipeline.http.upload_gcode.assert_not_awaited()

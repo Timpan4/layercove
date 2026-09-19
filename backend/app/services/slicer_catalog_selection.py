@@ -23,9 +23,10 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileRevision,
     SlicerSelectionEvaluation,
 )
-from backend.app.schemas.slicer import HistoricalReslicePrepareRequest, SliceRequest
+from backend.app.schemas.slicer import DestinationArtifactKind, HistoricalReslicePrepareRequest, SliceRequest
 from backend.app.services.preset_resolver import materialize_orca_profile
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_types import PrinterProvider
 from backend.app.services.slicer_compatibility import (
     BindingEvidence,
     NozzleEvidence,
@@ -245,6 +246,20 @@ def _history_target(provenance: SlicerJobProvenance) -> tuple[int, int]:
     return printer_id, binding_id
 
 
+def _resolve_destination(printer: Printer, request: SliceRequest) -> None:
+    """A physical target owns its artifact contract; legacy requests may omit it."""
+    kinds = {
+        PrinterProvider.BAMBU.value: DestinationArtifactKind.BAMBU_3MF,
+        PrinterProvider.MOONRAKER.value: DestinationArtifactKind.KLIPPER_GCODE,
+    }
+    expected = kinds.get(printer.provider)
+    if expected is None:
+        raise CatalogSelectionError("unsupported_printer_provider", ["unsupported_printer_provider"])
+    if "destination_artifact_kind" in request.model_fields_set and request.destination_artifact_kind != expected:
+        raise CatalogSelectionError("destination_artifact_mismatch", [f"requires_{expected.value}"])
+    request.destination_artifact_kind = expected
+
+
 async def _persist_profile_rows(
     db: AsyncSession,
     job: SliceJobRecord,
@@ -264,6 +279,7 @@ async def _persist_profile_rows(
         raise CatalogSelectionError("binding_unavailable", ["binding_unavailable"])
     if binding.printer_id != printer.id:
         raise CatalogSelectionError("binding_printer_mismatch", ["binding_printer_mismatch"])
+    _resolve_destination(printer, request)
 
     printer_profile, printer_revision, printer_account = printer_row
     process_profile, process_revision, process_account = process_row
@@ -335,6 +351,9 @@ async def _persist_profile_rows(
                 sorted(set(warning_reasons)),
                 status_code=409,
             )
+
+    # Persist what the worker will actually slice, including inferred destinations.
+    job.request_snapshot = request.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
 
     revision_ids = {
         "printer": printer_revision.id,
@@ -558,6 +577,10 @@ async def prepare_historical_reslice(
     if body.catalog_tombstone_acknowledgement is not None:
         snapshot["catalog_tombstone_acknowledgement"] = body.catalog_tombstone_acknowledgement
     request = SliceRequest.model_validate(snapshot)
+    printer = await db.get(Printer, printer_id)
+    if printer is None or not printer.is_active:
+        raise CatalogSelectionError("binding_unavailable", ["binding_unavailable"])
+    _resolve_destination(printer, request)
     return HistoricalRequestPreview(
         request=request,
         tombstoned=tombstoned,

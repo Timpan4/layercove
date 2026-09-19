@@ -1,5 +1,7 @@
 import asyncio
 import io
+import json
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -48,7 +50,9 @@ def _http_client(fake: FakeMoonraker, **options) -> MoonrakerHTTPClient:
     return MoonrakerHTTPClient(base_url=fake.base_url, resolver=fake.resolver, **options)
 
 
-def _backend(fake: FakeMoonraker, monkeypatch, events, *, sleep=asyncio.sleep) -> MoonrakerBackend:
+def _backend(
+    fake: FakeMoonraker, monkeypatch, events, *, sleep=asyncio.sleep, bootstrap_timeout=0.2
+) -> MoonrakerBackend:
     _allow_test_peer(monkeypatch)
     emit = events if callable(events) else events.append
 
@@ -65,7 +69,7 @@ def _backend(fake: FakeMoonraker, monkeypatch, events, *, sleep=asyncio.sleep) -
         http_client_factory=http_client_factory,
         sleep=sleep,
         jitter=lambda: 0,
-        bootstrap_timeout=0.2,
+        bootstrap_timeout=bootstrap_timeout,
     )
 
 
@@ -254,12 +258,19 @@ async def test_printer_manager_forwards_fake_backed_lifecycle_once(fake_moonrake
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("container", ["gcode", "gcode.3mf"])
 async def test_queue_lifecycle_runs_through_fake_backed_backend(
-    fake_moonraker, monkeypatch, test_engine, db_session, tmp_path
+    fake_moonraker, monkeypatch, test_engine, db_session, tmp_path, container
 ):
     _allow_test_peer(monkeypatch)
-    source = tmp_path / "cube.gcode"
-    source.write_bytes(b"G28\n")
+    source = tmp_path / f"cube.{container}"
+    if container == "gcode.3mf":
+        with zipfile.ZipFile(source, "w") as bundle:
+            bundle.writestr("Metadata/project_settings.config", json.dumps({"gcode_flavor": "klipper"}))
+            bundle.writestr("Metadata/plate_1.gcode", "G1 X999\n")
+            bundle.writestr("Metadata/plate_2.gcode", "G28\n")
+    else:
+        source.write_bytes(b"G28\n")
     config = MoonrakerPrinterConfig(base_url=fake_moonraker.base_url)
     printer = Printer(
         name="Voron",
@@ -276,11 +287,11 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
         file_size=source.stat().st_size,
         status="archived",
         print_name="Cube",
-        extra_data={"destination_artifact_kind": "klipper_gcode", "source": "library"},
+        extra_data=None if container == "gcode.3mf" else {"destination_artifact_kind": "klipper_gcode"},
     )
     db_session.add(archive)
     await db_session.flush()
-    item = PrintQueueItem(printer_id=printer.id, archive_id=archive.id, status="pending")
+    item = PrintQueueItem(printer_id=printer.id, archive_id=archive.id, status="pending", plate_id=2)
     db_session.add(item)
     await db_session.commit()
     ids = SimpleNamespace(printer=printer.id, archive=archive.id, item=item.id)

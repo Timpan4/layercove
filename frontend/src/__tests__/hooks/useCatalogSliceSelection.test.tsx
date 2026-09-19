@@ -111,7 +111,7 @@ describe('useCatalogSliceSelection', () => {
 
   beforeEach(() => {
     vi.restoreAllMocks();
-    vi.spyOn(api, 'getPrinters').mockResolvedValue([{ id: 1, name: 'P1S', is_active: true } as Printer]);
+    vi.spyOn(api, 'getPrinters').mockResolvedValue([{ id: 1, name: 'P1S', provider: 'bambu', is_active: true } as Printer]);
     vi.spyOn(api, 'listSlicerCatalogProfiles').mockResolvedValue([
       profile(4, 'printer'),
       profile(12, 'process'),

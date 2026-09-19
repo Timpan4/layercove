@@ -3518,10 +3518,14 @@ async def _run_slicer_with_fallback(
         else:
             presets["process"] = _patch_process_bed_type(presets["process"], request.bed_type)
 
-    # Slicer routing — schema-bound workbench requests always use Orca, while
-    # legacy requests retain preferred_slicer routing.
+    # Klipper and schema-bound workbench requests require Orca. Legacy Bambu
+    # requests retain preferred_slicer routing.
     preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
-    if request.schema_hash is not None or preferred == "orcaslicer":
+    if (
+        request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
+        or request.schema_hash is not None
+        or preferred == "orcaslicer"
+    ):
         api_url = await resolve_orca_api_url(db)
     elif preferred == "bambu_studio":
         configured = await get_setting(db, "bambu_studio_api_url")
@@ -3927,7 +3931,13 @@ async def slice_and_persist(
     )
 
     if is_klipper_gcode:
+        from backend.app.services.moonraker_artifact import ArtifactValidationError, validate_raw_gcode
         from backend.app.utils.filename import validate_moonraker_gcode_basename
+
+        try:
+            validate_raw_gcode(result.content)
+        except ArtifactValidationError as exc:
+            raise HTTPException(status_code=502, detail=f"Slicer returned an invalid Klipper artifact: {exc}") from exc
 
         safe_source_name = Path(model_filename.replace("\\", "/")).name
         base_name = safe_source_name.rsplit(".", 1)[0]
@@ -4111,7 +4121,13 @@ async def slice_and_persist_as_archive(
     )
 
     if is_klipper_gcode:
+        from backend.app.services.moonraker_artifact import ArtifactValidationError, validate_raw_gcode
         from backend.app.utils.filename import validate_moonraker_gcode_basename
+
+        try:
+            validate_raw_gcode(result.content)
+        except ArtifactValidationError as exc:
+            raise HTTPException(status_code=502, detail=f"Slicer returned an invalid Klipper artifact: {exc}") from exc
 
         safe_source_name = Path(model_filename.replace("\\", "/")).name
         base_name = safe_source_name.rsplit(".", 1)[0]
