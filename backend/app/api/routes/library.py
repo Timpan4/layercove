@@ -3665,7 +3665,7 @@ async def _run_slicer_with_fallback(
     # Same-class slice-all goes through the regular path below — the
     # sidecar's native ``--slice 0`` produces the right shape directly.
     export_3mf = request.export_3mf and request.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
-    use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and export_3mf
+    use_cross_class_slice_all = (cross_class_arrange or request.arrange) and request.plate == 0 and export_3mf
 
     try:
         if process_overrides_for_sidecar and request.schema_hash is None:
@@ -3774,7 +3774,9 @@ async def _run_slicer_with_fallback(
                     process_overrides=process_overrides_for_sidecar,
                     plate=request.plate,
                     export_3mf=export_3mf,
-                    arrange=cross_class_arrange or bool(request.model_state and request.model_state.arrange),
+                    arrange=request.arrange
+                    or cross_class_arrange
+                    or bool(request.model_state and request.model_state.arrange),
                     schema_hash=request.schema_hash,
                     model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
                     request_id=progress_request_id,

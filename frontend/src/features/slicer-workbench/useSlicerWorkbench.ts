@@ -13,6 +13,7 @@ import {
 } from '../../api/client';
 import { useSliceJobTracker } from '../../contexts/SliceJobTrackerContext';
 import { useCatalogSliceSelection } from '../../hooks/useCatalogSliceSelection';
+import { slicerBedFromProfile } from '../../utils/slicerBed';
 import type { ArchivePlatesResponse, LibraryFilePlatesResponse } from '../../types/plates';
 
 export type WorkbenchSource = { kind: 'libraryFile' | 'archive'; id: number };
@@ -50,6 +51,7 @@ function normalizeRequest(request: SliceRequest, supportsModelState = true): Rec
   const normalized: Record<string, unknown> = Object.fromEntries(
     Object.entries(request).filter(([, value]) => value !== null && value !== undefined),
   );
+  if (request.arrange === false) delete normalized.arrange;
   if (request.export_3mf === false) delete normalized.export_3mf;
   if (request.destination_artifact_kind === 'bambu_3mf') delete normalized.destination_artifact_kind;
   if (request.filament_presets?.length === 0) delete normalized.filament_presets;
@@ -108,7 +110,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
   const [bedType, setBedType] = useState<string | null>(null);
   const [processOverrides, setProcessOverrides] = useState<Record<string, SettingValue>>({});
   const [objects, setObjects] = useState<WorkbenchObject[]>([]);
-  const [arrange, setArrange] = useState(false);
+  const [arrange, setArrange] = useState(true);
   const [layFlatObjectIds, setLayFlatObjectIds] = useState<string[]>([]);
   const [selectedObjectId, setSelectedObjectId] = useState<string | null>(null);
   const [jobId, setJobId] = useState<number | null>(initialJobId);
@@ -153,20 +155,36 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     }
   }, [platesQuery.data, selectedPlate]);
 
+  // Refetching unchanged plate metadata must not reset explicit placement choices.
+  const objectIdentity = JSON.stringify({
+    plate: selectedPlateMetadata?.index,
+    objects: (selectedPlateMetadata?.object_ids ?? []).map((id, index) => ({
+      id, name: selectedPlateMetadata?.objects[index] ?? `Object ${id}`,
+    })),
+  });
   useEffect(() => {
-    const ids = selectedPlateMetadata?.object_ids ?? [];
-    setObjects(ids.map((id, index) => ({
+    const initial = JSON.parse(objectIdentity) as { objects: Array<{ id: string; name: string }> };
+    setObjects(initial.objects.map(({ id, name }) => ({
       id,
-      name: selectedPlateMetadata?.objects[index] ?? `Object ${id}`,
+      name,
       visible: true,
       locked: false,
       transform: identityTransform(),
       overrides: {},
     })));
-    setSelectedObjectId(ids[0] ?? null);
+    setSelectedObjectId(initial.objects[0]?.id ?? null);
     setLayFlatObjectIds([]);
-    setArrange(false);
-  }, [selectedPlateMetadata]);
+    setArrange(true);
+  }, [objectIdentity, source.kind, source.id]);
+
+  const printerRevisionId = catalogSelection.selectedPrinterProfile?.revision_id;
+  const printerProfileQuery = useQuery({
+    queryKey: ['slicerCatalogRevision', printerRevisionId],
+    queryFn: () => api.getSlicerCatalogRevision(printerRevisionId!),
+    enabled: printerRevisionId !== undefined,
+    retry: false,
+  });
+  const buildVolume = useMemo(() => slicerBedFromProfile(printerProfileQuery.data?.content), [printerProfileQuery.data]);
 
   const processProfileQuery = useQuery({
     queryKey: [
@@ -200,6 +218,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
       ...(Object.keys(object.overrides).length > 0 ? { overrides: object.overrides } : {}),
     }));
     return {
+      arrange,
       destination_artifact_kind: catalog.destinationArtifactKind,
       printer_preset: catalog.printerPreset,
       process_preset: catalog.processPreset,
@@ -215,13 +234,13 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
       ...(bedType ? { bed_type: bedType } : {}),
       schema_hash: schemaHash,
       ...(Object.keys(processOverrides).length > 0 ? { process_overrides: processOverrides } : {}),
-      ...(supportsModelState && (modelObjects.length > 0 || arrange || layFlatObjectIds.length > 0)
+      ...(supportsModelState && (modelObjects.length > 0 || layFlatObjectIds.length > 0)
         ? {
             model_state: {
               objects: modelObjects,
               hidden_object_ids: objects.filter((object) => !object.visible).map((object) => object.id),
               lay_flat_object_ids: layFlatObjectIds,
-              arrange,
+              arrange: false,
             },
           }
         : {}),
@@ -253,6 +272,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
   }, [processProfileQuery.data?.values, schemaQuery.data?.samples]);
 
   const updateObject = useCallback((id: string, update: Partial<WorkbenchObject>) => {
+    if (update.transform) setArrange(false); // Do not discard an explicit placement on the next slice.
     setObjects((current) => current.map((object) => object.id === id ? { ...object, ...update } : object));
   }, []);
 
@@ -307,6 +327,8 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     catalogSelection,
     filamentSlots,
     processProfileQuery,
+    printerProfileQuery,
+    buildVolume,
     sourceName,
     bedType,
     setBedType,

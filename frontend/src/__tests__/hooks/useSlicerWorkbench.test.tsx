@@ -122,8 +122,7 @@ function plates() {
   };
 }
 
-function wrapper() {
-  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+function wrapper(queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
   return ({ children }: { children: ReactNode }) => (
     <MemoryRouter>
       <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
@@ -139,6 +138,10 @@ async function chooseTarget(result: { current: ReturnType<typeof useSlicerWorkbe
 }
 
 beforeEach(() => {
+  vi.spyOn(api, 'getSlicerCatalogRevision').mockResolvedValue({
+    id: 1, profile_id: 1, review_state: 'approved', content_hash: 'machine',
+    content: { printable_area: ['0x0', '300x0', '300x300', '0x300'], printable_height: '300' },
+  });
   vi.spyOn(api, 'getSlicerCapabilities').mockResolvedValue(capabilities);
   vi.spyOn(api, 'getSlicerProcessSchema').mockResolvedValue(schema);
   vi.spyOn(api, 'getLibraryFile').mockResolvedValue({ id: 42, filename: 'catalog.3mf', print_name: null } as Awaited<ReturnType<typeof api.getLibraryFile>>);
@@ -218,4 +221,58 @@ describe('workbench destination contract', () => {
     await act(async () => { await result.current.slice(); });
     expect(submit).toHaveBeenCalledWith(42, expect.objectContaining({ destination_artifact_kind: destination }));
   });
+});
+
+
+it('uses the exact 300 mm bed and arranges without requiring per-object capability', async () => {
+  const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper() });
+  await chooseTarget(result);
+  await waitFor(() => expect(result.current.request).not.toBeNull());
+  await waitFor(() => expect(result.current.buildVolume).toEqual({ x: 300, y: 300, z: 300, origin: [0, 0] }));
+  expect(api.getSlicerCatalogRevision).toHaveBeenCalledWith(1);
+  expect(result.current.request).toMatchObject({ arrange: true });
+  expect(result.current.request?.model_state).toBeUndefined();
+  act(() => result.current.setArrange(false));
+  expect(result.current.request?.arrange).toBe(false);
+});
+
+it('invalidates the output fingerprint when a selected filament revision changes', async () => {
+  const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper(queryClient) });
+  await chooseTarget(result);
+  await waitFor(() => expect(result.current.requestFingerprint).not.toBeNull());
+  const previous = result.current.requestFingerprint;
+  act(() => queryClient.setQueryData(['slicerCatalogGroups', 1, 5], {
+    ...groups, selected_printer: groups.selected_printer.map((p) => p.profile_id === 20 ? { ...p, revision_id: 120 } : p),
+  }));
+  await waitFor(() => expect(result.current.requestFingerprint).not.toBe(previous));
+  const evidence = result.current.request?.catalog_selection_evidence as {filaments: Array<{revision_id: number}>};
+  expect(evidence.filaments[0].revision_id).toBe(120);
+});
+
+it('selects the saved local filament after refetch and sends it in the next real request', async () => {
+  vi.spyOn(api, 'saveSlicerCatalogPreference').mockResolvedValue({} as Awaited<ReturnType<typeof api.saveSlicerCatalogPreference>>);
+  const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper() });
+  await chooseTarget(result);
+  await waitFor(() => expect(result.current.request?.catalog_filament_profile_ids).toEqual([20]));
+  vi.mocked(api.listSlicerCatalogProfiles).mockResolvedValue([
+    profile(1, 'printer'), profile(10, 'process'), profile(20, 'filament', 'PLA'), profile(30, 'filament', 'PLA'),
+  ] as Awaited<ReturnType<typeof api.listSlicerCatalogProfiles>>);
+  vi.mocked(api.getSlicerCatalogGroups).mockResolvedValue({
+    ...groups, selected_printer: [...groups.selected_printer, classified(30, 'filament', 'Edited PLA')],
+  } as Awaited<ReturnType<typeof api.getSlicerCatalogGroups>>);
+  await act(async () => { await result.current.catalogSelection.selectSavedFilament(0, 30); });
+  await waitFor(() => expect(result.current.request).toMatchObject({
+    catalog_filament_profile_ids: [30], filament_presets: [{ source: 'local', id: 'filament-30' }],
+  }));
+});
+
+it('preserves a deliberate arrange-off setting when unchanged plate metadata refetches', async () => {
+  const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper() });
+  await chooseTarget(result);
+  await waitFor(() => expect(result.current.request).not.toBeNull());
+  act(() => result.current.setArrange(false));
+  vi.mocked(api.getLibraryFilePlates).mockResolvedValue(plates());
+  await act(async () => { await result.current.platesQuery.refetch(); });
+  expect(result.current.request?.arrange).toBe(false);
 });

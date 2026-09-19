@@ -1577,6 +1577,8 @@ export interface BuiltinFilament {
 export type PresetSource = components['schemas']['PresetRef']['source'];
 export type PresetRef = components['schemas']['PresetRef'];
 export interface SliceRequest {
+  /** Arrange on the selected bed; false preserves source placement. */
+  arrange?: boolean;
   printer_preset_id?: number;
   process_preset_id?: number;
   filament_preset_id?: number;
@@ -1701,6 +1703,20 @@ export interface UnifiedPresetsResponse {
   standard: UnifiedPresetsBySlot;
   cloud_status: SlicerCloudStatus;
   orca_cloud_status: SlicerCloudStatus;
+}
+
+export interface SlicerCatalogRevisionContent {
+  id: number;
+  profile_id: number;
+  content: Record<string, unknown>;
+  content_hash: string;
+  review_state: string;
+}
+
+export interface FilamentProfileCopy {
+  profile_id: number;
+  revision_id: number;
+  local_preset_id: number;
 }
 
 export interface SlicerCatalogProfile {
@@ -2395,7 +2411,17 @@ export interface DiscoveredTasmotaDevice {
 }
 
 // Print Queue types
+export interface QueueDispatchProgress {
+  stage: 'preparing' | 'uploading' | 'awaiting_printer';
+  started_at: string;
+  stage_started_at: string;
+  updated_at?: string | null;
+  bytes_transferred?: number | null;
+  total_bytes?: number | null;
+}
+
 export interface PrintQueueItem {
+  dispatch_progress?: QueueDispatchProgress | null;
   id: number;
   printer_id: number | null;  // null = unassigned
   target_model: string | null;  // Target printer model for model-based assignment
@@ -6736,6 +6762,12 @@ export const api = {
     ),
 
   // Persistent installed-printer slicer catalog.
+  getSlicerCatalogRevision: (revisionId: number) => request<SlicerCatalogRevisionContent>(`/slicer/catalog/revisions/${revisionId}`),
+  copySlicerFilament: (profileId: number, body: {
+    base_revision_id: number; name: string; overrides: Record<string, unknown>; share_local_copy: boolean;
+  }) => request<FilamentProfileCopy>(`/slicer/catalog/profiles/${profileId}/filament-copy`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
   listSlicerCatalogProfiles: (options?: { includeInactive?: boolean; limit?: number; offset?: number }) => {
     const search = new URLSearchParams();
     if (options?.includeInactive) search.set('include_inactive', 'true');

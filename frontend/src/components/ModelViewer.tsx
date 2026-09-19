@@ -10,6 +10,7 @@ import { Button } from './Button';
 import { getAuthToken } from '../api/client';
 
 interface BuildVolume {
+  origin?: [number, number];
   x: number;
   y: number;
   z: number;
@@ -23,6 +24,7 @@ interface ModelViewerProps {
   buildVolume?: BuildVolume;
   filamentColors?: string[];
   selectedPlateId?: number | null;
+  centerOnBed?: boolean;
   className?: string;
 }
 
@@ -627,6 +629,7 @@ export function ModelViewer({
   buildVolume = DEFAULT_BUILD_VOLUME,
   filamentColors,
   selectedPlateId = null,
+  centerOnBed,
   className = '',
 }: ModelViewerProps) {
   const { t } = useTranslation();
@@ -833,9 +836,10 @@ export function ModelViewer({
     const selectedPlateOffset = (!isStlModel && selectedPlateId != null)
       ? parsedData!.plateOffsets.get(selectedPlateId)
       : undefined;
-    const shouldCenterOnPlate = isStlModel
-      || parsedData!.buildItems.length === 0
-      || (selectedPlateId != null && !selectedPlateBounds && !selectedPlateOffset);
+    // Orca centers standalone STL imports even without --arrange. The
+    // arrangement choice preserves saved placement only for project formats.
+    const shouldCenterOnPlate = isStlModel || (centerOnBed ?? (parsedData!.buildItems.length === 0
+      || (selectedPlateId != null && !selectedPlateBounds && !selectedPlateOffset)));
     const centerOffsetX = shouldCenterOnPlate ? -center.x : 0;
     const centerOffsetZ = shouldCenterOnPlate ? -center.z : 0;
 
@@ -847,10 +851,13 @@ export function ModelViewer({
       plateOffsetZ = plateBox.min.z - selectedPlateBounds.minY;
     }
 
-    const plateCenterX = buildVolume.x / 2;
-    const plateCenterZ = buildVolume.y / 2;
+    const plateCenterX = (buildVolume.origin?.[0] ?? 0) + buildVolume.x / 2;
+    const plateCenterZ = (buildVolume.origin?.[1] ?? 0) + buildVolume.y / 2;
 
-    if (!isStlModel && selectedPlateId != null && parsedData!.buildItems.length > 0 && selectedPlateBounds) {
+    if (centerOnBed === true) {
+      group.position.x = plateCenterX - center.x;
+      group.position.z = plateCenterZ - center.z;
+    } else if (!isStlModel && selectedPlateId != null && parsedData!.buildItems.length > 0 && selectedPlateBounds) {
       group.position.x = centerOffsetX - plateOffsetX;
       group.position.z = centerOffsetZ - plateOffsetZ;
     } else if (!isStlModel && selectedPlateId != null && selectedPlateOffset) {
@@ -891,7 +898,7 @@ export function ModelViewer({
     controlsRef.current.update();
 
     setLoading(false);
-  }, [parsedData, stlGeometry, selectedPlateId, filamentColors, buildVolume]);
+  }, [parsedData, stlGeometry, selectedPlateId, filamentColors, buildVolume, centerOnBed]);
 
   const resetView = () => {
     if (cameraRef.current && controlsRef.current) {
