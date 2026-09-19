@@ -177,7 +177,6 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // incompatible with high-temp filaments like ABS / ASA / PC, and the
   // user had no way to switch plates without cloning the preset.
   const [bedType, setBedType] = useState<string | null>(null);
-  const [destinationArtifactKind, setDestinationArtifactKind] = useState<'bambu_3mf' | 'klipper_gcode'>('bambu_3mf');
 
   const platesQuery = useQuery({
     queryKey: ['slicePlates', source.kind, source.id],
@@ -280,7 +279,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       throw new Error(t('slice.allPresetsRequired'));
     }
     return {
-      destination_artifact_kind: destinationArtifactKind,
+      destination_artifact_kind: catalog.destinationArtifactKind,
       printer_preset: catalog.printerPreset,
       process_preset: catalog.processPreset,
       filament_preset: catalog.filamentPresets[0],
@@ -384,29 +383,12 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
                 onChange={setBedType}
                 disabled={isEnqueuing}
               />
-              <fieldset className="space-y-1">
-                <legend className="block text-xs text-bambu-gray">{t('slice.destination.label', 'Output')}</legend>
-                <label className="flex items-center gap-2 text-sm text-white">
-                  <input
-                    type="radio"
-                    name="slice-destination"
-                    checked={destinationArtifactKind === 'bambu_3mf'}
-                    onChange={() => setDestinationArtifactKind('bambu_3mf')}
-                    disabled={isEnqueuing}
-                  />
-                  {t('slice.destination.bambu', 'Bambu 3MF')}
-                </label>
-                <label className="flex items-center gap-2 text-sm text-white">
-                  <input
-                    type="radio"
-                    name="slice-destination"
-                    checked={destinationArtifactKind === 'klipper_gcode'}
-                    onChange={() => setDestinationArtifactKind('klipper_gcode')}
-                    disabled={isEnqueuing}
-                  />
-                  {t('slice.destination.klipper', 'Klipper G-code')}
-                </label>
-              </fieldset>
+              {catalogSelection.destinationArtifactKind && <div className="space-y-1">
+                <span className="block text-xs text-bambu-gray">{t('slice.destination.label', 'Output')}</span>
+                <p className="text-sm text-white">{catalogSelection.destinationArtifactKind === 'klipper_gcode'
+                  ? t('slice.destination.klipper', 'Klipper G-code')
+                  : t('slice.destination.bambu', 'Bambu 3MF')}</p>
+              </div>}
               {filamentReqsQuery.isLoading && (
                 <FilamentAnalysisSpinner
                   requestId={previewRequestId}

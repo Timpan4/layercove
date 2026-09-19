@@ -3,6 +3,7 @@ import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   api,
   type PresetRef,
+  type SliceRequest,
   type SlicerCatalogClassification,
   type SlicerCatalogGroups,
 } from '../api/client';
@@ -24,6 +25,7 @@ export interface CatalogFilamentSlot {
 }
 
 export interface ResolvedCatalogSliceSelection {
+  destinationArtifactKind: NonNullable<SliceRequest['destination_artifact_kind']>;
   printerId: number;
   bindingId: number;
   processProfileId: number;
@@ -111,6 +113,10 @@ export function useCatalogSliceSelection({
     [bindingsQuery.data],
   );
   const selectedBinding = activeBindings.find((binding) => binding.id === bindingId) ?? null;
+  const selectedPrinter = activePrinters.find((printer) => printer.id === printerId);
+  const destinationArtifactKind = selectedPrinter?.provider === 'moonraker'
+    ? 'klipper_gcode' as const
+    : selectedPrinter?.provider === 'bambu' ? 'bambu_3mf' as const : null;
   const processPreferenceId = preferenceProfileId(preferencesQuery.data, 'process_profile');
   const filamentPreferenceId = preferenceProfileId(preferencesQuery.data, 'filament_profile');
 
@@ -249,6 +255,7 @@ export function useCatalogSliceSelection({
   const resolvedSelection = useMemo<ResolvedCatalogSliceSelection | null>(() => {
     if (
       printerId === null
+      || destinationArtifactKind === null
       || !selectedBinding
       || !processChoice
       || filamentChoices.length !== filamentSlots.length
@@ -271,6 +278,7 @@ export function useCatalogSliceSelection({
       )
     ) return null;
     return {
+      destinationArtifactKind,
       printerId,
       bindingId: selectedBinding.id,
       processProfileId: processChoice.id,
@@ -305,6 +313,7 @@ export function useCatalogSliceSelection({
     };
   }, [
     acknowledgementReasons,
+    destinationArtifactKind,
     filamentChoices,
     filamentSlots,
     groupsQuery.data,
@@ -331,6 +340,7 @@ export function useCatalogSliceSelection({
   return {
     activePrinters,
     activeBindings,
+    destinationArtifactKind,
     printerId,
     setPrinterId,
     bindingId,

@@ -2580,7 +2580,9 @@ class PrintScheduler:
     def _artifact_matches_provider(printer: Printer, file_path: Path, metadata: dict | None) -> bool:
         declared = (metadata or {}).get("destination_artifact_kind")
         if printer.provider == PrinterProvider.MOONRAKER.value:
-            return file_path.suffix.lower() == ".gcode" and declared in (None, "klipper_gcode")
+            # A 3MF is only a candidate: its selected plate and Klipper flavor are
+            # verified by moonraker_gcode_source before any provider I/O.
+            return file_path.suffix.lower() in {".gcode", ".3mf"} and declared in (None, "klipper_gcode")
         return file_path.suffix.lower() == ".3mf" and declared in (None, "bambu_3mf")
 
     @staticmethod
@@ -2612,12 +2614,19 @@ class PrintScheduler:
             return
 
         correlation_id = str(uuid4())
-        upload_name = f"queued-{correlation_id}{file_path.suffix.lower()}"
+        from backend.app.services.moonraker_artifact import ArtifactValidationError, moonraker_gcode_source
+
+        upload_name = f"queued-{correlation_id}.gcode"
         try:
-            with file_path.open("rb") as source:
+            async with moonraker_gcode_source(file_path, item.plate_id) as source:
                 remote_path = self._safe_moonraker_path(
-                    (await backend.upload(UploadJob(source, upload_name, file_path.stat().st_size))).path
+                    (await backend.upload(UploadJob(source.file, upload_name, source.size))).path
                 )
+        except ArtifactValidationError as exc:
+            await self._record_moonraker_dispatch_failure(
+                db, item, archive, printer, filename, f"Queue item {item.id}: {exc}"
+            )
+            return
         except BackendError as exc:
             logger.warning("Queue item %s: Moonraker upload failed: %s", item.id, exc.safe_message)
             await self._record_moonraker_dispatch_failure(
@@ -3181,7 +3190,7 @@ class PrintScheduler:
                     archive,
                     printer,
                     filename,
-                    f"Source artifact is not compatible with {printer.provider} printers",
+                    f"Source artifact is not compatible with {printer.provider} printers. Re-slice for the selected printer.",
                 )
                 return
 
@@ -3208,7 +3217,7 @@ class PrintScheduler:
                     None,
                     printer,
                     filename,
-                    f"Source artifact is not compatible with {printer.provider} printers",
+                    f"Source artifact is not compatible with {printer.provider} printers. Re-slice for the selected printer.",
                 )
                 return
 

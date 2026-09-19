@@ -850,3 +850,97 @@ async def test_failed_catalog_job_keeps_complete_provenance(catalog_db, monkeypa
         assert provenance.printer_revision_id is not None
         assert provenance.process_revision_id is not None
         assert provenance.filament_revision_ids
+
+
+@pytest.mark.parametrize("provider,expected", [("moonraker", "klipper_gcode"), ("bambu", "bambu_3mf")])
+async def test_catalog_destination_is_derived_and_persisted_before_worker_runs(
+    catalog_db, monkeypatch, provider, expected
+):
+    import hashlib
+
+    ids = await setup_catalog(catalog_db)
+    async with catalog_db() as db:
+        printer = await db.get(Printer, 1)
+        printer.provider = provider
+        await db.commit()
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _: PrinterSnapshot(
+            PrinterProvider(provider),
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+    request = request_for(ids)  # The workbench omitted destination_artifact_kind.
+    service = SliceDispatchService()
+    captured = []
+
+    async def before_commit(db, job):
+        await persist_catalog_selection(db, job, request)
+
+    async def run(_job_id):
+        captured.append(request.destination_artifact_kind.value)
+        return {"library_file_id": 20}
+
+    job = await service.enqueue(
+        kind="library_file",
+        source_id=1,
+        source_name="Cube.stl",
+        request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
+        run=run,
+        before_commit=before_commit,
+    )
+    await asyncio.gather(*list(service._tasks.values()))
+    assert captured == [expected]
+    stored = await service.get(job.id)
+    assert SliceRequest.model_validate(stored.request_snapshot).destination_artifact_kind.value == expected
+    canonical = json.dumps(stored.request_snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+    assert stored.request_fingerprint == hashlib.sha256(canonical).hexdigest()
+
+
+@pytest.mark.parametrize("provider,wrong", [("moonraker", "bambu_3mf"), ("bambu", "klipper_gcode")])
+async def test_catalog_rejects_explicit_wrong_destination_before_enqueuing(catalog_db, monkeypatch, provider, wrong):
+    ids = await setup_catalog(catalog_db)
+    async with catalog_db() as db:
+        printer = await db.get(Printer, 1)
+        printer.provider = provider
+        await db.commit()
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _: PrinterSnapshot(
+            PrinterProvider(provider),
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+    request = request_for(ids)
+    request = SliceRequest.model_validate({**request.model_dump(mode="json"), "destination_artifact_kind": wrong})
+    service = SliceDispatchService()
+    ran = []
+
+    async def run(_job_id):
+        ran.append(True)
+        return {}
+
+    async def before_commit(db, job):
+        await persist_catalog_selection(db, job, request)
+
+    try:
+        with pytest.raises(CatalogSelectionError, match="destination_artifact_mismatch"):
+            await service.enqueue(
+                kind="library_file",
+                source_id=1,
+                source_name="Cube.stl",
+                request_snapshot=request.model_dump(mode="json"),
+                run=run,
+                before_commit=before_commit,
+            )
+    finally:
+        await asyncio.gather(*list(service._tasks.values()))
+    assert ran == []
+    async with catalog_db() as db:
+        assert await db.scalar(select(func.count(SliceJobRecord.id))) == 0

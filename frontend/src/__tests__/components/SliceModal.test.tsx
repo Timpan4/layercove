@@ -261,3 +261,16 @@ describe('SliceModal catalog selection', () => {
     ));
   });
 });
+
+
+it.each(['libraryFile', 'archive'] as const)('uses the physical Moonraker provider for %s output without a manual format switch', async (kind) => {
+  // The label is deliberately unchanged: output must follow the provider, not a name heuristic.
+  mockApi.getPrinters.mockResolvedValue([{ id: 1, name: 'P1S', model: 'P1S', provider: 'moonraker', is_active: true }]);
+  renderModal(kind);
+  const user = await chooseTarget();
+  const slice = screen.getByRole('button', { name: 'Slice' });
+  await waitFor(() => expect(slice).toBeEnabled());
+  await user.click(slice);
+  const submit = kind === 'libraryFile' ? mockApi.sliceLibraryFile : mockApi.sliceArchive;
+  await waitFor(() => expect(submit).toHaveBeenCalledWith(100, expect.objectContaining({ destination_artifact_kind: 'klipper_gcode' })));
+});

@@ -200,6 +200,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
       ...(Object.keys(object.overrides).length > 0 ? { overrides: object.overrides } : {}),
     }));
     return {
+      destination_artifact_kind: catalog.destinationArtifactKind,
       printer_preset: catalog.printerPreset,
       process_preset: catalog.processPreset,
       filament_preset: catalog.filamentPresets[0],

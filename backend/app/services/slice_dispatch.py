@@ -55,15 +55,6 @@ class SliceDispatchService:
         before_commit: Callable[[AsyncSession, SliceJobRecord], Awaitable[None]] | None = None,
     ) -> SliceJobRecord:
         now = _now()
-        request_fingerprint = None
-        if request_snapshot is not None:
-            canonical_request = json.dumps(
-                request_snapshot,
-                sort_keys=True,
-                separators=(",", ":"),
-                ensure_ascii=False,
-            ).encode()
-            request_fingerprint = hashlib.sha256(canonical_request).hexdigest()
         async with database.async_session() as db:
             await db.execute(
                 delete(SliceJobRecord).where(
@@ -77,7 +68,7 @@ class SliceDispatchService:
                 source_id=source_id,
                 source_name=source_name,
                 request_snapshot=request_snapshot,
-                request_fingerprint=request_fingerprint,
+                request_fingerprint=None,
                 schema_hash=schema_hash,
                 status="pending",
                 created_at=now,
@@ -87,6 +78,13 @@ class SliceDispatchService:
             await db.flush()
             if before_commit is not None:
                 await before_commit(db, job)
+            # Catalog validation can infer the physical target's output contract.
+            # Hash the final durable request, not the pre-validation input.
+            if job.request_snapshot is not None:
+                canonical_request = json.dumps(
+                    job.request_snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+                job.request_fingerprint = hashlib.sha256(canonical_request).hexdigest()
             await db.commit()
             await db.refresh(job)
 
