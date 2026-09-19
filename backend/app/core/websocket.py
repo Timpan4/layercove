@@ -127,6 +127,32 @@ class ConnectionManager:
             }
         )
 
+    async def send_queue_item_dispatch_stage(
+        self,
+        user_id: int | None,
+        queue_item_id: int,
+        printer_id: int,
+        printer_name: str | None,
+        file_name: str,
+        stage: str,
+    ):
+        from backend.app.services import dispatch_progress
+
+        if stage not in {"preparing", "awaiting_printer"}:
+            raise ValueError("Unsupported dispatch stage")
+        dispatch_progress.set_stage(queue_item_id, stage)
+        await self.broadcast_to_user(
+            user_id,
+            {
+                "type": "queue_item_dispatch_stage",
+                "queue_item_id": queue_item_id,
+                "printer_id": printer_id,
+                "printer_name": printer_name,
+                "file_name": file_name,
+                "stage": stage,
+            },
+        )
+
     async def send_queue_item_uploading(
         self,
         user_id: int | None,
@@ -136,7 +162,10 @@ class ConnectionManager:
         file_name: str,
         total_bytes: int,
     ):
-        """Toast trigger: scheduler picked the item up, FTP upload starts."""
+        """The provider transfer starts; also retain telemetry for reconnecting clients."""
+        from backend.app.services import dispatch_progress
+
+        dispatch_progress.set_stage(queue_item_id, "uploading", total_bytes)
         await self.broadcast_to_user(
             user_id,
             {
@@ -156,7 +185,10 @@ class ConnectionManager:
         bytes_transferred: int,
         total_bytes: int,
     ):
-        """Toast update: throttled byte-level progress during the FTP upload."""
+        """Toast update: throttled byte-level progress during the provider upload."""
+        from backend.app.services import dispatch_progress
+
+        dispatch_progress.update_bytes(queue_item_id, bytes_transferred, total_bytes)
         pct = int(round(100 * bytes_transferred / total_bytes)) if total_bytes else 0
         await self.broadcast_to_user(
             user_id,
@@ -176,6 +208,9 @@ class ConnectionManager:
         printer_id: int,
     ):
         """Toast trigger: watchdog confirmed the printer transitioned out of pre_state."""
+        from backend.app.services import dispatch_progress
+
+        dispatch_progress.clear(queue_item_id)
         await self.broadcast_to_user(
             user_id,
             {
@@ -193,6 +228,9 @@ class ConnectionManager:
         reason: str,
     ):
         """Toast trigger: dispatch failed at any stage. Toast turns red, auto-dismisses."""
+        from backend.app.services import dispatch_progress
+
+        dispatch_progress.clear(queue_item_id)
         await self.broadcast_to_user(
             user_id,
             {

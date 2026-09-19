@@ -269,7 +269,10 @@ class MoonrakerBackend:
         if not isinstance(job, UploadJob):
             raise BackendError("Moonraker upload job is invalid", code="invalid_upload_job")
         self._require_command("upload_gcode", MOONRAKER_STARTABLE_STATES)
-        path = await self._run_command(self._http.upload_gcode(job.file, filename=job.filename, size=job.size))
+        options = {"progress_callback": job.progress_callback} if job.progress_callback is not None else {}
+        path = await self._run_command(
+            self._http.upload_gcode(job.file, filename=job.filename, size=job.size, **options)
+        )
         return UploadResult(path)
 
     async def upload_gcode(self, file, *, filename: str, start: bool, size: int | None) -> str:

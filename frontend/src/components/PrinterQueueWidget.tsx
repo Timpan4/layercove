@@ -1,3 +1,4 @@
+import { QueueDispatchProgress } from './QueueDispatchProgress';
 import { useQuery } from '@tanstack/react-query';
 import { Clock, Calendar, ChevronRight } from 'lucide-react';
 import { Link } from 'react-router-dom';
@@ -19,7 +20,7 @@ export function PrinterQueueWidget({ printerId, printerModel, loadedFilamentType
   const { data: queue } = useQuery({
     queryKey: ['queue', printerId, 'pending', printerModel],
     queryFn: () => api.getQueue(printerId, 'pending', printerModel || undefined),
-    refetchInterval: 30000,
+    refetchInterval: (query) => query.state.data?.some((item) => item.dispatch_progress) ? 5000 : 30000,
   });
 
   // Filter queue to items this printer can actually print (filament type + color check)
@@ -69,6 +70,7 @@ export function PrinterQueueWidget({ printerId, printerModel, loadedFilamentType
           <ChevronRight className="w-4 h-4 text-bambu-gray" />
         </div>
       </div>
+      {nextItem?.dispatch_progress && <QueueDispatchProgress progress={nextItem.dispatch_progress} />}
     </Link>
   );
 }

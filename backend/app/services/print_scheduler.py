@@ -171,6 +171,7 @@ class PrintScheduler:
     def __init__(self):
         self._running = False
         self._queue_lock = asyncio.Lock()
+        self._queue_changed = asyncio.Event()
         self._check_interval = 30  # seconds
         self._power_on_wait_time = 180  # seconds to wait for printer after power on (3 min)
         self._power_on_check_interval = 10  # seconds between connection checks
@@ -209,16 +210,26 @@ class PrintScheduler:
         logger.info("Print scheduler started")
 
         while self._running:
+            self._queue_changed.clear()
             try:
                 await self.check_queue()
             except Exception as e:
                 self._log_dispatch_error(None, e)
 
-            await asyncio.sleep(self._check_interval)
+            if self._running:
+                try:
+                    await asyncio.wait_for(self._queue_changed.wait(), timeout=self._check_interval)
+                except asyncio.TimeoutError:
+                    pass
+
+    def notify_queue_changed(self) -> None:
+        """Wake a running scheduler after a committed enqueue/start, without lost wakeups."""
+        self._queue_changed.set()
 
     def stop(self):
         """Stop the scheduler."""
         self._running = False
+        self._queue_changed.set()
         logger.info("Print scheduler stopped")
 
     async def check_queue(self):
@@ -2617,10 +2628,23 @@ class PrintScheduler:
         from backend.app.services.moonraker_artifact import ArtifactValidationError, moonraker_gcode_source
 
         upload_name = f"queued-{correlation_id}.gcode"
+        await self._dispatch_stage(item, printer, filename, "preparing")
         try:
             async with moonraker_gcode_source(file_path, item.plate_id) as source:
+                try:
+                    await ws_manager.send_queue_item_uploading(
+                        user_id=item.created_by_id,
+                        queue_item_id=item.id,
+                        printer_id=printer.id,
+                        printer_name=printer.name,
+                        file_name=filename,
+                        total_bytes=source.size,
+                    )
+                except Exception:
+                    pass
+                progress = _UploadProgressBridge(item.created_by_id, item.id)
                 remote_path = self._safe_moonraker_path(
-                    (await backend.upload(UploadJob(source.file, upload_name, source.size))).path
+                    (await backend.upload(UploadJob(source.file, upload_name, source.size, progress))).path
                 )
         except ArtifactValidationError as exc:
             await self._record_moonraker_dispatch_failure(
@@ -2655,6 +2679,12 @@ class PrintScheduler:
         await db.commit()
         if cas.rowcount == 0:
             logger.info("Queue item %s cancelled after Moonraker upload; retaining remote G-code", item.id)
+            try:
+                await ws_manager.send_queue_item_failed(
+                    item.created_by_id, item.id, printer.id, "Cancelled before print start"
+                )
+            except Exception:
+                pass
             return
 
         item.status = "printing"
@@ -2677,6 +2707,7 @@ class PrintScheduler:
         if bind_job is not None:
             bind_job(correlation_id, remote_path, remote_path)
 
+        await self._dispatch_stage(item, printer, filename, "awaiting_printer")
         try:
             started = (await backend.start(MoonrakerStartJob(remote_path))).started
         except BackendError as exc:
@@ -2723,6 +2754,10 @@ class PrintScheduler:
         )
         await db.commit()
         item.start_reconcile_after = None
+        try:
+            await ws_manager.send_queue_item_acked(item.created_by_id, item.id, printer.id)
+        except Exception:
+            pass
 
         estimated_time = (
             archive.print_time_seconds if archive else library_file.print_time_seconds if library_file else None
@@ -2734,6 +2769,20 @@ class PrintScheduler:
             db=db,
             estimated_time=estimated_time,
         )
+
+    async def _dispatch_stage(self, item, printer, filename: str, stage: str) -> None:
+        logger.info("Queue item %s, printer %s: dispatch stage %s", item.id, printer.id, stage)
+        try:
+            await ws_manager.send_queue_item_dispatch_stage(
+                user_id=item.created_by_id,
+                queue_item_id=item.id,
+                printer_id=printer.id,
+                printer_name=printer.name,
+                file_name=filename,
+                stage=stage,
+            )
+        except Exception:
+            pass  # Dispatch telemetry is best-effort, never a reason to resend a job.
 
     def _schedule_moonraker_start_reconciliation(
         self,
@@ -2909,6 +2958,10 @@ class PrintScheduler:
             )
         )
         await db.commit()
+        try:
+            await ws_manager.send_queue_item_failed(item.created_by_id, item.id, printer.id, reason)
+        except Exception:
+            pass
         outcome = {
             "queue_item_id": item.id,
             "archive_id": item.archive_id,
@@ -2975,6 +3028,10 @@ class PrintScheduler:
             bound = result.rowcount == 1
             item_id = item.id
         if bound:
+            try:
+                await ws_manager.send_queue_item_acked(item.created_by_id, item_id, printer_id)
+            except Exception:
+                pass
             await PrintScheduler.dispatch_moonraker_cancel_intent(item_id, printer_id)
         return bound
 
@@ -3101,6 +3158,18 @@ class PrintScheduler:
                 )
             )
             await db.commit()
+        try:
+            if status == "completed":
+                await ws_manager.send_queue_item_acked(item.created_by_id, item.id, printer_id)
+            else:
+                await ws_manager.send_queue_item_failed(
+                    item.created_by_id,
+                    item.id,
+                    printer_id,
+                    str(data.get("reason") or "Print cancelled"),
+                )
+        except Exception:
+            pass
         return {
             "queue_item_id": item.id,
             "archive_id": item.archive_id,
@@ -3371,6 +3440,8 @@ class PrintScheduler:
             f"retry_enabled={ftp_retry_enabled}, retry_count={ftp_retry_count}, timeout={ftp_timeout}"
         )
 
+        await self._dispatch_stage(item, printer, filename, "preparing")
+
         # Delete existing file if present (avoids 553 error on overwrite)
         try:
             logger.debug("Queue item %s: Deleting existing file %s if present...", item.id, remote_path)
@@ -3475,6 +3546,8 @@ class PrintScheduler:
             return
 
         # Parse AMS mapping if stored
+        await self._dispatch_stage(item, printer, filename, "awaiting_printer")
+
         ams_mapping = None
         if item.ams_mapping:
             try:

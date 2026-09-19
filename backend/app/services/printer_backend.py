@@ -13,6 +13,7 @@ class UploadJob:
     file: BinaryIO
     filename: str
     size: int | None
+    progress_callback: Callable[[int, int], None] | None = None
 
 
 @dataclass(frozen=True)

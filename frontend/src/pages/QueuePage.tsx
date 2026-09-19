@@ -1,3 +1,4 @@
+import { QueueDispatchProgress } from '../components/QueueDispatchProgress';
 import { queryKeys } from '../api/queryKeys';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
@@ -593,7 +594,8 @@ function SortableQueueItem({
           </div>
 
           {/* Progress bar for printing items - TODO: integrate with WebSocket */}
-          {isPrinting && status && (() => {
+          {item.dispatch_progress && <QueueDispatchProgress progress={item.dispatch_progress} />}
+          {isPrinting && !item.dispatch_progress && status && (() => {
             // Gate progress/remaining/layer on printer actually running this print.
             // Between dispatch and RUNNING transition (H2D/P1 MQTT lag), status.progress
             // is stale from the previous print — showing 100% then snapping back to 0%
@@ -667,7 +669,7 @@ function SortableQueueItem({
 
         {/* Status badge + Actions */}
         <div className="flex flex-col sm:flex-row items-end sm:items-center gap-2 sm:gap-1 shrink-0" onClick={(e) => e.stopPropagation()}>
-          <StatusBadge status={item.status} waitingReason={item.waiting_reason} printerState={printerState} t={t} />
+          {!item.dispatch_progress && <StatusBadge status={item.status} waitingReason={item.waiting_reason} printerState={printerState} t={t} />}
 
           <div className="flex items-center gap-0.5 sm:gap-1">
             {isPrinting && (

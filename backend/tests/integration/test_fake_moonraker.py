@@ -412,3 +412,28 @@ async def test_malformed_jsonrpc_and_websocket_payloads_reconnect_safely(fake_mo
         assert backend.snapshot().state is NormalizedPrinterState.IDLE
     finally:
         await backend.disconnect()
+
+
+@pytest.mark.parametrize("observer_fails", [False, True])
+async def test_real_http_upload_reports_file_bytes_without_claiming_acceptance(
+    fake_moonraker, monkeypatch, observer_fails
+):
+    _allow_test_peer(monkeypatch)
+    client = _http_client(fake_moonraker)
+    content = b"G1 X10 Y10\n" * 20000
+    observed = []
+
+    def progress(transferred, total):
+        observed.append((transferred, total))
+        if observer_fails:
+            raise RuntimeError("observer unavailable")
+
+    result = await client.upload_gcode(
+        io.BytesIO(content), filename="progress.gcode", size=len(content), progress_callback=progress
+    )
+    assert result == "queue/progress.gcode"
+    assert fake_moonraker.uploads == [("progress.gcode", content)]
+    assert len(observed) > 1
+    assert observed[-1] == (len(content), len(content))
+    assert [done for done, _ in observed] == sorted(done for done, _ in observed)
+    assert fake_moonraker.commands == []  # Reading all bytes is NOT a start acknowledgement.

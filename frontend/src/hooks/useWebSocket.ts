@@ -429,11 +429,15 @@ export function useWebSocket() {
       // start until printer ack — the "Awaiting printer…" subtitle is
       // derived from upload_progress_pct >= 99.9, not from a separate
       // event).
+      case 'queue_item_dispatch_stage':
       case 'queue_item_uploading':
       case 'queue_item_upload_progress':
       case 'queue_item_acked':
       case 'queue_item_failed':
         window.dispatchEvent(new CustomEvent('bambuddy:dispatch-toast', { detail: message }));
+        if (message.type !== 'queue_item_upload_progress') {
+          queryClient.invalidateQueries({ queryKey: ['queue'] });
+        }
         break;
       // Slicer Pipeline runs (#1425 PR C). State transitions on the run
       // refresh both the dashboard list AND the per-pipeline "Last run"
