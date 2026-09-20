@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GcodeViewer } from '../components/GcodeViewer';
@@ -26,6 +27,7 @@ import {
   type SlicerSetting,
 } from '../features/slicer-workbench/SlicerSettingsSidebar';
 import { SlicerTopBar } from '../features/slicer-workbench/SlicerTopBar';
+import { SlicerBedStatus } from '../features/slicer-workbench/SlicerBedStatus';
 import { parsePositiveInteger, resolveSettingsScope, resolveWorkbenchSource } from '../features/slicer-workbench/source';
 import {
   type SettingValue,
@@ -214,6 +216,7 @@ export function HistoricalReslice({ model }: { model: HistoricalResliceModel }) 
 }
 
 function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; initialJobId: number | null; onBack: () => void }) {
+  const { t } = useTranslation();
   const model = useSlicerWorkbench(source, initialJobId);
   const [previewMode, setPreviewMode] = useState<'prepare' | 'preview'>('prepare');
   const [sidebarWidth, setSidebarWidth] = useState(400);
@@ -278,6 +281,14 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
   const sliceStatus = model.jobState?.status;
   const sliceState = sliceStatus === 'pending' ? 'queued' : sliceStatus === 'running' ? 'running' : sliceStatus === 'completed' ? 'complete' : sliceStatus === 'failed' || sliceStatus === 'cancelled' ? 'failed' : 'idle';
   const result = model.result;
+  const bedStatus = <SlicerBedStatus
+    profileName={model.catalogSelection.selectedBinding?.profile_name}
+    revisionId={model.catalogSelection.selectedPrinterProfile?.revision_id}
+    loading={model.printerProfileQuery.isFetching}
+    failed={model.printerProfileQuery.isError}
+    issue={model.bedGeometry.issue}
+    onRetry={() => { void model.printerProfileQuery.refetch(); }}
+  />;
 
   return <div className="flex h-[calc(100vh-5rem)] min-h-[42rem] flex-col gap-1 overflow-hidden bg-[#202125] p-1">
     <SlicerTopBar
@@ -297,8 +308,9 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       <div style={{ width: sidebarWidth }} className="min-w-0 shrink-0">
         <SlicerSettingsSidebar
           selectionPanel={<><CatalogSliceSelector selection={model.catalogSelection} filamentSlots={model.filamentSlots} />
+            {!model.buildVolume && bedStatus}
             <label className="mt-3 flex items-center gap-2 text-xs"><input type="checkbox" checked={model.arrange} onChange={(e) => model.setArrange(e.target.checked)} />Arrange on selected printer bed</label>
-            <p className="mt-1 text-xs text-bambu-gray">{model.buildVolume ? `Bed bounds: ${model.buildVolume.x} × ${model.buildVolume.y} × ${model.buildVolume.z} mm.` : 'Bed geometry unavailable. Select a machine profile with printable_area and printable_height.'} {model.arrange ? 'Arrangement is applied by the slicer; inspect Preview before printing.' : 'Saved project placement is preserved; the slicer centers standalone STL imports.'}</p>
+            <p className="mt-1 text-xs text-bambu-gray">{model.buildVolume ? t('slicerBed.bounds', { x: model.buildVolume.x, y: model.buildVolume.y, z: model.buildVolume.z }) : ''} {model.arrange ? 'Arrangement is applied by the slicer; inspect Preview before printing.' : 'Saved project placement is preserved; the slicer centers standalone STL imports.'}</p>
           </>}
           pages={pages}
           settings={settingRows}

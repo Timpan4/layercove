@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "Selecione uma impressora e um perfil exato para visualizar a mesa.",
+    loading: "Carregando a mesa selecionada…",
+    loadFailed: "Não foi possível carregar a mesa de {{profile}}.",
+    unavailable: "A geometria da mesa não está disponível para {{profile}}.",
+    missingArea: "A revisão selecionada não contém printable_area nem bed_shape.",
+    invalidArea: "A revisão selecionada contém coordenadas printable_area ou bed_shape inválidas.",
+    missingHeight: "A revisão selecionada não contém printable_height nem max_print_height.",
+    invalidHeight: "A revisão selecionada contém um valor printable_height ou max_print_height inválido.",
+    revision: "Revisão do perfil {{revision}}",
+    retry: "Recarregar a mesa",
+    bounds: "Dimensões da mesa: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "A revisão do perfil selecionada não está disponível. Recarregue o catálogo de perfis.",
+  },
+
   // Navigation
   nav: {
     printers: 'Impressoras',

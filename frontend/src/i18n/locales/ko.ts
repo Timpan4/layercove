@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "프린터와 정확한 프로필을 선택하여 베드를 확인하세요.",
+    loading: "선택한 베드를 불러오는 중…",
+    loadFailed: "{{profile}}의 베드를 불러올 수 없습니다.",
+    unavailable: "{{profile}}의 베드 형상을 사용할 수 없습니다.",
+    missingArea: "선택한 리비전에 printable_area 또는 bed_shape가 없습니다.",
+    invalidArea: "선택한 리비전의 printable_area 또는 bed_shape 좌표가 잘못되었습니다.",
+    missingHeight: "선택한 리비전에 printable_height 또는 max_print_height가 없습니다.",
+    invalidHeight: "선택한 리비전의 printable_height 또는 max_print_height 값이 잘못되었습니다.",
+    revision: "프로필 리비전 {{revision}}",
+    retry: "베드 다시 불러오기",
+    bounds: "베드 크기: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "선택한 프로필 리비전을 사용할 수 없습니다. 프로필 카탈로그를 다시 불러오세요.",
+  },
+
   nav: {
     printers: '프린터',
     archives: '아카이브',

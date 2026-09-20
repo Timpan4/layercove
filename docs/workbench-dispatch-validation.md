@@ -105,3 +105,34 @@ Submit one controlled print per provider. Observe preparation, upload progress,
 and printer-confirmation phases, including a browser refresh during a transfer.
 Record the elapsed phase and printer logs when investigating delays. Never retry
 an uncertain start without checking the physical printer's state/history.
+
+## Serialized cloud bed regression
+
+The viewer accepts native JSON coordinate arrays and Orca Cloud's serialized
+coordinate vectors from the exact selected catalog revision. The conversion is
+read-only: it does not alter catalog content, compatibility, nozzle evidence,
+pinned jobs, slicing requests, or generated toolpaths. Prepare and Preview use
+the same parsed bed bounds and origin. Missing or malformed geometry still has
+no guessed printer-name/default-bed fallback.
+
+After rebasing onto #126, unavailable geometry does not hide either viewer.
+The model and completed G-code remain visible without a build plate, with the
+existing unverified-fit warning. Field-specific diagnostics and retry now sit
+in the settings sidebar instead of replacing the canvas. Inherited geometry
+that is genuinely absent from the selected revision is not resolved by this
+change.
+
+For a configured cloud printer, verify that selecting its exact profile shows
+the expected bed and model in Prepare and the same bed in Preview. A failed
+revision request must show the selected profile and revision with a retry action,
+not tell the user to select the already-selected printer. Retry should restore
+the viewer without reselecting. Missing/invalid area or height has a separate
+field-specific error. Confirm an older revision response cannot replace the
+bed after changing profiles. During loading, failure, missing or malformed
+geometry, both previews must remain usable without a guessed build plate.
+After a successful retry, the correct bed returns and the warning clears.
+
+The regression tests cover the real workbench page and selection/revision hooks,
+with only network and canvas boundaries replaced. A separate viewer test checks
+the actual Three.js mesh bounds at 150,150 on a serialized 300 mm bed. This is a
+preview/data-format fix, not automatic model orientation or a G-code rewrite.
