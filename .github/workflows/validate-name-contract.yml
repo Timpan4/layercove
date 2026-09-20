@@ -1,0 +1,64 @@
+name: Validate Moonraker filename contract
+on:
+  push:
+    branches: [validation/moonraker-name-contract]
+    paths: [.github/workflows/validate-name-contract.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: validation/moonraker-name-contract
+      - name: Inspect the failed shard summary
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run view 35521969873 --repo Timpan4/layercove --job 106107491946 --log-failed > /tmp/failed-shard.log
+          python - <<'PY'
+          from pathlib import Path
+          text = Path('/tmp/failed-shard.log').read_text()
+          lines = text.splitlines()
+          keep = [line for line in lines if any(value in line for value in ('FAILED ', 'short test summary', ' failed,', 'AssertionError', 'assert ', 'E       ', 'E        '))]
+          print('\n'.join(keep[-60:]))
+          PY
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v7
+      - name: Install repository dependencies
+        run: uv pip install --system -r requirements.txt -r requirements-dev.txt
+      - name: Update the old anonymous-name contract
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path('backend/tests/unit/test_scheduler_provider_dispatch.py')
+          s = p.read_text()
+          old = '    assert upload_job.filename.startswith("queued-")\n    assert upload_job.filename.endswith(".gcode")\n    assert "cube" not in upload_job.filename'
+          new = '    assert item.provider_correlation_id\n    assert upload_job.filename == f"cube-{item.provider_correlation_id.replace(chr(45), chr(0)[:0])}.gcode"\n    assert archive.filename == source.name'
+          new = new.replace('replace(chr(45), chr(0)[:0])', "replace('-', '')")
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, new))
+          PY
+          python -m ruff check backend/tests/unit/test_scheduler_provider_dispatch.py
+          python -m ruff format --check backend/tests/unit/test_scheduler_provider_dispatch.py
+      - name: Verify the scheduler contract and provider paths
+        run: |
+          python -m pytest backend/tests/unit/test_scheduler_provider_dispatch.py backend/tests/unit/test_moonraker_upload_filename.py backend/tests/integration/test_fake_moonraker.py backend/tests/integration/test_catalog_klipper_pipeline.py backend/tests/unit/test_dispatch_pipeline_regressions.py -q --tb=short --timeout=60 --timeout-method=thread
+      - name: Commit only the validated assertion update
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "validation/moonraker-name-contract"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          rm .github/workflows/validate-name-contract.yml
+          git diff --check
+          git branch --show-current
+          git add backend/tests/unit/test_scheduler_provider_dispatch.py .github/workflows/validate-name-contract.yml
+          git branch --show-current
+          git -c user.name='Timpan4' -c user.email='70634109+Timpan4@users.noreply.github.com' commit -m 'test: assert readable unique Moonraker dispatch names'
+          git branch --show-current
+          git push origin HEAD:validation/moonraker-name-contract
