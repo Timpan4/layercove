@@ -1,0 +1,25 @@
+name: Bed geometry regression workspace
+on:
+  push:
+    branches: [validation/inherited-bed-geometry]
+    paths: [.github/workflows/bed-geometry-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 40e000a7151e70c289c0e2a78e45839eab012314
+          persist-credentials: false
+      - name: Export exact source
+        run: |
+          git branch --show-current
+          git archive --format=tar.gz HEAD > /tmp/bed-geometry-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bed-geometry-source
+          path: /tmp/bed-geometry-source.tar.gz
+          retention-days: 1
