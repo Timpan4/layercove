@@ -1,0 +1,23 @@
+name: PR117 review workspace
+on:
+  push:
+    branches: [validation/pr117-review-feedback]
+    paths: [.github/workflows/pr117-review-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 83beeadba1c3dad212bc41f5fecb89b57586c576
+          persist-credentials: false
+      - name: Export exact PR source
+        run: git archive --format=tar.gz HEAD > /tmp/pr117-review-source.tar.gz
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr117-review-source
+          path: /tmp/pr117-review-source.tar.gz
+          retention-days: 1
