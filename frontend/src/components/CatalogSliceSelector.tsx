@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { FilamentProfileEditor } from './FilamentProfileEditor';
 import type { SlicerCatalogClassification, SlicerCatalogGroups } from '../api/client';
 import type { CatalogSliceSelectionState } from '../hooks/useCatalogSliceSelection';
 
@@ -26,6 +27,7 @@ export function CatalogSliceSelector({
   disabled?: boolean;
 }) {
   const [search, setSearch] = useState('');
+  const [editingSlot, setEditingSlot] = useState<number | null>(null);
   const selectedProcessId = selection.processChoice?.id ?? null;
 
   return <div className="space-y-3" aria-label="Installed printer slicer selection">
@@ -88,8 +90,8 @@ export function CatalogSliceSelector({
         onChoose={selection.chooseProcess}
       />
       {filamentSlots.map((slot, index) => (
+        <div key={`${slot.slot_id ?? index}-${index}`}>
         <ProfileGroups
-          key={`${slot.slot_id ?? index}-${index}`}
           legend={filamentSlots.length === 1 ? 'Filament profile' : `Filament ${index + 1} · ${slot.type || 'unknown material'}`}
           profileType="filament"
           groups={selection.groups}
@@ -98,8 +100,19 @@ export function CatalogSliceSelector({
           disabled={disabled || slot.used_in_plate === false}
           onChoose={(profile) => selection.chooseFilament(index, profile)}
         />
+        {selection.selectedFilamentProfiles?.[index] && <button type="button" disabled={disabled || slot.used_in_plate === false}
+          className="mt-1 text-xs text-bambu-green underline disabled:opacity-40" onClick={() => setEditingSlot(index)}>
+          Edit filament {index + 1} settings
+        </button>}
+        </div>
       ))}
     </>}
+
+    {editingSlot !== null && selection.selectedFilamentProfiles?.[editingSlot] && <FilamentProfileEditor
+      key={`${selection.bindingId}-${editingSlot}-${selection.selectedFilamentProfiles[editingSlot]!.revision_id}`}
+      profile={selection.selectedFilamentProfiles[editingSlot]!}
+      onSaved={(profileId) => selection.selectSavedFilament(editingSlot, profileId)}
+      onClose={() => setEditingSlot(null)} />}
 
     {selection.needsAcknowledgement && <label className="flex items-start gap-2 rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-200">
       <input

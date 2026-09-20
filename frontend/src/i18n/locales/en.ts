@@ -1053,6 +1053,9 @@ export default {
   // legacy bg-dispatch toast UI for the scheduler-driven dispatch path).
   // Strings mirror 0b43ac0d's backgroundDispatch namespace.
   dispatchToast: {
+    preparingFile: "Preparing file for transfer…",
+    uploadingBytes: "Uploading {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Uploading {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Print job',
     startingPrints: 'Starting prints',
     progressSummary: '{{complete}}/{{total}} complete • Processing: {{processing}}',
@@ -1125,6 +1128,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "Print dispatch",
+    dispatch: {
+      progressLabel: "Print dispatch progress",
+      preparing: "Preparing transfer",
+      uploading: "Uploading to printer",
+      awaitingPrinter: "Waiting for printer confirmation",
+      uploadProgress: "Upload progress",
+      elapsed: "{{seconds}}s",
+      uploadSummary: "{{transferred}} / {{total}} ({{percent}}%)",
+      waitingForUpload: "File sent; waiting for the upload response.",
+      waitingForStart: "Upload accepted. The print start has not yet been confirmed.",
+    },
     title: 'Print Queue',
     subtitle: 'Schedule and manage your print jobs',
     filamentShort: {

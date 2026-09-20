@@ -1,5 +1,6 @@
 """Physical-printer selection through slicing, persistence, queue, and real HTTP upload."""
 
+import asyncio
 import hashlib
 import io
 import json
@@ -23,7 +24,7 @@ from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.slice_job import SliceJobRecord
-from backend.app.models.slicer_profile_catalog import SlicerJobProvenance, SlicerProfile
+from backend.app.models.slicer_profile_catalog import SlicerJobProvenance, SlicerProfile, SlicerProfileActivation
 from backend.app.services import print_scheduler, slicer_api, slicer_catalog_selection
 from backend.app.services.print_scheduler import PrintScheduler
 from backend.app.services.printer_backend_registry import PrinterBackendRegistry
@@ -40,6 +41,7 @@ from backend.tests.integration.test_fake_moonraker import _backend, _wait_for
 from backend.tests.integration.test_library_slice_api import _wait_for_job
 
 
+@pytest.mark.parametrize("edit_filament", [False, True])
 @pytest.mark.parametrize("source_kind", ["library", "archive"])
 @pytest.mark.parametrize("packaged_response", [False, True])
 async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
@@ -51,6 +53,7 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
     tmp_path,
     source_kind,
     packaged_response,
+    edit_filament,
 ):
     """Only the external slicer is replaced; no slice/pin/persist/dispatch logic is mocked."""
     monkeypatch.setattr(settings, "base_dir", tmp_path)
@@ -107,12 +110,18 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
     monkeypatch.setattr(print_scheduler, "async_session", async_sessionmaker(test_engine, expire_on_commit=False))
     monkeypatch.setattr(print_scheduler.notification_service, "on_queue_job_started", AsyncMock())
     monkeypatch.setattr(print_scheduler.notification_service, "on_queue_job_failed", AsyncMock())
+    messages = []
+
+    async def record_message(_user, payload):
+        messages.append(payload)
+
+    monkeypatch.setattr(print_scheduler.ws_manager, "broadcast_to_user", record_message)
     scheduler = PrintScheduler()
     monkeypatch.setattr(scheduler, "_propagate_owner_to_printer_manager", AsyncMock())
     await manager.connect_printer(printer)
     await _wait_for(lambda: manager.get_snapshot(printer_id).connected, timeout=5)
 
-    raw_gcode = b"; gcode_flavor = klipper\nG28\nG1 X10 Y10\n"
+    raw_gcode = b"; gcode_flavor = klipper\n; filament_type = PLA\nG28\nG1 X10 Y10\n"
     packaged = io.BytesIO()
     with zipfile.ZipFile(packaged, "w") as bundle:
         bundle.writestr("Metadata/plate_1.gcode", raw_gcode)
@@ -129,7 +138,11 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
             for part in message.iter_parts()
         }
         captured.append((str(request.url), fields))
-        return httpx.Response(200, content=packaged.getvalue() if packaged_response else raw_gcode)
+        return httpx.Response(
+            200,
+            content=packaged.getvalue() if packaged_response else raw_gcode,
+            headers={"X-Print-Time-Seconds": "582"},
+        )
 
     sidecar_client = httpx.AsyncClient(transport=httpx.MockTransport(sidecar))
     slicer_api.set_shared_http_client(sidecar_client)
@@ -166,11 +179,27 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
             db_session.add(source)
             await db_session.commit()
             endpoint = f"/api/v1/archives/{source.id}/slice"
+        if edit_filament:
+            activation = await db_session.scalar(
+                select(SlicerProfileActivation).where(SlicerProfileActivation.profile_id == profiles["filament"])
+            )
+            copied = await async_client.post(
+                f"/api/v1/slicer/catalog/profiles/{profiles['filament']}/filament-copy",
+                json={
+                    "base_revision_id": activation.revision_id,
+                    "name": "Edited filament",
+                    "overrides": {"nozzle_temperature": ["237"], "filament_flow_ratio": ["0.97"]},
+                    "share_local_copy": True,
+                },
+            )
+            assert copied.status_code == 201, copied.text
+            profiles["filament"] = copied.json()["profile_id"]
         # Deliberately omit the destination, reproducing the original workbench request.
         # The durable selection must derive it from the stored physical provider.
         response = await async_client.post(
             endpoint,
             json={
+                "arrange": True,
                 "printer_preset": {"source": "local", "id": "printer"},
                 "process_preset": {"source": "local", "id": "process"},
                 "filament_presets": [{"source": "local", "id": "filament"}],
@@ -186,6 +215,11 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
         assert len(captured) == 1
         assert captured[0][0].startswith("http://orca.test:3000/")
         assert captured[0][1].get("exportType") != b"3mf"
+        assert captured[0][1].get("arrange") == b"true"
+        assert "modelState" not in captured[0][1]  # Independent of unsupported bridge transforms.
+        if edit_filament:
+            assert any(b'"nozzle_temperature": ["237"]' in value for value in captured[0][1].values())
+            assert any(b'"filament_flow_ratio": ["0.97"]' in value for value in captured[0][1].values())
         assert any(b'"gcode_flavor": "klipper"' in value for value in captured[0][1].values())
         stored_job = await db_session.get(SliceJobRecord, slice_id)
         assert stored_job.request_snapshot["destination_artifact_kind"] == "klipper_gcode"
@@ -218,7 +252,7 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
         result = completed["result"]
         artifact_id = result["library_file_id" if source_kind == "library" else "archive_id"]
         artifact = await db_session.get(LibraryFile if source_kind == "library" else PrintArchive, artifact_id)
-        assert artifact.filename.endswith(".gcode") and not artifact.filename.endswith(".3mf")
+        assert artifact.filename == f"{model_path.stem}_PLA_9m42s.gcode"
         assert (tmp_path / artifact.file_path).read_bytes() == raw_gcode
         queued = await async_client.post(
             "/api/v1/queue/",
@@ -232,6 +266,22 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
         item_id = queued.json()["id"]
         assert queued.json()["status"] == "pending"
         await scheduler.check_queue()
+        await asyncio.sleep(0)  # Drain the thread-to-event-loop byte progress bridge.
+        events = [event for event in messages if event.get("queue_item_id") == item_id]
+        assert any(event["type"] == "queue_item_uploading" for event in events)
+        assert any(
+            event["type"] == "queue_item_upload_progress" and event["bytes_transferred"] == len(raw_gcode)
+            for event in events
+        )
+        stages = [
+            event.get("stage", event["type"]) for event in events if event["type"] != "queue_item_upload_progress"
+        ]
+        assert (
+            stages.index("preparing")
+            < stages.index("queue_item_uploading")
+            < stages.index("awaiting_printer")
+            < stages.index("queue_item_acked")
+        )
         status = await async_client.get(f"/api/v1/queue/{item_id}")
         assert status.status_code == 200, status.text
         assert status.json()["status"] == "printing", status.text
@@ -239,9 +289,11 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
         remote_name, content = fake_moonraker.uploads[0]
         assert content == raw_gcode
         assert remote_name.endswith(".gcode")
-        assert fake_moonraker.commands == [("start", f"queue/{remote_name}")]
+        assert remote_name == artifact.filename
+        assert fake_moonraker.commands == [("start", fake_moonraker.upload_paths[0])]
         queued_row = await db_session.get(PrintQueueItem, item_id)
         assert queued_row.provider_correlation_id
+        assert fake_moonraker.upload_paths == [f"layercove/{queued_row.provider_correlation_id}/{artifact.filename}"]
         assert queued_row.start_reconcile_after is None
     finally:
         slicer_api.set_shared_http_client(None)

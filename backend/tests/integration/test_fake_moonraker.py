@@ -342,8 +342,9 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
                 correlation_id = queued.provider_correlation_id
                 assert queued.status == "printing"
                 assert queued.start_reconcile_after is None
-                assert remote_path and remote_path.startswith("queue/queued-")
                 assert correlation_id
+                assert remote_path == f"layercove/{correlation_id}/cube.gcode"
+                assert (await db.get(PrintArchive, ids.archive)).filename == source.name
 
             assert fake_moonraker.uploads[0][1] == b"G28\n"
             assert fake_moonraker.commands == [("start", remote_path)]
@@ -412,3 +413,28 @@ async def test_malformed_jsonrpc_and_websocket_payloads_reconnect_safely(fake_mo
         assert backend.snapshot().state is NormalizedPrinterState.IDLE
     finally:
         await backend.disconnect()
+
+
+@pytest.mark.parametrize("observer_fails", [False, True])
+async def test_real_http_upload_reports_file_bytes_without_claiming_acceptance(
+    fake_moonraker, monkeypatch, observer_fails
+):
+    _allow_test_peer(monkeypatch)
+    client = _http_client(fake_moonraker)
+    content = b"G1 X10 Y10\n" * 20000
+    observed = []
+
+    def progress(transferred, total):
+        observed.append((transferred, total))
+        if observer_fails:
+            raise RuntimeError("observer unavailable")
+
+    result = await client.upload_gcode(
+        io.BytesIO(content), filename="progress.gcode", size=len(content), progress_callback=progress
+    )
+    assert result == "queue/progress.gcode"
+    assert fake_moonraker.uploads == [("progress.gcode", content)]
+    assert len(observed) > 1
+    assert observed[-1] == (len(content), len(content))
+    assert [done for done, _ in observed] == sorted(done for done, _ in observed)
+    assert fake_moonraker.commands == []  # Reading all bytes is NOT a start acknowledgement.

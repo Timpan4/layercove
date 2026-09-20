@@ -25,6 +25,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileRevision,
 )
 from backend.app.models.user import User
+from backend.app.services.filament_edit import FilamentCopyRequest, copy_filament_profile
 from backend.app.services.orca_cloud import OrcaCloudError
 from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
 from backend.app.services.slicer_catalog import (
@@ -37,6 +38,19 @@ from backend.app.services.slicer_catalog import (
 from backend.app.services.slicer_catalog_sync import sync_cloud_account, sync_orca_account, sync_standard_account
 
 router = APIRouter(prefix="/slicer/catalog", tags=["Slicer Catalog"])
+
+
+@router.post("/profiles/{profile_id}/filament-copy", status_code=201)
+async def create_filament_copy(
+    profile_id: int,
+    body: FilamentCopyRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+) -> dict[str, int]:
+    """Save an edited local copy and activate it in the same transaction."""
+    result = await copy_filament_profile(db, profile_id, body, current_user.id if current_user else None)
+    await db.commit()
+    return result
 
 
 class SharingRequest(BaseModel):

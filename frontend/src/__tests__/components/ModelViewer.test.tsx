@@ -1,9 +1,11 @@
 import { useState } from 'react';
+import { Box3, Vector3, type Scene } from 'three';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelViewer } from '../../components/ModelViewer';
 
 const rendererCreated = vi.hoisted(() => vi.fn());
+const renderedScene = vi.hoisted(() => ({ current: null as Scene | null }));
 
 vi.mock('three', async () => {
   const actual = await vi.importActual<typeof import('three')>('three');
@@ -12,7 +14,7 @@ vi.mock('three', async () => {
     domElement = document.createElement('canvas');
     setSize = vi.fn();
     setPixelRatio = vi.fn();
-    render = vi.fn();
+    render = vi.fn((scene: Scene) => { renderedScene.current = scene; });
     dispose = vi.fn();
 
     constructor() {
@@ -99,6 +101,22 @@ describe('ModelViewer lifecycle', () => {
       expect(document.querySelector('.animate-spin')).not.toBeInTheDocument();
     });
   }
+
+
+  it.each([true, false])('centers STL mesh bounds on the selected bed with arrange=%s, matching the CLI', async (arrange) => {
+    render(<ModelViewer url="/cube.stl" fileType="stl" buildVolume={{x: 300, y: 300, z: 300, origin: [0, 0]}} centerOnBed={arrange} />);
+    await finishFetch(0);
+    const group = renderedScene.current!.children.find((object) => object.type === 'Group')!;
+    expect(group).toBeDefined();
+    const bounds = new Box3().setFromObject(group);
+    const center = bounds.getCenter(new Vector3());
+    expect(center.x).toBeCloseTo(150);
+    expect(center.z).toBeCloseTo(150);
+    expect(bounds.min.y).toBeCloseTo(0);
+    const size = bounds.getSize(new Vector3());
+    expect(size.x).toBeCloseTo(10);
+    expect(size.z).toBeCloseTo(10);
+  });
 
   it('loads once for unchanged inputs and reloads once for semantic changes', async () => {
     render(<Harness />);

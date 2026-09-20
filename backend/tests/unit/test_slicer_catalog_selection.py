@@ -944,3 +944,50 @@ async def test_catalog_rejects_explicit_wrong_destination_before_enqueuing(catal
     assert ran == []
     async with catalog_db() as db:
         assert await db.scalar(select(func.count(SliceJobRecord.id))) == 0
+
+
+async def test_resolved_standard_revision_is_not_resolved_again_in_sidecar(catalog_db, monkeypatch):
+    ids = await setup_catalog(catalog_db)
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _: PrinterSnapshot(
+            PrinterProvider.BAMBU, True, NormalizedPrinterState.IDLE, nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),)
+        ),
+    )
+    # The trusted bundled index has already flattened ancestors but retains the
+    # original inherits label. Sending it again makes the sidecar choose among
+    # unrelated vendors' identically named fdm_klipper_common parents.
+    async with catalog_db() as db:
+        result = await ingest_catalog(
+            db,
+            CatalogInput(
+                source="standard",
+                remote_account_id="selection-test",
+                profiles=[
+                    CatalogProfile(
+                        "printer",
+                        "printer",
+                        "Bambu Lab P1S 0.4 nozzle",
+                        {
+                            "type": "machine",
+                            "name": "Bambu Lab P1S 0.4 nozzle",
+                            "setting_id": "machine",
+                            "inherits": "fdm_common",
+                            "printable_area": ["0x0", "300x0", "300x300", "0x300"],
+                        },
+                    )
+                ],
+            ),
+        )
+        await approve_review_batch(db, result.review_batch_id)
+        await activate_revision(db, result.revision_ids[0])
+        await db.commit()
+    job_id, _ = await _persist_original_job(catalog_db, ids)
+    async with catalog_db() as db:
+        pinned = await load_pinned_profile_content(db, job_id)
+        output = json.loads(pinned.printer)
+        assert "inherits" not in output
+        assert output["printable_area"] == ["0x0", "300x0", "300x300", "0x300"]
+        original = await db.get(SlicerProfileRevision, result.revision_ids[0])
+        assert original.content["inherits"] == "fdm_common"

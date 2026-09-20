@@ -176,6 +176,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // because the process preset's default plate (typically "Cool Plate") is
   // incompatible with high-temp filaments like ABS / ASA / PC, and the
   // user had no way to switch plates without cloning the preset.
+  const [arrange, setArrange] = useState(true);
   const [bedType, setBedType] = useState<string | null>(null);
 
   const platesQuery = useQuery({
@@ -279,6 +280,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       throw new Error(t('slice.allPresetsRequired'));
     }
     return {
+      arrange,
       destination_artifact_kind: catalog.destinationArtifactKind,
       printer_preset: catalog.printerPreset,
       process_preset: catalog.processPreset,
@@ -375,6 +377,9 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
                 filamentSlots={filamentSlots}
                 disabled={isEnqueuing}
               />
+              <label className="flex items-center gap-2 text-sm text-white"><input type="checkbox" checked={arrange}
+                onChange={(event) => setArrange(event.target.checked)} disabled={isEnqueuing} />Arrange on selected printer bed</label>
+              <p className="text-xs text-bambu-gray">Uncheck to preserve source placement. Check the sliced preview before printing.</p>
               {/* Bed-type override (#1337). Always visible, always enabled.
                   The backend patches curr_bed_type on the resolved process
                   JSON before forwarding to the sidecar. */}

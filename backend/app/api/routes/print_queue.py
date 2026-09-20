@@ -210,6 +210,18 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
         "nozzles_info": nozzles_info_parsed,
         "cleanup_library_after_dispatch": item.cleanup_library_after_dispatch,
     }
+    from backend.app.services import dispatch_progress
+
+    if item.status in {"pending", "printing"}:
+        item_dict["dispatch_progress"] = dispatch_progress.snapshot(item.id)
+        if item_dict["dispatch_progress"] is None and item.start_reconcile_after is not None:
+            item_dict["dispatch_progress"] = {
+                "stage": "awaiting_printer",
+                "started_at": (item.started_at or item.created_at).isoformat(),
+                "stage_started_at": (item.started_at or item.created_at).isoformat(),
+            }
+    else:
+        dispatch_progress.clear(item.id)
     response = PrintQueueItemResponse(**item_dict)
     if item.archive:
         # Soft-deleted archive: files are gone from disk but the row stays
@@ -663,6 +675,9 @@ async def add_to_queue(
         items.append(item)
 
     await db.commit()
+    from backend.app.services.print_scheduler import scheduler
+
+    scheduler.notify_queue_changed()
 
     # Refresh the first item for the response
     item = items[0]
@@ -1487,6 +1502,9 @@ async def start_queue_item(
     if user is not None and item.created_by_id is None:
         item.created_by_id = user.id
     await db.commit()
+    from backend.app.services.print_scheduler import scheduler
+
+    scheduler.notify_queue_changed()
     await db.refresh(item, ["archive", "printer", "library_file", "created_by", "batch"])
 
     logger.info(

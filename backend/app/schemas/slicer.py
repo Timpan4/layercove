@@ -164,6 +164,10 @@ class SliceRequest(BaseModel):
         default=DestinationArtifactKind.BAMBU_3MF,
         description="Explicit destination artifact; defaults to legacy Bambu 3MF output.",
     )
+    arrange: bool = Field(
+        default=False,
+        description="Arrange objects on the selected printer bed before slicing; false preserves source placement.",
+    )
     bed_type: str | None = Field(
         default=None,
         max_length=64,

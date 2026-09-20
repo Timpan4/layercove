@@ -1046,6 +1046,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "転送するファイルを準備中…",
+    uploadingBytes: "アップロード中 {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "アップロード中 {{transferred}} / {{total}} ({{percent}}%)",
     untitled: '印刷ジョブ',
     startingPrints: '印刷を開始しています',
     progressSummary: '{{complete}}/{{total}} 完了 • 処理中: {{processing}}',
@@ -1115,6 +1118,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "印刷ジョブの転送",
+    dispatch: {
+      progressLabel: "印刷ジョブの転送状況",
+      preparing: "転送を準備中",
+      uploading: "プリンターにアップロード中",
+      awaitingPrinter: "プリンターの確認を待機中",
+      uploadProgress: "アップロードの進行状況",
+      elapsed: "{{seconds}}秒",
+      uploadSummary: "{{total}} 中 {{transferred}} ({{percent}}%)",
+      waitingForUpload: "ファイル送信済み。アップロードの応答を待機しています。",
+      waitingForStart: "アップロードが受け付けられました。印刷開始はまだ確認されていません。",
+    },
     filamentShort: {
       rowBadge: '割り当てられたスプールのフィラメントが不足しています',
       rowTooltip: 'スケジューラーがこのアイテムをフラグしました。再生ボタンをクリックしてスロットごとの不足量を確認し、それでも印刷するか判断してください。',

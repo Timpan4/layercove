@@ -625,6 +625,11 @@ async def load_pinned_profile_content(db: AsyncSession, job_id: int | None) -> P
     def serialized(revision_id: int) -> str:
         profile, revision, source = rows[revision_id]
         content = revision.content
+        if source == "standard":
+            # The authoritative bundled snapshot is already fully resolved. Keep
+            # its stored revision/hash intact, but do not resolve retained parent
+            # labels again against unrelated vendors in the runtime catalog.
+            content = {key: value for key, value in content.items() if key != "inherits"}
         if source in {"orca_cloud", "cloud"}:
             content = materialize_orca_profile(
                 content,

@@ -3665,7 +3665,9 @@ async def _run_slicer_with_fallback(
     # Same-class slice-all goes through the regular path below — the
     # sidecar's native ``--slice 0`` produces the right shape directly.
     export_3mf = request.export_3mf and request.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
-    use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and export_3mf
+    use_cross_class_slice_all = (
+        (cross_class_arrange or request.arrange) and is_3mf and request.plate == 0 and export_3mf
+    )
 
     try:
         if process_overrides_for_sidecar and request.schema_hash is None:
@@ -3774,7 +3776,9 @@ async def _run_slicer_with_fallback(
                     process_overrides=process_overrides_for_sidecar,
                     plate=request.plate,
                     export_3mf=export_3mf,
-                    arrange=cross_class_arrange or bool(request.model_state and request.model_state.arrange),
+                    arrange=request.arrange
+                    or cross_class_arrange
+                    or bool(request.model_state and request.model_state.arrange),
                     schema_hash=request.schema_hash,
                     model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
                     request_id=progress_request_id,
@@ -3939,10 +3943,10 @@ async def slice_and_persist(
         except ArtifactValidationError as exc:
             raise HTTPException(status_code=502, detail=f"Slicer returned an invalid Klipper artifact: {exc}") from exc
 
-        safe_source_name = Path(model_filename.replace("\\", "/")).name
-        base_name = safe_source_name.rsplit(".", 1)[0]
-        out_filename = f"{base_name}.gcode"
+        from backend.app.services.slicer_output import orca_gcode_filename
+
         try:
+            out_filename = orca_gcode_filename(model_filename, result.content, result.print_time_seconds)
             validate_moonraker_gcode_basename(out_filename)
         except InvalidFilenameError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4089,6 +4093,13 @@ async def slice_and_persist(
     )
 
 
+def _resliced_print_name(name: str) -> str:
+    """Reserve the suffix inside the archive column's character limit."""
+    suffix = " (re-sliced)"
+    limit = PrintArchive.__table__.c.print_name.type.length
+    return name[: limit - len(suffix)] + suffix
+
+
 async def slice_and_persist_as_archive(
     db: AsyncSession,
     *,
@@ -4129,20 +4140,21 @@ async def slice_and_persist_as_archive(
         except ArtifactValidationError as exc:
             raise HTTPException(status_code=502, detail=f"Slicer returned an invalid Klipper artifact: {exc}") from exc
 
-        safe_source_name = Path(model_filename.replace("\\", "/")).name
-        base_name = safe_source_name.rsplit(".", 1)[0]
-        out_filename = f"{base_name}.gcode"
+        from backend.app.services.slicer_output import orca_gcode_filename
+
         try:
+            out_filename = orca_gcode_filename(model_filename, result.content, result.print_time_seconds)
             validate_moonraker_gcode_basename(out_filename)
         except InvalidFilenameError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        base_name = out_filename[:-6]
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
         archive_dir = safe_join_under(
             app_settings.archive_dir,
             printer_folder,
-            f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}",
+            f"{timestamp}_sliced_{uuid.uuid4().hex}",
         )
         out_path = safe_join_under(archive_dir, out_filename)
         archive_dir_created = False
@@ -4164,7 +4176,7 @@ async def slice_and_persist_as_archive(
             file_size=len(result.content),
             content_hash=hashlib.sha256(result.content).hexdigest(),
             thumbnail_path=None,
-            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_name=_resliced_print_name(source_archive.print_name or base_name),
             print_time_seconds=result.print_time_seconds,
             filament_used_grams=result.filament_used_g or None,
             filament_type=source_archive.filament_type,
@@ -4325,7 +4337,7 @@ async def slice_and_persist_as_archive(
             thumbnail_path=thumbnail_path,
             # Inherit identity from the source archive so the new entry shows
             # up alongside its sibling in the archives list.
-            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_name=_resliced_print_name(source_archive.print_name or base_name),
             print_time_seconds=result.print_time_seconds,
             filament_used_grams=filament_g or None,
             filament_type=new_filament_type,

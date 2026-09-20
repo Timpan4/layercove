@@ -51,8 +51,11 @@ class MoonrakerHTTPResponse:
 class _BoundedUpload:
     """Limit synchronous multipart reads without buffering a G-code in memory."""
 
-    def __init__(self, file: BinaryIO, size: int | None):
+    def __init__(self, file: BinaryIO, size: int | None, progress_callback=None):
         self._file = file
+        self._size = size
+        self._transferred = 0
+        self._progress_callback = progress_callback
         self._remaining = _MAX_UPLOAD_BYTES
         if size is not None:
             if not isinstance(size, int) or size < 0 or size > _MAX_UPLOAD_BYTES:
@@ -69,6 +72,12 @@ class _BoundedUpload:
         if not isinstance(chunk, bytes):
             raise MoonrakerHTTPError("invalid_upload", "G-code upload could not be read.")
         self._remaining -= len(chunk)
+        self._transferred += len(chunk)
+        if chunk and self._progress_callback is not None:
+            try:
+                self._progress_callback(self._transferred, self._size or 0)
+            except Exception:
+                pass  # Telemetry must never fail or retry a printer upload.
         return chunk
 
 
@@ -376,18 +385,35 @@ class MoonrakerHTTPClient:
         *,
         filename: str,
         size: int | None = None,
+        progress_callback: Callable[[int, int], None] | None = None,
+        directory: str | None = None,
     ) -> str:
         """Stream one safe G-code to Moonraker's ``gcodes`` root without retries."""
         try:
             validate_moonraker_gcode_basename(filename)
         except InvalidFilenameError as exc:
             raise MoonrakerHTTPError("invalid_filename", str(exc)) from exc
+        data = {"root": "gcodes"}
+        if directory is not None:
+            # The multipart path field creates missing directories. Do not put
+            # a path into filename: that has different Moonraker semantics.
+            if not isinstance(directory, str) or len(directory) > 1024:
+                raise MoonrakerHTTPError("invalid_directory", "Moonraker upload directory is invalid.")
+            parts = directory.split("/")
+            if not parts or any(not part or part in {".", ".."} for part in parts):
+                raise MoonrakerHTTPError("invalid_directory", "Moonraker upload requires a relative directory.")
+            try:
+                for part in parts:
+                    validate_moonraker_gcode_basename(f"{part}.gcode")
+            except InvalidFilenameError as exc:
+                raise MoonrakerHTTPError("invalid_directory", "Moonraker upload directory is invalid.") from exc
+            data["path"] = directory
         response = await self._request(
             "POST",
             "/server/files/upload",
             total_timeout=_UPLOAD_TOTAL_TIMEOUT_SECONDS,
-            data={"root": "gcodes"},
-            files={"file": (filename, _BoundedUpload(file, size), "application/octet-stream")},
+            data=data,
+            files={"file": (filename, _BoundedUpload(file, size, progress_callback), "application/octet-stream")},
         )
         try:
             payload = json.loads(response.body)
@@ -398,6 +424,10 @@ class MoonrakerHTTPClient:
         if not _safe_moonraker_gcode_path(path):
             raise MoonrakerHTTPError(
                 "invalid_response", "Moonraker upload response did not contain a safe G-code path."
+            )
+        if directory is not None and (path != f"{directory}/{filename}" or item.get("root") != "gcodes"):
+            raise MoonrakerHTTPError(
+                "invalid_response", "Moonraker did not preserve the requested dispatch directory and filename."
             )
         return path
 

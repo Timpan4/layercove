@@ -433,3 +433,36 @@ async def test_unverified_3mf_fails_before_moonraker_io_but_other_printer_dispat
     pipeline.http.start_print.assert_not_awaited()
     await pipeline.scheduler.check_queue()
     pipeline.http.upload_gcode.assert_not_awaited()
+
+
+async def test_moonraker_dispatch_is_visible_before_start_acknowledgement(pipeline, monkeypatch):
+    messages = []
+    entered_start = asyncio.Event()
+    release_start = asyncio.Event()
+
+    async def broadcast(_user_id, message):
+        messages.append(message)
+
+    async def start(_path):
+        entered_start.set()
+        await release_start.wait()
+
+    monkeypatch.setattr(scheduler_module.ws_manager, "broadcast_to_user", broadcast)
+    pipeline.http.start_print.side_effect = start
+    task = asyncio.create_task(pipeline.scheduler.check_queue())
+    try:
+        await asyncio.wait_for(entered_start.wait(), 2)
+        events = [message for message in messages if message.get("queue_item_id") == pipeline.item_ids[1]]
+        assert any(event["type"] == "queue_item_uploading" for event in events)
+        assert any(event.get("stage") == "awaiting_printer" for event in events)
+        assert not any(event["type"] == "queue_item_acked" for event in events)
+        release_start.set()
+        await asyncio.wait_for(task, 2)
+        assert any(
+            message["type"] == "queue_item_acked" and message.get("queue_item_id") == pipeline.item_ids[1]
+            for message in messages
+        )
+    finally:
+        release_start.set()
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)

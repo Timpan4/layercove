@@ -236,6 +236,21 @@ export function useCatalogSliceSelection({
     ? { state: 'ready' as const, reason_codes: [] }
     : unconfirmedReadiness, [acknowledged, needsAcknowledgement, unconfirmedReadiness]);
 
+  const selectedPrinterProfile = (profilesQuery.data ?? []).find((profile) => profile.profile_id === selectedBinding?.profile_id);
+  const selectedFilamentProfiles = filamentChoices.map((choice) =>
+    (profilesQuery.data ?? []).find((profile) => profile.profile_id === choice?.id));
+
+  const selectSavedFilament = useCallback(async (index: number, profileId: number) => {
+    const targetBinding = bindingId;
+    const [, refreshed] = await Promise.all([profilesQuery.refetch(), groupsQuery.refetch()]);
+    if (targetBinding === null) throw new Error('Choose the target printer before using the saved profile.');
+    const profile = catalogClassification(refreshed.data, profileId);
+    if (!profile || !selectableCatalogProfile(profile)) {
+      throw new Error('Profile saved, but it is not selectable for this printer. Check its compatibility in Settings.');
+    }
+    chooseFilament(index, profile);
+  }, [bindingId, chooseFilament, profilesQuery, groupsQuery]);
+
   const selectedPrinterPreset = useMemo<PresetRef | null>(() => {
     const profile = (profilesQuery.data ?? []).find((item) => item.profile_id === selectedBinding?.profile_id);
     return profile ? { source: profile.source, id: profile.remote_profile_id } : null;
@@ -290,8 +305,10 @@ export function useCatalogSliceSelection({
         ? { confirmed: true, reason_codes: acknowledgementReasons }
         : null,
       evidence: {
+        printer_revision_id: selectedPrinterProfile?.revision_id,
         process: {
           profile_id: processChoice.id,
+          revision_id: processClassification.revision_id,
           reason: processChoice.reason,
           group: processClassification?.classification.group,
           reason_codes: processClassification?.classification.reason_codes ?? [],
@@ -301,6 +318,7 @@ export function useCatalogSliceSelection({
           return {
             slot_id: filamentSlots[index]?.slot_id ?? index + 1,
             profile_id: choice!.id,
+            revision_id: classification?.revision_id,
             reason: choice!.reason,
             group: classification?.classification.group,
             reason_codes: classification?.classification.reason_codes ?? [],
@@ -323,6 +341,7 @@ export function useCatalogSliceSelection({
     selectedBinding,
     selectedFilamentPresets,
     selectedPrinterPreset,
+    selectedPrinterProfile?.revision_id,
     selectedProcessPreset,
     selectionReadiness,
   ]);
@@ -351,6 +370,9 @@ export function useCatalogSliceSelection({
     processChoice,
     filamentChoices,
     selectedPrinterPreset,
+    selectedPrinterProfile,
+    selectedFilamentProfiles,
+    selectSavedFilament,
     selectedProcessPreset,
     selectedFilamentPresets,
     chooseProcess,
