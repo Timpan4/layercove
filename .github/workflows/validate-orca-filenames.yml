@@ -18,7 +18,10 @@ jobs:
           python - <<'PY'
           import base64, hashlib, zlib
           from pathlib import Path
-          patch = zlib.decompress(base64.b64decode(Path('.tmp/orca-filenames.patch.zlib.b64').read_bytes()))
+          encoded = Path('.tmp/orca-filenames.patch.zlib.b64').read_text().strip()
+          for start, end, replacement in [(5191, 5192, 'D'), (4768, 4769, '1'), (3200, 3200, 'F6'), (329, 331, '')]:
+              encoded = encoded[:start] + replacement + encoded[end:]
+          patch = zlib.decompress(base64.b64decode(encoded))
           assert hashlib.sha256(patch).hexdigest() == '921d5058f4c2ed880343b7a9042b7f14e3e4a408aa3c9d366221fa6a0e463fd5'
           Path('/tmp/orca-filenames.patch').write_bytes(patch)
           PY
