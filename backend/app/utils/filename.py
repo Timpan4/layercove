@@ -100,12 +100,10 @@ def derive_remote_filename(filename: str) -> str:
 
 
 def derive_moonraker_upload_filename(filename: str, correlation_id: str, plate_id: int | None = None) -> str:
-    """Keep the model name visible while retaining full dispatch-attempt uniqueness.
+    """Keep the exported basename; a separate upload directory isolates attempts.
 
-    Legacy archive names may contain paths or unsafe characters. Normalize only
-    the remote basename; never rename the stored source or alter its G-code.
-    Reserve the suffix before truncating so long UTF-8 names retain the entire
-    correlation ID and cannot alias another attempt or plate.
+    Normalize unsafe legacy names only. Do not add plate/UUID suffixes or
+    replace valid spaces. Stored source names and G-code remain unchanged.
     """
     from uuid import UUID
 
@@ -113,7 +111,7 @@ def derive_moonraker_upload_filename(filename: str, correlation_id: str, plate_i
         raise TypeError("Moonraker source filename must be a string")
     if plate_id is not None and (type(plate_id) is not int or plate_id < 1):
         raise InvalidFilenameError("Moonraker plate ID must be a positive integer")
-    dispatch_id = UUID(correlation_id).hex
+    UUID(correlation_id)  # Validate the dispatch identity independently of its display name.
     stem = filename.replace("\\", "/").rsplit("/", 1)[-1]
     while True:
         suffix = next((value for value in (".gcode.3mf", ".3mf", ".gcode") if stem.lower().endswith(value)), None)
@@ -121,13 +119,10 @@ def derive_moonraker_upload_filename(filename: str, correlation_id: str, plate_i
             break
         stem = stem[: -len(suffix)]
     stem = (
-        "".join(
-            "_" if char in INVALID_FILENAME_CHARS or not char.isprintable() or char.isspace() else char for char in stem
-        ).strip(" ._")
+        "".join("_" if char in INVALID_FILENAME_CHARS or not char.isprintable() else char for char in stem).strip(" ._")
         or "print"
     )
-    plate = f"-plate-{plate_id}" if plate_id is not None else ""
-    suffix = f"{plate}-{dispatch_id}.gcode"
+    suffix = ".gcode"
     budget = MAX_FILENAME_BYTES - len(suffix.encode("utf-8"))
     if budget < 1:
         raise InvalidFilenameError("Moonraker filename suffix exceeds the filename limit")

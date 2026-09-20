@@ -386,17 +386,33 @@ class MoonrakerHTTPClient:
         filename: str,
         size: int | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        directory: str | None = None,
     ) -> str:
         """Stream one safe G-code to Moonraker's ``gcodes`` root without retries."""
         try:
             validate_moonraker_gcode_basename(filename)
         except InvalidFilenameError as exc:
             raise MoonrakerHTTPError("invalid_filename", str(exc)) from exc
+        data = {"root": "gcodes"}
+        if directory is not None:
+            # The multipart path field creates missing directories. Do not put
+            # a path into filename: that has different Moonraker semantics.
+            if not isinstance(directory, str) or len(directory) > 1024:
+                raise MoonrakerHTTPError("invalid_directory", "Moonraker upload directory is invalid.")
+            parts = directory.split("/")
+            if not parts or any(not part or part in {".", ".."} for part in parts):
+                raise MoonrakerHTTPError("invalid_directory", "Moonraker upload requires a relative directory.")
+            try:
+                for part in parts:
+                    validate_moonraker_gcode_basename(f"{part}.gcode")
+            except InvalidFilenameError as exc:
+                raise MoonrakerHTTPError("invalid_directory", "Moonraker upload directory is invalid.") from exc
+            data["path"] = directory
         response = await self._request(
             "POST",
             "/server/files/upload",
             total_timeout=_UPLOAD_TOTAL_TIMEOUT_SECONDS,
-            data={"root": "gcodes"},
+            data=data,
             files={"file": (filename, _BoundedUpload(file, size, progress_callback), "application/octet-stream")},
         )
         try:
@@ -408,6 +424,10 @@ class MoonrakerHTTPClient:
         if not _safe_moonraker_gcode_path(path):
             raise MoonrakerHTTPError(
                 "invalid_response", "Moonraker upload response did not contain a safe G-code path."
+            )
+        if directory is not None and (path != f"{directory}/{filename}" or item.get("root") != "gcodes"):
+            raise MoonrakerHTTPError(
+                "invalid_response", "Moonraker did not preserve the requested dispatch directory and filename."
             )
         return path
 

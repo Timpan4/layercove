@@ -270,6 +270,8 @@ class MoonrakerBackend:
             raise BackendError("Moonraker upload job is invalid", code="invalid_upload_job")
         self._require_command("upload_gcode", MOONRAKER_STARTABLE_STATES)
         options = {"progress_callback": job.progress_callback} if job.progress_callback is not None else {}
+        if job.directory is not None:
+            options["directory"] = job.directory
         path = await self._run_command(
             self._http.upload_gcode(job.file, filename=job.filename, size=job.size, **options)
         )
