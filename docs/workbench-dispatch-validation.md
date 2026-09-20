@@ -105,3 +105,25 @@ Submit one controlled print per provider. Observe preparation, upload progress,
 and printer-confirmation phases, including a browser refresh during a transfer.
 Record the elapsed phase and printer logs when investigating delays. Never retry
 an uncertain start without checking the physical printer's state/history.
+
+## Serialized cloud bed regression
+
+The viewer accepts native JSON coordinate arrays and Orca Cloud's serialized
+coordinate vectors from the exact selected catalog revision. The conversion is
+read-only: it does not alter catalog content, compatibility, nozzle evidence,
+pinned jobs, slicing requests, or generated toolpaths. Prepare and Preview use
+the same parsed bed bounds and origin. Missing or malformed geometry still has
+no guessed printer-name/default-bed fallback.
+
+For a configured cloud printer, verify that selecting its exact profile shows
+the expected bed and model in Prepare and the same bed in Preview. A failed
+revision request must show the selected profile and revision with a retry action,
+not tell the user to select the already-selected printer. Retry should restore
+the viewer without reselecting. Missing/invalid area or height has a separate
+field-specific error. Confirm an older revision response cannot replace the
+bed after changing profiles.
+
+The regression tests cover the real workbench page and selection/revision hooks,
+with only network and canvas boundaries replaced. A separate viewer test checks
+the actual Three.js mesh bounds at 150,150 on a serialized 300 mm bed. This is a
+preview/data-format fix, not automatic model orientation or a G-code rewrite.

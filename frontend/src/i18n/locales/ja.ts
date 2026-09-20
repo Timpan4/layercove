@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "プリンターと正確なプロファイルを選択してベッドを表示してください。",
+    loading: "選択したベッドを読み込み中…",
+    loadFailed: "{{profile}} のベッドを読み込めませんでした。",
+    unavailable: "{{profile}} のベッド形状を取得できません。",
+    missingArea: "選択したリビジョンに printable_area または bed_shape がありません。",
+    invalidArea: "選択したリビジョンの printable_area または bed_shape の座標が無効です。",
+    missingHeight: "選択したリビジョンに printable_height または max_print_height がありません。",
+    invalidHeight: "選択したリビジョンの printable_height または max_print_height が無効です。",
+    revision: "プロファイルのリビジョン {{revision}}",
+    retry: "ベッドを再読み込み",
+    bounds: "ベッド寸法: {{x}} × {{y}} × {{z}} mm。",
+    missingRevision: "選択したプロファイルのリビジョンを取得できません。プロファイルカタログを再読み込みしてください。",
+  },
+
   // Navigation
   nav: {
     printers: 'プリンター',

@@ -3,6 +3,7 @@ import { Box3, Vector3, type Scene } from 'three';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelViewer } from '../../components/ModelViewer';
+import { slicerBedFromProfile } from '../../utils/slicerBed';
 
 const rendererCreated = vi.hoisted(() => vi.fn());
 const renderedScene = vi.hoisted(() => ({ current: null as Scene | null }));
@@ -116,6 +117,21 @@ describe('ModelViewer lifecycle', () => {
     const size = bounds.getSize(new Vector3());
     expect(size.x).toBeCloseTo(10);
     expect(size.z).toBeCloseTo(10);
+  });
+
+  it('places the actual mesh at the center of a serialized cloud bed', async () => {
+    const volume = slicerBedFromProfile({
+      printable_area: '0x0,300x0,300x300,0x300', printable_height: '300',
+    });
+    expect(volume).not.toBeNull();
+    render(<ModelViewer url="/cube.stl" fileType="stl" buildVolume={volume!} centerOnBed />);
+    await finishFetch(0);
+    const group = renderedScene.current!.children.find((object) => object.type === 'Group')!;
+    const bounds = new Box3().setFromObject(group);
+    const center = bounds.getCenter(new Vector3());
+    expect(center.x).toBeCloseTo(150);
+    expect(center.z).toBeCloseTo(150);
+    expect(bounds.min.y).toBeCloseTo(0);
   });
 
   it('loads once for unchanged inputs and reloads once for semantic changes', async () => {

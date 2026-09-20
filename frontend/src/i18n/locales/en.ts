@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "Select a printer and an exact profile to view the bed.",
+    loading: "Loading selected bed…",
+    loadFailed: "Could not load the bed for {{profile}}.",
+    unavailable: "Bed geometry is unavailable for {{profile}}.",
+    missingArea: "The selected revision has no printable_area or bed_shape.",
+    invalidArea: "The selected revision has invalid printable_area or bed_shape coordinates.",
+    missingHeight: "The selected revision has no printable_height or max_print_height.",
+    invalidHeight: "The selected revision has an invalid printable_height or max_print_height.",
+    revision: "Profile revision {{revision}}",
+    retry: "Retry loading bed",
+    bounds: "Bed bounds: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "The selected profile revision is unavailable. Reload the profile catalog.",
+  },
+
   // Navigation
   nav: {
     printers: 'Printers',

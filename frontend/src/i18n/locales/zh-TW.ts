@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "請選擇印表機及其確切設定檔以檢視列印平台。",
+    loading: "正在載入所選列印平台…",
+    loadFailed: "無法載入 {{profile}} 的列印平台。",
+    unavailable: "{{profile}} 的列印平台幾何資訊無法使用。",
+    missingArea: "所選修訂版本缺少 printable_area 或 bed_shape。",
+    invalidArea: "所選修訂版本的 printable_area 或 bed_shape 座標無效。",
+    missingHeight: "所選修訂版本缺少 printable_height 或 max_print_height。",
+    invalidHeight: "所選修訂版本的 printable_height 或 max_print_height 無效。",
+    revision: "設定檔修訂版本 {{revision}}",
+    retry: "重新載入列印平台",
+    bounds: "列印平台尺寸：{{x}} × {{y}} × {{z}} mm。",
+    missingRevision: "所選設定檔修訂版本無法使用。請重新載入設定檔目錄。",
+  },
+
   // Navigation
   nav: {
     printers: '印表機',

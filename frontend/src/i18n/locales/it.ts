@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "Seleziona una stampante e un profilo esatto per visualizzare il piano.",
+    loading: "Caricamento del piano selezionato…",
+    loadFailed: "Impossibile caricare il piano per {{profile}}.",
+    unavailable: "La geometria del piano non è disponibile per {{profile}}.",
+    missingArea: "La revisione selezionata non contiene printable_area né bed_shape.",
+    invalidArea: "La revisione selezionata contiene coordinate printable_area o bed_shape non valide.",
+    missingHeight: "La revisione selezionata non contiene printable_height né max_print_height.",
+    invalidHeight: "La revisione selezionata contiene un valore printable_height o max_print_height non valido.",
+    revision: "Revisione del profilo {{revision}}",
+    retry: "Ricarica il piano",
+    bounds: "Dimensioni del piano: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "La revisione del profilo selezionata non è disponibile. Ricarica il catalogo dei profili.",
+  },
+
   // Navigation
   nav: {
     printers: 'Stampanti',

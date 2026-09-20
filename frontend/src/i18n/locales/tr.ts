@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "Tabla görünümü için bir yazıcı ve kesin bir profil seçin.",
+    loading: "Seçili tabla yükleniyor…",
+    loadFailed: "{{profile}} için tabla yüklenemedi.",
+    unavailable: "{{profile}} için tabla geometrisi kullanılamıyor.",
+    missingArea: "Seçili revizyonda printable_area veya bed_shape yok.",
+    invalidArea: "Seçili revizyondaki printable_area veya bed_shape koordinatları geçersiz.",
+    missingHeight: "Seçili revizyonda printable_height veya max_print_height yok.",
+    invalidHeight: "Seçili revizyondaki printable_height veya max_print_height değeri geçersiz.",
+    revision: "Profil revizyonu {{revision}}",
+    retry: "Tablayı yeniden yükle",
+    bounds: "Tabla boyutları: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "Seçili profil revizyonu kullanılamıyor. Profil kataloğunu yeniden yükleyin.",
+  },
+
   // Navigasyon
   nav: {
     printers: 'Yazıcılar',

@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "Wähle einen Drucker und ein genaues Profil, um das Druckbett anzuzeigen.",
+    loading: "Ausgewähltes Druckbett wird geladen…",
+    loadFailed: "Das Druckbett für {{profile}} konnte nicht geladen werden.",
+    unavailable: "Für {{profile}} ist keine Druckbettgeometrie verfügbar.",
+    missingArea: "Die ausgewählte Revision enthält weder printable_area noch bed_shape.",
+    invalidArea: "Die ausgewählte Revision enthält ungültige printable_area- oder bed_shape-Koordinaten.",
+    missingHeight: "Die ausgewählte Revision enthält weder printable_height noch max_print_height.",
+    invalidHeight: "Die ausgewählte Revision enthält einen ungültigen Wert für printable_height oder max_print_height.",
+    revision: "Profilrevision {{revision}}",
+    retry: "Druckbett erneut laden",
+    bounds: "Druckbettmaße: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "Die ausgewählte Profilrevision ist nicht verfügbar. Lade den Profilkatalog neu.",
+  },
+
   // Navigation
   nav: {
     printers: 'Drucker',

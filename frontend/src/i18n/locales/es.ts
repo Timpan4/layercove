@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "Selecciona una impresora y un perfil exacto para ver la cama.",
+    loading: "Cargando la cama seleccionada…",
+    loadFailed: "No se pudo cargar la cama de {{profile}}.",
+    unavailable: "La geometría de la cama no está disponible para {{profile}}.",
+    missingArea: "La revisión seleccionada no contiene printable_area ni bed_shape.",
+    invalidArea: "La revisión seleccionada contiene coordenadas printable_area o bed_shape no válidas.",
+    missingHeight: "La revisión seleccionada no contiene printable_height ni max_print_height.",
+    invalidHeight: "La revisión seleccionada contiene un valor printable_height o max_print_height no válido.",
+    revision: "Revisión del perfil {{revision}}",
+    retry: "Volver a cargar la cama",
+    bounds: "Dimensiones de la cama: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "La revisión del perfil seleccionada no está disponible. Recarga el catálogo de perfiles.",
+  },
+
   // Navigation
   nav: {
     printers: 'Impresoras',
