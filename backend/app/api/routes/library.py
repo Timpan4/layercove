@@ -3665,7 +3665,9 @@ async def _run_slicer_with_fallback(
     # Same-class slice-all goes through the regular path below — the
     # sidecar's native ``--slice 0`` produces the right shape directly.
     export_3mf = request.export_3mf and request.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
-    use_cross_class_slice_all = (cross_class_arrange or request.arrange) and request.plate == 0 and export_3mf
+    use_cross_class_slice_all = (
+        (cross_class_arrange or request.arrange) and is_3mf and request.plate == 0 and export_3mf
+    )
 
     try:
         if process_overrides_for_sidecar and request.schema_hash is None:
@@ -4145,7 +4147,7 @@ async def slice_and_persist_as_archive(
         archive_dir = safe_join_under(
             app_settings.archive_dir,
             printer_folder,
-            f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}",
+            f"{timestamp}_sliced_{uuid.uuid4().hex}",
         )
         out_path = safe_join_under(archive_dir, out_filename)
         archive_dir_created = False
