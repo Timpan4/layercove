@@ -1,0 +1,45 @@
+name: PR117 review workspace
+on:
+  push:
+    branches: [validation/pr117-review-feedback]
+    paths: [.github/workflows/pr117-review-workspace.yml]
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: validation/pr117-review-feedback
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: requirements*.txt
+      - name: Apply verified database-name regression fix
+        run: |
+          echo 'a6f84d4460a361c80af8fe5a5a1375125e43352863e083a1dc91a5c691d7e67a  .tmp/pr117-review-displayname.patch' | sha256sum --check
+          git apply --check .tmp/pr117-review-displayname.patch
+          git branch --show-current
+          git apply .tmp/pr117-review-displayname.patch
+      - name: Validate persistence and naming
+        run: |
+          uv pip install --system -r requirements.txt -r requirements-dev.txt
+          python -m ruff check backend/
+          python -m ruff format --check backend/
+          python -m pytest backend/tests/unit/test_slicer_output.py backend/tests/integration/test_library_slice_api.py -q --tb=short --timeout=60 --timeout-method=thread
+      - name: Commit clean source tree
+        run: |
+          rm .tmp/pr117-review-displayname.patch .github/workflows/pr117-review-workspace.yml
+          git diff --check
+          git branch --show-current
+          git add -A -- .tmp/pr117-review-displayname.patch .github/workflows/pr117-review-workspace.yml backend/app/api/routes/library.py backend/tests/integration/test_library_slice_api.py
+          git branch --show-current
+          git -c user.name='Timpan4' -c user.email='70634109+Timpan4@users.noreply.github.com' commit -m 'fix: keep re-sliced display names within database limits'
+          test -z "$(git status --porcelain)"
+          git branch --show-current
+          git push origin HEAD:validation/pr117-review-feedback
