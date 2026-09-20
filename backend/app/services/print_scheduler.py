@@ -2627,7 +2627,8 @@ class PrintScheduler:
         correlation_id = str(uuid4())
         from backend.app.services.moonraker_artifact import ArtifactValidationError, moonraker_gcode_source
 
-        upload_name = derive_moonraker_upload_filename(filename, correlation_id, item.plate_id)
+        upload_name = derive_moonraker_upload_filename(filename)
+        upload_directory = f"layercove/{correlation_id.replace('-', '')}"
         await self._dispatch_stage(item, printer, filename, "preparing")
         try:
             async with moonraker_gcode_source(file_path, item.plate_id) as source:
@@ -2644,7 +2645,11 @@ class PrintScheduler:
                     pass
                 progress = _UploadProgressBridge(item.created_by_id, item.id)
                 remote_path = self._safe_moonraker_path(
-                    (await backend.upload(UploadJob(source.file, upload_name, source.size, progress))).path
+                    (
+                        await backend.upload(
+                            UploadJob(source.file, upload_name, source.size, progress, directory=upload_directory)
+                        )
+                    ).path
                 )
         except ArtifactValidationError as exc:
             await self._record_moonraker_dispatch_failure(

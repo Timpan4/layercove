@@ -3943,7 +3943,9 @@ async def slice_and_persist(
 
         safe_source_name = Path(model_filename.replace("\\", "/")).name
         base_name = safe_source_name.rsplit(".", 1)[0]
-        out_filename = f"{base_name}.gcode"
+        from backend.app.utils.slicer_filename import default_klipper_filename
+
+        out_filename = default_klipper_filename(model_filename, result.content, result.print_time_seconds)
         try:
             validate_moonraker_gcode_basename(out_filename)
         except InvalidFilenameError as exc:
@@ -4133,7 +4135,9 @@ async def slice_and_persist_as_archive(
 
         safe_source_name = Path(model_filename.replace("\\", "/")).name
         base_name = safe_source_name.rsplit(".", 1)[0]
-        out_filename = f"{base_name}.gcode"
+        from backend.app.utils.slicer_filename import default_klipper_filename
+
+        out_filename = default_klipper_filename(model_filename, result.content, result.print_time_seconds)
         try:
             validate_moonraker_gcode_basename(out_filename)
         except InvalidFilenameError as exc:

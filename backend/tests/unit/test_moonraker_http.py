@@ -892,3 +892,74 @@ async def test_start_accepts_moonraker_ok_response():
         transport_factory=lambda *_: httpx.MockTransport(lambda _request: httpx.Response(200, json={"result": "ok"})),
     )
     await client.start_print("queue/cube.gcode")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_directories_preserve_basename_and_separate_repeated_uploads():
+    from email.parser import BytesParser
+    from email.policy import default
+
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    async def resolver(_host, _port):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    received = []
+
+    def handler(request):
+        message = BytesParser(policy=default).parsebytes(
+            f"Content-Type: {request.headers['content-type']}\r\n\r\n".encode() + request.content
+        )
+        parts = {part.get_param("name", header="content-disposition"): part for part in message.iter_parts()}
+        directory = parts["path"].get_payload(decode=True).decode()
+        filename = parts["file"].get_filename()
+        assert filename == "3dbenchy_PLA_9m42s.gcode"
+        assert parts["root"].get_payload(decode=True) == b"gcodes"
+        assert "print" not in parts
+        received.append((directory, filename))
+        return httpx.Response(201, json={"item": {"root": "gcodes", "path": f"{directory}/{filename}"}})
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125", resolver=resolver, transport_factory=lambda *_: httpx.MockTransport(handler)
+    )
+    for attempt in ("a" * 32, "b" * 32):
+        directory = f"layercove/{attempt}"
+        path = await client.upload_gcode(
+            io.BytesIO(b"G28"), filename="3dbenchy_PLA_9m42s.gcode", size=3, directory=directory
+        )
+        assert path == f"{directory}/3dbenchy_PLA_9m42s.gcode"
+    assert received[0] != received[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "directory", ["../escape", "/gcodes", "layercove//job", "layercove/./job", "layercove/job\x00"]
+)
+async def test_upload_rejects_invalid_directory_before_network(directory):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(*_):
+        pytest.fail("invalid upload path reached the network")
+
+    client = MoonrakerHTTPClient(base_url="http://printer.lan:7125", resolver=resolver)
+    with pytest.raises(MoonrakerHTTPError, match="invalid_directory"):
+        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", directory=directory)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "item", [{"root": "config", "path": "layercove/job/cube.gcode"}, {"root": "gcodes", "path": "cube.gcode"}]
+)
+async def test_upload_rejects_server_that_loses_dispatch_namespace(item):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(*_):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(lambda _: httpx.Response(201, json={"item": item})),
+    )
+    with pytest.raises(MoonrakerHTTPError, match="did not preserve"):
+        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", directory="layercove/job")

@@ -106,9 +106,10 @@ async def test_moonraker_upload_claim_start_has_no_bambu_options(moonraker_queue
     upload_job = backend.upload.await_args.args[0]
     assert isinstance(upload_job, UploadJob)
     assert upload_job.file.closed
-    assert upload_job.filename.startswith("queued-")
-    assert upload_job.filename.endswith(".gcode")
-    assert "cube" not in upload_job.filename
+    assert upload_job.filename == "cube.gcode"
+    assert item.provider_correlation_id
+    assert upload_job.directory == f"layercove/{item.provider_correlation_id.replace('-', '')}"
+    assert archive.filename == source.name
     assert upload_job.size == source.stat().st_size
     backend.start.assert_awaited_once_with(MoonrakerStartJob("queue/cube.gcode"))
     backend.bind_queued_job.assert_called_once_with(

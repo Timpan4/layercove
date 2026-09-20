@@ -18,7 +18,11 @@ import httpcore
 import httpx
 
 from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
-from backend.app.utils.filename import InvalidFilenameError, validate_moonraker_gcode_basename
+from backend.app.utils.filename import (
+    InvalidFilenameError,
+    validate_moonraker_gcode_basename,
+    validate_moonraker_upload_directory,
+)
 
 _MAX_RESPONSE_BYTES = 64 * 1024
 MOONRAKER_MAX_UPLOAD_BYTES = 4 * 1024 * 1024 * 1024
@@ -386,17 +390,26 @@ class MoonrakerHTTPClient:
         filename: str,
         size: int | None = None,
         progress_callback: Callable[[int, int], None] | None = None,
+        directory: str | None = None,
     ) -> str:
         """Stream one safe G-code to Moonraker's ``gcodes`` root without retries."""
         try:
             validate_moonraker_gcode_basename(filename)
         except InvalidFilenameError as exc:
             raise MoonrakerHTTPError("invalid_filename", str(exc)) from exc
+        data = {"root": "gcodes"}
+        if directory is not None:
+            try:
+                validate_moonraker_upload_directory(directory)
+            except InvalidFilenameError as exc:
+                raise MoonrakerHTTPError("invalid_directory", str(exc)) from exc
+            # Moonraker creates missing subdirectories for the path form field.
+            data["path"] = directory
         response = await self._request(
             "POST",
             "/server/files/upload",
             total_timeout=_UPLOAD_TOTAL_TIMEOUT_SECONDS,
-            data={"root": "gcodes"},
+            data=data,
             files={"file": (filename, _BoundedUpload(file, size, progress_callback), "application/octet-stream")},
         )
         try:
@@ -409,6 +422,8 @@ class MoonrakerHTTPClient:
             raise MoonrakerHTTPError(
                 "invalid_response", "Moonraker upload response did not contain a safe G-code path."
             )
+        if directory is not None and (item.get("root") != "gcodes" or path != f"{directory}/{filename}"):
+            raise MoonrakerHTTPError("invalid_response", "Moonraker did not preserve the requested dispatch path.")
         return path
 
     async def start_print(self, filename: str) -> None:

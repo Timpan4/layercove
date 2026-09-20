@@ -99,39 +99,32 @@ def derive_remote_filename(filename: str) -> str:
     return f"{stem}.3mf".replace(" ", "_")
 
 
-def derive_moonraker_upload_filename(filename: str, correlation_id: str, plate_id: int | None = None) -> str:
-    """Keep the model name visible while retaining full dispatch-attempt uniqueness.
+def derive_moonraker_upload_filename(filename: str) -> str:
+    """Preserve the visible export basename; dispatch uniqueness lives in a directory.
 
-    Legacy archive names may contain paths or unsafe characters. Normalize only
-    the remote basename; never rename the stored source or alter its G-code.
-    Reserve the suffix before truncating so long UTF-8 names retain the entire
-    correlation ID and cannot alias another attempt or plate.
+    Legacy 3MF names are converted to .gcode after validated plate extraction.
+    Only unsafe legacy characters and path prefixes are normalized.
     """
-    from uuid import UUID
-
     if not isinstance(filename, str):
         raise TypeError("Moonraker source filename must be a string")
-    if plate_id is not None and (type(plate_id) is not int or plate_id < 1):
-        raise InvalidFilenameError("Moonraker plate ID must be a positive integer")
-    dispatch_id = UUID(correlation_id).hex
     stem = filename.replace("\\", "/").rsplit("/", 1)[-1]
-    while True:
-        suffix = next((value for value in (".gcode.3mf", ".3mf", ".gcode") if stem.lower().endswith(value)), None)
-        if suffix is None:
-            break
+    while suffix := next((value for value in (".gcode.3mf", ".3mf", ".gcode") if stem.lower().endswith(value)), None):
         stem = stem[: -len(suffix)]
     stem = (
-        "".join(
-            "_" if char in INVALID_FILENAME_CHARS or not char.isprintable() or char.isspace() else char for char in stem
-        ).strip(" ._")
+        "".join("_" if char in INVALID_FILENAME_CHARS or not char.isprintable() else char for char in stem).strip(" ._")
         or "print"
     )
-    plate = f"-plate-{plate_id}" if plate_id is not None else ""
-    suffix = f"{plate}-{dispatch_id}.gcode"
-    budget = MAX_FILENAME_BYTES - len(suffix.encode("utf-8"))
-    if budget < 1:
-        raise InvalidFilenameError("Moonraker filename suffix exceeds the filename limit")
-    stem = stem.encode("utf-8")[:budget].decode("utf-8", errors="ignore").rstrip(" ._") or "print"
-    result = f"{stem}{suffix}"
+    stem = stem.encode("utf-8")[: MAX_FILENAME_BYTES - len(".gcode")].decode("utf-8", errors="ignore").rstrip(" ._")
+    result = f"{stem}.gcode"
     validate_moonraker_gcode_basename(result)
     return result
+
+
+def validate_moonraker_upload_directory(directory: str) -> None:
+    """Validate a literal path relative to the gcodes root, without normalizing it."""
+    if not isinstance(directory, str) or not directory or len(directory.encode("utf-8")) > 1024:
+        raise InvalidFilenameError("Moonraker upload directory must be a bounded relative path")
+    for part in directory.split("/"):
+        validate_print_filename(part)
+        if any(not char.isprintable() for char in part):
+            raise InvalidFilenameError("Moonraker upload directory contains a control character")
