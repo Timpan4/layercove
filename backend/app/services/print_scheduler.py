@@ -2644,7 +2644,13 @@ class PrintScheduler:
                     pass
                 progress = _UploadProgressBridge(item.created_by_id, item.id)
                 remote_path = self._safe_moonraker_path(
-                    (await backend.upload(UploadJob(source.file, upload_name, source.size, progress))).path
+                    (
+                        await backend.upload(
+                            UploadJob(
+                                source.file, upload_name, source.size, progress, directory=f"layercove/{correlation_id}"
+                            )
+                        )
+                    ).path
                 )
         except ArtifactValidationError as exc:
             await self._record_moonraker_dispatch_failure(

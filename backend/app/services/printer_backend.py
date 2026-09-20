@@ -14,6 +14,7 @@ class UploadJob:
     filename: str
     size: int | None
     progress_callback: Callable[[int, int], None] | None = None
+    directory: str | None = None
 
 
 @dataclass(frozen=True)

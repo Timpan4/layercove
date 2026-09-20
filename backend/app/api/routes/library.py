@@ -3941,10 +3941,10 @@ async def slice_and_persist(
         except ArtifactValidationError as exc:
             raise HTTPException(status_code=502, detail=f"Slicer returned an invalid Klipper artifact: {exc}") from exc
 
-        safe_source_name = Path(model_filename.replace("\\", "/")).name
-        base_name = safe_source_name.rsplit(".", 1)[0]
-        out_filename = f"{base_name}.gcode"
+        from backend.app.services.slicer_output import orca_gcode_filename
+
         try:
+            out_filename = orca_gcode_filename(model_filename, result.content, result.print_time_seconds)
             validate_moonraker_gcode_basename(out_filename)
         except InvalidFilenameError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -4131,14 +4131,15 @@ async def slice_and_persist_as_archive(
         except ArtifactValidationError as exc:
             raise HTTPException(status_code=502, detail=f"Slicer returned an invalid Klipper artifact: {exc}") from exc
 
-        safe_source_name = Path(model_filename.replace("\\", "/")).name
-        base_name = safe_source_name.rsplit(".", 1)[0]
-        out_filename = f"{base_name}.gcode"
+        from backend.app.services.slicer_output import orca_gcode_filename
+
         try:
+            out_filename = orca_gcode_filename(model_filename, result.content, result.print_time_seconds)
             validate_moonraker_gcode_basename(out_filename)
         except InvalidFilenameError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        base_name = out_filename[:-6]
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
         archive_dir = safe_join_under(
