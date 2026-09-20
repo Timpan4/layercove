@@ -18,7 +18,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh run view 35521969873 --repo Timpan4/layercove --job 106107491946 --log-failed > /tmp/failed-shard.log
+          gh api repos/Timpan4/layercove/actions/jobs/106107491946/logs > /tmp/failed-shard.log
           python - <<'PY'
           from pathlib import Path
           text = Path('/tmp/failed-shard.log').read_text()
@@ -39,8 +39,10 @@ jobs:
           p = Path('backend/tests/unit/test_scheduler_provider_dispatch.py')
           s = p.read_text()
           old = '    assert upload_job.filename.startswith("queued-")\n    assert upload_job.filename.endswith(".gcode")\n    assert "cube" not in upload_job.filename'
-          new = '    assert item.provider_correlation_id\n    assert upload_job.filename == f"cube-{item.provider_correlation_id.replace(chr(45), chr(0)[:0])}.gcode"\n    assert archive.filename == source.name'
-          new = new.replace('replace(chr(45), chr(0)[:0])', "replace('-', '')")
+          new = '''    assert item.provider_correlation_id
+              assert upload_job.filename == f"cube-{item.provider_correlation_id.replace('-', '')}.gcode"
+              assert archive.filename == source.name'''
+          new = new.replace('\n              ', '\n    ')
           assert s.count(old) == 1
           p.write_text(s.replace(old, new))
           PY
