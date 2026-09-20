@@ -14,17 +14,22 @@ jobs:
       - uses: actions/checkout@v6
         with:
           ref: validation/moonraker-name-contract
-      - name: Inspect the failed shard summary
+      - name: Inspect failed shard summaries
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh api repos/Timpan4/layercove/actions/jobs/106107491946/logs > /tmp/failed-shard.log
+          for job in 106107491946 106107524607; do
+            gh api --allow-escape-sequences "repos/Timpan4/layercove/actions/jobs/$job/logs" > "/tmp/failed-$job.log"
+          done
           python - <<'PY'
+          import re
           from pathlib import Path
-          text = Path('/tmp/failed-shard.log').read_text()
-          lines = text.splitlines()
-          keep = [line for line in lines if any(value in line for value in ('FAILED ', 'short test summary', ' failed,', 'AssertionError', 'assert ', 'E       ', 'E        '))]
-          print('\n'.join(keep[-60:]))
+          for path in sorted(Path('/tmp').glob('failed-*.log')):
+              text = re.sub(r'\x1b\[[0-?]*[ -/]*[@-~]', '', path.read_text())
+              print(path.name)
+              lines = text.splitlines()
+              keep = [line for line in lines if any(value in line for value in ('FAILED ', 'short test summary', ' failed,', 'AssertionError', 'assert ', 'E       ', 'E        ', 'Timeout', 'timeout'))]
+              print('\n'.join(keep[-60:]))
           PY
       - uses: actions/setup-python@v6
         with:
