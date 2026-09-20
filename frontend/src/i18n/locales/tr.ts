@@ -1047,6 +1047,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "Dosya aktarıma hazırlanıyor…",
+    uploadingBytes: "Yükleniyor: {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Yükleniyor: {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Yazdırma işi',
     startingPrints: 'Yazdırmalar başlatılıyor',
     progressSummary: '{{complete}}/{{total}} tamamlandı • İşleniyor: {{processing}}',
@@ -1116,6 +1119,18 @@ export default {
   },
 
   queue: {
+    printDispatch: "Yazdırma aktarımı",
+    dispatch: {
+      progressLabel: "Yazdırma aktarımının ilerlemesi",
+      preparing: "Aktarım hazırlanıyor",
+      uploading: "Yazıcıya yükleniyor",
+      awaitingPrinter: "Yazıcı onayı bekleniyor",
+      uploadProgress: "Yükleme ilerlemesi",
+      elapsed: "{{seconds}}sn",
+      uploadSummary: "{{transferred}} / {{total}} (%{{percent}})",
+      waitingForUpload: "Dosya gönderildi; yükleme yanıtı bekleniyor.",
+      waitingForStart: "Yükleme kabul edildi. Yazdırmanın başlaması henüz onaylanmadı.",
+    },
     title: 'Baskı Kuyruğu',
     subtitle: 'Baskı işlerinizi zamanlayın ve yönetin',
     filamentShort: {

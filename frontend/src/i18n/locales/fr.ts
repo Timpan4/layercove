@@ -1047,6 +1047,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "Préparation du fichier pour le transfert…",
+    uploadingBytes: "Envoi de {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Envoi de {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Tâche d\'impression',
     startingPrints: 'Démarrage des impressions',
     progressSummary: '{{complete}}/{{total}} terminées • En cours : {{processing}}',
@@ -1116,6 +1119,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "Transmission d’impression",
+    dispatch: {
+      progressLabel: "Progression de la transmission d’impression",
+      preparing: "Préparation du transfert",
+      uploading: "Envoi à l’imprimante",
+      awaitingPrinter: "En attente de confirmation de l’imprimante",
+      uploadProgress: "Progression de l’envoi",
+      elapsed: "{{seconds}} s",
+      uploadSummary: "{{transferred}} sur {{total}} ({{percent}} %)",
+      waitingForUpload: "Fichier envoyé ; en attente de la réponse au transfert.",
+      waitingForStart: "Transfert accepté. Le démarrage de l’impression n’a pas encore été confirmé.",
+    },
     filamentShort: {
       rowBadge: 'Filament insuffisant pour la bobine assignee',
       rowTooltip: "Le planificateur a signale cet element. Cliquez sur Lecture pour voir le deficit par emplacement et decider de lancer quand meme l'impression.",

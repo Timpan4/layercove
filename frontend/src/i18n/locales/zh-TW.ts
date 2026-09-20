@@ -1047,6 +1047,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "正在準備傳輸檔案…",
+    uploadingBytes: "正在上傳 {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "正在上傳 {{transferred}} / {{total}} ({{percent}}%)",
     untitled: '列印任務',
     startingPrints: '正在開始列印',
     progressSummary: '{{complete}}/{{total}} 已完成 • 處理中: {{processing}}',
@@ -1116,6 +1119,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "列印工作傳輸",
+    dispatch: {
+      progressLabel: "列印工作傳輸進度",
+      preparing: "正在準備傳輸",
+      uploading: "正在上傳至印表機",
+      awaitingPrinter: "等待印表機確認",
+      uploadProgress: "上傳進度",
+      elapsed: "{{seconds}}秒",
+      uploadSummary: "已傳送 {{transferred}} / {{total}} ({{percent}}%)",
+      waitingForUpload: "檔案已傳送，正在等待上傳回應。",
+      waitingForStart: "上傳已接受，但尚未確認開始列印。",
+    },
     filamentShort: {
       rowBadge: '所分配料盤的線材不足',
       rowTooltip: '調度程式已標記此項目。點擊播放查看各槽位的不足量，並決定是否仍要列印。',

@@ -415,13 +415,16 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                                 {t('dispatchToast.awaitingPrinter')}
                               </div>
                             ) : job.stage === 'preparing' ? (
-                              <div className="text-[11px] text-bambu-gray">Preparing file for transfer…</div>
+                              <div className="text-[11px] text-bambu-gray">{t('dispatchToast.preparingFile')}</div>
                             ) : typeof job.uploadBytes === 'number'
                                 && typeof job.uploadTotalBytes === 'number'
                                 && job.uploadTotalBytes > 0 ? (
                               <div className="text-[11px] text-bambu-gray truncate">
-                                Uploading {formatFileSize(job.uploadBytes)} / {formatFileSize(job.uploadTotalBytes)}
-                                {typeof job.uploadProgressPct === 'number' ? ` (${job.uploadProgressPct.toFixed(1)}%)` : ''}
+                                {t(typeof job.uploadProgressPct === 'number' ? 'dispatchToast.uploadingBytesWithProgress' : 'dispatchToast.uploadingBytes', {
+                                  transferred: formatFileSize(job.uploadBytes),
+                                  total: formatFileSize(job.uploadTotalBytes),
+                                  percent: job.uploadProgressPct?.toFixed(1),
+                                })}
                               </div>
                             ) : null
                           ) : job.status === 'failed' && job.failReason ? (

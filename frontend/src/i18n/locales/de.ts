@@ -1047,6 +1047,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "Datei für die Übertragung vorbereiten…",
+    uploadingBytes: "Hochladen: {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Hochladen: {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Druckjob',
     startingPrints: 'Drucke starten',
     progressSummary: '{{complete}}/{{total}} fertig • Verarbeitung: {{processing}}',
@@ -1116,6 +1119,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "Druckübertragung",
+    dispatch: {
+      progressLabel: "Fortschritt der Druckübertragung",
+      preparing: "Übertragung vorbereiten",
+      uploading: "Hochladen zum Drucker",
+      awaitingPrinter: "Warten auf Druckerbestätigung",
+      uploadProgress: "Upload-Fortschritt",
+      elapsed: "{{seconds}} Sek.",
+      uploadSummary: "{{transferred}} von {{total}} ({{percent}} %)",
+      waitingForUpload: "Datei gesendet; warte auf die Upload-Antwort.",
+      waitingForStart: "Upload akzeptiert. Der Druckstart wurde noch nicht bestätigt.",
+    },
     filamentShort: {
       rowBadge: 'Filament fuer die zugewiesene Spule reicht nicht',
       rowTooltip: 'Der Dispatcher hat diese Position markiert. Klicke auf Play, um den Pro-Slot-Fehlbestand zu sehen und zu entscheiden, ob trotzdem gedruckt werden soll.',
