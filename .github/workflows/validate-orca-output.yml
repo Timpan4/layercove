@@ -12,14 +12,37 @@ jobs:
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 48256dfa064e5744de871d8bb479b7c1935ec111
+          repository: Timpan4/orca-slicer-api
+          ref: 739428693f6b7ff5506301320eae39de448073e6
           persist-credentials: false
-      - name: Archive exact PR source
+          path: sidecar
+      - uses: actions/checkout@v6
+        with:
+          repository: OrcaSlicer/OrcaSlicer
+          ref: 8500fcdccaa10b5099ac20d252af3a7c560046f1
+          persist-credentials: false
+          path: engine
+          sparse-checkout: |
+            src/OrcaSlicer.cpp
+            src/libslic3r/Print.cpp
+            src/libslic3r/Print.hpp
+            src/libslic3r/PrintBase.cpp
+            src/libslic3r/GCode.cpp
+            src/libslic3r/PlaceholderParser.cpp
+            src/libslic3r/PrintConfig.cpp
+            src/libslic3r/GCode/GCodeProcessor.cpp
+            src/slic3r/GUI/Plater.cpp
+            src/slic3r/GUI/PartPlate.cpp
+          sparse-checkout-cone-mode: false
+      - name: Archive exact source files
         run: |
+          cd sidecar
           git branch --show-current
-          git archive --format=tar.gz HEAD > /tmp/layercove-pr117.tar.gz
+          git archive --format=tar.gz HEAD > /tmp/sidecar-source.tar.gz
+          cd ../engine
+          tar --exclude=.git -czf /tmp/engine-source.tar.gz src
       - uses: actions/upload-artifact@v4
         with:
-          name: source-pr117
-          path: /tmp/layercove-pr117.tar.gz
+          name: orca-output-sources
+          path: /tmp/*-source.tar.gz
           retention-days: 1
