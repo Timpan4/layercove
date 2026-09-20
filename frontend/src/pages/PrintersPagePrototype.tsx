@@ -78,7 +78,7 @@ function getState(status?: PrinterStatus, supportsHms = true): PrinterState {
   if (supportsHms && status.hms_errors && filterKnownHMSErrors(status.hms_errors).length) return 'problem';
   const state = status.state?.toLowerCase() ?? '';
   if (state.includes('pause')) return 'paused';
-  if (state.includes('print') || state.includes('prepare')) return 'printing';
+  if (state === 'running' || state.includes('print') || state.includes('prepare')) return 'printing';
   if (state.includes('finish') || state.includes('complete') || state.includes('fail')) return 'finished';
   return 'idle';
 }
@@ -371,7 +371,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
     ...(status?.ams ?? []).flatMap((unit) => unit.tray.map((tray) => ({
       key: `ams-${unit.id}-${tray.id}`,
       name: tray.tray_type || 'Empty',
-      detail: tray.tray_sub_brands || (tray.tray_type ? `${Math.round(tray.remain)}%` : 'AMS'),
+      detail: tray.tray_sub_brands || (tray.tray_type ? (Number.isFinite(tray.remain) && tray.remain >= 0 ? `${Math.round(tray.remain)}%` : 'Remaining unknown') : 'AMS'),
       color: tray.tray_color,
     }))),
     ...(status?.vt_tray ?? []).map((tray) => ({
@@ -383,7 +383,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
   ];
   const notices: string[] = [];
   if (knownHmsCount) notices.push(`${knownHmsCount} machine ${knownHmsCount === 1 ? 'alert' : 'alerts'}`);
-  if (status?.awaiting_plate_clear) notices.push('Build plate needs clearing');
+  if (status?.awaiting_plate_clear && (state === 'idle' || state === 'finished')) notices.push('Build plate needs clearing');
   if (status?.door_open) notices.push('Enclosure door open');
 
   return (
@@ -459,7 +459,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
         <aside className="flex flex-col gap-3">
           <div className="rounded-[1.375rem] border border-white/[0.07] bg-black/25 p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray">Next best action</p>
-            <p className="mt-3 text-base font-medium text-white">{state === 'finished' ? 'Clear plate and prepare next job' : active ? 'Monitor this print' : state === 'offline' ? 'Check printer connection' : 'Choose a file to print'}</p>
+            <p className="mt-3 text-base font-medium text-white">{state === 'finished' || (state === 'idle' && status?.awaiting_plate_clear) ? 'Clear plate and prepare next job' : active ? 'Monitor this print' : state === 'offline' ? 'Check printer connection' : 'Choose a file to print'}</p>
             <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
               <span className="rounded-lg bg-white/[0.05] px-2.5 py-2 text-bambu-gray"><HardDrive className="mr-1.5 inline h-3.5 w-3.5" />{status?.firmware_version || 'Firmware unknown'}</span>
               <span className="rounded-lg bg-white/[0.05] px-2.5 py-2 text-bambu-gray"><DoorOpen className="mr-1.5 inline h-3.5 w-3.5" />{status?.door_open ? 'Door open' : 'Door closed'}</span>

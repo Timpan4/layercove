@@ -22,6 +22,7 @@ interface ModelViewerProps {
   url: string;
   fileType?: string;
   buildVolume?: BuildVolume;
+  showBuildPlate?: boolean;
   filamentColors?: string[];
   selectedPlateId?: number | null;
   centerOnBed?: boolean;
@@ -627,6 +628,7 @@ export function ModelViewer({
   url,
   fileType,
   buildVolume = DEFAULT_BUILD_VOLUME,
+  showBuildPlate = true,
   filamentColors,
   selectedPlateId = null,
   centerOnBed,
@@ -692,6 +694,7 @@ export function ModelViewer({
     const gridSize = Math.max(buildVolume.x, buildVolume.y);
     const gridDivisions = Math.ceil(gridSize / 16);
     const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x444444, 0x333333);
+    gridHelper.visible = showBuildPlate;
     scene.add(gridHelper);
     gridRef.current = gridHelper;
 
@@ -704,6 +707,7 @@ export function ModelViewer({
       side: THREE.DoubleSide,
     });
     const plate = new THREE.Mesh(plateGeometry, plateMaterial);
+    plate.visible = showBuildPlate;
     plate.rotation.x = -Math.PI / 2;
     plate.position.y = -0.5; // Slightly below Y=0 so models sit on top
     scene.add(plate);
@@ -798,7 +802,7 @@ export function ModelViewer({
       plateRef.current = null;
       gridRef.current = null;
     };
-  }, [url, buildVolume, fileType, t]);
+  }, [url, buildVolume, showBuildPlate, fileType, t]);
 
   useEffect(() => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;

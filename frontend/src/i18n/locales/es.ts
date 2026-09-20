@@ -6412,8 +6412,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Transmisión de cámara inaccesible',
-        cause: 'No se pudo acceder a la cámara en vivo en el puerto RTSPS 322. El puerto está bloqueado, o la cámara o la vista en vivo por LAN están desactivadas en la impresora.',
-        fix: 'Activa la cámara y la vista en vivo por LAN en la impresora y asegúrate de que el puerto 322 no esté bloqueado. Esto no afecta a la impresión.',
+        cause: 'No se pudo acceder a la cámara en vivo en el puerto {{cameraEndpoint}}. El puerto está bloqueado, o la cámara o la vista en vivo por LAN están desactivadas en la impresora.',
+        fix: 'Activa la cámara y la vista en vivo por LAN en la impresora y asegúrate de que el puerto {{cameraPort}} no esté bloqueado. Esto no afecta a la impresión.',
       },
       'database-locked': {
         name: 'Conflictos de escritura en la base de datos',

@@ -6392,8 +6392,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Flusso della telecamera non raggiungibile',
-        cause: 'Non è stato possibile raggiungere la telecamera dal vivo sulla porta RTSPS 322. La porta è bloccata, oppure la telecamera o la visione dal vivo via LAN è disattivata sulla stampante.',
-        fix: 'Attiva la telecamera e la visione dal vivo via LAN sulla stampante e assicurati che la porta 322 non sia bloccata. Questo non influisce sulla stampa.',
+        cause: 'Non è stato possibile raggiungere la telecamera dal vivo sulla porta {{cameraEndpoint}}. La porta è bloccata, oppure la telecamera o la visione dal vivo via LAN è disattivata sulla stampante.',
+        fix: 'Attiva la telecamera e la visione dal vivo via LAN sulla stampante e assicurati che la porta {{cameraPort}} non sia bloccata. Questo non influisce sulla stampa.',
       },
       'database-locked': {
         name: 'Conflitti di scrittura nel database',

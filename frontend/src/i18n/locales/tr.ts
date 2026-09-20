@@ -6343,8 +6343,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Kamera akışına erişilemez',
-        cause: 'Canlı kameraya RTSPS 322 portunda erişilemedi. Port engellendi veya yazıcıda kamera veya LAN canlı görünümü kapalı.',
-        fix: 'Yazıcıda kamerayı ve LAN canlı görünümünü etkinleştirin ve port 322\'nin engellenmediğinden emin olun. Bu, baskıyı etkilemez.',
+        cause: 'Canlı kameraya {{cameraEndpoint}} portunda erişilemedi. Port engellendi veya yazıcıda kamera veya LAN canlı görünümü kapalı.',
+        fix: 'Yazıcıda kamerayı ve LAN canlı görünümünü etkinleştirin ve port {{cameraPort}}\'nin engellenmediğinden emin olun. Bu, baskıyı etkilemez.',
       },
       'database-locked': {
         name: 'Veritabanı yazma çekişmesi',

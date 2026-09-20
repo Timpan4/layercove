@@ -109,6 +109,22 @@ const mockPrinters = [
 ];
 
 describe('QueuePage', () => {
+  it.each(['printing', 'paused'])('shows normalized Moonraker %s progress', async (state) => {
+    server.use(http.get('/api/v1/printers/1/status', () => HttpResponse.json({
+      id: 1, connected: true, state, progress: 73, remaining_time: 4, layer_num: 7, total_layers: 10,
+    })));
+    render(<QueuePage />);
+    expect(await screen.findByText('73%')).toBeInTheDocument();
+  });
+
+  it('does not label an idle printer as actively printing at zero percent', async () => {
+    server.use(http.get('/api/v1/printers/1/status', () => HttpResponse.json({
+      id: 1, connected: true, state: 'idle', progress: 0,
+    })));
+    render(<QueuePage />);
+    expect(await screen.findByText('Waiting for printer confirmation')).toBeInTheDocument();
+    expect(screen.queryByText('0%')).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     // Mock localStorage.getItem to return expected defaults for queue page
     vi.mocked(localStorage.getItem).mockImplementation((key: string) => {

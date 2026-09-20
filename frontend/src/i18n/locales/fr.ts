@@ -6393,8 +6393,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Flux de la caméra inaccessible',
-        cause: 'La caméra en direct n\'a pas pu être atteinte sur le port RTSPS 322. Le port est bloqué, ou la caméra ou la vue en direct par LAN est désactivée sur l\'imprimante.',
-        fix: 'Activez la caméra et la vue en direct par LAN sur l\'imprimante, et assurez-vous que le port 322 n\'est pas bloqué. Cela n\'affecte pas l\'impression.',
+        cause: 'La caméra en direct n\'a pas pu être atteinte sur le port {{cameraEndpoint}}. Le port est bloqué, ou la caméra ou la vue en direct par LAN est désactivée sur l\'imprimante.',
+        fix: 'Activez la caméra et la vue en direct par LAN sur l\'imprimante, et assurez-vous que le port {{cameraPort}} n\'est pas bloqué. Cela n\'affecte pas l\'impression.',
       },
       'database-locked': {
         name: 'Conflits d\'écriture dans la base de données',
