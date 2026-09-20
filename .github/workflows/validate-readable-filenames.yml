@@ -1,0 +1,98 @@
+name: Validate readable Moonraker filenames
+
+on:
+  push:
+    branches: [validation/moonraker-readable-filenames]
+    paths: [.github/workflows/validate-readable-filenames.yml]
+
+permissions:
+  contents: write
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: validation/moonraker-readable-filenames
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v7
+      - name: Install repository dependencies
+        run: uv pip install --system -r requirements.txt -r requirements-dev.txt
+      - name: Add production dispatch regression assertions
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("backend/tests/integration/test_fake_moonraker.py")
+          s = p.read_text()
+          old = '                assert remote_path and remote_path.startswith("queue/queued-")\n                assert correlation_id'
+          new = "                assert correlation_id\n                assert remote_path == f\"queue/cube-plate-2-{correlation_id.replace('-', '')}.gcode\"\n                assert (await db.get(PrintArchive, ids.archive)).filename == source.name"
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, new))
+          p = Path("backend/tests/integration/test_catalog_klipper_pipeline.py")
+          s = p.read_text()
+          old = '        assert remote_name.endswith(".gcode")'
+          new = old + '\n        assert remote_name.startswith(f"{Path(artifact.filename).stem}-")'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, new))
+          PY
+      - name: Reproduce the UUID-only name through real Moonraker dispatch
+        shell: bash
+        run: |
+          set +e
+          python -m pytest backend/tests/integration/test_fake_moonraker.py::test_queue_lifecycle_runs_through_fake_backed_backend -q --tb=short --timeout=60 --timeout-method=thread --junitxml=/tmp/filename-before.xml
+          status=$?
+          set -e
+          test "$status" -eq 1
+          python - <<'PY'
+          import xml.etree.ElementTree as ET
+          cases = ET.parse('/tmp/filename-before.xml').findall('.//testcase')
+          assert len(cases) == 2
+          for case in cases:
+              assert case.find('error') is None
+              failure = case.find('failure')
+              assert failure is not None and 'queue/queued-' in (failure.text or '')
+          PY
+      - name: Implement readable safe names
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          p = Path("backend/app/utils/filename.py")
+          s = p.read_text()
+          assert "def derive_moonraker_upload_filename" not in s
+          p.write_text(s + '\n\ndef derive_moonraker_upload_filename(filename: str, correlation_id: str, plate_id: int | None = None) -> str:\n    """Keep the model name visible while retaining full dispatch-attempt uniqueness.\n\n    Legacy archive names may contain paths or unsafe characters. Normalize only\n    the remote basename; never rename the stored source or alter its G-code.\n    Reserve the suffix before truncating so long UTF-8 names retain the entire\n    correlation ID and cannot alias another attempt or plate.\n    """\n    from uuid import UUID\n\n    if not isinstance(filename, str):\n        raise TypeError("Moonraker source filename must be a string")\n    if plate_id is not None and (type(plate_id) is not int or plate_id < 1):\n        raise InvalidFilenameError("Moonraker plate ID must be a positive integer")\n    dispatch_id = UUID(correlation_id).hex\n    stem = filename.replace("\\\\", "/").rsplit("/", 1)[-1]\n    while True:\n        suffix = next((value for value in (".gcode.3mf", ".3mf", ".gcode") if stem.lower().endswith(value)), None)\n        if suffix is None:\n            break\n        stem = stem[:-len(suffix)]\n    stem = "".join(\n        "_" if char in INVALID_FILENAME_CHARS or not char.isprintable() or char.isspace() else char\n        for char in stem\n    ).strip(" ._") or "print"\n    plate = f"-plate-{plate_id}" if plate_id is not None else ""\n    suffix = f"{plate}-{dispatch_id}.gcode"\n    budget = MAX_FILENAME_BYTES - len(suffix.encode("utf-8"))\n    if budget < 1:\n        raise InvalidFilenameError("Moonraker filename suffix exceeds the filename limit")\n    stem = stem.encode("utf-8")[:budget].decode("utf-8", errors="ignore").rstrip(" ._") or "print"\n    result = f"{stem}{suffix}"\n    validate_moonraker_gcode_basename(result)\n    return result\n')
+          Path("backend/tests/unit/test_moonraker_upload_filename.py").write_text('"""Readable Moonraker names must remain safe and unique across dispatch attempts."""\n\nfrom uuid import UUID\n\nimport pytest\n\nfrom backend.app.utils.filename import (\n    MAX_FILENAME_BYTES,\n    InvalidFilenameError,\n    derive_moonraker_upload_filename,\n    validate_moonraker_gcode_basename,\n)\n\nDISPATCH = "12345678-1234-4234-8234-123456789abc"\n\n\n@pytest.mark.parametrize("filename", ["Calibration Cube.gcode", "Calibration Cube.GCODE.3MF", "Calibration Cube.3mf.gcode.3mf"])\ndef test_model_name_and_selected_plate_precede_unique_suffix(filename):\n    assert derive_moonraker_upload_filename(filename, DISPATCH, 2) == (\n        f"Calibration_Cube-plate-2-{UUID(DISPATCH).hex}.gcode"\n    )\n\n\n@pytest.mark.parametrize("filename,stem", [\n    ("../../parts/Cube.gcode", "Cube"),\n    (r"C:\\parts\\Cube.gcode", "Cube"),\n    (\'Bad<name>:"?*.gcode\', "Bad_name"),\n    ("..", "print"),\n    (".gcode.3mf", "print"),\n    ("", "print"),\n    ("   ", "print"),\n    ("Part\\x00\\r\\n\\x7f\\u202e.gcode", "Part"),\n    ("Räksmörgås.gcode", "Räksmörgås"),\n])\ndef test_legacy_names_are_safe_basenames(filename, stem):\n    actual = derive_moonraker_upload_filename(filename, DISPATCH)\n    assert actual == f"{stem}-{UUID(DISPATCH).hex}.gcode"\n    validate_moonraker_gcode_basename(actual)\n\n\n@pytest.mark.parametrize("prefix", ["x", "å", "模型", "🧱"])\ndef test_utf8_truncation_preserves_complete_suffix(prefix):\n    actual = derive_moonraker_upload_filename(prefix * 500 + ".gcode.3mf", DISPATCH, 1)\n    assert len(actual.encode("utf-8")) <= MAX_FILENAME_BYTES\n    assert actual.startswith(prefix)\n    assert actual.endswith(f"-plate-1-{UUID(DISPATCH).hex}.gcode")\n    validate_moonraker_gcode_basename(actual)\n\n\ndef test_all_uuid_bits_are_retained_for_retries_and_old_jobs():\n    other = "12345678-1234-4234-8234-123456789abd"\n    first = derive_moonraker_upload_filename("Cube.gcode", DISPATCH, 1)\n    assert first != derive_moonraker_upload_filename("Cube.gcode", other, 1)\n    assert first != derive_moonraker_upload_filename("Cube.gcode", DISPATCH, 2)\n    assert first == derive_moonraker_upload_filename("Cube.gcode", DISPATCH, 1)\n\n\n@pytest.mark.parametrize("plate", [0, -1, True, "2", 1.5])\ndef test_invalid_plate_ids_are_rejected(plate):\n    with pytest.raises(InvalidFilenameError):\n        derive_moonraker_upload_filename("Cube.gcode", DISPATCH, plate)\n\n\ndef test_dispatch_id_cannot_be_a_path():\n    with pytest.raises(ValueError):\n        derive_moonraker_upload_filename("Cube.gcode", "../another-job")\n\n\ndef test_source_must_be_a_real_string():\n    with pytest.raises(TypeError):\n        derive_moonraker_upload_filename(None, DISPATCH)\n')
+          p = Path("backend/app/services/print_scheduler.py")
+          s = p.read_text()
+          old = "from backend.app.utils.filename import derive_remote_filename"
+          new = "from backend.app.utils.filename import derive_moonraker_upload_filename, derive_remote_filename"
+          assert s.count(old) == 1
+          s = s.replace(old, new)
+          old = '        upload_name = f"queued-{correlation_id}.gcode"'
+          new = '        upload_name = derive_moonraker_upload_filename(filename, correlation_id, item.plate_id)'
+          assert s.count(old) == 1
+          p.write_text(s.replace(old, new))
+          PY
+          python -m ruff format backend/app/utils/filename.py backend/app/services/print_scheduler.py backend/tests/unit/test_moonraker_upload_filename.py backend/tests/integration/test_fake_moonraker.py backend/tests/integration/test_catalog_klipper_pipeline.py
+          python -m ruff check backend/
+          python -m ruff format --check backend/
+      - name: Verify real queue and provider paths
+        run: |
+          python -m pytest backend/tests/unit/test_moonraker_upload_filename.py backend/tests/integration/test_fake_moonraker.py backend/tests/integration/test_catalog_klipper_pipeline.py backend/tests/unit/test_dispatch_pipeline_regressions.py -q --tb=short --timeout=60 --timeout-method=thread
+      - name: Commit only validated production changes
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = "validation/moonraker-readable-filenames"
+          test "$(git rev-parse HEAD)" = "$GITHUB_SHA"
+          rm .github/workflows/validate-readable-filenames.yml
+          git diff --check
+          git branch --show-current
+          git add backend/app/utils/filename.py backend/app/services/print_scheduler.py backend/tests/unit/test_moonraker_upload_filename.py backend/tests/integration/test_fake_moonraker.py backend/tests/integration/test_catalog_klipper_pipeline.py .github/workflows/validate-readable-filenames.yml
+          git branch --show-current
+          git -c user.name='Timpan4' -c user.email='70634109+Timpan4@users.noreply.github.com' commit -m 'fix: preserve readable model names in Moonraker uploads'
+          git branch --show-current
+          git push origin HEAD:validation/moonraker-readable-filenames
