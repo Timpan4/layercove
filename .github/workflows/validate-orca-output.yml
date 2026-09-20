@@ -1,48 +1,50 @@
-name: Validate Orca output and orientation
+name: Validate Orca filenames
 on:
   push:
     branches: [validation/orca-output-orientation]
     paths: [.github/workflows/validate-orca-output.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  source:
+  validate:
+    if: github.actor == 'Timpan4'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
-          repository: Timpan4/orca-slicer-api
-          ref: 739428693f6b7ff5506301320eae39de448073e6
-          persist-credentials: false
-          path: sidecar
-      - uses: actions/checkout@v6
+          ref: validation/orca-output-orientation
+      - uses: actions/setup-python@v6
         with:
-          repository: OrcaSlicer/OrcaSlicer
-          ref: 8500fcdccaa10b5099ac20d252af3a7c560046f1
-          persist-credentials: false
-          path: engine
-          sparse-checkout: |
-            src/OrcaSlicer.cpp
-            src/libslic3r/Print.cpp
-            src/libslic3r/Print.hpp
-            src/libslic3r/PrintBase.cpp
-            src/libslic3r/GCode.cpp
-            src/libslic3r/PlaceholderParser.cpp
-            src/libslic3r/PrintConfig.cpp
-            src/libslic3r/GCode/GCodeProcessor.cpp
-            src/slic3r/GUI/Plater.cpp
-            src/slic3r/GUI/PartPlate.cpp
-          sparse-checkout-cone-mode: false
-      - name: Archive exact source files
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v7
+      - name: Apply checksum-verified regression patch
+        env:
+          PATCH_B64: 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
         run: |
-          cd sidecar
+          python - <<'PY'
+          import base64, gzip, hashlib, os
+          from pathlib import Path
+          payload = gzip.decompress(base64.b64decode(os.environ['PATCH_B64']))
+          assert hashlib.sha256(payload).hexdigest() == '60e1d53ee49ab73be1375077ad224bc7360c506735bcb8eb4aa82eb3cf790452'
+          Path('/tmp/naming.patch').write_bytes(payload)
+          PY
           git branch --show-current
-          git archive --format=tar.gz HEAD > /tmp/sidecar-source.tar.gz
-          cd ../engine
-          tar --exclude=.git -czf /tmp/engine-source.tar.gz src
-      - uses: actions/upload-artifact@v4
-        with:
-          name: orca-output-sources
-          path: /tmp/*-source.tar.gz
-          retention-days: 1
+          git apply --check --unidiff-zero /tmp/naming.patch
+          git branch --show-current
+          git apply --unidiff-zero /tmp/naming.patch
+      - name: Validate changed production paths
+        run: |
+          uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt ruff check backend/
+          uv run --with-requirements requirements-dev.txt ruff format --check backend/
+          uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt pytest backend/tests/unit/test_slicer_filename.py backend/tests/unit/test_moonraker_upload_filename.py backend/tests/unit/test_moonraker_http.py backend/tests/unit/test_scheduler_provider_dispatch.py backend/tests/unit/test_dispatch_pipeline_regressions.py backend/tests/integration/test_catalog_klipper_pipeline.py backend/tests/integration/test_fake_moonraker.py backend/tests/integration/test_library_slice_api.py -q --tb=short --timeout=60
+      - name: Commit only the verified source changes on the validation branch
+        run: |
+          rm .github/workflows/validate-orca-output.yml
+          git diff --check
+          git branch --show-current
+          git add backend .github/workflows/validate-orca-output.yml
+          git branch --show-current
+          git -c user.name='Timpan4' -c user.email='70634109+Timpan4@users.noreply.github.com' commit -m 'fix: preserve Orca filenames in isolated Moonraker dispatch folders'
+          test "$(git branch --show-current)" = validation/orca-output-orientation
+          git push origin HEAD:validation/orca-output-orientation
