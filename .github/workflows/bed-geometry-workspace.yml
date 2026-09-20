@@ -4,22 +4,65 @@ on:
     branches: [validation/inherited-bed-geometry]
     paths: [.github/workflows/bed-geometry-workspace.yml]
 permissions:
-  contents: read
+  contents: write
 jobs:
-  source:
+  validate:
+    if: github.actor == 'Timpan4'
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v6
         with:
-          ref: 40e000a7151e70c289c0e2a78e45839eab012314
-          persist-credentials: false
-      - name: Export exact source
-        run: |
-          git branch --show-current
-          git archive --format=tar.gz HEAD > /tmp/bed-geometry-source.tar.gz
-      - uses: actions/upload-artifact@v4
+          ref: validation/inherited-bed-geometry
+          persist-credentials: true
+      - uses: oven-sh/setup-bun@v2
         with:
-          name: bed-geometry-source
-          path: /tmp/bed-geometry-source.tar.gz
-          retention-days: 1
+          bun-version: '1.3.14'
+      - name: Verify staged patches
+        run: |
+          set -euo pipefail
+          echo '5a80480b4e6c7ef04c8d8e87a9ded410cd086bffbd2791716965192dd4365831  .tmp/bed-prod.patch' | sha256sum --check
+          echo '163a8b2010194e86705c603d54b2d90e06cc0d543d6999bb9eed90880a56f01a  .tmp/bed-tests.patch' | sha256sum --check
+          echo '5f1bac574b13c8bef200dce957b827248e4d93cdc46a4519d32ac3f1f04d40d0  .tmp/bed-locales.patch' | sha256sum --check
+          git apply --check .tmp/bed-tests.patch .tmp/bed-prod.patch .tmp/bed-locales.patch
+          git branch --show-current
+          git apply .tmp/bed-tests.patch
+      - name: Reproduce the regression on the original production code
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          if bun x vitest run src/__tests__/utils/slicerBed.test.ts src/__tests__/hooks/useSlicerWorkbench.test.tsx src/__tests__/components/SlicerBedWorkbench.test.tsx src/__tests__/components/ModelViewer.test.tsx --maxWorkers=2 > /tmp/bed-before.log 2>&1; then
+            cat /tmp/bed-before.log
+            echo 'Expected the reported regression to fail before the fix.'
+            exit 1
+          fi
+          tail -25 /tmp/bed-before.log
+      - name: Apply production and localization fixes
+        run: |
+          set -euo pipefail
+          git branch --show-current
+          git apply .tmp/bed-prod.patch .tmp/bed-locales.patch
+          git diff --check
+      - name: Validate frontend
+        working-directory: frontend
+        run: |
+          set -euo pipefail
+          bun run lint
+          bun run build
+          bun x vitest run src/__tests__/utils/slicerBed.test.ts src/__tests__/hooks/useSlicerWorkbench.test.tsx src/__tests__/components/SlicerBedWorkbench.test.tsx src/__tests__/components/ModelViewer.test.tsx --maxWorkers=2
+          bun run check:i18n
+          bun run test:brand
+      - name: Commit clean application tree on validation branch only
+        run: |
+          set -euo pipefail
+          test "$(git branch --show-current)" = validation/inherited-bed-geometry
+          rm -f .tmp/bed-prod.patch .tmp/bed-tests.patch .tmp/bed-locales.patch .tmp/bed-geometry.patch.gz.b64 .tmp/bedpatch-00.b64
+          rm .github/workflows/bed-geometry-workspace.yml
+          git diff --check
+          git branch --show-current
+          git add -A
+          git branch --show-current
+          git -c user.name='Timpan4' -c user.email='70634109+Timpan4@users.noreply.github.com' commit -m 'fix: render serialized cloud bed geometry and report revision errors'
+          git branch --show-current
+          git push origin HEAD:validation/inherited-bed-geometry
