@@ -4,7 +4,13 @@ import logging
 import re
 from pathlib import Path
 
-from backend.app.utils.filename import INVALID_FILENAME_CHARS, MAX_FILENAME_BYTES, validate_moonraker_gcode_basename
+from backend.app.utils.filename import (
+    INVALID_FILENAME_CHARS,
+    MAX_FILENAME_BYTES,
+    InvalidFilenameError,
+    validate_moonraker_gcode_basename,
+    validate_print_filename,
+)
 
 logger = logging.getLogger(__name__)
 _SETTINGS_BYTES = 2 * 1024 * 1024
@@ -64,23 +70,28 @@ def orca_gcode_filename(model_filename: str, gcode: bytes, print_time_seconds: i
     name with a diagnostic rather than inventing a filament type.
     """
     base = Path(model_filename.replace("\\", "/")).name
+    # Validate the source before shortening it so truncation cannot hide unsafe
+    # characters. The longer output suffix is budgeted separately below.
+    validate_print_filename(base)
     if base.lower().endswith(".gcode.3mf"):
         base = base[:-10]
     else:
         base = base.rsplit(".", 1)[0]
-    validate_moonraker_gcode_basename(f"{base}.gcode")
     material = _initial_material(gcode)
     if material is None:
         logger.warning("Slicer output lacks unambiguous filament metadata; retaining model-only filename")
-        return f"{base}.gcode"
-    material = "".join("_" if char in INVALID_FILENAME_CHARS or not char.isprintable() else char for char in material)
-    suffix = f"_{material}_{orca_print_time(print_time_seconds)}.gcode"
+        suffix = ".gcode"
+    else:
+        material = "".join(
+            "_" if char in INVALID_FILENAME_CHARS or not char.isprintable() else char for char in material
+        )
+        suffix = f"_{material}_{orca_print_time(print_time_seconds)}.gcode"
     budget = MAX_FILENAME_BYTES - len(suffix.encode("utf-8"))
     if budget < 1:
-        raise ValueError("Slicer filament metadata exceeds the filename limit")
+        raise InvalidFilenameError("Slicer filament metadata exceeds the filename limit")
     base = base.encode("utf-8")[:budget].decode("utf-8", errors="ignore").rstrip(" .")
     if not base:
-        raise ValueError("Slicer filename exceeds the filename limit")
+        raise InvalidFilenameError("Slicer filename exceeds the filename limit")
     result = f"{base}{suffix}"
     validate_moonraker_gcode_basename(result)
     return result

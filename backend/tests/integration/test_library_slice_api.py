@@ -833,7 +833,7 @@ class TestSliceLibraryFile:
                 return fixed_now
 
         monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
-        output_dir = archive_root / "unassigned" / "20260712_120000_Failure_sliced_preexisting"
+        output_dir = archive_root / "unassigned" / "20260712_120000_sliced_preexisting"
         preexisting = failure_method == "refresh"
         if preexisting:
             output_dir.mkdir(parents=True)
@@ -872,9 +872,7 @@ class TestSliceLibraryFile:
             )
 
         assert not list(archive_root.rglob("Failure.gcode"))
-        assert not list(
-            (archive_root / "unassigned").glob("20260712_120000_Failure_sliced_????????????????????????????????")
-        )
+        assert not list((archive_root / "unassigned").glob("20260712_120000_sliced_????????????????????????????????"))
         assert output_dir.exists() is preexisting
         if preexisting:
             assert (output_dir / "keep.txt").read_text() == "keep"
@@ -976,7 +974,7 @@ class TestSliceLibraryFile:
             "G28 ; job 1\n",
             "G28 ; job 3\n",
         ]
-        assert len(list((archive_root / "unassigned").glob("20260712_120000_Collision_sliced_*"))) == 2
+        assert len(list((archive_root / "unassigned").glob("20260712_120000_sliced_*"))) == 2
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -1000,7 +998,7 @@ class TestSliceLibraryFile:
 
         monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
         monkeypatch.setattr(library_routes.uuid, "uuid4", lambda: SimpleNamespace(hex="a" * 32))
-        existing_dir = archive_root / "unassigned" / f"20260712_120000_Collision_sliced_{'a' * 32}"
+        existing_dir = archive_root / "unassigned" / f"20260712_120000_sliced_{'a' * 32}"
         existing_dir.mkdir(parents=True)
         existing_file = existing_dir / "Collision.gcode"
         existing_file.write_bytes(b"existing sibling\n")
@@ -2649,3 +2647,108 @@ async def test_archive_slice_rejects_catalog_incompatibility_before_enqueue(
         "code": "slicer_profile_incompatible",
         "reason_codes": ["resolved_metadata_mismatch"],
     }
+
+
+class TestReviewSlicePersistenceRegressions:
+    @pytest.mark.parametrize("extension", ["stl", "step"])
+    async def test_arrange_all_non_3mf_uses_normal_slice_path(self, db_session, slice_test_setup, extension):
+        calls = []
+        artifact = _make_sliced_3mf("X1C")
+
+        def sidecar(request):
+            calls.append(request.read())
+            return httpx.Response(200, content=artifact)
+
+        _install_mock_sidecar(sidecar)
+        result, embedded = await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid Cube\nendsolid\n",
+            model_filename=f"Cube.{extension}",
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+                arrange=True,
+                plate=0,
+                export_3mf=True,
+            ),
+            current_user_id=None,
+        )
+        assert result.content == artifact
+        assert not embedded
+        assert len(calls) == 1
+        assert b'name="arrange"\r\n\r\ntrue' in calls[0]
+        assert b'name="plate"\r\n\r\n0' in calls[0]
+
+    @pytest.mark.parametrize("stem", ["a" * 235, "å" * 117 + "a"])
+    async def test_long_klipper_archive_uses_bounded_storage_identity(
+        self, db_session, slice_test_setup, monkeypatch, stem
+    ):
+        archive_root = slice_test_setup["tmp_path"] / "archives"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        gcode = b"; filament_type = PLA\nG28\n"
+        _install_mock_sidecar(lambda _: httpx.Response(200, content=gcode, headers={"x-print-time-seconds": "582"}))
+        source = _bambu_source_archive(slice_test_setup["tmp_path"], print_name="Readable model")
+        result = await slice_and_persist_as_archive(
+            db_session,
+            model_bytes=b"solid Cube\nendsolid\n",
+            model_filename=f"{stem}.stl",
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+                destination_artifact_kind="klipper_gcode",
+            ),
+            source_archive=source,
+            current_user_id=None,
+        )
+        archive = await db_session.get(PrintArchive, result.archive_id)
+        assert archive.filename == f"{stem}_PLA_9m42s.gcode"
+        assert archive.print_name == "Readable model (re-sliced)"
+        path = app_settings.base_dir / archive.file_path
+        assert path.read_bytes() == gcode
+        assert len(path.parent.name.encode("utf-8")) == 55
+        assert all(len(part.encode("utf-8")) <= 255 for part in path.relative_to(archive_root).parts)
+
+    @pytest.mark.parametrize("destination", ["library", "archive"])
+    async def test_material_filename_limit_is_actionable_and_writes_no_output(
+        self, db_session, slice_test_setup, monkeypatch, destination
+    ):
+        from fastapi import HTTPException
+
+        archive_root = slice_test_setup["tmp_path"] / "archives"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        gcode = b"; filament_type = " + b"A" * 255 + b"\nG28\n"
+        _install_mock_sidecar(lambda _: httpx.Response(200, content=gcode))
+        request = SliceRequest(
+            printer_preset_id=slice_test_setup["printer_id"],
+            process_preset_id=slice_test_setup["process_id"],
+            filament_preset_id=slice_test_setup["filament_id"],
+            destination_artifact_kind="klipper_gcode",
+        )
+        with pytest.raises(HTTPException) as error:
+            if destination == "library":
+                await slice_and_persist(
+                    db_session,
+                    model_bytes=b"solid Cube\n",
+                    model_filename="Cube.stl",
+                    request=request,
+                    current_user_id=None,
+                    folder_id=None,
+                    extra_metadata=None,
+                )
+            else:
+                await slice_and_persist_as_archive(
+                    db_session,
+                    model_bytes=b"solid Cube\n",
+                    model_filename="Cube.stl",
+                    request=request,
+                    current_user_id=None,
+                    source_archive=_bambu_source_archive(slice_test_setup["tmp_path"]),
+                )
+        assert error.value.status_code == 400
+        assert error.value.detail == "Slicer filament metadata exceeds the filename limit"
+        assert not list(archive_root.rglob("*.gcode"))
+        assert not (await db_session.scalars(select(PrintArchive))).all()
+        files = (await db_session.scalars(select(LibraryFile))).all()
+        assert [file.id for file in files] == [slice_test_setup["src_file_id"]]

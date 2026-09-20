@@ -68,3 +68,26 @@ def test_material_metadata_cannot_add_paths_or_controls():
 def test_source_filename_validation_is_not_weakened():
     with pytest.raises(InvalidFilenameError):
         orca_gcode_filename("Part\x00.stl", b"; filament_type = PLA\n", 60)
+
+
+@pytest.mark.parametrize("stem", ["a" * 251, "å" * 125 + "a"])
+@pytest.mark.parametrize("gcode,suffix", [(b"; filament_type = PLA\nG28\n", "_PLA_9m42s.gcode"), (b"G28\n", ".gcode")])
+def test_maximum_source_basename_is_truncated_before_output_validation(stem, gcode, suffix):
+    source = f"{stem}.stl"
+    assert len(source.encode("utf-8")) == 255
+    result = orca_gcode_filename(source, gcode, 582)
+    assert result.endswith(suffix)
+    assert len(result.encode("utf-8")) <= 255
+    assert stem.startswith(result[: -len(suffix)])
+    validate_moonraker_gcode_basename(result)
+
+
+@pytest.mark.parametrize("source,material", [("Part.stl", "A" * 255), ("å.stl", "A" * 242)])
+def test_filename_budget_errors_use_filename_exception(source, material):
+    with pytest.raises(InvalidFilenameError, match="filename limit"):
+        orca_gcode_filename(source, f"; filament_type = {material}\nG28\n".encode(), 60)
+
+
+def test_truncation_does_not_hide_invalid_source_characters():
+    with pytest.raises(InvalidFilenameError):
+        orca_gcode_filename("a" * 240 + "?bad.stl", b"; filament_type = PLA\n", 582)
