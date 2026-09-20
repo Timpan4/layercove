@@ -4093,6 +4093,13 @@ async def slice_and_persist(
     )
 
 
+def _resliced_print_name(name: str) -> str:
+    """Reserve the suffix inside the archive column's character limit."""
+    suffix = " (re-sliced)"
+    limit = PrintArchive.__table__.c.print_name.type.length
+    return name[: limit - len(suffix)] + suffix
+
+
 async def slice_and_persist_as_archive(
     db: AsyncSession,
     *,
@@ -4169,7 +4176,7 @@ async def slice_and_persist_as_archive(
             file_size=len(result.content),
             content_hash=hashlib.sha256(result.content).hexdigest(),
             thumbnail_path=None,
-            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_name=_resliced_print_name(source_archive.print_name or base_name),
             print_time_seconds=result.print_time_seconds,
             filament_used_grams=result.filament_used_g or None,
             filament_type=source_archive.filament_type,
@@ -4330,7 +4337,7 @@ async def slice_and_persist_as_archive(
             thumbnail_path=thumbnail_path,
             # Inherit identity from the source archive so the new entry shows
             # up alongside its sibling in the archives list.
-            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_name=_resliced_print_name(source_archive.print_name or base_name),
             print_time_seconds=result.print_time_seconds,
             filament_used_grams=filament_g or None,
             filament_type=new_filament_type,
