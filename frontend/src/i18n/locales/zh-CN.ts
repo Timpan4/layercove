@@ -1047,6 +1047,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "正在准备传输文件…",
+    uploadingBytes: "正在上传 {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "正在上传 {{transferred}} / {{total}} ({{percent}}%)",
     untitled: '打印任务',
     startingPrints: '正在开始打印',
     progressSummary: '{{complete}}/{{total}} 已完成 • 处理中: {{processing}}',
@@ -1116,6 +1119,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "打印任务传输",
+    dispatch: {
+      progressLabel: "打印任务传输进度",
+      preparing: "正在准备传输",
+      uploading: "正在上传到打印机",
+      awaitingPrinter: "等待打印机确认",
+      uploadProgress: "上传进度",
+      elapsed: "{{seconds}}秒",
+      uploadSummary: "已发送 {{transferred}} / {{total}} ({{percent}}%)",
+      waitingForUpload: "文件已发送，正在等待上传响应。",
+      waitingForStart: "上传已接受，但打印开始尚未确认。",
+    },
     filamentShort: {
       rowBadge: '所分配料盘的耀丝不足',
       rowTooltip: '调度程序已标记该项。点击播放查看各插槽的赤字并决定是否仍要打印。',

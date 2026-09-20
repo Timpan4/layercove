@@ -1047,6 +1047,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "Preparando arquivo para transferência…",
+    uploadingBytes: "Enviando {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Enviando {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Trabalho de impressão',
     startingPrints: 'Iniciando impressões',
     progressSummary: '{{complete}}/{{total}} concluídas • Processando: {{processing}}',
@@ -1116,6 +1119,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "Envio de impressão",
+    dispatch: {
+      progressLabel: "Progresso do envio de impressão",
+      preparing: "Preparando transferência",
+      uploading: "Enviando para a impressora",
+      awaitingPrinter: "Aguardando confirmação da impressora",
+      uploadProgress: "Progresso do envio",
+      elapsed: "{{seconds}} s",
+      uploadSummary: "{{transferred}} de {{total}} ({{percent}}%)",
+      waitingForUpload: "Arquivo enviado; aguardando a resposta do envio.",
+      waitingForStart: "Envio aceito. O início da impressão ainda não foi confirmado.",
+    },
     filamentShort: {
       rowBadge: 'Filamento insuficiente para a bobina atribuida',
       rowTooltip: 'O escalonador sinalizou este item. Clique em Play para ver o deficit por slot e decidir se quer imprimir mesmo assim.',

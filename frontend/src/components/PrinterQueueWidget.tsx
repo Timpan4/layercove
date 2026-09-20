@@ -61,7 +61,7 @@ export function PrinterQueueWidget({ printerId, printerModel, loadedFilamentType
         <div className="flex items-center gap-3 min-w-0 flex-1">
           <Calendar className="w-5 h-5 text-yellow-600 dark:text-yellow-400 flex-shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="text-xs text-bambu-gray">{nextItem?.dispatch_progress ? 'Print dispatch' : t('queue.nextInQueue')}</p>
+            <p className="text-xs text-bambu-gray">{nextItem?.dispatch_progress ? t('queue.printDispatch') : t('queue.nextInQueue')}</p>
             <p className="text-sm text-white truncate">
               {nextItem?.archive_name || nextItem?.library_file_name || `File #${nextItem?.archive_id || nextItem?.library_file_id}`}
             </p>

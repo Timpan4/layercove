@@ -1002,6 +1002,9 @@ export default {
     }
   },
   dispatchToast: {
+    preparingFile: "전송할 파일 준비 중…",
+    uploadingBytes: "업로드 중 {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "업로드 중 {{transferred}} / {{total}} ({{percent}}%)",
     untitled: '인쇄 작업',
     startingPrints: '인쇄 시작 중',
     progressSummary: '{{complete}}/{{total}} 완료 • 처리 중: {{processing}}',
@@ -1069,6 +1072,18 @@ export default {
   },
 
   queue: {
+    printDispatch: "인쇄 작업 전송",
+    dispatch: {
+      progressLabel: "인쇄 작업 전송 진행 상황",
+      preparing: "전송 준비 중",
+      uploading: "프린터에 업로드 중",
+      awaitingPrinter: "프린터 확인 대기 중",
+      uploadProgress: "업로드 진행 상황",
+      elapsed: "{{seconds}}초",
+      uploadSummary: "{{total}} 중 {{transferred}} ({{percent}}%)",
+      waitingForUpload: "파일 전송 완료. 업로드 응답을 기다리는 중입니다.",
+      waitingForStart: "업로드가 수락되었습니다. 인쇄 시작은 아직 확인되지 않았습니다.",
+    },
     title: '인쇄 대기열',
     subtitle: '인쇄 작업을 예약하고 관리하세요',
     editQueueItem: '대기열 항목 편집',
