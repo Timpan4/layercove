@@ -1,0 +1,257 @@
+diff --git a/frontend/src/__tests__/components/ModelViewer.test.tsx b/frontend/src/__tests__/components/ModelViewer.test.tsx
+index 0a7095d97b84f268d65803d2bc7f86969388bae5..ad2bc30d7be017e9e4ba5911d07ac052ce5bea4d 100644
+--- a/frontend/src/__tests__/components/ModelViewer.test.tsx
++++ b/frontend/src/__tests__/components/ModelViewer.test.tsx
+@@ -5,2 +5,3 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+ import { ModelViewer } from '../../components/ModelViewer';
++import { slicerBedFromProfile } from '../../utils/slicerBed';
+ 
+@@ -120,2 +121,17 @@ describe('ModelViewer lifecycle', () => {
+ 
++  it('places the actual mesh at the center of a serialized cloud bed', async () => {
++    const volume = slicerBedFromProfile({
++      printable_area: '0x0,300x0,300x300,0x300', printable_height: '300',
++    });
++    expect(volume).not.toBeNull();
++    render(<ModelViewer url="/cube.stl" fileType="stl" buildVolume={volume!} centerOnBed />);
++    await finishFetch(0);
++    const group = renderedScene.current!.children.find((object) => object.type === 'Group')!;
++    const bounds = new Box3().setFromObject(group);
++    const center = bounds.getCenter(new Vector3());
++    expect(center.x).toBeCloseTo(150);
++    expect(center.z).toBeCloseTo(150);
++    expect(bounds.min.y).toBeCloseTo(0);
++  });
++
+   it('loads once for unchanged inputs and reloads once for semantic changes', async () => {
+diff --git a/frontend/src/__tests__/components/SlicerBedWorkbench.test.tsx b/frontend/src/__tests__/components/SlicerBedWorkbench.test.tsx
+new file mode 100644
+index 0000000000000000000000000000000000000000..c338cee402523a8cb4b691cb0f4881a6d85f0b32
+--- /dev/null
++++ b/frontend/src/__tests__/components/SlicerBedWorkbench.test.tsx
+@@ -0,0 +1,131 @@
++import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
++import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
++import { MemoryRouter } from 'react-router-dom';
++import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
++import { api } from '../../api/client';
++import { SlicerWorkbenchPage } from '../../pages/SlicerWorkbenchPage';
++import type { SlicerBed } from '../../utils/slicerBed';
++
++// Only the canvas renderers and external API calls are replaced. The page,
++// selector, revision query, geometry parser and state messages are production.
++vi.mock('../../components/ModelViewer', () => ({
++  ModelViewer: ({ buildVolume }: { buildVolume: SlicerBed }) => <output data-testid="model-bed">{JSON.stringify(buildVolume)}</output>,
++}));
++vi.mock('../../components/GcodeViewer', () => ({
++  GcodeViewer: ({ buildVolume }: { buildVolume: SlicerBed }) => <output data-testid="gcode-bed">{JSON.stringify(buildVolume)}</output>,
++}));
++vi.mock('../../contexts/SliceJobTrackerContext', () => ({
++  useSliceJobTracker: () => ({ trackJob: vi.fn(), jobStates: { 9: {
++    status: 'completed', result: { library_file_id: 77 }, request_fingerprint: 'previous',
++  } } }),
++}));
++
++const bed = { x: 300, y: 300, z: 300, origin: [0, 0] };
++const revision = {
++  id: 101, profile_id: 1, review_state: 'approved', content_hash: 'machine',
++  content: { printable_area: '0x0,300x0,300x300,0x300', printable_height: '300' },
++};
++const profile = (id: number, type: 'printer' | 'process' | 'filament') => ({
++  profile_id: id, revision_id: 100 + id, source: 'orca_cloud' as const, remote_profile_id: `profile-${id}`,
++  profile_type: type, display_name: `Cloud ${type}`, content_hash: 'content', account_id: 1,
++  sharing_state: 'shared', tombstoned: false, stale: false, compatibility_metadata: {}, account_name: null,
++});
++const binding = {
++  id: 5, profile_id: 1, printer_id: 1, printer_name: 'Physical device', profile_name: 'Cloud machine',
++  expected_nozzle_diameter: 0.4, tool_index: 0, default_process_profile_id: 2, default_filament_profile_id: 3,
++  enforcement_state: 'shadow', is_active: true, confirmed_at: null,
++  readiness: { state: 'ready', reason_codes: [] }, nozzle: { status: 'confirmed', diameter: 0.4, tool_index: 0 },
++};
++
++beforeEach(() => {
++  const contract = {
++    contract_version: '1', engine: { name: 'OrcaSlicer', version: '2.4.2', commit: 'pinned' },
++    image_identity: { digest: `sha256:${'b'.repeat(64)}` }, schema_hash: 'a'.repeat(64),
++    capabilities: { process_schema: true, model_state: false, progress: true, cancel: false }, supported_scopes: ['global'],
++  };
++  vi.spyOn(api, 'getSlicerCapabilities').mockResolvedValue(contract);
++  vi.spyOn(api, 'getSlicerProcessSchema').mockResolvedValue({ ...contract, pages: [], options: [], scopes: {}, samples: {} });
++  vi.spyOn(api, 'getLibraryFile').mockResolvedValue({ id: 42, filename: 'cube.stl' } as Awaited<ReturnType<typeof api.getLibraryFile>>);
++  vi.spyOn(api, 'getLibraryFilePlates').mockResolvedValue({
++    file_id: 42, filename: 'cube.stl', is_multi_plate: false, plates: [{ index: 1, objects: [], object_ids: [], filaments: [] }],
++  } as unknown as Awaited<ReturnType<typeof api.getLibraryFilePlates>>);
++  vi.spyOn(api, 'getPrinters').mockResolvedValue([{ id: 1, name: 'Physical device', provider: 'moonraker', is_active: true }] as Awaited<ReturnType<typeof api.getPrinters>>);
++  vi.spyOn(api, 'listSlicerCatalogProfiles').mockResolvedValue([profile(1, 'printer'), profile(2, 'process'), profile(3, 'filament')] as Awaited<ReturnType<typeof api.listSlicerCatalogProfiles>>);
++  vi.spyOn(api, 'listSlicerCatalogBindings').mockResolvedValue([binding] as Awaited<ReturnType<typeof api.listSlicerCatalogBindings>>);
++  vi.spyOn(api, 'getSlicerCatalogGroups').mockResolvedValue({
++    selected_printer: ['process', 'filament'].map((type, index) => ({
++      ...profile(index + 2, type as 'process' | 'filament'),
++      classification: { group: 'selected_printer', compatibility: 'match', readiness: 'ready', reason_codes: [], reason_details: [], selectable: true, auto_selectable: true, acknowledgement_required: false },
++    })), other_installed_printers: [], unclassified: [], incompatible: [],
++  } as Awaited<ReturnType<typeof api.getSlicerCatalogGroups>>);
++  vi.spyOn(api, 'getSlicerCatalogRevision').mockResolvedValue(revision);
++  vi.spyOn(api, 'getResolvedSlicerProfile').mockResolvedValue({ preset_type: 'process', source: 'orca_cloud', id: 'profile-2', values: {} });
++  vi.spyOn(api, 'listSlicerCatalogPreferences').mockResolvedValue([]);
++  vi.spyOn(api, 'listSlicerFilamentRules').mockResolvedValue([]);
++  vi.spyOn(api, 'getAssignments').mockResolvedValue([]);
++  vi.spyOn(api, 'getSpoolmanSlotAssignments').mockResolvedValue([]);
++});
++
++afterEach(() => vi.restoreAllMocks());
++
++async function selectMachine() {
++  render(<MemoryRouter initialEntries={['/slicer?library_file=42&job=9']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
++  fireEvent.change(await screen.findByRole('combobox', { name: 'Physical printer' }), { target: { value: '1' } });
++  await screen.findByRole('option', { name: /Cloud machine/ });
++  fireEvent.change(screen.getByRole('combobox', { name: 'Exact slicer binding' }), { target: { value: '5' } });
++}
++
++describe('bed geometry in the actual workbench', () => {
++  it('renders Prepare and Preview for a Ready cloud profile with serialized coordinates', async () => {
++    await selectMachine();
++    expect(await screen.findByTestId('model-bed')).toHaveTextContent(JSON.stringify(bed));
++    expect(screen.getByText(/Readiness: ready/)).toBeInTheDocument();
++    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
++    expect(await screen.findByTestId('gcode-bed')).toHaveTextContent(JSON.stringify(bed));
++    expect(screen.queryByText(/Select a printer profile with bed geometry/)).not.toBeInTheDocument();
++  });
++
++  it('reports a failed revision request, then recovers without reselecting the printer', async () => {
++    vi.mocked(api.getSlicerCatalogRevision).mockRejectedValueOnce(new Error('Service unavailable'));
++    await selectMachine();
++    expect(await screen.findByRole('alert')).toHaveTextContent('Could not load the bed for Cloud machine.');
++    expect(screen.getByRole('alert')).toHaveTextContent('Profile revision 101');
++    expect(screen.queryByTestId('model-bed')).not.toBeInTheDocument();
++    fireEvent.click(screen.getByRole('button', { name: 'Retry loading bed' }));
++    expect(await screen.findByTestId('model-bed')).toHaveTextContent(JSON.stringify(bed));
++    expect(api.getSlicerCatalogRevision).toHaveBeenCalledTimes(2);
++    expect(screen.getByRole('combobox', { name: 'Exact slicer binding' })).toHaveValue('5');
++  });
++
++  it('identifies an invalid field instead of claiming that no printer is selected', async () => {
++    vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({ ...revision, content: { printable_area: 'broken', printable_height: '300' } });
++    await selectMachine();
++    expect(await screen.findByRole('alert')).toHaveTextContent('Bed geometry is unavailable for Cloud machine.');
++    expect(screen.getByRole('alert')).toHaveTextContent('invalid printable_area or bed_shape coordinates');
++    expect(screen.queryByTestId('model-bed')).not.toBeInTheDocument();
++    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
++    expect(screen.getByRole('alert')).toHaveTextContent('invalid printable_area');
++    expect(screen.queryByText('Slice plate to generate preview.')).not.toBeInTheDocument();
++  });
++
++  it('reports a missing height without falling back to a guessed volume', async () => {
++    vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({
++      ...revision, content: { printable_area: revision.content.printable_area },
++    });
++    await selectMachine();
++    expect(await screen.findByRole('alert')).toHaveTextContent('no printable_height or max_print_height');
++    expect(screen.getByRole('alert')).toHaveTextContent('Profile revision 101');
++    expect(screen.queryByTestId('model-bed')).not.toBeInTheDocument();
++  });
++
++  it('shows loading while the selected revision is pending', async () => {
++    let finish!: (value: typeof revision) => void;
++    vi.mocked(api.getSlicerCatalogRevision).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
++    await selectMachine();
++    await waitFor(() => expect(api.getSlicerCatalogRevision).toHaveBeenCalledWith(101));
++    expect(screen.getByText('Loading selected bed…')).toBeInTheDocument();
++    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
++    await act(async () => finish(revision));
++    expect(await screen.findByTestId('model-bed')).toHaveTextContent(JSON.stringify(bed));
++  });
++});
+diff --git a/frontend/src/__tests__/hooks/useSlicerWorkbench.test.tsx b/frontend/src/__tests__/hooks/useSlicerWorkbench.test.tsx
+index 71004d90304bf76259e34b91fb179abfd27118fe..070de9e25519ecc571864672e8821e6b9d84c259 100644
+--- a/frontend/src/__tests__/hooks/useSlicerWorkbench.test.tsx
++++ b/frontend/src/__tests__/hooks/useSlicerWorkbench.test.tsx
+@@ -278 +278,48 @@ it('preserves a deliberate arrange-off setting when unchanged plate metadata ref
+ });
++
++
++describe('cloud revision geometry regression', () => {
++  it.each(['orca_cloud', 'cloud', 'local', 'standard'] as const)('uses serialized geometry from the exact %s revision while Ready', async (source) => {
++    vi.mocked(api.listSlicerCatalogProfiles).mockResolvedValue([
++      { ...profile(1, 'printer'), source }, profile(10, 'process'), profile(20, 'filament', 'PLA'),
++    ] as Awaited<ReturnType<typeof api.listSlicerCatalogProfiles>>);
++    vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({
++      id: 1, profile_id: 1, review_state: 'approved', content_hash: 'serialized',
++      content: { printable_area: '0x0,300x0,300x300,0x300', printable_height: '300' },
++    });
++    const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper() });
++    await chooseTarget(result);
++    await waitFor(() => expect(result.current.printerProfileQuery.isSuccess).toBe(true));
++    expect(result.current.catalogSelection.selectionReadiness.state).toBe('ready');
++    expect(result.current.buildVolume).toEqual({ x: 300, y: 300, z: 300, origin: [0, 0] });
++    expect(api.getSlicerCatalogRevision).toHaveBeenCalledWith(1);
++  });
++});
++
++it('does not reuse the previous bed while a new exact revision loads, even if the old request finishes late', async () => {
++  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
++  type Revision = Awaited<ReturnType<typeof api.getSlicerCatalogRevision>>;
++  let finishOld!: (value: Revision) => void;
++  let finishNew!: (value: Revision) => void;
++  vi.mocked(api.getSlicerCatalogRevision).mockImplementation((id) => new Promise((resolve) => {
++    if (id === 1) finishOld = resolve;
++    else if (id === 2) finishNew = resolve;
++  }));
++  const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper(client) });
++  await chooseTarget(result);
++  await waitFor(() => expect(api.getSlicerCatalogRevision).toHaveBeenCalledWith(1));
++  act(() => client.setQueryData(['slicerCatalogProfiles'], [
++    { ...profile(1, 'printer'), revision_id: 2 }, profile(10, 'process'), profile(20, 'filament', 'PLA'),
++  ]));
++  await waitFor(() => expect(api.getSlicerCatalogRevision).toHaveBeenCalledWith(2));
++  expect(result.current.buildVolume).toBeNull();
++  await act(async () => finishNew({ id: 2, profile_id: 1, review_state: 'approved', content_hash: 'new',
++    content: { printable_area: '-20x-10,330x-10,330x340,-20x340', printable_height: '400' },
++  }));
++  await waitFor(() => expect(result.current.buildVolume).toEqual({ x: 350, y: 350, z: 400, origin: [-20, -10] }));
++  await act(async () => finishOld({ id: 1, profile_id: 1, review_state: 'approved', content_hash: 'old',
++    content: { printable_area: '0x0,256x0,256x256,0x256', printable_height: '256' },
++  }));
++  expect(result.current.buildVolume).toEqual({ x: 350, y: 350, z: 400, origin: [-20, -10] });
++  expect(result.current.printerProfileQuery.data?.id).toBe(2);
++});
+diff --git a/frontend/src/__tests__/utils/slicerBed.test.ts b/frontend/src/__tests__/utils/slicerBed.test.ts
+index c4e96bf2997dea8be0057d4589a5a6497ccd7ddd..cd7db0577146662d93e39e6e9a85f27efd1ec091 100644
+--- a/frontend/src/__tests__/utils/slicerBed.test.ts
++++ b/frontend/src/__tests__/utils/slicerBed.test.ts
+@@ -16 +16,36 @@ describe('selected machine bed geometry', () => {
+ });
++
++
++describe('serialized cloud bed geometry', () => {
++  const area = ['-50x-20', '250x-20', '250x280', '-50x280'];
++  it.each([
++    area.join(','),
++    JSON.stringify(area),
++    [area.join(',')],
++  ].map((printable_area) => ({ printable_area })))('reads the same bed from cloud-serialized coordinates: %j', ({ printable_area }) => {
++    expect(slicerBedFromProfile({ printable_area, printable_height: '300' }))
++      .toEqual({ x: 300, y: 300, z: 300, origin: [-50, -20] });
++  });
++  it('supports serialized Prusa-style aliases without guessing dimensions', () => {
++    expect(slicerBedFromProfile({ bed_shape: '0x0,220x0,220x250,0x250', max_print_height: 270 }))
++      .toEqual({ x: 220, y: 250, z: 270, origin: [0, 0] });
++  });
++  it.each([true, ['300', '400'], '0x100', [], null].map((printable_height) => ({ printable_height })))('rejects malformed heights instead of coercing %j', ({ printable_height }) => {
++    expect(slicerBedFromProfile({ printable_area: area, printable_height })).toBeNull();
++  });
++  it.each([
++    '0x0,300x0,300xNaN,0x300',
++    '0x0,,300x300,0x300',
++    '0x0,300x0,300x300,0x300,',
++    '["0x0",true,"300x300"]',
++    '0x0,1x1,2x2',
++    '0x0,30001x0,30001x300,0x300',
++    '0x0,'.repeat(513),
++    ' '.repeat(32769),
++  ])('does not accept malformed or unbounded serialized coordinates', (printable_area) => {
++    expect(slicerBedFromProfile({ printable_area, printable_height: 300 })).toBeNull();
++  });
++  it('does not fall back to an alias to hide invalid explicit geometry', () => {
++    expect(slicerBedFromProfile({ printable_area: 'bad', bed_shape: area, printable_height: '300' })).toBeNull();
++  });
++});
