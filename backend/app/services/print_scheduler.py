@@ -48,7 +48,7 @@ from backend.app.services.printer_manager import (
 )
 from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider
 from backend.app.services.smart_plug_manager import smart_plug_manager
-from backend.app.utils.filename import derive_remote_filename
+from backend.app.utils.filename import derive_moonraker_upload_filename, derive_remote_filename
 from backend.app.utils.printer_models import normalize_printer_model
 
 logger = logging.getLogger(__name__)
@@ -2627,7 +2627,7 @@ class PrintScheduler:
         correlation_id = str(uuid4())
         from backend.app.services.moonraker_artifact import ArtifactValidationError, moonraker_gcode_source
 
-        upload_name = f"queued-{correlation_id}.gcode"
+        upload_name = derive_moonraker_upload_filename(filename, correlation_id, item.plate_id)
         await self._dispatch_stage(item, printer, filename, "preparing")
         try:
             async with moonraker_gcode_source(file_path, item.plate_id) as source:
