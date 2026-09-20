@@ -2752,3 +2752,31 @@ class TestReviewSlicePersistenceRegressions:
         assert not (await db_session.scalars(select(PrintArchive))).all()
         files = (await db_session.scalars(select(LibraryFile))).all()
         assert [file.id for file in files] == [slice_test_setup["src_file_id"]]
+
+
+@pytest.mark.parametrize("source_name", [None, "a" * 255, "å" * 255])
+async def test_resliced_display_name_respects_archive_column_limit(
+    db_session, slice_test_setup, monkeypatch, source_name
+):
+    monkeypatch.setattr(app_settings, "archive_dir", slice_test_setup["tmp_path"] / "archives")
+    gcode = b"; filament_type = PLA\nG28\n"
+    _install_mock_sidecar(lambda _: httpx.Response(200, content=gcode, headers={"x-print-time-seconds": "582"}))
+    result = await slice_and_persist_as_archive(
+        db_session,
+        model_bytes=b"solid Cube\nendsolid\n",
+        model_filename="a" * 251 + ".stl",
+        request=SliceRequest(
+            printer_preset_id=slice_test_setup["printer_id"],
+            process_preset_id=slice_test_setup["process_id"],
+            filament_preset_id=slice_test_setup["filament_id"],
+            destination_artifact_kind="klipper_gcode",
+        ),
+        source_archive=_bambu_source_archive(slice_test_setup["tmp_path"], print_name=source_name),
+        current_user_id=None,
+    )
+    archive = await db_session.get(PrintArchive, result.archive_id)
+    name_limit = PrintArchive.__table__.c.print_name.type.length
+    suffix = " (re-sliced)"
+    assert len(archive.print_name) <= name_limit
+    assert archive.print_name == (source_name or archive.filename[:-6])[: name_limit - len(suffix)] + suffix
+    assert (app_settings.base_dir / archive.file_path).read_bytes() == gcode
