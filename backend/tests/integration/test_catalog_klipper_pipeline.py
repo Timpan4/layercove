@@ -285,6 +285,7 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
         remote_name, content = fake_moonraker.uploads[0]
         assert content == raw_gcode
         assert remote_name.endswith(".gcode")
+        assert remote_name.startswith(f"{Path(artifact.filename).stem}-")
         assert fake_moonraker.commands == [("start", f"queue/{remote_name}")]
         queued_row = await db_session.get(PrintQueueItem, item_id)
         assert queued_row.provider_correlation_id

@@ -342,8 +342,9 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
                 correlation_id = queued.provider_correlation_id
                 assert queued.status == "printing"
                 assert queued.start_reconcile_after is None
-                assert remote_path and remote_path.startswith("queue/queued-")
                 assert correlation_id
+                assert remote_path == f"queue/cube-plate-2-{correlation_id.replace('-', '')}.gcode"
+                assert (await db.get(PrintArchive, ids.archive)).filename == source.name
 
             assert fake_moonraker.uploads[0][1] == b"G28\n"
             assert fake_moonraker.commands == [("start", remote_path)]
