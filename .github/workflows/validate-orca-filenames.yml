@@ -1,0 +1,53 @@
+name: Validate Orca filenames
+on:
+  push:
+    branches: [validation/pr117-orca-filenames]
+    paths: [.github/workflows/validate-orca-filenames.yml]
+permissions:
+  contents: write
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: validation/pr117-orca-filenames
+      - name: Apply checked patch
+        run: |
+          python - <<'PY'
+          import base64, hashlib, zlib
+          from pathlib import Path
+          patch = zlib.decompress(base64.b64decode(Path('.tmp/orca-filenames.patch.zlib.b64').read_bytes()))
+          assert hashlib.sha256(patch).hexdigest() == '921d5058f4c2ed880343b7a9042b7f14e3e4a408aa3c9d366221fa6a0e463fd5'
+          Path('/tmp/orca-filenames.patch').write_bytes(patch)
+          PY
+          git branch --show-current
+          git apply --check /tmp/orca-filenames.patch
+          git branch --show-current
+          git apply /tmp/orca-filenames.patch
+          git diff --check
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - uses: astral-sh/setup-uv@v7
+      - name: Repository lint and focused production-path tests
+        run: |
+          uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt ruff check backend/
+          uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt ruff format --check backend/
+          uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt pytest backend/tests/unit/test_slicer_output.py backend/tests/unit/test_moonraker_upload_filename.py backend/tests/unit/test_moonraker_http.py backend/tests/unit/test_scheduler_provider_dispatch.py backend/tests/integration/test_fake_moonraker.py backend/tests/integration/test_catalog_klipper_pipeline.py backend/tests/integration/test_library_slice_api.py -q --tb=short --timeout=60 --timeout-method=thread
+      - name: Commit validated application changes without staging helpers
+        run: |
+          rm .tmp/orca-filenames.patch.zlib.b64 .github/workflows/validate-orca-filenames.yml
+          git branch --show-current
+          git add backend .tmp/orca-filenames.patch.zlib.b64 .github/workflows/validate-orca-filenames.yml
+          git branch --show-current
+          git -c user.name='Timpan4' -c user.email='70634109+Timpan4@users.noreply.github.com' commit -m 'fix: preserve Orca export names through Moonraker dispatch'
+          git branch --show-current
+          git push origin HEAD:validation/pr117-orca-filenames
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: staged-patch-diagnostic
+          path: .tmp/orca-filenames.patch.zlib.b64
+          retention-days: 1
