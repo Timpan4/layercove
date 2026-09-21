@@ -1,0 +1,30 @@
+name: PR118 rebase workspace
+on:
+  push:
+    branches: [validation/pr118-rebase-505dc43]
+    paths: [.github/workflows/pr118-rebase-workspace.yml]
+permissions:
+  contents: read
+jobs:
+  source:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          ref: 505dc43c2b0572de168a0948474bf8afbd6736b4
+          persist-credentials: false
+      - name: Export exact source and proposed changes
+        run: |
+          set -euo pipefail
+          git branch --show-current
+          git fetch --depth=2 origin cfbcae27a446ebbed3614f28a2ab45220a3b620e
+          mkdir /tmp/pr118-source
+          git archive --format=tar.gz HEAD > /tmp/pr118-source/main.tar.gz
+          git diff --binary --full-index 40e000a7151e70c289c0e2a78e45839eab012314 cfbcae27a446ebbed3614f28a2ab45220a3b620e > /tmp/pr118-source/pr118.patch
+          git diff --name-only 40e000a7151e70c289c0e2a78e45839eab012314 HEAD > /tmp/pr118-source/main-changed-files.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: pr118-rebase-source
+          path: /tmp/pr118-source/
+          retention-days: 1
