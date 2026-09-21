@@ -637,6 +637,8 @@ function FolderTreeItem({ folder, selectedFolderId, onSelect, onDelete, onLink, 
         <div className={`flex-shrink-0 flex items-center gap-0.5 transition-opacity ${wrapNames ? '' : 'opacity-0 group-hover:opacity-100'}`} onClick={(e) => e.stopPropagation()}>
           <div className="relative">
             <button
+              aria-label={`${t('common.actions')}: ${folder.name}`}
+              aria-expanded={showActions}
               onClick={() => setShowActions(!showActions)}
               className="p-1 rounded hover:bg-bambu-dark-tertiary"
             >
@@ -834,6 +836,8 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
       {/* Actions - always visible on mobile, hover on desktop */}
       <div className={`absolute bottom-2 right-2 transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} onClick={(e) => e.stopPropagation()}>
         <button
+          aria-label={`${t('common.actions')}: ${file.print_name || file.filename}`}
+          aria-expanded={showActions}
           onClick={() => setShowActions(!showActions)}
           className="p-1.5 rounded bg-bambu-dark-secondary/90 hover:bg-bambu-dark-tertiary"
         >

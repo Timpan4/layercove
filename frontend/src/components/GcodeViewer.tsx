@@ -6,6 +6,7 @@ import { getAuthToken } from '../api/client';
 interface GcodeViewerProps {
   gcodeUrl: string;
   buildVolume?: { x: number; y: number; z: number; origin?: [number, number] };
+  showBuildPlate?: boolean;
   filamentColors?: string[];
   className?: string;
 }
@@ -13,6 +14,7 @@ interface GcodeViewerProps {
 export function GcodeViewer({
   gcodeUrl,
   buildVolume = { x: 256, y: 256, z: 256 },
+  showBuildPlate = true,
   filamentColors,
   className = ''
 }: GcodeViewerProps) {
@@ -50,7 +52,7 @@ export function GcodeViewer({
     // Create preview
     const preview = new WebGLPreview({
       canvas,
-      buildVolume,
+      ...(showBuildPlate ? { buildVolume } : {}),
       backgroundColor: 0x1a1a1a,
       // Pass full color array - library uses index as tool number
       extrusionColor: hasMultiColor ? filamentColors : primaryColor,
@@ -193,7 +195,7 @@ export function GcodeViewer({
       initRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gcodeUrl, colorsKey, buildVolume.x, buildVolume.y, buildVolume.z, buildVolume.origin?.[0], buildVolume.origin?.[1]]);
+  }, [gcodeUrl, colorsKey, showBuildPlate, buildVolume.x, buildVolume.y, buildVolume.z, buildVolume.origin?.[0], buildVolume.origin?.[1]]);
 
   const handleLayerChange = useCallback((layer: number) => {
     if (!previewRef.current) return;

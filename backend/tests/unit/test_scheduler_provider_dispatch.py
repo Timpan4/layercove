@@ -1,6 +1,5 @@
 import asyncio
 from datetime import datetime, timedelta, timezone
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -92,6 +91,7 @@ async def test_moonraker_upload_claim_start_has_no_bambu_options(moonraker_queue
         patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
         patch.object(scheduler, "_propagate_owner_to_printer_manager", AsyncMock()),
         patch.object(scheduler_module.notification_service, "on_queue_job_started", AsyncMock()),
+        patch.object(scheduler, "_schedule_moonraker_start_reconciliation") as reconcile,
     ):
         async with sessions() as db:
             await scheduler._start_print(db, await db.get(PrintQueueItem, ids.item))
@@ -101,7 +101,7 @@ async def test_moonraker_upload_claim_start_has_no_bambu_options(moonraker_queue
         archive = await db.get(PrintArchive, ids.archive)
         assert item.status == "printing"
         assert item.provider_job_id == "queue/cube.gcode"
-        assert item.start_reconcile_after is None
+        assert item.start_reconcile_after is not None
         assert archive.status == "printing"
     upload_job = backend.upload.await_args.args[0]
     assert isinstance(upload_job, UploadJob)
@@ -111,6 +111,7 @@ async def test_moonraker_upload_claim_start_has_no_bambu_options(moonraker_queue
     assert archive.filename == source.name
     assert upload_job.size == source.stat().st_size
     backend.start.assert_awaited_once_with(MoonrakerStartJob("queue/cube.gcode"))
+    reconcile.assert_called_once()
     backend.bind_queued_job.assert_called_once_with(
         item.provider_correlation_id, "queue/cube.gcode", "queue/cube.gcode"
     )
@@ -730,3 +731,128 @@ async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue, stat
         library_file = await db.get(LibraryFile, library_id)
         assert library_file.print_count == expected_print_count
         assert (library_file.last_printed_at is not None) is (status == "completed")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("state", "connected", "stale", "expected"),
+    [
+        (NormalizedPrinterState.IDLE, True, False, "failed"),
+        (NormalizedPrinterState.COMPLETED, True, False, "completed"),
+        (NormalizedPrinterState.PRINTING, True, False, "printing"),
+        (NormalizedPrinterState.IDLE, False, False, "printing"),
+        (NormalizedPrinterState.IDLE, True, True, "printing"),
+        (NormalizedPrinterState.UNKNOWN, True, False, "printing"),
+    ],
+)
+@pytest.mark.parametrize("awaiting_start", [False, True])
+async def test_reconcile_accepted_job_after_restart(moonraker_queue, state, connected, stale, expected, awaiting_start):
+    sessions, _base_dir, _source, ids = moonraker_queue
+    remote_path = "queue/queued-opaque.gcode"
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        item.status = "printing"
+        item.started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        item.provider_correlation_id = "queue-job"
+        item.provider_job_id = remote_path
+        item.start_reconcile_after = datetime.now(timezone.utc) - timedelta(days=1) if awaiting_start else None
+        await db.commit()
+    backend = SimpleNamespace(
+        snapshot=lambda: PrinterSnapshot(
+            PrinterProvider.MOONRAKER, connected, state, filename=remote_path, telemetry_stale=stale
+        ),
+        current_job_identity=lambda: (None, remote_path),
+        clear_queued_job_binding=MagicMock(),
+    )
+    scheduler = PrintScheduler()
+    with (
+        patch.object(scheduler_module, "async_session", sessions),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
+    ):
+        await scheduler._reconcile_persisted_moonraker_starts()
+        await scheduler._reconcile_persisted_moonraker_starts()
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        assert item.status == expected
+        assert await db.scalar(select(func.count()).select_from(PrintLogEntry)) == (0 if expected == "printing" else 1)
+        if expected == "failed" and not awaiting_start:
+            assert "outcome" in item.error_message.lower()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("busy", "connected", "reason"),
+    [
+        (True, True, "Waiting for the current queued job to finish."),
+        (False, False, "Printer is offline. Waiting for connection."),
+        (False, True, "Waiting for printer readiness. Check printer controls."),
+    ],
+)
+async def test_assigned_queue_exposes_waiting_reason(moonraker_queue, busy, connected, reason):
+    sessions, _base_dir, _source, ids = moonraker_queue
+    scheduler = PrintScheduler()
+    with (
+        patch.object(scheduler, "_is_printer_idle", return_value=False),
+        patch.object(scheduler_module.printer_manager, "is_connected", return_value=connected),
+        patch.object(scheduler, "_get_smart_plugs", AsyncMock(return_value=[])),
+        patch.object(scheduler, "_start_print", AsyncMock()) as start,
+    ):
+        async with sessions() as db:
+            item = await db.get(PrintQueueItem, ids.item)
+            await scheduler._dispatch_pending_item(db, item, {ids.printer} if busy else set(), {}, False, False)
+            assert item.waiting_reason == reason
+            start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_accepted_active_job_without_identity_is_not_failed(moonraker_queue):
+    sessions, _base_dir, _source, ids = moonraker_queue
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        item.status = "printing"
+        item.started_at = datetime.now(timezone.utc) - timedelta(days=1)
+        item.provider_correlation_id = "queue-job"
+        item.provider_job_id = "queued-job.gcode"
+        item.start_reconcile_after = None
+        await db.commit()
+    backend = SimpleNamespace(
+        snapshot=lambda: PrinterSnapshot(PrinterProvider.MOONRAKER, True, NormalizedPrinterState.PRINTING),
+        current_job_identity=lambda: (None, None),
+    )
+    scheduler = PrintScheduler()
+    with (
+        patch.object(scheduler_module, "async_session", sessions),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
+    ):
+        await scheduler._reconcile_persisted_moonraker_starts()
+    async with sessions() as db:
+        assert (await db.get(PrintQueueItem, ids.item)).status == "printing"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_started_notification_requires_telemetry_and_is_sent_once(moonraker_queue):
+    sessions, base_dir, _source, ids = moonraker_queue
+    scheduler = PrintScheduler()
+    backend = _backend()
+    with (
+        patch.object(scheduler_module, "async_session", sessions),
+        patch.object(scheduler_module.settings, "base_dir", base_dir),
+        patch.object(scheduler_module.printer_manager, "is_connected", return_value=True),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
+        patch.object(scheduler, "_propagate_owner_to_printer_manager", AsyncMock()),
+        patch.object(scheduler, "_schedule_moonraker_start_reconciliation"),
+        patch.object(scheduler_module.notification_service, "on_queue_job_started", AsyncMock()) as notify,
+    ):
+        async with sessions() as db:
+            archive = await db.get(PrintArchive, ids.archive)
+            archive.print_time_seconds = 600
+            await db.commit()
+            await scheduler._start_print(db, await db.get(PrintQueueItem, ids.item))
+        notify.assert_not_awaited()
+        observed = {"filename": "queue/cube.gcode", "provider_job_id": "42"}
+        assert await scheduler.bind_provider_observed(ids.printer, observed)
+        assert await scheduler.bind_provider_observed(ids.printer, observed)
+        notify.assert_awaited_once()
+        assert notify.await_args.kwargs["job_name"] == "cube"
+        assert notify.await_args.kwargs["estimated_time"] == 600
+        assert notify.await_args.kwargs["printer_id"] == ids.printer

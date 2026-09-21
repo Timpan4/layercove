@@ -6447,8 +6447,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Camera stream unreachable',
-        cause: 'The live camera could not be reached on port RTSPS 322. The port is blocked, or the camera or LAN liveview is off on the printer.',
-        fix: 'Enable the camera and LAN liveview on the printer, and make sure port 322 is not blocked. This does not affect printing.',
+        cause: 'The live camera could not be reached on port {{cameraEndpoint}}. The port is blocked, or the camera or LAN liveview is off on the printer.',
+        fix: 'Enable the camera and LAN liveview on the printer, and make sure port {{cameraPort}} is not blocked. This does not affect printing.',
       },
       'database-locked': {
         name: 'Database write contention',

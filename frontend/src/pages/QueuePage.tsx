@@ -83,6 +83,10 @@ function formatWeight(g: number, useKg = false): string {
   return `${Math.round(g)}g`;
 }
 
+function isActivePrinterState(state?: string | null): boolean {
+  return ['running', 'printing', 'pause', 'paused'].includes(state?.toLowerCase() ?? '');
+}
+
 function StatusBadge({ status, waitingReason, printerState, t }: { status: PrintQueueItem['status']; waitingReason?: string | null; printerState?: string | null; t: (key: string) => string }) {
   // Special case: pending with waiting_reason shows as "Waiting"
   if (status === 'pending' && waitingReason) {
@@ -95,7 +99,7 @@ function StatusBadge({ status, waitingReason, printerState, t }: { status: Print
   }
 
   // Special case: printing but printer is paused
-  if (status === 'printing' && printerState === 'PAUSE') {
+  if (status === 'printing' && ['pause', 'paused'].includes(printerState?.toLowerCase() ?? '')) {
     return (
       <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border text-yellow-700 dark:text-yellow-400 bg-yellow-50 dark:bg-yellow-400/10 border-yellow-200 dark:border-yellow-400/20">
         <Pause className="w-3.5 h-3.5" />
@@ -106,7 +110,7 @@ function StatusBadge({ status, waitingReason, printerState, t }: { status: Print
 
   const config = {
     pending: { icon: Clock, color: 'text-status-warning bg-status-warning/10 border-status-warning/20', label: t('queue.status.pending') },
-    printing: { icon: Play, color: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-400/10 border-blue-200 dark:border-blue-400/20', label: t('queue.status.printing') },
+    printing: { icon: Play, color: 'text-blue-700 dark:text-blue-400 bg-blue-50 dark:bg-blue-400/10 border-blue-200 dark:border-blue-400/20', label: t(isActivePrinterState(printerState) ? 'queue.status.printing' : 'queue.dispatch.awaitingPrinter') },
     completed: { icon: CheckCircle, color: 'text-status-ok bg-status-ok/10 border-status-ok/20', label: t('queue.status.completed') },
     failed: { icon: XCircle, color: 'text-status-error bg-status-error/10 border-status-error/20', label: t('queue.status.failed') },
     skipped: { icon: SkipForward, color: 'text-orange-700 dark:text-orange-400 bg-orange-50 dark:bg-orange-400/10 border-orange-200 dark:border-orange-400/20', label: t('queue.status.skipped') },
@@ -341,7 +345,7 @@ function SortableQueueItem({
     queryKey: queryKeys.printerStatus(item.printer_id),
     queryFn: () => api.getPrinterStatus(item.printer_id!),
     refetchInterval: 30000,
-    enabled: item.printer_id != null && printerState === 'printing',
+    enabled: item.printer_id != null && item.status === 'printing',
   });
 
   // Determine if we're printing a library file
@@ -600,7 +604,8 @@ function SortableQueueItem({
             // Between dispatch and RUNNING transition (H2D/P1 MQTT lag), status.progress
             // is stale from the previous print — showing 100% then snapping back to 0%
             // once the new print starts. Only trust these fields when state is active.
-            const isActive = status.state === 'RUNNING' || status.state === 'PAUSE';
+            const isActive = isActivePrinterState(status.state);
+            if (!isActive) return null;
             const progress = isActive ? (status.progress || 0) : 0;
             const remaining = isActive ? status.remaining_time : null;
             const layerNum = isActive ? status.layer_num : null;

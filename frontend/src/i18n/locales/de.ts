@@ -6403,8 +6403,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Kamera-Stream nicht erreichbar',
-        cause: 'Die Live-Kamera war auf Port RTSPS 322 nicht erreichbar. Der Port ist blockiert, oder die Kamera bzw. die LAN-Liveansicht ist am Drucker deaktiviert.',
-        fix: 'Aktiviere Kamera und LAN-Liveansicht am Drucker und stelle sicher, dass Port 322 nicht blockiert ist. Das Drucken ist davon nicht betroffen.',
+        cause: 'Die Live-Kamera war auf Port {{cameraEndpoint}} nicht erreichbar. Der Port ist blockiert, oder die Kamera bzw. die LAN-Liveansicht ist am Drucker deaktiviert.',
+        fix: 'Aktiviere Kamera und LAN-Liveansicht am Drucker und stelle sicher, dass Port {{cameraPort}} nicht blockiert ist. Das Drucken ist davon nicht betroffen.',
       },
       'database-locked': {
         name: 'Datenbank-Schreibkonflikte',

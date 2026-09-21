@@ -984,7 +984,7 @@ function ArchiveCard({
                 : 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400'
             }`}
             title={
-              isSlicedFile(archive)
+              !archive.file_path ? t('archives.card.noFileForReprint') : isSlicedFile(archive)
                 ? t('archives.card.slicedFile')
                 : t('archives.card.sourceFile')
             }

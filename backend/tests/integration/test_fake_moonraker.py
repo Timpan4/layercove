@@ -2,7 +2,6 @@ import asyncio
 import io
 import json
 import zipfile
-from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -332,6 +331,7 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
             patch.object(scheduler_module.settings, "base_dir", tmp_path),
             patch.object(scheduler_module.notification_service, "on_queue_job_started", AsyncMock()),
             patch.object(scheduler, "_propagate_owner_to_printer_manager", AsyncMock()),
+            patch.object(scheduler, "_schedule_moonraker_start_reconciliation"),
         ):
             async with sessions() as db:
                 await scheduler._start_print(db, await db.get(PrintQueueItem, ids.item))
@@ -341,7 +341,7 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
                 remote_path = queued.provider_job_id
                 correlation_id = queued.provider_correlation_id
                 assert queued.status == "printing"
-                assert queued.start_reconcile_after is None
+                assert queued.start_reconcile_after is not None
                 assert correlation_id
                 assert remote_path == f"layercove/{correlation_id}/cube.gcode"
                 assert (await db.get(PrintArchive, ids.archive)).filename == source.name
@@ -360,6 +360,7 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
             async with sessions() as db:
                 current = await db.get(PrintQueueItem, ids.item)
                 assert current.provider_job_id == "42"
+                assert current.start_reconcile_after is None
 
             await fake_moonraker.finish_job(status="completed", filename=remote_path, job_id="42")
             await _wait_for(lambda: bool(terminal_outcomes))

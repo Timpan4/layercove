@@ -204,9 +204,9 @@ async def test_unacknowledged_bambu_job_fails_instead_of_auto_retrying(pipeline)
 @pytest.mark.asyncio
 async def test_local_publish_is_not_reported_as_printer_acceptance(pipeline):
     await pipeline.scheduler.check_queue()
-    # Only Moonraker has actually acknowledged the start RPC so far.
+    # Neither provider has confirmed a matching job through telemetry yet.
     notices = scheduler_module.notification_service.on_queue_job_started
-    assert [call.kwargs["printer_id"] for call in notices.await_args_list] == [2]
+    notices.assert_not_awaited()
     async with pipeline.sessions() as db:
         item = await db.get(PrintQueueItem, pipeline.item_ids[0])
         assert item.start_reconcile_after is not None
@@ -231,7 +231,7 @@ async def test_restarted_scheduler_recovers_bambu_acceptance_without_resending(p
 
 
 @pytest.mark.asyncio
-async def test_restart_expires_uncertain_starts_even_when_both_printers_are_offline(pipeline):
+async def test_restart_preserves_unconfirmed_moonraker_start_while_offline(pipeline):
     await pipeline.scheduler.check_queue()
     async with pipeline.sessions() as db:
         for item_id in pipeline.item_ids:
@@ -243,11 +243,15 @@ async def test_restart_expires_uncertain_starts_even_when_both_printers_are_offl
     pipeline.klipper._snapshot = replace(pipeline.klipper.snapshot(), connected=False)
     await PrintScheduler().check_queue()
     async with pipeline.sessions() as db:
-        for item_id in pipeline.item_ids:
-            item = await db.get(PrintQueueItem, item_id)
-            assert item.status == "failed"
-            assert "confirm" in item.error_message.lower()
-            assert item.completed_at is not None
+        bambu_item = await db.get(PrintQueueItem, pipeline.item_ids[0])
+        assert bambu_item.status == "failed"
+        assert "confirm" in bambu_item.error_message.lower()
+        assert bambu_item.completed_at is not None
+        moonraker_item = await db.get(PrintQueueItem, pipeline.item_ids[1])
+        assert moonraker_item.status == "printing"
+        assert moonraker_item.start_reconcile_after is not None
+        assert moonraker_item.completed_at is None
+        assert moonraker_item.error_message is None
     pipeline.http.start_print.assert_awaited_once()
     assert pipeline.bambu.client._client.publish.call_count == 1
 
@@ -262,7 +266,7 @@ async def test_another_active_bambu_job_does_not_acknowledge_this_submission(pip
         item = await db.get(PrintQueueItem, pipeline.item_ids[0])
         assert item.start_reconcile_after is not None
     notices = scheduler_module.notification_service.on_queue_job_started
-    assert [call.kwargs["printer_id"] for call in notices.await_args_list] == [2]
+    notices.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -353,7 +357,7 @@ async def test_bambu_qos_disconnect_keeps_the_uncertain_command_for_reconciliati
     # The pre-upload replacement deletes once; do not delete the transferred file.
     assert scheduler_module.delete_file_async.await_count == 1
     notices = scheduler_module.notification_service.on_queue_job_started
-    assert [call.kwargs["printer_id"] for call in notices.await_args_list] == [2]
+    notices.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -458,6 +462,11 @@ async def test_moonraker_dispatch_is_visible_before_start_acknowledgement(pipeli
         assert not any(event["type"] == "queue_item_acked" for event in events)
         release_start.set()
         await asyncio.wait_for(task, 2)
+        assert not any(
+            message["type"] == "queue_item_acked" and message.get("queue_item_id") == pipeline.item_ids[1]
+            for message in messages
+        )
+        await pipeline.scheduler.bind_provider_observed(2, {"filename": "queue/cube.gcode"})
         assert any(
             message["type"] == "queue_item_acked" and message.get("queue_item_id") == pipeline.item_ids[1]
             for message in messages

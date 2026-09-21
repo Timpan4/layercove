@@ -144,6 +144,27 @@ async function waitForWs(): Promise<MockWebSocket> {
 describe('useWebSocket hook', () => {
   let queryClient: QueryClient;
 
+  it('updates queue upload bytes immediately without reviving a finished dispatch', async () => {
+    vi.stubGlobal('requestAnimationFrame', (callback: FrameRequestCallback) => { callback(0); return 0; });
+    const { useWebSocket } = await import('../../hooks/useWebSocket');
+    queryClient.setQueryData(['queue'], [
+      { id: 7, status: 'pending', dispatch_progress: { stage: 'uploading', bytes_transferred: 0, total_bytes: 100 } },
+      { id: 8, status: 'printing', dispatch_progress: { stage: 'awaiting_printer' } },
+    ]);
+    const { unmount } = renderHook(() => useWebSocket(), { wrapper: createWrapper(queryClient) });
+    const ws = await waitForWs();
+    act(() => {
+      ws.open();
+      ws.simulateMessage({ type: 'queue_item_upload_progress', queue_item_id: 7, bytes_transferred: 50, total_bytes: 100 });
+      ws.simulateMessage({ type: 'queue_item_upload_progress', queue_item_id: 8, bytes_transferred: 100, total_bytes: 100 });
+    });
+    expect(queryClient.getQueryData(['queue'])).toMatchObject([
+      { id: 7, dispatch_progress: { bytes_transferred: 50, total_bytes: 100 } },
+      { id: 8, dispatch_progress: { stage: 'awaiting_printer' } },
+    ]);
+    unmount();
+  });
+
   beforeEach(() => {
     vi.clearAllMocks();
     wsInstances = [];

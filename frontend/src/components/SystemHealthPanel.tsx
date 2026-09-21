@@ -19,9 +19,13 @@ const CATEGORY_META: Record<LogFindingCategory, { icon: ElementType; badgeClass:
 function FindingCard({ finding }: { finding: LogFinding }) {
   const { t } = useTranslation();
   const id = finding.signature_id;
+  const chamberImage = /chamber[ -]?image|\b6000\b/i.test(finding.sample);
+  const rtsps = /rtsps?|\b322\b/i.test(finding.sample);
+  const cameraPort = chamberImage ? '6000' : rtsps ? '322' : '322 / 6000';
+  const cameraEndpoint = chamberImage ? 'chamber-image 6000' : rtsps ? 'RTSPS 322' : 'RTSPS 322 / chamber-image 6000';
   const name = t(`systemHealth.signature.${id}.name`, { defaultValue: id });
-  const cause = t(`systemHealth.signature.${id}.cause`, { defaultValue: '' });
-  const fix = t(`systemHealth.signature.${id}.fix`, { defaultValue: '' });
+  const cause = t(`systemHealth.signature.${id}.cause`, { defaultValue: '', cameraEndpoint });
+  const fix = t(`systemHealth.signature.${id}.fix`, { defaultValue: '', cameraPort });
   const meta = CATEGORY_META[finding.category] ?? CATEGORY_META.bug;
   const CategoryIcon = meta.icon;
   const SeverityIcon = finding.severity === 'error' ? XCircle : AlertTriangle;

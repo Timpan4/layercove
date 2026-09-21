@@ -2,7 +2,7 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '../contexts/ToastContext';
 import { useTranslation } from 'react-i18next';
-import { api, ApiError } from '../api/client';
+import { api, ApiError, type PrintQueueItem } from '../api/client';
 import { reducePrinterStatus } from '../api/printerData';
 import { queryKeys } from '../api/queryKeys';
 import { inventoryLocationsQueryKey } from '../utils/inventoryQueries';
@@ -16,6 +16,9 @@ const WS_CLOSE_UNAUTHORIZED = 4401;
 
 interface WebSocketMessage {
   type: string;
+  queue_item_id?: number;
+  bytes_transferred?: number;
+  total_bytes?: number;
   printer_id?: number;
   data?: Record<string, unknown>;
   printer_name?: string;
@@ -435,6 +438,18 @@ export function useWebSocket() {
       case 'queue_item_acked':
       case 'queue_item_failed':
         window.dispatchEvent(new CustomEvent('bambuddy:dispatch-toast', { detail: message }));
+        if (message.type === 'queue_item_upload_progress'
+          && typeof message.bytes_transferred === 'number' && Number.isFinite(message.bytes_transferred)
+          && typeof message.total_bytes === 'number' && Number.isFinite(message.total_bytes) && message.total_bytes > 0) {
+          const total = message.total_bytes;
+          const transferred = Math.max(0, Math.min(message.bytes_transferred, total));
+          queryClient.setQueriesData<PrintQueueItem[]>({ queryKey: ['queue'] }, (items) =>
+            Array.isArray(items) ? items.map((item) => item.id === message.queue_item_id
+              && (item.status === 'pending' || item.status === 'printing') && item.dispatch_progress?.stage === 'uploading'
+              ? { ...item, dispatch_progress: { ...item.dispatch_progress, bytes_transferred: transferred, total_bytes: total } }
+              : item) : items,
+          );
+        }
         if (message.type !== 'queue_item_upload_progress') {
           queryClient.invalidateQueries({ queryKey: ['queue'] });
         }

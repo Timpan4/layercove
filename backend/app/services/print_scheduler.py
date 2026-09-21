@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from uuid import uuid4
 
-from sqlalchemy import func, or_, select, update
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -462,11 +462,24 @@ class PrintScheduler:
         if item.printer_id:
             # Specific printer assignment (existing behavior)
             if item.printer_id in busy_printers:
+                if item.waiting_reason != "Waiting for the current queued job to finish.":
+                    item.waiting_reason = "Waiting for the current queued job to finish."
+                    await db.commit()
                 return
 
             # Check if printer is idle
             printer_idle = self._is_printer_idle(item.printer_id, require_plate_clear)
             printer_connected = printer_manager.is_connected(item.printer_id)
+            waiting_reason = (
+                "Printer is offline. Waiting for connection."
+                if not printer_connected
+                else "Waiting for printer readiness. Check printer controls."
+                if not printer_idle
+                else None
+            )
+            if item.waiting_reason != waiting_reason:
+                item.waiting_reason = waiting_reason
+                await db.commit()
 
             # If printer not connected, try to power on via smart plug
             if not printer_connected:
@@ -558,6 +571,7 @@ class PrintScheduler:
                 return
 
             # Start the print
+            item.waiting_reason = None
             await self._start_print(db, item)
             busy_printers.add(item.printer_id)
 
@@ -2748,33 +2762,9 @@ class PrintScheduler:
             await self._run_moonraker_terminal_effects(outcome, terminal_data)
             return
 
-        await db.execute(
-            update(PrintQueueItem)
-            .where(
-                PrintQueueItem.id == item.id,
-                PrintQueueItem.status == "printing",
-                PrintQueueItem.provider_correlation_id == correlation_id,
-                PrintQueueItem.provider_job_id == remote_path,
-            )
-            .values(start_reconcile_after=None)
-        )
-        await db.commit()
-        item.start_reconcile_after = None
-        try:
-            await ws_manager.send_queue_item_acked(item.created_by_id, item.id, printer.id)
-        except Exception:
-            pass
-
-        estimated_time = (
-            archive.print_time_seconds if archive else library_file.print_time_seconds if library_file else None
-        )
-        await notification_service.on_queue_job_started(
-            job_name=Path(filename).stem,
-            printer_id=printer.id,
-            printer_name=printer.name,
-            db=db,
-            estimated_time=estimated_time,
-        )
+        # HTTP acceptance is not evidence that the matching job is running.
+        # Keep the durable awaiting-printer phase until telemetry binds it.
+        self._schedule_moonraker_start_reconciliation(item.id, item.printer_id, correlation_id, remote_path)
 
     async def _dispatch_stage(self, item, printer, filename: str, stage: str) -> None:
         logger.info("Queue item %s, printer %s: dispatch stage %s", item.id, printer.id, stage)
@@ -2803,8 +2793,9 @@ class PrintScheduler:
         )
 
     async def _reconcile_persisted_moonraker_starts(self) -> int:
-        """Retry durable ambiguous-start checks after restart or a prior offline observation."""
+        """Reconcile awaiting starts and accepted jobs whose terminal event was missed."""
         now = datetime.now(timezone.utc)
+        accepted_before = now - timedelta(seconds=_MOONRAKER_START_RECONCILE_GRACE_SECONDS)
         async with async_session() as db:
             rows = list(
                 (
@@ -2818,8 +2809,13 @@ class PrintScheduler:
                         .join(Printer, Printer.id == PrintQueueItem.printer_id)
                         .where(
                             PrintQueueItem.status == "printing",
-                            PrintQueueItem.start_reconcile_after.is_not(None),
-                            PrintQueueItem.start_reconcile_after <= now,
+                            or_(
+                                PrintQueueItem.start_reconcile_after <= now,
+                                and_(
+                                    PrintQueueItem.start_reconcile_after.is_(None),
+                                    PrintQueueItem.started_at <= accepted_before,
+                                ),
+                            ),
                             Printer.provider == PrinterProvider.MOONRAKER.value,
                         )
                     )
@@ -2857,7 +2853,6 @@ class PrintScheduler:
                     PrintQueueItem.status == "printing",
                     PrintQueueItem.provider_correlation_id == correlation_id,
                     PrintQueueItem.provider_job_id == remote_path,
-                    PrintQueueItem.start_reconcile_after.is_not(None),
                 )
             )
             if item is None:
@@ -2879,7 +2874,10 @@ class PrintScheduler:
                 NormalizedPrinterState.UNKNOWN,
             }
         )
-        if not fresh and not expired:
+        awaiting_start = item.start_reconcile_after is not None
+        # Missing confirmation is not evidence of failure, even after the
+        # start deadline expires. The printer may still be running the job.
+        if not fresh:
             return False
         identity = getattr(backend, "current_job_identity", None)
         provider_job_id, observed_filename = (
@@ -2893,7 +2891,11 @@ class PrintScheduler:
         authoritative_idle = fresh and snapshot.state in MOONRAKER_STARTABLE_STATES
         filename_matches = self._same_provider_filename(remote_path, observed_filename)
         job_matches = provider_job_id is not None and provider_job_id == remote_path
+        if active and not awaiting_start and not provider_job_id and not observed_filename:
+            return False
         if active and (filename_matches or job_matches):
+            if not awaiting_start:
+                return False
             return await self.bind_provider_observed(
                 printer_id,
                 {
@@ -2903,7 +2905,16 @@ class PrintScheduler:
                 },
             )
 
-        if not authoritative_idle and not active and not expired:
+        terminal_status = (
+            {
+                NormalizedPrinterState.COMPLETED: "completed",
+                NormalizedPrinterState.CANCELLED: "cancelled",
+                NormalizedPrinterState.ERROR: "failed",
+            }.get(snapshot.state)
+            if fresh and (filename_matches or job_matches)
+            else None
+        )
+        if not authoritative_idle and not active and terminal_status is None and (not awaiting_start or not expired):
             return False
         clear_binding = getattr(backend, "clear_queued_job_binding", None)
         if clear_binding is not None:
@@ -2911,9 +2922,15 @@ class PrintScheduler:
         if printer is None:
             return False
         terminal_data = {
-            "status": "failed",
+            "status": terminal_status or "failed",
             "filename": remote_path,
-            "reason": f"Queue job {item_id}: Moonraker start could not be confirmed on printer {printer_id}. Check the printer before retrying; the command will not be resent automatically.",
+            "reason": (
+                f"Queue job {item_id}: Moonraker start could not be confirmed on printer {printer_id}. "
+                "Check the printer before retrying; the command will not be resent automatically."
+                if awaiting_start
+                else "Printer is no longer running this queued job. Its outcome could not be confirmed; "
+                "check the printer and build plate before retrying."
+            ),
             "correlation_id": correlation_id,
             "provider_job_id": remote_path,
         }
@@ -3015,6 +3032,7 @@ class PrintScheduler:
             if len(matches) != 1:
                 return False
             item = matches[0]
+            awaiting_start = item.start_reconcile_after
             values = {}
             if correlation_id:
                 values["provider_correlation_id"] = correlation_id
@@ -3027,12 +3045,29 @@ class PrintScheduler:
                     PrintQueueItem.id == item.id,
                     PrintQueueItem.status == "printing",
                     or_(*identities),
+                    PrintQueueItem.start_reconcile_after == awaiting_start,
                 )
                 .values(**values)
             )
             await db.commit()
             bound = result.rowcount == 1
             item_id = item.id
+            if bound and awaiting_start is not None:
+                printer = await db.get(Printer, printer_id)
+                source = (
+                    await db.get(PrintArchive, item.archive_id)
+                    if item.archive_id
+                    else await db.get(LibraryFile, item.library_file_id)
+                    if item.library_file_id
+                    else None
+                )
+                await notification_service.on_queue_job_started(
+                    job_name=Path(source.filename if source else filename or f"job-{item_id}").stem,
+                    printer_id=printer_id,
+                    printer_name=printer.name if printer else "Unknown",
+                    db=db,
+                    estimated_time=source.print_time_seconds if source else None,
+                )
         if bound:
             try:
                 await ws_manager.send_queue_item_acked(item.created_by_id, item_id, printer_id)

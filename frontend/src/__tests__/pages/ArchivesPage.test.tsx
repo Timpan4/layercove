@@ -103,6 +103,12 @@ describe('ArchivesPage', () => {
   });
 
   describe('rendering', () => {
+    it('does not call a metadata-only archive ready to print', async () => {
+      render(<ArchivesPage />);
+      await screen.findByText('Benchy');
+      expect(screen.queryAllByTitle('Sliced file - ready to print')).toHaveLength(0);
+      expect(screen.getAllByTitle(/No 3MF file available/).length).toBeGreaterThan(0);
+    });
     it('renders the page title', async () => {
       render(<ArchivesPage />);
 
