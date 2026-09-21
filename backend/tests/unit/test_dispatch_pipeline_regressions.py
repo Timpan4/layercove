@@ -231,7 +231,7 @@ async def test_restarted_scheduler_recovers_bambu_acceptance_without_resending(p
 
 
 @pytest.mark.asyncio
-async def test_restart_expires_uncertain_starts_even_when_both_printers_are_offline(pipeline):
+async def test_restart_preserves_unconfirmed_moonraker_start_while_offline(pipeline):
     await pipeline.scheduler.check_queue()
     async with pipeline.sessions() as db:
         for item_id in pipeline.item_ids:
@@ -243,11 +243,15 @@ async def test_restart_expires_uncertain_starts_even_when_both_printers_are_offl
     pipeline.klipper._snapshot = replace(pipeline.klipper.snapshot(), connected=False)
     await PrintScheduler().check_queue()
     async with pipeline.sessions() as db:
-        for item_id in pipeline.item_ids:
-            item = await db.get(PrintQueueItem, item_id)
-            assert item.status == "failed"
-            assert "confirm" in item.error_message.lower()
-            assert item.completed_at is not None
+        bambu_item = await db.get(PrintQueueItem, pipeline.item_ids[0])
+        assert bambu_item.status == "failed"
+        assert "confirm" in bambu_item.error_message.lower()
+        assert bambu_item.completed_at is not None
+        moonraker_item = await db.get(PrintQueueItem, pipeline.item_ids[1])
+        assert moonraker_item.status == "printing"
+        assert moonraker_item.start_reconcile_after is not None
+        assert moonraker_item.completed_at is None
+        assert moonraker_item.error_message is None
     pipeline.http.start_print.assert_awaited_once()
     assert pipeline.bambu.client._client.publish.call_count == 1
 

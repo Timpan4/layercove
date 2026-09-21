@@ -2875,9 +2875,9 @@ class PrintScheduler:
             }
         )
         awaiting_start = item.start_reconcile_after is not None
-        # A previously accepted print must never be finalized from stale or
-        # disconnected telemetry, regardless of how long it has been running.
-        if not fresh and (not awaiting_start or not expired):
+        # Missing confirmation is not evidence of failure, even after the
+        # start deadline expires. The printer may still be running the job.
+        if not fresh:
             return False
         identity = getattr(backend, "current_job_identity", None)
         provider_job_id, observed_filename = (

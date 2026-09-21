@@ -745,7 +745,8 @@ async def test_moonraker_terminal_runs_shared_main_effects(moonraker_queue, stat
         (NormalizedPrinterState.UNKNOWN, True, False, "printing"),
     ],
 )
-async def test_reconcile_accepted_job_after_restart(moonraker_queue, state, connected, stale, expected):
+@pytest.mark.parametrize("awaiting_start", [False, True])
+async def test_reconcile_accepted_job_after_restart(moonraker_queue, state, connected, stale, expected, awaiting_start):
     sessions, _base_dir, _source, ids = moonraker_queue
     remote_path = "queue/queued-opaque.gcode"
     async with sessions() as db:
@@ -754,7 +755,7 @@ async def test_reconcile_accepted_job_after_restart(moonraker_queue, state, conn
         item.started_at = datetime.now(timezone.utc) - timedelta(days=1)
         item.provider_correlation_id = "queue-job"
         item.provider_job_id = remote_path
-        item.start_reconcile_after = None
+        item.start_reconcile_after = datetime.now(timezone.utc) - timedelta(days=1) if awaiting_start else None
         await db.commit()
     backend = SimpleNamespace(
         snapshot=lambda: PrinterSnapshot(
@@ -774,7 +775,7 @@ async def test_reconcile_accepted_job_after_restart(moonraker_queue, state, conn
         item = await db.get(PrintQueueItem, ids.item)
         assert item.status == expected
         assert await db.scalar(select(func.count()).select_from(PrintLogEntry)) == (0 if expected == "printing" else 1)
-        if expected == "failed":
+        if expected == "failed" and not awaiting_start:
             assert "outcome" in item.error_message.lower()
 
 
