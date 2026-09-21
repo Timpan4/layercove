@@ -826,3 +826,32 @@ async def test_accepted_active_job_without_identity_is_not_failed(moonraker_queu
         await scheduler._reconcile_persisted_moonraker_starts()
     async with sessions() as db:
         assert (await db.get(PrintQueueItem, ids.item)).status == "printing"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_started_notification_requires_telemetry_and_is_sent_once(moonraker_queue):
+    sessions, base_dir, _source, ids = moonraker_queue
+    scheduler = PrintScheduler()
+    backend = _backend()
+    with (
+        patch.object(scheduler_module, "async_session", sessions),
+        patch.object(scheduler_module.settings, "base_dir", base_dir),
+        patch.object(scheduler_module.printer_manager, "is_connected", return_value=True),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
+        patch.object(scheduler, "_propagate_owner_to_printer_manager", AsyncMock()),
+        patch.object(scheduler, "_schedule_moonraker_start_reconciliation"),
+        patch.object(scheduler_module.notification_service, "on_queue_job_started", AsyncMock()) as notify,
+    ):
+        async with sessions() as db:
+            archive = await db.get(PrintArchive, ids.archive)
+            archive.print_time_seconds = 600
+            await db.commit()
+            await scheduler._start_print(db, await db.get(PrintQueueItem, ids.item))
+        notify.assert_not_awaited()
+        observed = {"filename": "queue/cube.gcode", "provider_job_id": "42"}
+        assert await scheduler.bind_provider_observed(ids.printer, observed)
+        assert await scheduler.bind_provider_observed(ids.printer, observed)
+        notify.assert_awaited_once()
+        assert notify.await_args.kwargs["job_name"] == "cube"
+        assert notify.await_args.kwargs["estimated_time"] == 600
+        assert notify.await_args.kwargs["printer_id"] == ids.printer

@@ -2766,17 +2766,6 @@ class PrintScheduler:
         # Keep the durable awaiting-printer phase until telemetry binds it.
         self._schedule_moonraker_start_reconciliation(item.id, item.printer_id, correlation_id, remote_path)
 
-        estimated_time = (
-            archive.print_time_seconds if archive else library_file.print_time_seconds if library_file else None
-        )
-        await notification_service.on_queue_job_started(
-            job_name=Path(filename).stem,
-            printer_id=printer.id,
-            printer_name=printer.name,
-            db=db,
-            estimated_time=estimated_time,
-        )
-
     async def _dispatch_stage(self, item, printer, filename: str, stage: str) -> None:
         logger.info("Queue item %s, printer %s: dispatch stage %s", item.id, printer.id, stage)
         try:
@@ -3043,6 +3032,7 @@ class PrintScheduler:
             if len(matches) != 1:
                 return False
             item = matches[0]
+            awaiting_start = item.start_reconcile_after
             values = {}
             if correlation_id:
                 values["provider_correlation_id"] = correlation_id
@@ -3055,12 +3045,29 @@ class PrintScheduler:
                     PrintQueueItem.id == item.id,
                     PrintQueueItem.status == "printing",
                     or_(*identities),
+                    PrintQueueItem.start_reconcile_after == awaiting_start,
                 )
                 .values(**values)
             )
             await db.commit()
             bound = result.rowcount == 1
             item_id = item.id
+            if bound and awaiting_start is not None:
+                printer = await db.get(Printer, printer_id)
+                source = (
+                    await db.get(PrintArchive, item.archive_id)
+                    if item.archive_id
+                    else await db.get(LibraryFile, item.library_file_id)
+                    if item.library_file_id
+                    else None
+                )
+                await notification_service.on_queue_job_started(
+                    job_name=Path(source.filename if source else filename or f"job-{item_id}").stem,
+                    printer_id=printer_id,
+                    printer_name=printer.name if printer else "Unknown",
+                    db=db,
+                    estimated_time=source.print_time_seconds if source else None,
+                )
         if bound:
             try:
                 await ws_manager.send_queue_item_acked(item.created_by_id, item_id, printer_id)

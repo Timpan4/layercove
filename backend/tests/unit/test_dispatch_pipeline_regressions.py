@@ -204,9 +204,9 @@ async def test_unacknowledged_bambu_job_fails_instead_of_auto_retrying(pipeline)
 @pytest.mark.asyncio
 async def test_local_publish_is_not_reported_as_printer_acceptance(pipeline):
     await pipeline.scheduler.check_queue()
-    # Only Moonraker has actually acknowledged the start RPC so far.
+    # Neither provider has confirmed a matching job through telemetry yet.
     notices = scheduler_module.notification_service.on_queue_job_started
-    assert [call.kwargs["printer_id"] for call in notices.await_args_list] == [2]
+    notices.assert_not_awaited()
     async with pipeline.sessions() as db:
         item = await db.get(PrintQueueItem, pipeline.item_ids[0])
         assert item.start_reconcile_after is not None
@@ -262,7 +262,7 @@ async def test_another_active_bambu_job_does_not_acknowledge_this_submission(pip
         item = await db.get(PrintQueueItem, pipeline.item_ids[0])
         assert item.start_reconcile_after is not None
     notices = scheduler_module.notification_service.on_queue_job_started
-    assert [call.kwargs["printer_id"] for call in notices.await_args_list] == [2]
+    notices.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -353,7 +353,7 @@ async def test_bambu_qos_disconnect_keeps_the_uncertain_command_for_reconciliati
     # The pre-upload replacement deletes once; do not delete the transferred file.
     assert scheduler_module.delete_file_async.await_count == 1
     notices = scheduler_module.notification_service.on_queue_job_started
-    assert [call.kwargs["printer_id"] for call in notices.await_args_list] == [2]
+    notices.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -458,6 +458,11 @@ async def test_moonraker_dispatch_is_visible_before_start_acknowledgement(pipeli
         assert not any(event["type"] == "queue_item_acked" for event in events)
         release_start.set()
         await asyncio.wait_for(task, 2)
+        assert not any(
+            message["type"] == "queue_item_acked" and message.get("queue_item_id") == pipeline.item_ids[1]
+            for message in messages
+        )
+        await pipeline.scheduler.bind_provider_observed(2, {"filename": "queue/cube.gcode"})
         assert any(
             message["type"] == "queue_item_acked" and message.get("queue_item_id") == pipeline.item_ids[1]
             for message in messages

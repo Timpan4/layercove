@@ -7,8 +7,7 @@ import json
 import zipfile
 from email.parser import BytesParser
 from email.policy import default
-from pathlib import Path
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
@@ -117,6 +116,8 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
 
     monkeypatch.setattr(print_scheduler.ws_manager, "broadcast_to_user", record_message)
     scheduler = PrintScheduler()
+    monkeypatch.setattr(scheduler, "_schedule_moonraker_start_reconciliation", MagicMock())
+    manager.set_print_start_callback(scheduler.bind_provider_observed)
     monkeypatch.setattr(scheduler, "_propagate_owner_to_printer_manager", AsyncMock())
     await manager.connect_printer(printer)
     await _wait_for(lambda: manager.get_snapshot(printer_id).connected, timeout=5)
@@ -267,6 +268,18 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
         assert queued.json()["status"] == "pending"
         await scheduler.check_queue()
         await asyncio.sleep(0)  # Drain the thread-to-event-loop byte progress bridge.
+        assert not any(
+            event["type"] == "queue_item_acked" and event.get("queue_item_id") == item_id for event in messages
+        )
+        await fake_moonraker.wait_for_subscribers()
+        await fake_moonraker.set_status(
+            {"print_stats": {"state": "printing", "filename": fake_moonraker.upload_paths[0]}}
+        )
+        await _wait_for(
+            lambda: any(
+                event["type"] == "queue_item_acked" and event.get("queue_item_id") == item_id for event in messages
+            )
+        )
         events = [event for event in messages if event.get("queue_item_id") == item_id]
         assert any(event["type"] == "queue_item_uploading" for event in events)
         assert any(

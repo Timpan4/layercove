@@ -6343,7 +6343,7 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Kamera akışına erişilemez',
-        cause: 'Canlı kameraya {{cameraEndpoint}} portunda erişilemedi. Port engellendi veya yazıcıda kamera veya LAN canlı görünümü kapalı.',
+        cause: 'Canlı kameraya {{cameraEndpoint}} uç noktası üzerinden erişilemedi. Port engellendi veya yazıcıda kamera veya LAN canlı görünümü kapalı.',
         fix: 'Yazıcıda kamerayı ve LAN canlı görünümünü etkinleştirin ve port {{cameraPort}}\'nin engellenmediğinden emin olun. Bu, baskıyı etkilemez.',
       },
       'database-locked': {
