@@ -1,0 +1,5 @@
+# CI-only override. Local Compose test builds remain unchanged.
+services:
+  integration:
+    image: bambuddy:test
+    pull_policy: never
