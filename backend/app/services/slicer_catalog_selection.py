@@ -6,6 +6,7 @@ import json
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -272,6 +273,7 @@ async def _persist_profile_rows(
     *,
     force_validation: bool = False,
     history: dict[str, Any] | None = None,
+    source_path: Path | None = None,
 ) -> None:
     printer = await db.get(Printer, printer_id)
     binding = await db.get(PrinterSlicerBinding, binding_id)
@@ -437,6 +439,8 @@ async def persist_catalog_selection(
     db: AsyncSession,
     job: SliceJobRecord,
     request: SliceRequest,
+    *,
+    source_path: Path | None = None,
 ) -> None:
     """Validate and pin one request inside the slice-job transaction."""
     if request.catalog_history_job_id is not None:
@@ -479,6 +483,7 @@ async def persist_catalog_selection(
             process_row,
             filament_rows,
             force_validation=True,
+            source_path=source_path,
             history={
                 "source_job_id": request.catalog_history_job_id,
                 "mode": request.catalog_history_mode,
@@ -511,6 +516,7 @@ async def persist_catalog_selection(
         printer_row,
         process_row,
         filament_rows,
+        source_path=source_path,
     )
 
 
