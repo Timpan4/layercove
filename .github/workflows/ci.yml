@@ -48,7 +48,6 @@ jobs:
   backend-tests:
     name: Backend Tests (shard ${{ matrix.shard }}/4)
     runs-on: ubuntu-latest
-    needs: backend-lint
     strategy:
       # Don't cancel sibling shards if one fails — we want every shard's
       # failure list, not just the first one, so a single PR push shows
@@ -88,7 +87,6 @@ jobs:
   postgres-camera-token-test:
     name: PostgreSQL Camera Token Expiry
     runs-on: ubuntu-latest
-    needs: backend-lint
     services:
       postgres:
         image: postgres:16-alpine
@@ -128,11 +126,16 @@ jobs:
   # Frontend Checks
   # ============================================================================
 
-  frontend-lint:
-    name: Frontend Lint
+  # Share one checkout, runtime setup and frozen install across frontend checks.
+  frontend-tests:
+    name: Frontend Checks
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
+
+      - name: Test CI orchestration
+        run: node --test scripts/ci-workflow-regression.test.mjs
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
@@ -147,40 +150,9 @@ jobs:
         working-directory: frontend
         run: bun run lint
 
-  frontend-typecheck:
-    name: Frontend Type Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Install dependencies
-        working-directory: frontend
-        run: bun install --frozen-lockfile
-
       - name: Run TypeScript check
         working-directory: frontend
         run: bun x tsc --noEmit
-
-  frontend-tests:
-    name: Frontend Tests
-    runs-on: ubuntu-latest
-    needs: [frontend-lint, frontend-typecheck]
-    steps:
-      - uses: actions/checkout@v6
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Install dependencies
-        working-directory: frontend
-        run: bun install --frozen-lockfile
 
       - name: Build frontend assets
         working-directory: frontend
@@ -221,7 +193,8 @@ jobs:
           load: true
           tags: bambuddy-backend-test:latest
           cache-from: type=gha,scope=backend-test
-          cache-to: type=gha,scope=backend-test,mode=max
+          # Only one shard exports the identical shared cache.
+          cache-to: ${{ matrix.shard == 1 && 'type=gha,scope=backend-test,mode=max' || '' }}
 
       - name: Run backend tests in Docker (shard ${{ matrix.shard }}/4)
         run: |
@@ -245,7 +218,9 @@ jobs:
     name: Docker Build
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    needs: [backend-lint, frontend-lint, frontend-typecheck]
+    # Lint produces no artifacts needed by this build.
+    env:
+      COMPOSE_FILE: docker-compose.test.yml:docker-compose.ci.yml
     steps:
       - uses: actions/checkout@v6
 
@@ -268,42 +243,36 @@ jobs:
       - name: Verify static files exist
         run: docker run --rm bambuddy:test test -d /app/static
 
-      # Smoke-test the production container
-      - name: Build integration container
-        run: docker compose -f docker-compose.test.yml build integration
-
+      # Exercise the exact loaded production image, not a second Compose build.
       - name: Start integration container
+        run: docker compose up --no-build --pull never --wait --wait-timeout 120 integration
+
+      - name: Verify integration image identity
         run: |
-          docker compose -f docker-compose.test.yml up -d integration
-          echo "Waiting for container to be healthy..."
-          for i in {1..30}; do
-            if docker compose -f docker-compose.test.yml ps integration | grep -q "healthy"; then
-              echo "Container is healthy"
-              break
-            fi
-            sleep 2
-          done
+          EXPECTED=$(docker image inspect bambuddy:test --format '{{.Id}}')
+          ACTUAL=$(docker inspect "$(docker compose ps -q integration)" --format '{{.Image}}')
+          test "$ACTUAL" = "$EXPECTED"
 
       - name: Test health endpoint
         run: |
-          HEALTH=$(docker compose -f docker-compose.test.yml exec -T integration curl -s http://localhost:8000/health)
+          HEALTH=$(docker compose exec -T integration curl -fsS http://localhost:8000/health)
           echo "$HEALTH"
           echo "$HEALTH" | grep -q "healthy"
 
       - name: Test API endpoint
         run: |
-          docker compose -f docker-compose.test.yml exec -T integration curl -s http://localhost:8000/api/v1/settings
+          docker compose exec -T integration curl -fsS http://localhost:8000/api/v1/settings
 
       - name: Test static files served
         run: |
-          STATUS=$(docker compose -f docker-compose.test.yml exec -T integration curl -s -o /dev/null -w "%{http_code}" http://localhost:8000/)
+          STATUS=$(docker compose exec -T integration curl -fsS -o /dev/null -w "%{http_code}" http://localhost:8000/)
           echo "Static files HTTP status: $STATUS"
           [ "$STATUS" = "200" ]
 
       - name: Show logs on failure
         if: failure()
-        run: docker compose -f docker-compose.test.yml logs
+        run: docker compose logs
 
       - name: Cleanup
         if: always()
-        run: docker compose -f docker-compose.test.yml down -v --remove-orphans
+        run: docker compose down -v --remove-orphans
