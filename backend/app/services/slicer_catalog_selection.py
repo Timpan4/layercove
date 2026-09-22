@@ -380,7 +380,7 @@ async def _persist_profile_rows(
         source_materials = _source_materials(source_path, request.plate)
         if len(source_materials) != len(filament_rows):
             raise CatalogSelectionError("filament_slot_count_mismatch", ["filament_slot_count_mismatch"])
-        for source_material, (_profile, revision, _account) in zip(source_materials, filament_rows):
+        for source_material, (_profile, revision, _account) in zip(source_materials, filament_rows, strict=True):
             source = _canonical_material(source_material)
             selected = _profile_material(revision)
             if source and selected and source == selected:
