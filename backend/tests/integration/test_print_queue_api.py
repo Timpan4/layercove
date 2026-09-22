@@ -134,7 +134,8 @@ class TestPrintQueueAPI:
         from backend.app.models.library import LibraryFile
 
         bambu = await printer_factory(provider="bambu", model="P1S")
-        voron = await printer_factory(provider="moonraker", model="Voron 2.4")
+        voron = await printer_factory(provider="moonraker", model="Voron 2.4", location="Workshop")
+        await printer_factory(provider="bambu", model="Voron 2.4", location="Garage")
         gcode = LibraryFile(
             filename="Voron_Design_Cube_v8.gcode",
             file_path="library/files/voron-cube.gcode",
@@ -154,6 +155,21 @@ class TestPrintQueueAPI:
             "/api/v1/queue/", json={"library_file_id": gcode.id, "target_model": "P1S"}
         )
         assert wrong_model.status_code == 400
+
+        valid_model = await async_client.post(
+            "/api/v1/queue/",
+            json={
+                "library_file_id": gcode.id,
+                "target_model": "Voron 2.4",
+                "target_location": "Workshop",
+                "manual_start": True,
+            },
+        )
+        assert valid_model.status_code == 200
+        wrong_location = await async_client.patch(
+            f"/api/v1/queue/{valid_model.json()['id']}", json={"target_location": "Garage"}
+        )
+        assert wrong_location.status_code == 400
 
         archive = await archive_factory(
             filename="Voron_Design_Cube_v8.gcode",
@@ -176,6 +192,10 @@ class TestPrintQueueAPI:
         assert edited.status_code == 400
         bulk = await async_client.patch("/api/v1/queue/bulk", json={"item_ids": [item_id], "printer_id": bambu.id})
         assert bulk.status_code == 400
+        valid_edit = await async_client.patch(
+            f"/api/v1/queue/{item_id}", json={"target_model": "Voron 2.4", "target_location": "Workshop"}
+        )
+        assert valid_edit.status_code == 200
 
     @pytest.mark.asyncio
     @pytest.mark.integration

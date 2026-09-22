@@ -499,7 +499,11 @@ async def add_to_queue(
 
     source = archive or library_file
     if source and target_printers:
-        _require_artifact_target_compatible(source, target_printers)
+        validation_printers = target_printers
+        if target_model_norm and data.target_location:
+            validation_printers = [printer for printer in target_printers if printer.location == data.target_location]
+        if validation_printers:
+            _require_artifact_target_compatible(source, validation_printers)
 
     # Extract filament types for model-based assignment (used by scheduler for validation)
     required_filament_types = None
@@ -1160,15 +1164,19 @@ async def update_queue_item(
         target_printers = [target_printer]
 
     # Validate target_model has active printers
-    if "target_model" in update_data and update_data["target_model"]:
+    if new_target_model and ("target_model" in update_data or "target_location" in update_data):
         if caller.printer_ids is not None:
             raise HTTPException(403, "Printer-scoped API keys cannot queue model-based jobs")
         result = await db.execute(
-            select(Printer).where(Printer.model == update_data["target_model"]).where(Printer.is_active == True)  # noqa: E712
+            select(Printer).where(Printer.model == new_target_model).where(Printer.is_active == True)  # noqa: E712
         )
         target_printers = list(result.scalars().all())
-        if not target_printers:
-            raise HTTPException(400, f"No active printers for model: {update_data['target_model']}")
+        if not target_printers and "target_model" in update_data:
+            raise HTTPException(400, f"No active printers for model: {new_target_model}")
+
+        target_location = update_data.get("target_location", item.target_location)
+        if target_location:
+            target_printers = [printer for printer in target_printers if printer.location == target_location]
 
     if target_printers:
         await _require_queue_item_target_compatible(db, item, target_printers)

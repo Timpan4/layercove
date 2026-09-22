@@ -1111,7 +1111,7 @@ export function PrintModal({
             />
 
             {/* Printer selection with per-printer mapping — hidden when printer is pre-selected via props */}
-            {!initialSelectedPrinterIds?.length && (
+            {(!initialSelectedPrinterIds?.length || selectedPrinters.length === 0) && (
               <PrinterSelector
                 printers={compatiblePrinters}
                 selectedPrinterIds={selectedPrinters}
