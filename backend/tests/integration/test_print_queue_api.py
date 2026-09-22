@@ -155,6 +155,11 @@ class TestPrintQueueAPI:
             "/api/v1/queue/", json={"library_file_id": gcode.id, "target_model": "P1S"}
         )
         assert wrong_model.status_code == 400
+        wrong_model_unknown_location = await async_client.post(
+            "/api/v1/queue/",
+            json={"library_file_id": gcode.id, "target_model": "P1S", "target_location": "Unknown"},
+        )
+        assert wrong_model_unknown_location.status_code == 400
 
         valid_model = await async_client.post(
             "/api/v1/queue/",
@@ -190,6 +195,10 @@ class TestPrintQueueAPI:
         item_id = unassigned.json()["id"]
         edited = await async_client.patch(f"/api/v1/queue/{item_id}", json={"printer_id": bambu.id})
         assert edited.status_code == 400
+        wrong_model_edit = await async_client.patch(
+            f"/api/v1/queue/{item_id}", json={"target_model": "P1S", "target_location": "Unknown"}
+        )
+        assert wrong_model_edit.status_code == 400
         bulk = await async_client.patch("/api/v1/queue/bulk", json={"item_ids": [item_id], "printer_id": bambu.id})
         assert bulk.status_code == 400
         valid_edit = await async_client.patch(

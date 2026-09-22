@@ -501,9 +501,10 @@ async def add_to_queue(
     if source and target_printers:
         validation_printers = target_printers
         if target_model_norm and data.target_location:
-            validation_printers = [printer for printer in target_printers if printer.location == data.target_location]
-        if validation_printers:
-            _require_artifact_target_compatible(source, validation_printers)
+            located = [printer for printer in target_printers if printer.location == data.target_location]
+            if located:
+                validation_printers = located
+        _require_artifact_target_compatible(source, validation_printers)
 
     # Extract filament types for model-based assignment (used by scheduler for validation)
     required_filament_types = None
@@ -1176,7 +1177,9 @@ async def update_queue_item(
 
         target_location = update_data.get("target_location", item.target_location)
         if target_location:
-            target_printers = [printer for printer in target_printers if printer.location == target_location]
+            located = [printer for printer in target_printers if printer.location == target_location]
+            if located:
+                target_printers = located
 
     if target_printers:
         await _require_queue_item_target_compatible(db, item, target_printers)
