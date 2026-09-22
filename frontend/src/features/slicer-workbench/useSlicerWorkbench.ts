@@ -13,7 +13,7 @@ import {
 } from '../../api/client';
 import { useSliceJobTracker } from '../../contexts/SliceJobTrackerContext';
 import { useCatalogSliceSelection } from '../../hooks/useCatalogSliceSelection';
-import { slicerBedFromProfile } from '../../utils/slicerBed';
+import { parseSlicerBed } from '../../utils/slicerBed';
 import type { ArchivePlatesResponse, LibraryFilePlatesResponse } from '../../types/plates';
 
 export type WorkbenchSource = { kind: 'libraryFile' | 'archive'; id: number };
@@ -184,7 +184,8 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     enabled: printerRevisionId !== undefined,
     retry: false,
   });
-  const buildVolume = useMemo(() => slicerBedFromProfile(printerProfileQuery.data?.content), [printerProfileQuery.data]);
+  const bedGeometry = useMemo(() => parseSlicerBed(printerProfileQuery.data?.content), [printerProfileQuery.data]);
+  const buildVolume = bedGeometry.bed;
 
   const processProfileQuery = useQuery({
     queryKey: [
@@ -329,6 +330,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     processProfileQuery,
     printerProfileQuery,
     buildVolume,
+    bedGeometry,
     sourceName,
     bedType,
     setBedType,

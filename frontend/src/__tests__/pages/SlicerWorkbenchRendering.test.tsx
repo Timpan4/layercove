@@ -14,7 +14,7 @@ beforeEach(() => {
     capabilitiesQuery: { data: { capabilities: { process_schema: true, model_state: false } } },
     schemaQuery: { data: { pages: [], options: [], scopes: {}, samples: {}, engine: { name: 'OrcaSlicer', version: '2.4.2' }, schema_hash: 'abc' } },
     sourceQuery: { data: { filename: 'cube.stl' } }, platesQuery: { data: { plates: [] } },
-    catalogSelection: {}, printerProfileQuery: {}, buildVolume: null,
+    catalogSelection: {}, printerProfileQuery: {}, buildVolume: null, bedGeometry: { bed: null, issue: 'missingArea' },
     sourceName: 'cube.stl', modelUrl: '/cube.stl', previewUrl: '/cube.gcode',
     objects: [], selectedPlateMetadata: null, filamentSlots: [], arrange: true,
     settingsView: 'global', mode: 'simple', jobId: null, canPrint: true,

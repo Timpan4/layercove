@@ -1,4 +1,19 @@
 export default {
+  slicerBed: {
+    selectPrinter: "Sélectionnez une imprimante et un profil précis pour afficher le plateau.",
+    loading: "Chargement du plateau sélectionné…",
+    loadFailed: "Impossible de charger le plateau de {{profile}}.",
+    unavailable: "La géométrie du plateau est indisponible pour {{profile}}.",
+    missingArea: "La révision sélectionnée ne contient ni printable_area ni bed_shape.",
+    invalidArea: "La révision sélectionnée contient des coordonnées printable_area ou bed_shape invalides.",
+    missingHeight: "La révision sélectionnée ne contient ni printable_height ni max_print_height.",
+    invalidHeight: "La révision sélectionnée contient une valeur printable_height ou max_print_height invalide.",
+    revision: "Révision du profil {{revision}}",
+    retry: "Recharger le plateau",
+    bounds: "Dimensions du plateau : {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "La révision du profil sélectionnée est indisponible. Rechargez le catalogue des profils.",
+  },
+
   // Navigation
   nav: {
     printers: 'Imprimantes',

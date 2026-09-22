@@ -276,3 +276,50 @@ it('preserves a deliberate arrange-off setting when unchanged plate metadata ref
   await act(async () => { await result.current.platesQuery.refetch(); });
   expect(result.current.request?.arrange).toBe(false);
 });
+
+
+describe('cloud revision geometry regression', () => {
+  it.each(['orca_cloud', 'cloud', 'local', 'standard'] as const)('uses serialized geometry from the exact %s revision while Ready', async (source) => {
+    vi.mocked(api.listSlicerCatalogProfiles).mockResolvedValue([
+      { ...profile(1, 'printer'), source }, profile(10, 'process'), profile(20, 'filament', 'PLA'),
+    ] as Awaited<ReturnType<typeof api.listSlicerCatalogProfiles>>);
+    vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({
+      id: 1, profile_id: 1, review_state: 'approved', content_hash: 'serialized',
+      content: { printable_area: '0x0,300x0,300x300,0x300', printable_height: '300' },
+    });
+    const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper() });
+    await chooseTarget(result);
+    await waitFor(() => expect(result.current.printerProfileQuery.isSuccess).toBe(true));
+    expect(result.current.catalogSelection.selectionReadiness.state).toBe('ready');
+    expect(result.current.buildVolume).toEqual({ x: 300, y: 300, z: 300, origin: [0, 0] });
+    expect(api.getSlicerCatalogRevision).toHaveBeenCalledWith(1);
+  });
+});
+
+it('does not reuse the previous bed while a new exact revision loads, even if the old request finishes late', async () => {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  type Revision = Awaited<ReturnType<typeof api.getSlicerCatalogRevision>>;
+  let finishOld!: (value: Revision) => void;
+  let finishNew!: (value: Revision) => void;
+  vi.mocked(api.getSlicerCatalogRevision).mockImplementation((id) => new Promise((resolve) => {
+    if (id === 1) finishOld = resolve;
+    else if (id === 2) finishNew = resolve;
+  }));
+  const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper(client) });
+  await chooseTarget(result);
+  await waitFor(() => expect(api.getSlicerCatalogRevision).toHaveBeenCalledWith(1));
+  act(() => client.setQueryData(['slicerCatalogProfiles'], [
+    { ...profile(1, 'printer'), revision_id: 2 }, profile(10, 'process'), profile(20, 'filament', 'PLA'),
+  ]));
+  await waitFor(() => expect(api.getSlicerCatalogRevision).toHaveBeenCalledWith(2));
+  expect(result.current.buildVolume).toBeNull();
+  await act(async () => finishNew({ id: 2, profile_id: 1, review_state: 'approved', content_hash: 'new',
+    content: { printable_area: '-20x-10,330x-10,330x340,-20x340', printable_height: '400' },
+  }));
+  await waitFor(() => expect(result.current.buildVolume).toEqual({ x: 350, y: 350, z: 400, origin: [-20, -10] }));
+  await act(async () => finishOld({ id: 1, profile_id: 1, review_state: 'approved', content_hash: 'old',
+    content: { printable_area: '0x0,256x0,256x256,0x256', printable_height: '256' },
+  }));
+  expect(result.current.buildVolume).toEqual({ x: 350, y: 350, z: 400, origin: [-20, -10] });
+  expect(result.current.printerProfileQuery.data?.id).toBe(2);
+});
