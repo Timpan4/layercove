@@ -53,11 +53,19 @@ router = APIRouter(prefix="/queue", tags=["queue"])
 def _require_artifact_target_compatible(source: PrintArchive | LibraryFile, printers: list[Printer]) -> None:
     metadata = source.extra_data if isinstance(source, PrintArchive) else source.file_metadata
     if not all(artifact_matches_provider(printer.provider, Path(source.file_path), metadata) for printer in printers):
-        raise HTTPException(400, "Source artifact is not compatible with the selected printer. Re-slice for the selected printer.")
+        raise HTTPException(
+            400, "Source artifact is not compatible with the selected printer. Re-slice for the selected printer."
+        )
 
 
-async def _require_queue_item_target_compatible(db: AsyncSession, item: PrintQueueItem, printers: list[Printer]) -> None:
-    source = await db.get(PrintArchive, item.archive_id) if item.archive_id else await db.get(LibraryFile, item.library_file_id)
+async def _require_queue_item_target_compatible(
+    db: AsyncSession, item: PrintQueueItem, printers: list[Printer]
+) -> None:
+    source = (
+        await db.get(PrintArchive, item.archive_id)
+        if item.archive_id
+        else await db.get(LibraryFile, item.library_file_id)
+    )
     if source:
         _require_artifact_target_compatible(source, printers)
 

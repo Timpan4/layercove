@@ -146,9 +146,7 @@ class TestPrintQueueAPI:
         db_session.add(gcode)
         await db_session.commit()
 
-        wrong = await async_client.post(
-            "/api/v1/queue/", json={"library_file_id": gcode.id, "printer_id": bambu.id}
-        )
+        wrong = await async_client.post("/api/v1/queue/", json={"library_file_id": gcode.id, "printer_id": bambu.id})
         assert wrong.status_code == 400
         assert "compatible" in wrong.json()["detail"].lower()
 
@@ -167,24 +165,16 @@ class TestPrintQueueAPI:
         )
         assert wrong_archive.status_code == 400
 
-        right = await async_client.post(
-            "/api/v1/queue/", json={"library_file_id": gcode.id, "printer_id": voron.id}
-        )
+        right = await async_client.post("/api/v1/queue/", json={"library_file_id": gcode.id, "printer_id": voron.id})
         assert right.status_code == 200
         assert right.json()["printer_id"] == voron.id
 
-        unassigned = await async_client.post(
-            "/api/v1/queue/", json={"library_file_id": gcode.id, "manual_start": True}
-        )
+        unassigned = await async_client.post("/api/v1/queue/", json={"library_file_id": gcode.id, "manual_start": True})
         assert unassigned.status_code == 200
         item_id = unassigned.json()["id"]
-        edited = await async_client.patch(
-            f"/api/v1/queue/{item_id}", json={"printer_id": bambu.id}
-        )
+        edited = await async_client.patch(f"/api/v1/queue/{item_id}", json={"printer_id": bambu.id})
         assert edited.status_code == 400
-        bulk = await async_client.patch(
-            "/api/v1/queue/bulk", json={"item_ids": [item_id], "printer_id": bambu.id}
-        )
+        bulk = await async_client.patch("/api/v1/queue/bulk", json={"item_ids": [item_id], "printer_id": bambu.id})
         assert bulk.status_code == 400
 
     @pytest.mark.asyncio
