@@ -10,6 +10,7 @@ import {
 import {
   catalogClassification,
   catalogClassifications,
+  catalogMaterialWarnings,
   catalogSelectionReadiness,
   pickCatalogFilament,
   pickCatalogProcess,
@@ -212,17 +213,25 @@ export function useCatalogSliceSelection({
       ...filamentChoices.map((choice) => choice && catalogClassification(groups, choice.id)),
     ].filter((profile): profile is SlicerCatalogClassification => profile !== undefined && profile !== null);
   }, [filamentChoices, groupsQuery.data, processChoice]);
+  const selectedFilamentProfiles = useMemo(() => filamentChoices.map((choice) =>
+    (profilesQuery.data ?? []).find((profile) => profile.profile_id === choice?.id)),
+  [filamentChoices, profilesQuery.data]);
+  const materialWarnings = useMemo(() => catalogMaterialWarnings(filamentSlots, selectedFilamentProfiles),
+    [filamentSlots, selectedFilamentProfiles]);
   const unconfirmedReadiness = useMemo(() => catalogSelectionReadiness({
     binding: selectedBinding,
     process: processChoice ? catalogClassification(groupsQuery.data, processChoice.id) : undefined,
     filaments: filamentChoices.map((choice) => choice && catalogClassification(groupsQuery.data, choice.id)),
     filamentCount: filamentSlots.length,
+    materialWarnings,
     unavailable: profilesQuery.isError || bindingsQuery.isError || groupsQuery.isError,
   }), [selectedBinding, processChoice, filamentChoices, filamentSlots.length, groupsQuery.data,
-    profilesQuery.isError, bindingsQuery.isError, groupsQuery.isError]);
+    materialWarnings, profilesQuery.isError, bindingsQuery.isError, groupsQuery.isError]);
   const acknowledgementContext = JSON.stringify({
     binding: selectedBinding,
     profiles: selectedClassifications.map((profile) => [profile.profile_id, profile.revision_id, profile.classification]),
+    materials: filamentSlots.map((slot, index) => [slot.slot_id ?? index + 1, slot.type,
+      selectedFilamentProfiles[index]?.revision_id, selectedFilamentProfiles[index]?.compatibility_metadata]),
   });
   // Consent applies only to the exact evidence that was displayed, never a later revision/nozzle.
   const acknowledged = acknowledgementKey === acknowledgementContext;
@@ -237,8 +246,6 @@ export function useCatalogSliceSelection({
     : unconfirmedReadiness, [acknowledged, needsAcknowledgement, unconfirmedReadiness]);
 
   const selectedPrinterProfile = (profilesQuery.data ?? []).find((profile) => profile.profile_id === selectedBinding?.profile_id);
-  const selectedFilamentProfiles = filamentChoices.map((choice) =>
-    (profilesQuery.data ?? []).find((profile) => profile.profile_id === choice?.id));
 
   const selectSavedFilament = useCallback(async (index: number, profileId: number) => {
     const targetBinding = bindingId;
@@ -381,6 +388,7 @@ export function useCatalogSliceSelection({
     setAcknowledged,
     needsAcknowledgement,
     acknowledgementReasons,
+    materialWarnings,
     resolvedSelection,
     selectionReadiness,
     loading,

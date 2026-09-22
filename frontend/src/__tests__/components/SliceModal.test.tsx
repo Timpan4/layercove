@@ -144,8 +144,8 @@ beforeEach(() => {
   mockApi.getSpoolmanSlotAssignments.mockResolvedValue([]);
   mockApi.getLibraryFilePlates.mockResolvedValue({ file_id: 100, filename: 'Cube.stl', plates: [], is_multi_plate: false });
   mockApi.getArchivePlates.mockResolvedValue({ archive_id: 100, filename: 'Cube.3mf', plates: [], is_multi_plate: false });
-  mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({ file_id: 100, filename: 'Cube.stl', plate_id: 1, filaments: [] });
-  mockApi.getArchiveFilamentRequirements.mockResolvedValue({ archive_id: 100, filename: 'Cube.3mf', plate_id: 1, filaments: [] });
+  mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({ file_id: 100, filename: 'Cube.stl', plate_id: 1, filaments: [{ slot_id: 1, type: 'PLA', color: '' }] });
+  mockApi.getArchiveFilamentRequirements.mockResolvedValue({ archive_id: 100, filename: 'Cube.3mf', plate_id: 1, filaments: [{ slot_id: 1, type: 'PLA', color: '' }] });
   mockApi.sliceLibraryFile.mockResolvedValue({ job_id: 42 });
   mockApi.sliceArchive.mockResolvedValue({ job_id: 43 });
   mockApi.getSliceJob.mockResolvedValue({ job_id: 42, status: 'running', kind: 'library_file', source_id: 100, source_name: 'Cube.stl', created_at: 'today', started_at: null, completed_at: null });
@@ -153,6 +153,47 @@ beforeEach(() => {
 });
 
 describe('SliceModal catalog selection', () => {
+  it('requires material mismatch acknowledgement for every PLA project slot', async () => {
+    mockApi.listSlicerCatalogProfiles.mockResolvedValue([
+      profile(1, 'printer', 'P1S 0.4'),
+      profile(10, 'process', 'P1S process'),
+      profile(20, 'filament', 'Inslogic 95A TPU', { filament_type: 'TPU' }),
+    ]);
+    mockApi.getSlicerCatalogGroups.mockResolvedValue({
+      ...defaultGroups,
+      selected_printer: [selectedProfiles[0], classified(20, 'filament', 'Inslogic 95A TPU')],
+    });
+    mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
+      file_id: 100, filename: 'Cube.3mf', plate_id: 1,
+      filaments: [1, 2, 3].map((slot_id) => ({ slot_id, type: 'PLA', color: '' })),
+    });
+    renderModal();
+    const user = await chooseTarget();
+
+    await waitFor(() => expect(screen.getAllByRole('radio', { name: /Inslogic 95A TPU/ })).toHaveLength(3));
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    expect(screen.getByText(/Filament 1: project PLA, selected TPU/)).toBeInTheDocument();
+    expect(screen.getByText(/Filament 2: project PLA, selected TPU/)).toBeInTheDocument();
+    expect(screen.getByText(/Filament 3: project PLA, selected TPU/)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('checkbox', { name: /Confirm filament materials before slicing/ }));
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
+  });
+
+  it('requires material confirmation for a standalone STL without declared material', async () => {
+    mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
+      file_id: 100, filename: 'Cube.stl', plate_id: 1, filaments: [],
+    });
+    renderModal();
+    const user = await chooseTarget();
+
+    await waitFor(() => expect(screen.getByRole('radio', { name: /PLA profile/ })).toBeChecked());
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    expect(screen.getByText(/Filament 1: source material unknown, selected PLA/)).toBeInTheDocument();
+    await user.click(screen.getByRole('checkbox', { name: /Confirm filament materials before slicing/ }));
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
+  });
+
   it('requires physical printer then exact binding and renders all four groups safely', async () => {
     renderModal();
     const slice = await screen.findByRole('button', { name: 'Slice' });

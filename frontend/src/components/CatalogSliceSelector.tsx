@@ -29,6 +29,9 @@ export function CatalogSliceSelector({
   const [search, setSearch] = useState('');
   const [editingSlot, setEditingSlot] = useState<number | null>(null);
   const selectedProcessId = selection.processChoice?.id ?? null;
+  const otherAcknowledgementReasons = selection.acknowledgementReasons.filter(
+    (reason) => reason !== 'material_mismatch' && reason !== 'material_unverified',
+  );
 
   return <div className="space-y-3" aria-label="Installed printer slicer selection">
     <label className="block text-xs text-bambu-gray">
@@ -122,7 +125,11 @@ export function CatalogSliceSelector({
         onChange={(event) => selection.setAcknowledged(event.target.checked)}
       />
       <span>
-        Confirm current target and nozzle before slicing. {selection.acknowledgementReasons.join(', ')}
+        {selection.materialWarnings.length > 0
+          ? `Confirm filament materials${otherAcknowledgementReasons.length > 0 ? ' and current target/nozzle' : ''} before slicing.`
+          : 'Confirm current target and nozzle before slicing.'}
+        {selection.materialWarnings.map((warning) => <span key={warning.message} className="block">{warning.message}</span>)}
+        {otherAcknowledgementReasons.length > 0 && <span className="block">{otherAcknowledgementReasons.join(', ')}</span>}
       </span>
     </label>}
     {selection.error && <p role="alert" className="text-xs text-red-400">
