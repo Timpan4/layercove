@@ -184,7 +184,10 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     enabled: printerRevisionId !== undefined,
     retry: false,
   });
-  const bedGeometry = useMemo(() => parseSlicerBed(printerProfileQuery.data?.content), [printerProfileQuery.data]);
+  const bedGeometry = useMemo(
+    () => parseSlicerBed(printerProfileQuery.data?.bed_content ?? printerProfileQuery.data?.content),
+    [printerProfileQuery.data],
+  );
   const buildVolume = bedGeometry.bed;
 
   const processProfileQuery = useQuery({
