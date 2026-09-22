@@ -208,6 +208,7 @@ export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
 export function catalogMaterialWarnings(
   slots: Array<{ type: string }>,
   profiles: Array<SlicerCatalogProfile | undefined>,
+  revisions: Array<number | null | undefined>,
 ) {
   return slots.flatMap((slot, index) => {
     const profile = profiles[index];
@@ -215,7 +216,8 @@ export function catalogMaterialWarnings(
     const declared = canonicalFilamentType(slot.type.trim());
     const metadata = profile.compatibility_metadata ?? {};
     const profileType = metadata.filament_type ?? metadata.material_type;
-    const selected = typeof profileType === 'string' ? canonicalFilamentType(profileType.trim()) : '';
+    const selected = profile.revision_id === revisions[index] && typeof profileType === 'string'
+      ? canonicalFilamentType(profileType.trim()) : '';
     if (declared && selected && declared === selected) return [];
     const reason = declared && selected ? 'material_mismatch' : 'material_unverified';
     const detail = declared

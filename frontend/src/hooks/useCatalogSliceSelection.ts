@@ -216,8 +216,11 @@ export function useCatalogSliceSelection({
   const selectedFilamentProfiles = useMemo(() => filamentChoices.map((choice) =>
     (profilesQuery.data ?? []).find((profile) => profile.profile_id === choice?.id)),
   [filamentChoices, profilesQuery.data]);
-  const materialWarnings = useMemo(() => catalogMaterialWarnings(filamentSlots, selectedFilamentProfiles),
-    [filamentSlots, selectedFilamentProfiles]);
+  const materialWarnings = useMemo(() => catalogMaterialWarnings(
+    filamentSlots,
+    selectedFilamentProfiles,
+    filamentChoices.map((choice) => choice && catalogClassification(groupsQuery.data, choice.id)?.revision_id),
+  ), [filamentSlots, selectedFilamentProfiles, filamentChoices, groupsQuery.data]);
   const unconfirmedReadiness = useMemo(() => catalogSelectionReadiness({
     binding: selectedBinding,
     process: processChoice ? catalogClassification(groupsQuery.data, processChoice.id) : undefined,

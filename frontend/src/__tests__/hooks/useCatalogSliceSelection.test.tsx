@@ -82,6 +82,28 @@ const groups: SlicerCatalogGroups = {
 };
 
 describe('useCatalogSliceSelection', () => {
+  it('requires confirmation when material metadata belongs to an older profile revision', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useCatalogSliceSelection({ filamentSlots }), { wrapper });
+    await waitFor(() => expect(result.current.activePrinters).toHaveLength(1));
+    act(() => result.current.setPrinterId(1));
+    await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
+    act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.selectionReadiness.state).toBe('ready'));
+
+    act(() => client.setQueryData(['slicerCatalogGroups', 1, 5], {
+      ...groups,
+      selected_printer: groups.selected_printer.map((item) =>
+        item.profile_id === 22 ? { ...item, revision_id: item.revision_id + 1 } : item),
+    }));
+
+    await waitFor(() => expect(result.current.selectionReadiness.reason_codes).toContain('material_unverified'));
+    expect(result.current.resolvedSelection).toBeNull();
+  });
+
   it('invalidates material confirmation when the project slot material changes', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const slots: Record<string, Array<{ type: string; color: string }>> = {
