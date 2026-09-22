@@ -1709,6 +1709,8 @@ export interface SlicerCatalogRevisionContent {
   id: number;
   profile_id: number;
   content: Record<string, unknown>;
+  bed_content?: Record<string, unknown>;
+  bed_parent_revision_id?: number | null;
   content_hash: string;
   review_state: string;
 }

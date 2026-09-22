@@ -50,6 +50,118 @@ async def db():
     await engine.dispose()
 
 
+async def test_revision_bed_inherits_bundled_voron_without_changing_stored_content(db):
+    parent = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="bundled",
+            profiles=[
+                CatalogProfile(
+                    "printer:Voron:G4jBDBTV7TnKVT6X",
+                    "printer",
+                    "Voron 2.4 300 0.4 nozzle",
+                    {
+                        "setting_id": "G4jBDBTV7TnKVT6X",
+                        "inherits": "fdm_klipper_common",
+                        "printable_area": ["0x0", "300x0", "300x300", "0x300"],
+                        "printable_height": "275",
+                        "machine_start_gcode": "parent start",
+                    },
+                ),
+            ],
+        ),
+    )
+    content = {"type": "printer", "inherits": "Voron 2.4 300 0.4 nozzle", "base_id": "G4jBDBTV7TnKVT6X"}
+    child = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud",
+            remote_account_id="owner",
+            profiles=[
+                CatalogProfile("custom", "printer", "Voron 2.4 300 0.4 nozzle - my", content),
+            ],
+        ),
+    )
+    result = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
+    assert result["bed_content"] == {
+        "printable_area": ["0x0", "300x0", "300x300", "0x300"],
+        "printable_height": "275",
+    }
+    assert result["bed_parent_revision_id"] == parent.revision_ids[0]
+    assert result["content"] == content
+    assert (await db.get(SlicerProfileRevision, parent.revision_ids[0])).review_state == "pending"
+
+    # Explicit child geometry wins, including alternate Orca field names.
+    revision = await db.get(SlicerProfileRevision, child.revision_ids[0])
+    revision.content = {**content, "bed_shape": "-10x0,290x0,290x300,-10x300", "max_print_height": "260"}
+    result = await catalog_routes.get_catalog_revision(revision.id, db, None)
+    assert result["bed_content"] == {"bed_shape": revision.content["bed_shape"], "max_print_height": "260"}
+
+
+@pytest.mark.parametrize("parent_source,base_id", [("orca_cloud", "base"), ("standard", "wrong")])
+async def test_revision_bed_does_not_borrow_private_or_wrong_parent(db, parent_source, base_id):
+    await ingest_catalog(
+        db,
+        CatalogInput(
+            source=parent_source,
+            remote_account_id="other",
+            profiles=[
+                CatalogProfile(
+                    "base",
+                    "printer",
+                    "Parent",
+                    {
+                        "setting_id": "base",
+                        "printable_area": ["0x0", "300x0", "300x300", "0x300"],
+                        "printable_height": "275",
+                    },
+                ),
+            ],
+        ),
+    )
+    child = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud",
+            remote_account_id="owner",
+            profiles=[
+                CatalogProfile("custom", "printer", "Custom", {"inherits": "Parent", "base_id": base_id}),
+            ],
+        ),
+    )
+    result = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
+    assert result["bed_content"] == {}
+    assert result["bed_parent_revision_id"] is None
+
+
+async def test_revision_bed_rejects_ambiguous_bundled_parent(db):
+    await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="bundled",
+            profiles=[
+                CatalogProfile(vendor, "printer", "Parent", {"printable_height": height})
+                for vendor, height in [("vendor-a", "275"), ("vendor-b", "300")]
+            ],
+        ),
+    )
+    child = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud",
+            remote_account_id="owner",
+            profiles=[
+                CatalogProfile("custom", "printer", "Custom", {"inherits": "Parent"}),
+            ],
+        ),
+    )
+    result = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
+    assert result["bed_content"] == {}
+    assert result["bed_parent_revision_id"] is None
+
+
 async def test_private_account_visibility_requires_owner_consent(db):
     owner = User(username="owner", role="admin")
     outsider = User(username="outsider")

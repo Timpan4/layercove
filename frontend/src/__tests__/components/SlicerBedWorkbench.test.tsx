@@ -76,6 +76,20 @@ async function selectMachine() {
 }
 
 describe('bed geometry in the actual workbench', () => {
+  it('uses inherited bed geometry for a cloud revision containing only overrides', async () => {
+    vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({
+      ...revision,
+      content: { inherits: 'Voron 2.4 300 0.4 nozzle', base_id: 'G4jBDBTV7TnKVT6X' },
+      bed_content: { printable_area: '0x0,300x0,300x300,0x300', printable_height: '275' },
+      bed_parent_revision_id: 882,
+    });
+    await selectMachine();
+    expect(await screen.findByTestId('model-bed')).toHaveTextContent(JSON.stringify({ ...bed, z: 275 }));
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
+    expect(await screen.findByTestId('gcode-bed')).toHaveTextContent(JSON.stringify({ ...bed, z: 275 }));
+  });
+
   it('renders Prepare and Preview for a Ready cloud profile with serialized coordinates', async () => {
     await selectMachine();
     expect(await screen.findByTestId('model-bed')).toHaveTextContent(JSON.stringify(bed));

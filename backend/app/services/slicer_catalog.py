@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.slicer_profile_catalog import (
@@ -390,6 +390,56 @@ async def get_revision_content(session: AsyncSession, revision_id: int) -> dict[
     if revision is None:
         raise ValueError("revision not found")
     return dict(revision.content)
+
+
+async def get_revision_bed_content(
+    session: AsyncSession, revision: SlicerProfileRevision
+) -> tuple[dict[str, Any], int | None]:
+    """Resolve display-only bed fields from an explicit bundled parent.
+
+    Standard snapshots are already flattened by the slicer. They need not be
+    activated for visualization; this never approves or changes slice inputs.
+    """
+    field_pairs = (("printable_area", "bed_shape"), ("printable_height", "max_print_height"))
+    content = revision.content
+    bed = {key: content[key] for pair in field_pairs for key in pair if key in content}
+    missing = [pair for pair in field_pairs if not any(key in content for key in pair)]
+    parent_name = content.get("inherits")
+    if not missing or not isinstance(parent_name, str) or not parent_name.strip():
+        return bed, None
+    profile = await session.get(SlicerProfile, revision.profile_id)
+    if profile.profile_type != "printer":
+        return bed, None
+    latest = (
+        select(func.max(SlicerProfileRevision.id))
+        .where(SlicerProfileRevision.profile_id == SlicerProfile.id)
+        .correlate(SlicerProfile)
+        .scalar_subquery()
+    )
+    parents = (
+        await session.scalars(
+            select(SlicerProfileRevision)
+            .select_from(SlicerProfile)
+            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+            .join(SlicerProfileRevision, SlicerProfileRevision.id == latest)
+            .where(
+                SlicerProfileAccount.source == "standard",
+                SlicerProfileAccount.sharing_state == "shared",
+                SlicerProfile.profile_type == "printer",
+                SlicerProfile.display_name == parent_name.strip(),
+                SlicerProfile.tombstoned_at.is_(None),
+                SlicerProfileRevision.review_state != "rejected",
+            )
+        )
+    ).all()
+    base_id = content.get("base_id")
+    if isinstance(base_id, str) and base_id.strip():
+        parents = [parent for parent in parents if parent.content.get("setting_id") == base_id]
+    if len(parents) != 1:
+        return bed, None
+    parent = parents[0]
+    inherited = {key: parent.content[key] for pair in missing for key in pair if key in parent.content}
+    return {**inherited, **bed}, parent.id if inherited else None
 
 
 async def resolve_dependency_ids(session: AsyncSession, revision_id: int) -> list[int]:

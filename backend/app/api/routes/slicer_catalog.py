@@ -31,6 +31,7 @@ from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
 from backend.app.services.slicer_catalog import (
     activate_revision,
     approve_review_batch,
+    get_revision_bed_content,
     get_revision_content,
     mark_account_stale,
     rollback_revision,
@@ -242,12 +243,15 @@ async def get_catalog_revision(
     )
     if revision is None:
         raise HTTPException(status_code=404, detail="Catalog revision not found")
+    bed_content, bed_parent_revision_id = await get_revision_bed_content(db, revision)
     return {
         "id": revision.id,
         "profile_id": revision.profile_id,
         "content_hash": revision.content_hash,
         "review_state": revision.review_state,
         "content": await get_revision_content(db, revision.id),
+        "bed_content": bed_content,
+        "bed_parent_revision_id": bed_parent_revision_id,
         "resolved_metadata": revision.resolved_metadata,
         "created_at": revision.created_at,
     }
