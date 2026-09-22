@@ -257,6 +257,35 @@ describe('SliceModal catalog selection', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
+  it('loads every project slot before slicing all plates', async () => {
+    mockApi.getLibraryFilePlates.mockResolvedValue({
+      file_id: 100, filename: 'Cube.3mf', is_multi_plate: true,
+      plates: [1, 2].map((index) => ({
+        index, name: `Plate ${index}`, has_thumbnail: false, thumbnail_url: null,
+        objects: [], filaments: [{ type: index === 1 ? 'PLA' : 'PETG', color: '' }],
+      })),
+    });
+    mockApi.getLibraryFileFilamentRequirements.mockImplementation(async (_id, plateId) => ({
+      file_id: 100, filename: 'Cube.3mf', plate_id: plateId ?? null,
+      filaments: plateId === undefined
+        ? [{ slot_id: 1, type: 'PLA', color: '' }, { slot_id: 2, type: 'PETG', color: '' }]
+        : [{ slot_id: 1, type: 'PLA', color: '' }],
+    }));
+    renderModal();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: /Plate 1/ }));
+    await chooseTarget();
+    await user.click(screen.getByRole('checkbox', { name: 'Slice all 2 plates' }));
+
+    await waitFor(() => expect(mockApi.getLibraryFileFilamentRequirements).toHaveBeenCalledWith(
+      100, undefined, expect.any(String),
+    ));
+    expect(await screen.findByRole('group', { name: 'Filament 2 · PETG' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Slice all 2 plates' }));
+    await waitFor(() => expect(mockApi.sliceLibraryFile).toHaveBeenCalledWith(100,
+      expect.objectContaining({ plate: 0, catalog_filament_profile_ids: [20, 21] })));
+  });
+
   it('blocks partial multi-slot resolution', async () => {
     mockApi.listSlicerCatalogBindings.mockResolvedValue([{ ...readyBinding, default_filament_profile_id: null }]);
     mockApi.getSlicerCatalogGroups.mockResolvedValue({

@@ -142,16 +142,17 @@ def request_for(ids: dict[str, int], *, process: str = "process", acknowledgemen
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "source_suffix,project_types,reason",
+    "source_suffix,project_types,selected_type,reason",
     [
-        (".3mf", ["PLA", "PLA", "PLA"], "material_mismatch"),
-        (".stl", None, "material_unverified"),
+        (".3mf", ["PLA", "PLA", "PLA"], "TPU", "material_mismatch"),
+        (".stl", None, "TPU", "material_unverified"),
+        (".3mf", ["PLA", "PLA", "PLA"], "PLA", None),
     ],
 )
-async def test_source_material_requires_acknowledgement_before_catalog_slice(
-    catalog_db, monkeypatch, tmp_path, source_suffix, project_types, reason
+async def test_source_material_validation_before_catalog_slice(
+    catalog_db, monkeypatch, tmp_path, source_suffix, project_types, selected_type, reason
 ):
-    ids = await setup_catalog(catalog_db, filament_type="TPU")
+    ids = await setup_catalog(catalog_db, filament_type=selected_type)
     monkeypatch.setattr(
         printer_manager,
         "get_snapshot",
@@ -183,12 +184,12 @@ async def test_source_material_requires_acknowledgement_before_catalog_slice(
         )
         db.add(job)
         await db.flush()
-        with pytest.raises(CatalogSelectionError) as warning:
-            await persist_catalog_selection(db, job, request, source_path=source_path)
-        assert warning.value.code == "slicer_acknowledgement_required"
-        assert reason in warning.value.reason_codes
-
-        request.catalog_acknowledgement = {"confirmed": True, "reason_codes": [reason]}
+        if reason is not None:
+            with pytest.raises(CatalogSelectionError) as warning:
+                await persist_catalog_selection(db, job, request, source_path=source_path)
+            assert warning.value.code == "slicer_acknowledgement_required"
+            assert reason in warning.value.reason_codes
+            request.catalog_acknowledgement = {"confirmed": True, "reason_codes": [reason]}
         await persist_catalog_selection(db, job, request, source_path=source_path)
 
 
