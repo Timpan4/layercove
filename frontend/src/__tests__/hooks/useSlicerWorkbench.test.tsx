@@ -245,9 +245,14 @@ it('invalidates the output fingerprint when a selected filament revision changes
   act(() => queryClient.setQueryData(['slicerCatalogGroups', 1, 5], {
     ...groups, selected_printer: groups.selected_printer.map((p) => p.profile_id === 20 ? { ...p, revision_id: 120 } : p),
   }));
-  await waitFor(() => expect(result.current.requestFingerprint).not.toBe(previous));
-  const evidence = result.current.request?.catalog_selection_evidence as {filaments: Array<{revision_id: number}>};
-  expect(evidence.filaments[0].revision_id).toBe(120);
+  await waitFor(() => expect(result.current.catalogSelection.needsAcknowledgement).toBe(true));
+  expect(result.current.request).toBeNull();
+  act(() => result.current.catalogSelection.setAcknowledged(true));
+  await waitFor(() => {
+    expect(result.current.requestFingerprint).not.toBe(previous);
+    const evidence = result.current.request?.catalog_selection_evidence as {filaments: Array<{revision_id: number}>} | undefined;
+    expect(evidence?.filaments[0]?.revision_id).toBe(120);
+  });
 });
 
 it('selects the saved local filament after refetch and sends it in the next real request', async () => {

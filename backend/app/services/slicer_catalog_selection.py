@@ -392,7 +392,11 @@ async def _persist_profile_rows(
     validation_required = force_validation or binding.enforcement_state == "enforced"
     if validation_required and blocked_reasons:
         raise CatalogSelectionError("slicer_profile_incompatible", sorted(set(blocked_reasons)))
-    if warning_reasons and (validation_required or material_reasons) and not _acknowledged(request.catalog_acknowledgement):
+    if (
+        warning_reasons
+        and (validation_required or material_reasons)
+        and not _acknowledged(request.catalog_acknowledgement)
+    ):
         raise CatalogSelectionError(
             "slicer_acknowledgement_required",
             sorted(set(warning_reasons)),

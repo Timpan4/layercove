@@ -117,7 +117,7 @@ export function CatalogSliceSelector({
       onSaved={(profileId) => selection.selectSavedFilament(editingSlot, profileId)}
       onClose={() => setEditingSlot(null)} />}
 
-    {selection.needsAcknowledgement && <label className="flex items-start gap-2 rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-200">
+    {selection.needsAcknowledgement && <label className="flex items-start gap-2 rounded border border-amber-400/40 bg-amber-400/5 p-2 text-xs text-amber-900 dark:text-amber-200">
       <input
         type="checkbox"
         checked={selection.acknowledged}

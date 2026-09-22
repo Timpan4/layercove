@@ -175,6 +175,8 @@ describe('SliceModal catalog selection', () => {
     expect(screen.getByText(/Filament 1: project PLA, selected TPU/)).toBeInTheDocument();
     expect(screen.getByText(/Filament 2: project PLA, selected TPU/)).toBeInTheDocument();
     expect(screen.getByText(/Filament 3: project PLA, selected TPU/)).toBeInTheDocument();
+    expect(screen.getByText(/Filament 1: project PLA, selected TPU/).closest('label'))
+      .toHaveClass('text-amber-900', 'dark:text-amber-200');
 
     await user.click(screen.getByRole('checkbox', { name: /Confirm filament materials before slicing/ }));
     expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
