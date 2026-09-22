@@ -127,6 +127,68 @@ class TestPrintQueueAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_klipper_library_gcode_rejects_bambu_and_accepts_moonraker(
+        self, async_client: AsyncClient, printer_factory, archive_factory, db_session
+    ):
+        """Generated Voron G-code must never enter a Bambu printer's queue."""
+        from backend.app.models.library import LibraryFile
+
+        bambu = await printer_factory(provider="bambu", model="P1S")
+        voron = await printer_factory(provider="moonraker", model="Voron 2.4")
+        gcode = LibraryFile(
+            filename="Voron_Design_Cube_v8.gcode",
+            file_path="library/files/voron-cube.gcode",
+            file_type="gcode",
+            file_size=16,
+            file_metadata={"destination_artifact_kind": "klipper_gcode"},
+            source_type="sliced",
+        )
+        db_session.add(gcode)
+        await db_session.commit()
+
+        wrong = await async_client.post(
+            "/api/v1/queue/", json={"library_file_id": gcode.id, "printer_id": bambu.id}
+        )
+        assert wrong.status_code == 400
+        assert "compatible" in wrong.json()["detail"].lower()
+
+        wrong_model = await async_client.post(
+            "/api/v1/queue/", json={"library_file_id": gcode.id, "target_model": "P1S"}
+        )
+        assert wrong_model.status_code == 400
+
+        archive = await archive_factory(
+            filename="Voron_Design_Cube_v8.gcode",
+            file_path="archives/voron-cube.gcode",
+            extra_data={"destination_artifact_kind": "klipper_gcode"},
+        )
+        wrong_archive = await async_client.post(
+            "/api/v1/queue/", json={"archive_id": archive.id, "printer_id": bambu.id}
+        )
+        assert wrong_archive.status_code == 400
+
+        right = await async_client.post(
+            "/api/v1/queue/", json={"library_file_id": gcode.id, "printer_id": voron.id}
+        )
+        assert right.status_code == 200
+        assert right.json()["printer_id"] == voron.id
+
+        unassigned = await async_client.post(
+            "/api/v1/queue/", json={"library_file_id": gcode.id, "manual_start": True}
+        )
+        assert unassigned.status_code == 200
+        item_id = unassigned.json()["id"]
+        edited = await async_client.patch(
+            f"/api/v1/queue/{item_id}", json={"printer_id": bambu.id}
+        )
+        assert edited.status_code == 400
+        bulk = await async_client.patch(
+            "/api/v1/queue/bulk", json={"item_ids": [item_id], "printer_id": bambu.id}
+        )
+        assert bulk.status_code == 400
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_add_to_queue_with_manual_start(
         self, async_client: AsyncClient, printer_factory, archive_factory, db_session
     ):

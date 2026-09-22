@@ -1,4 +1,5 @@
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Any
 
 from backend.app.core.compat import StrEnum
@@ -7,6 +8,16 @@ from backend.app.core.compat import StrEnum
 class PrinterProvider(StrEnum):
     BAMBU = "bambu"
     MOONRAKER = "moonraker"
+
+
+def artifact_matches_provider(provider: str, file_path: Path, metadata: dict | None) -> bool:
+    """Match a sliced artifact to the provider that can dispatch it."""
+    declared = (metadata or {}).get("destination_artifact_kind")
+    if provider == PrinterProvider.MOONRAKER.value:
+        # A 3MF is only a candidate; its selected plate and Klipper flavor are
+        # verified by moonraker_gcode_source before provider I/O.
+        return file_path.suffix.lower() in {".gcode", ".3mf"} and declared in (None, "klipper_gcode")
+    return file_path.suffix.lower() == ".3mf" and declared in (None, "bambu_3mf")
 
 
 class NormalizedPrinterState(StrEnum):
