@@ -403,9 +403,15 @@ async def get_revision_bed_content(
     field_pairs = (("printable_area", "bed_shape"), ("printable_height", "max_print_height"))
     profile = await session.get(SlicerProfile, revision.profile_id)
     if profile is None or profile.profile_type != "printer":
-        return {key: revision.content[key] for pair in field_pairs for key in pair if key in revision.content}, None, None
+        return (
+            {key: revision.content[key] for pair in field_pairs for key in pair if key in revision.content},
+            None,
+            None,
+        )
 
-    async def resolve(current: SlicerProfileRevision, visited: set[int]) -> tuple[dict[str, Any], int | None, str | None]:
+    async def resolve(
+        current: SlicerProfileRevision, visited: set[int]
+    ) -> tuple[dict[str, Any], int | None, str | None]:
         content = current.content
         bed = {key: content[key] for pair in field_pairs for key in pair if key in content}
         missing = [pair for pair in field_pairs if not any(key in content for key in pair)]
