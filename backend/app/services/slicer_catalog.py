@@ -220,7 +220,10 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                 changed = True
             content = dict(item.content)
             metadata = dict(item.metadata or {})
-            digest = canonical_hash({"content": content, "metadata": metadata})
+            digest_input = {"content": content, "metadata": metadata}
+            if catalog.source == "standard":
+                digest_input["display_name"] = item.display_name
+            digest = canonical_hash(digest_input)
             revision = await session.scalar(
                 select(SlicerProfileRevision).where(
                     SlicerProfileRevision.profile_id == profile.id,
@@ -235,7 +238,12 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                     created_by_user_id=catalog.actor_user_id,
                     content=content,
                     content_hash=digest,
-                    resolved_metadata={"metadata": metadata, "dependency_refs": sorted(refs), "dependency_ids": []},
+                    resolved_metadata={
+                        "metadata": metadata,
+                        "display_name": item.display_name,
+                        "dependency_refs": sorted(refs),
+                        "dependency_ids": [],
+                    },
                     review_state="pending",
                 )
                 session.add(revision)
@@ -430,15 +438,27 @@ async def get_revision_bed_content(
                     SlicerProfileAccount.source == "standard",
                     SlicerProfileAccount.sharing_state == "shared",
                     SlicerProfile.profile_type == "printer",
-                    SlicerProfile.display_name == parent_name.strip(),
                     SlicerProfileRevision.id <= revision.id,
                     SlicerProfileRevision.review_state != "rejected",
                 )
                 .order_by(SlicerProfileRevision.id.desc())
             )
         ).all()
+        name = parent_name.strip()
+        named_rows = [
+            (parent_profile, parent_revision)
+            for parent_profile, parent_revision in rows
+            if (parent_revision.resolved_metadata or {}).get("display_name", parent_revision.content.get("name"))
+            == name
+        ]
+        if not named_rows:
+            named_rows = [
+                (parent_profile, parent_revision)
+                for parent_profile, parent_revision in rows
+                if parent_profile.display_name == name
+            ]
         latest_by_profile = {}
-        for parent_profile, parent_revision in rows:
+        for parent_profile, parent_revision in named_rows:
             latest_by_profile.setdefault(parent_profile.id, parent_revision)
         parents = list(latest_by_profile.values())
         base_id = content.get("base_id")
@@ -451,7 +471,8 @@ async def get_revision_bed_content(
         inherited = {key: inherited[key] for pair in missing for key in pair if key in inherited}
         return {**inherited, **bed}, parent.id if inherited else None, issue
 
-    return await resolve(revision, set())
+    bed, parent_id, issue = await resolve(revision, set())
+    return ({}, None, issue) if issue else (bed, parent_id, None)
 
 
 async def resolve_dependency_ids(session: AsyncSession, revision_id: int) -> list[int]:

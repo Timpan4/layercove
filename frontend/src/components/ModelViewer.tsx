@@ -703,7 +703,7 @@ export function ModelViewer({
     const plateGeometry = buildVolume.outline
       ? new THREE.ShapeGeometry(new THREE.Shape(buildVolume.outline.map(([x, y]) => new THREE.Vector2(
           x - (buildVolume.origin?.[0] ?? 0) - buildVolume.x / 2,
-          y - (buildVolume.origin?.[1] ?? 0) - buildVolume.y / 2,
+          -(y - (buildVolume.origin?.[1] ?? 0) - buildVolume.y / 2),
         ))))
       : new THREE.PlaneGeometry(buildVolume.x, buildVolume.y);
     const plateMaterial = new THREE.MeshBasicMaterial({

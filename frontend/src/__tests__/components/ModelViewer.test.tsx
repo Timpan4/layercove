@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box3, Vector3, type Scene } from 'three';
+import { Box3, Mesh, Vector3, type Scene } from 'three';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelViewer } from '../../components/ModelViewer';
@@ -145,6 +145,15 @@ describe('ModelViewer lifecycle', () => {
     expect(plate).toBeDefined();
     const bounds = new Box3().setFromObject(plate!);
     expect([bounds.min.x, bounds.max.x, bounds.min.z, bounds.max.z]).toEqual([-50, 150, -25, 175]);
+    if (!(plate instanceof Mesh)) throw new Error('Expected bed mesh');
+    plate.updateMatrixWorld(true);
+    const positions = plate.geometry.getAttribute('position');
+    const corners = Array.from({ length: positions.count }, (_, index) => {
+      const point = new Vector3().fromBufferAttribute(positions, index).applyMatrix4(plate.matrixWorld);
+      return [point.x, point.z];
+    });
+    expect(corners).toContainEqual([150, -25]);
+    expect(corners).not.toContainEqual([150, 175]);
   });
 
   it('does not center a bedless STL on the hidden default 256 mm plate', async () => {
