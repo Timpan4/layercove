@@ -70,9 +70,8 @@ export function useCatalogSliceSelection({
     queryFn: api.listSlicerFilamentRules,
   });
   const bindingsQuery = useQuery({
-    queryKey: ['slicerCatalogBindings', printerId],
-    queryFn: () => api.listSlicerCatalogBindings(printerId!),
-    enabled: printerId !== null,
+    queryKey: ['slicerCatalogBindings'],
+    queryFn: () => api.listSlicerCatalogBindings(),
     refetchInterval: 30_000,
   });
   const groupsQuery = useQuery({
@@ -109,9 +108,10 @@ export function useCatalogSliceSelection({
     [printersQuery.data],
   );
   const activeBindings = useMemo(
-    () => (bindingsQuery.data ?? []).filter((binding) => binding.is_active),
-    [bindingsQuery.data],
+    () => (bindingsQuery.data ?? []).filter((binding) => binding.is_active && binding.printer_id === printerId),
+    [bindingsQuery.data, printerId],
   );
+  const printerBindings = bindingsQuery.data ?? [];
   const selectedBinding = activeBindings.find((binding) => binding.id === bindingId) ?? null;
   const selectedPrinter = activePrinters.find((printer) => printer.id === printerId);
   const destinationArtifactKind = selectedPrinter?.provider === 'moonraker'
@@ -135,10 +135,13 @@ export function useCatalogSliceSelection({
   }, []);
 
   useEffect(() => {
-    if (bindingId !== null && bindingsQuery.isSuccess && !activeBindings.some((binding) => binding.id === bindingId)) {
+    if (!bindingsQuery.isSuccess || printerId === null) return;
+    if (bindingId !== null && !activeBindings.some((binding) => binding.id === bindingId)) {
       setBindingId(null);
+    } else if (bindingId === null && activeBindings.length === 1 && activeBindings[0].confirmed_at) {
+      setBindingId(activeBindings[0].id);
     }
-  }, [activeBindings, bindingId, bindingsQuery.isSuccess, setBindingId]);
+  }, [activeBindings, bindingId, bindingsQuery.isSuccess, printerId, setBindingId]);
 
   useEffect(() => {
     const groups = groupsQuery.data;
@@ -359,6 +362,7 @@ export function useCatalogSliceSelection({
   return {
     activePrinters,
     activeBindings,
+    printerBindings,
     destinationArtifactKind,
     printerId,
     setPrinterId,

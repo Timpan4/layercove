@@ -93,7 +93,7 @@ describe('useCatalogSliceSelection', () => {
     await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
     act(() => result.current.setBindingId(5));
     await waitFor(() => expect(result.current.selectionReadiness.state).toBe('ready'));
-    act(() => client.setQueryData(['slicerCatalogBindings', 1], [{
+    act(() => client.setQueryData(['slicerCatalogBindings'], [{
       ...binding,
       readiness: { state: 'acknowledgement_required', reason_codes: ['telemetry_stale'] },
       nozzle: { ...binding.nozzle, status: 'stale' },

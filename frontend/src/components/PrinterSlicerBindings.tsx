@@ -62,7 +62,7 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
   );
 
   const refreshPrinter = (printerId: number) => {
-    queryClient.invalidateQueries({ queryKey: ['slicerCatalogBindings', printerId] });
+    queryClient.invalidateQueries({ queryKey: ['slicerCatalogBindings'] });
     queryClient.invalidateQueries({ queryKey: ['slicerCatalogSuggestion', printerId] });
     queryClient.invalidateQueries({ queryKey: ['slicerCatalogGroups'] });
   };

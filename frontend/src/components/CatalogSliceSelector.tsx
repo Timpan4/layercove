@@ -41,10 +41,19 @@ export function CatalogSliceSelector({
         onChange={(event) => selection.setPrinterId(event.target.value ? Number(event.target.value) : null)}
       >
         <option value="">Choose physical printer</option>
-        {selection.activePrinters.map((printer) => <option key={printer.id} value={printer.id}>{printer.name}</option>)}
+        {selection.activePrinters.map((printer) => {
+          const bindings = selection.printerBindings.filter((binding) => binding.is_active && binding.printer_id === printer.id);
+          const detail = bindings.length === 1
+            ? `${bindings[0].profile_name} · ${bindings[0].expected_nozzle_diameter} mm · tool ${bindings[0].tool_index}`
+            : bindings.length > 1 ? `${bindings.length} presets` : null;
+          return <option key={printer.id} value={printer.id}>
+            {printer.name}{printer.model && printer.model !== printer.name ? ` · ${printer.model}` : ''}
+            {detail && ` · ${detail}`}
+          </option>;
+        })}
       </select>
     </label>
-    {selection.printerId !== null && <label className="block text-xs text-bambu-gray">
+    {selection.printerId !== null && !(selection.activeBindings.length === 1 && selection.activeBindings[0].confirmed_at) && <label className="block text-xs text-bambu-gray">
       Exact printer profile, nozzle, and tool
       <select
         aria-label="Exact slicer binding"
