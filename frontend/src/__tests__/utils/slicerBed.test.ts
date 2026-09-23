@@ -10,6 +10,15 @@ describe('selected machine bed geometry', () => {
     expect(slicerBedFromProfile({ printable_area: ['-100x-120', '100x-120', '100x120', '-100x120'], printable_height: ['300'] }))
       .toEqual({ x: 200, y: 240, z: 300, origin: [-100, -120] });
   });
+  it('retains a nonrectangular printable outline instead of presenting its bounds as the bed', () => {
+    expect(slicerBedFromProfile({
+      printable_area: ['0x0', '200x0', '200x100', '100x100', '100x200', '0x200'],
+      printable_height: 250,
+    })).toEqual({
+      x: 200, y: 200, z: 250, origin: [0, 0],
+      outline: [[0, 0], [200, 0], [200, 100], [100, 100], [100, 200], [0, 200]],
+    });
+  });
   it.each([{}, {printable_area: ['0x0', 'NaNx300', '300x300'], printable_height: 300}, {printable_area: ['0x0','300x0','300x300'], printable_height: 0}])('does not invent a bed for malformed/missing metadata', (content) => {
     expect(slicerBedFromProfile(content)).toBeNull();
   });

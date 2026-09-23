@@ -133,6 +133,7 @@ async def test_revision_bed_does_not_borrow_private_or_wrong_parent(db, parent_s
     result = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
     assert result["bed_content"] == {}
     assert result["bed_parent_revision_id"] is None
+    assert result["bed_issue"] == "missing_parent"
 
 
 async def test_revision_bed_rejects_ambiguous_bundled_parent(db):
@@ -160,6 +161,80 @@ async def test_revision_bed_rejects_ambiguous_bundled_parent(db):
     result = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
     assert result["bed_content"] == {}
     assert result["bed_parent_revision_id"] is None
+    assert result["bed_issue"] == "ambiguous_parent"
+
+
+async def test_revision_bed_resolves_parent_chain_at_selected_revision(db):
+    standard = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="bundled",
+            profiles=[
+                CatalogProfile("root", "printer", "Machine root", {
+                    "printable_area": ["-100x-50", "200x-50", "200x250", "-100x250"],
+                    "printable_height": "275",
+                }),
+                CatalogProfile("middle", "printer", "Machine middle", {
+                    "inherits": "Machine root", "setting_id": "middle-id",
+                }),
+            ],
+        ),
+    )
+    child = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud", remote_account_id="owner",
+            profiles=[CatalogProfile("custom", "printer", "My machine", {
+                "inherits": "Machine middle", "base_id": "middle-id",
+            })],
+        ),
+    )
+    first = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
+    assert first["bed_content"] == {
+        "printable_area": ["-100x-50", "200x-50", "200x250", "-100x250"],
+        "printable_height": "275",
+    }
+    assert first["bed_issue"] is None
+
+    await ingest_catalog(
+        db,
+        CatalogInput(source="standard", remote_account_id="bundled", profiles=[
+            CatalogProfile("root", "printer", "Machine root", {
+                "printable_area": ["0x0", "400x0", "400x400", "0x400"],
+                "printable_height": "400",
+            }),
+        ]),
+    )
+    reopened = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
+    assert reopened["bed_content"] == first["bed_content"]
+    assert reopened["bed_parent_revision_id"] == standard.revision_ids[1]
+
+    updated_child = await ingest_catalog(
+        db,
+        CatalogInput(source="orca_cloud", remote_account_id="owner", profiles=[
+            CatalogProfile("custom", "printer", "My machine", {
+                "inherits": "Machine middle", "base_id": "middle-id", "updated": True,
+            }),
+        ]),
+    )
+    updated = await catalog_routes.get_catalog_revision(updated_child.revision_ids[0], db, None)
+    assert updated["bed_content"] == {
+        "printable_area": ["0x0", "400x0", "400x400", "0x400"],
+        "printable_height": "400",
+    }
+
+
+async def test_revision_bed_reports_missing_parent_instead_of_unexplained_empty_bed(db):
+    child = await ingest_catalog(
+        db,
+        CatalogInput(source="orca_cloud", remote_account_id="owner", profiles=[
+            CatalogProfile("custom", "printer", "My machine", {"inherits": "Missing parent"}),
+        ]),
+    )
+    result = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
+    assert result["bed_content"] == {}
+    assert result["bed_issue"] == "missing_parent"
 
 
 async def test_private_account_visibility_requires_owner_consent(db):

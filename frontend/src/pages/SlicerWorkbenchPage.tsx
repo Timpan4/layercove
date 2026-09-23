@@ -287,6 +287,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
     loading={model.printerProfileQuery.isFetching}
     failed={model.printerProfileQuery.isError}
     issue={model.bedGeometry.issue}
+    parentIssue={model.printerProfileQuery.data?.bed_issue}
     onRetry={() => { void model.printerProfileQuery.refetch(); }}
   />;
 
@@ -355,8 +356,10 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
         plates={(model.platesQuery.data?.plates ?? []).map((plate) => ({ index: plate.index, name: plate.name || `Plate ${plate.index}`, objectCount: plate.object_count ?? plate.objects.length }))}
         selectedPlate={model.selectedPlate ?? 0}
         onPlateChange={model.setSelectedPlate}
-        modelViewer={<ModelViewer buildVolume={model.buildVolume ?? undefined} showBuildPlate={Boolean(model.buildVolume)} centerOnBed={model.buildVolume ? model.arrange : false} url={model.modelUrl} fileType={filename.split('.').pop()} selectedPlateId={model.selectedPlate} filamentColors={model.selectedPlateMetadata?.filaments.map((filament) => filament.color)} className="h-full w-full" />}
-        gcodeViewer={model.previewUrl ? <div className="relative h-full"><GcodeViewer buildVolume={model.buildVolume ?? undefined} showBuildPlate={Boolean(model.buildVolume)} gcodeUrl={model.previewUrl} filamentColors={model.selectedPlateMetadata?.filaments.map((filament) => filament.color)} className="h-full w-full" />{model.previewStale && <div className="absolute left-3 top-3 rounded-md border border-amber-400/40 bg-black/80 px-3 py-2 text-xs text-amber-300">Preview is stale. Slice again before printing.</div>}</div> : <div className="flex h-full items-center justify-center text-sm text-bambu-gray-light">Slice plate to generate preview.</div>}
+        modelViewer={/\.(step|stp)$/i.test(filename)
+          ? <div className="flex h-full items-center justify-center p-6 text-center text-sm text-bambu-gray-light">STEP source preview is unavailable. If the selected slicer supports STEP, slice it and inspect the resulting Preview.</div>
+          : <ModelViewer buildVolume={model.buildVolume ?? undefined} showBuildPlate={Boolean(model.buildVolume)} centerOnBed={model.buildVolume ? model.arrange : false} url={model.modelUrl} fileType={filename.split('.').pop()} selectedPlateId={model.selectedPlate} filamentColors={model.selectedPlateMetadata?.filaments.map((filament) => filament.color)} className="h-full w-full" />}
+        gcodeViewer={model.previewUrl ? <div className="relative h-full"><GcodeViewer buildVolume={model.buildVolume ?? undefined} showBuildPlate={Boolean(model.buildVolume && !model.buildVolume.outline)} gcodeUrl={model.previewUrl} filamentColors={model.selectedPlateMetadata?.filaments.map((filament) => filament.color)} className="h-full w-full" />{model.previewStale && <div className="absolute left-3 top-3 rounded-md border border-amber-400/40 bg-black/80 px-3 py-2 text-xs text-amber-300">Preview is stale. Slice again before printing.</div>}{model.buildVolume?.outline && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">This printer has a nonrectangular bed. Toolpath fit is unverified in this preview.</p>}</div> : <div className="flex h-full items-center justify-center text-sm text-bambu-gray-light">Slice plate to generate preview.</div>}
       >{!model.buildVolume && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">Bed geometry unavailable. Preview only; printer fit and placement are unverified.</p>}</SlicerCanvasWorkspace>
     </div>
     <HistoricalReslice model={model} />

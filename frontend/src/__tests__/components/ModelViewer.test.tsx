@@ -134,6 +134,28 @@ describe('ModelViewer lifecycle', () => {
     expect(bounds.min.y).toBeCloseTo(0);
   });
 
+  it('renders a nonrectangular bed at its nonzero origin', async () => {
+    const volume = slicerBedFromProfile({
+      printable_area: ['-50x-25', '150x-25', '150x75', '50x75', '50x175', '-50x175'],
+      printable_height: 275,
+    });
+    render(<ModelViewer url="/cube.stl" fileType="stl" buildVolume={volume!} centerOnBed />);
+    await finishFetch(0);
+    const plate = renderedScene.current!.children.find((object) => object.type === 'Mesh' && 'geometry' in object && object.geometry.type === 'ShapeGeometry');
+    expect(plate).toBeDefined();
+    const bounds = new Box3().setFromObject(plate!);
+    expect([bounds.min.x, bounds.max.x, bounds.min.z, bounds.max.z]).toEqual([-50, 150, -25, 175]);
+  });
+
+  it('does not center a bedless STL on the hidden default 256 mm plate', async () => {
+    render(<ModelViewer url="/cube.stl" fileType="stl" showBuildPlate={false} centerOnBed={false} />);
+    await finishFetch(0);
+    const group = renderedScene.current!.children.find((object) => object.type === 'Group')!;
+    const center = new Box3().setFromObject(group).getCenter(new Vector3());
+    expect(center.x).toBeCloseTo(0);
+    expect(center.z).toBeCloseTo(0);
+  });
+
   it('loads once for unchanged inputs and reloads once for semantic changes', async () => {
     render(<Harness />);
 

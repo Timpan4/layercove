@@ -11,6 +11,7 @@ import { getAuthToken } from '../api/client';
 
 interface BuildVolume {
   origin?: [number, number];
+  outline?: Array<[number, number]>;
   x: number;
   y: number;
   z: number;
@@ -699,7 +700,12 @@ export function ModelViewer({
     gridRef.current = gridHelper;
 
     // Build plate indicator
-    const plateGeometry = new THREE.PlaneGeometry(buildVolume.x, buildVolume.y);
+    const plateGeometry = buildVolume.outline
+      ? new THREE.ShapeGeometry(new THREE.Shape(buildVolume.outline.map(([x, y]) => new THREE.Vector2(
+          x - (buildVolume.origin?.[0] ?? 0) - buildVolume.x / 2,
+          y - (buildVolume.origin?.[1] ?? 0) - buildVolume.y / 2,
+        ))))
+      : new THREE.PlaneGeometry(buildVolume.x, buildVolume.y);
     const plateMaterial = new THREE.MeshBasicMaterial({
       color: 0x00ae42,
       transparent: true,
@@ -855,8 +861,8 @@ export function ModelViewer({
       plateOffsetZ = plateBox.min.z - selectedPlateBounds.minY;
     }
 
-    const plateCenterX = (buildVolume.origin?.[0] ?? 0) + buildVolume.x / 2;
-    const plateCenterZ = (buildVolume.origin?.[1] ?? 0) + buildVolume.y / 2;
+    const plateCenterX = showBuildPlate ? (buildVolume.origin?.[0] ?? 0) + buildVolume.x / 2 : 0;
+    const plateCenterZ = showBuildPlate ? (buildVolume.origin?.[1] ?? 0) + buildVolume.y / 2 : 0;
 
     if (centerOnBed === true) {
       group.position.x = plateCenterX - center.x;
@@ -902,7 +908,7 @@ export function ModelViewer({
     controlsRef.current.update();
 
     setLoading(false);
-  }, [parsedData, stlGeometry, selectedPlateId, filamentColors, buildVolume, centerOnBed]);
+  }, [parsedData, stlGeometry, selectedPlateId, filamentColors, buildVolume, centerOnBed, showBuildPlate]);
 
   const resetView = () => {
     if (cameraRef.current && controlsRef.current) {

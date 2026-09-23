@@ -143,6 +143,15 @@ describe('bed geometry in the actual workbench', () => {
     expect(screen.getByTestId('model-bed')).toHaveAttribute('data-centered', 'false');
   });
 
+  it('names the missing inheritance parent when the selected revision cannot resolve its bed', async () => {
+    vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({
+      ...revision, content: { inherits: 'Missing machine' }, bed_content: {}, bed_issue: 'missing_parent',
+    });
+    await selectMachine();
+    expect(await screen.findByRole('alert')).toHaveTextContent('inheritance parent is missing');
+    expect(screen.getByTestId('model-bed')).toHaveAttribute('data-bed', 'false');
+  });
+
   it('shows loading while the selected revision is pending', async () => {
     let finish!: (value: typeof revision) => void;
     vi.mocked(api.getSlicerCatalogRevision).mockReturnValue(new Promise((resolve) => { finish = resolve; }));
