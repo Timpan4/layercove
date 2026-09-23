@@ -153,6 +153,19 @@ beforeEach(() => {
 });
 
 describe('SliceModal catalog selection', () => {
+  it('explains a P1S without a binding and links to its setup', async () => {
+    mockApi.listSlicerCatalogBindings.mockResolvedValue([]);
+    renderModal();
+    const user = userEvent.setup();
+    await screen.findByRole('option', { name: 'P1S' });
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Physical printer' }), '1');
+
+    expect(await screen.findByText('P1S has no active slicer binding. Add one before slicing.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Set up P1S binding' })).toHaveAttribute('href', '/#slicer-binding-1');
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    expect(mockApi.sliceLibraryFile).not.toHaveBeenCalled();
+  });
+
   it('requires physical printer then exact binding and renders all four groups safely', async () => {
     renderModal();
     const slice = await screen.findByRole('button', { name: 'Slice' });

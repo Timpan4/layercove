@@ -1,5 +1,6 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useLocation } from 'react-router-dom';
 import {
   api,
   type Printer,
@@ -24,10 +25,15 @@ function isP1S(printer: Printer) {
 }
 
 export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
+  const location = useLocation();
   const { hasPermission, authEnabled } = useAuth();
   const queryClient = useQueryClient();
   const canUpdate = !authEnabled || hasPermission('printers:update');
   const activePrinters = printers.filter((printer) => printer.is_active);
+  useEffect(() => {
+    const target = printers.find((printer) => printer.is_active && location.hash === `#slicer-binding-${printer.id}`);
+    if (target) document.getElementById(`slicer-binding-${target.id}`)?.scrollIntoView?.();
+  }, [printers, location.hash]);
   const [draft, setDraft] = useState<SlicerCatalogBindingInput | null>(null);
   const [suggestedDraft, setSuggestedDraft] = useState<SlicerCatalogBindingInput | null>(null);
 
@@ -120,7 +126,7 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
             const setupRequired = printer.provider === 'moonraker' && bindings.length === 0;
 
             return (
-              <section key={printer.id} className="rounded-lg border border-bambu-dark-tertiary p-3">
+              <section id={`slicer-binding-${printer.id}`} key={printer.id} className="scroll-mt-4 rounded-lg border border-bambu-dark-tertiary p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-medium text-white">{printer.name}</h3>
                   <span className="text-xs text-bambu-gray">

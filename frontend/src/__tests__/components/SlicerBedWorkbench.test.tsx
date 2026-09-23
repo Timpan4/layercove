@@ -76,6 +76,17 @@ async function selectMachine() {
 }
 
 describe('bed geometry in the actual workbench', () => {
+  it('offers binding setup for a printer without an active binding', async () => {
+    vi.mocked(api.getPrinters).mockResolvedValue([{ id: 1, name: 'DOGGE\'S PRINTER', model: 'P1S', provider: 'bambu', is_active: true }] as Awaited<ReturnType<typeof api.getPrinters>>);
+    vi.mocked(api.listSlicerCatalogBindings).mockResolvedValue([]);
+    render(<MemoryRouter initialEntries={['/slicer?library_file=42']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Physical printer' }), { target: { value: '1' } });
+
+    expect(await screen.findByText("DOGGE'S PRINTER has no active slicer binding. Add one before slicing.")).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: "Set up DOGGE'S PRINTER binding" })).toHaveAttribute('href', '/#slicer-binding-1');
+    expect(screen.getByRole('button', { name: 'Slice plate' })).toBeDisabled();
+  });
+
   it('uses inherited bed geometry for a cloud revision containing only overrides', async () => {
     vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({
       ...revision,

@@ -88,7 +88,7 @@ import {
   MonitorPlay,
 } from 'lucide-react';
 
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api, discoveryApi, firmwareApi, withStreamToken, ApiError } from '../api/client';
 import { formatDateOnly, formatETA, formatDuration, parseUTCDate } from '../utils/date';
 import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult, NetworkSiteInput } from '../api/client';
@@ -7945,6 +7945,7 @@ function PowerDropdownItem({
 }
 
 export function PrintersPage() {
+  const location = useLocation();
   const { t } = useTranslation();
   const { resolvedMode, darkAccent, lightAccent } = useTheme();
   const activeAccent = resolvedMode === 'dark' ? darkAccent : lightAccent;
@@ -8880,7 +8881,7 @@ export function PrintersPage() {
     }))
     .filter(({ status }) => !hideDisconnected || status?.connected);
 
-  if (commandDeckControlsPrinterId == null) {
+  if (commandDeckControlsPrinterId == null && !/^#slicer-binding-\d+$/.test(location.hash)) {
     return (
       <>
         <PrintersPagePrototype

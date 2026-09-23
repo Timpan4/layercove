@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { Link } from 'react-router-dom';
 import { FilamentProfileEditor } from './FilamentProfileEditor';
 import type { SlicerCatalogClassification, SlicerCatalogGroups } from '../api/client';
 import type { CatalogSliceSelectionState } from '../hooks/useCatalogSliceSelection';
@@ -29,6 +30,7 @@ export function CatalogSliceSelector({
   const [search, setSearch] = useState('');
   const [editingSlot, setEditingSlot] = useState<number | null>(null);
   const selectedProcessId = selection.processChoice?.id ?? null;
+  const selectedPrinter = selection.activePrinters.find((printer) => printer.id === selection.printerId);
 
   return <div className="space-y-3" aria-label="Installed printer slicer selection">
     <label className="block text-xs text-bambu-gray">
@@ -61,6 +63,15 @@ export function CatalogSliceSelector({
         ))}
       </select>
     </label>}
+
+    {selectedPrinter && !selection.loading && !selection.error && selection.activeBindings.length === 0 && (
+      <p role="status" className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-200">
+        {selectedPrinter.name} has no active slicer binding. Add one before slicing.{' '}
+        <Link className="rounded-sm font-medium underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-bambu-green" to={`/#slicer-binding-${selectedPrinter.id}`}>
+          Set up {selectedPrinter.name} binding
+        </Link>
+      </p>
+    )}
 
     {selection.selectedBinding && <div className={`rounded border px-2 py-1.5 text-xs ${selection.selectionReadiness.state === 'blocked' ? 'border-red-500/40 text-red-300' : selection.selectionReadiness.state === 'acknowledgement_required' ? 'border-amber-400/40 text-amber-300' : 'border-green-500/30 text-green-300'}`}>
       Readiness: {selection.selectionReadiness.state}
