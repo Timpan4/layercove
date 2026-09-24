@@ -9,18 +9,22 @@ vi.mock('../../components/CatalogSliceSelector', () => ({ CatalogSliceSelector: 
 vi.mock('../../components/ModelViewer', () => ({ ModelViewer: ({ showBuildPlate }: { showBuildPlate?: boolean }) => <div data-testid="model" data-bed={showBuildPlate}>Model preview</div> }));
 vi.mock('../../components/GcodeViewer', () => ({ GcodeViewer: ({ showBuildPlate }: { showBuildPlate?: boolean }) => <div data-testid="gcode" data-bed={showBuildPlate}>Toolpath preview</div> }));
 
-beforeEach(() => {
-  vi.mocked(useSlicerWorkbench).mockReturnValue({
+function mockedModel(filename = 'cube.stl') {
+  return {
     capabilitiesQuery: { data: { capabilities: { process_schema: true, model_state: false } } },
     schemaQuery: { data: { pages: [], options: [], scopes: {}, samples: {}, engine: { name: 'OrcaSlicer', version: '2.4.2' }, schema_hash: 'abc' } },
-    sourceQuery: { data: { filename: 'cube.stl' } }, platesQuery: { data: { plates: [] } },
+    sourceQuery: { data: { filename } }, platesQuery: { data: { plates: [] } },
     catalogSelection: {}, printerProfileQuery: {}, buildVolume: null, bedGeometry: { bed: null, issue: 'missingArea' },
     sourceName: 'cube.stl', modelUrl: '/cube.stl', previewUrl: '/cube.gcode',
     objects: [], selectedPlateMetadata: null, filamentSlots: [], arrange: true,
     settingsView: 'global', mode: 'simple', jobId: null, canPrint: true,
     jobState: { status: 'completed' }, request: {}, processOverrides: {},
     processProfileQuery: {}, schemaOptions: new Map(),
-  } as unknown as ReturnType<typeof useSlicerWorkbench>);
+  } as unknown as ReturnType<typeof useSlicerWorkbench>;
+}
+
+beforeEach(() => {
+  vi.mocked(useSlicerWorkbench).mockReturnValue(mockedModel());
 });
 
 function open() {
@@ -63,5 +67,12 @@ describe('Workbench with missing bed metadata', () => {
     fireEvent.click(screen.getByRole('button', { name: 'preview' }));
     expect(screen.getByTestId('gcode')).toHaveAttribute('data-bed', 'false');
     expect(screen.queryByText('Slice plate to generate preview.')).not.toBeInTheDocument();
+  });
+
+  it('explains that a STEP source cannot be displayed in Prepare', () => {
+    vi.mocked(useSlicerWorkbench).mockReturnValue(mockedModel('part.step'));
+    open();
+    expect(screen.getByText(/STEP source preview is unavailable/)).toBeInTheDocument();
+    expect(screen.queryByTestId('model')).not.toBeInTheDocument();
   });
 });

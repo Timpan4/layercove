@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "O perfil principal da impressora não existe ou não está disponível para esta revisão.",
+      ambiguous_parent: "O perfil principal da impressora é ambíguo para esta revisão.",
+      inheritance_cycle: "A cadeia de herança da impressora contém um ciclo.",
+    },
     selectPrinter: "Selecione uma impressora e um perfil exato para visualizar a mesa.",
     loading: "Carregando a mesa selecionada…",
     loadFailed: "Não foi possível carregar a mesa de {{profile}}.",

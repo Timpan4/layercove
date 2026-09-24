@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "Le profil parent de l'imprimante est introuvable ou indisponible pour cette révision.",
+      ambiguous_parent: "Le profil parent de l'imprimante est ambigu pour cette révision.",
+      inheritance_cycle: "La chaîne d'héritage de l'imprimante contient un cycle.",
+    },
     selectPrinter: "Sélectionnez une imprimante et un profil précis pour afficher le plateau.",
     loading: "Chargement du plateau sélectionné…",
     loadFailed: "Impossible de charger le plateau de {{profile}}.",

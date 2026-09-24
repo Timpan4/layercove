@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box3, Vector3, type Scene } from 'three';
+import { Box3, Mesh, Vector3, type Scene } from 'three';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelViewer } from '../../components/ModelViewer';
@@ -132,6 +132,37 @@ describe('ModelViewer lifecycle', () => {
     expect(center.x).toBeCloseTo(150);
     expect(center.z).toBeCloseTo(150);
     expect(bounds.min.y).toBeCloseTo(0);
+  });
+
+  it('renders a nonrectangular bed at its nonzero origin', async () => {
+    const volume = slicerBedFromProfile({
+      printable_area: ['-50x-25', '150x-25', '150x75', '50x75', '50x175', '-50x175'],
+      printable_height: 275,
+    });
+    render(<ModelViewer url="/cube.stl" fileType="stl" buildVolume={volume!} centerOnBed />);
+    await finishFetch(0);
+    const plate = renderedScene.current!.children.find((object) => object.type === 'Mesh' && 'geometry' in object && object.geometry.type === 'ShapeGeometry');
+    expect(plate).toBeDefined();
+    const bounds = new Box3().setFromObject(plate!);
+    expect([bounds.min.x, bounds.max.x, bounds.min.z, bounds.max.z]).toEqual([-50, 150, -25, 175]);
+    if (!(plate instanceof Mesh)) throw new Error('Expected bed mesh');
+    plate.updateMatrixWorld(true);
+    const positions = plate.geometry.getAttribute('position');
+    const corners = Array.from({ length: positions.count }, (_, index) => {
+      const point = new Vector3().fromBufferAttribute(positions, index).applyMatrix4(plate.matrixWorld);
+      return [point.x, point.z];
+    });
+    expect(corners).toContainEqual([150, -25]);
+    expect(corners).not.toContainEqual([150, 175]);
+  });
+
+  it('does not center a bedless STL on the hidden default 256 mm plate', async () => {
+    render(<ModelViewer url="/cube.stl" fileType="stl" showBuildPlate={false} centerOnBed={false} />);
+    await finishFetch(0);
+    const group = renderedScene.current!.children.find((object) => object.type === 'Group')!;
+    const center = new Box3().setFromObject(group).getCenter(new Vector3());
+    expect(center.x).toBeCloseTo(0);
+    expect(center.z).toBeCloseTo(0);
   });
 
   it('loads once for unchanged inputs and reloads once for semantic changes', async () => {

@@ -4,6 +4,7 @@ export interface SlicerBed {
   y: number;
   z: number;
   origin: [number, number];
+  outline?: Array<[number, number]>;
 }
 
 export type SlicerBedIssue = 'missingArea' | 'invalidArea' | 'missingHeight' | 'invalidHeight';
@@ -80,7 +81,8 @@ export function parseSlicerBed(profile: Record<string, unknown> | undefined): Sl
   if (rawHeight == null) return { bed: null, issue: 'missingHeight' };
   const height = heightValue(rawHeight);
   if (height === null) return { bed: null, issue: 'invalidHeight' };
-  return { bed: { x, y, z: height, origin: [minX, minY] }, issue: null };
+  const outline = Math.abs(Math.abs(twiceArea) - 2 * x * y) > 0.001 ? points : undefined;
+  return { bed: { x, y, z: height, origin: [minX, minY], ...(outline ? { outline } : {}) }, issue: null };
 }
 
 export function slicerBedFromProfile(profile: Record<string, unknown> | undefined): SlicerBed | null {

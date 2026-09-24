@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "Il profilo padre della stampante manca o non è disponibile per questa revisione.",
+      ambiguous_parent: "Il profilo padre della stampante è ambiguo per questa revisione.",
+      inheritance_cycle: "La catena di ereditarietà della stampante contiene un ciclo.",
+    },
     selectPrinter: "Seleziona una stampante e un profilo esatto per visualizzare il piano.",
     loading: "Caricamento del piano selezionato…",
     loadFailed: "Impossibile caricare il piano per {{profile}}.",
