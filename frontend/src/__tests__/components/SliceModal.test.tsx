@@ -179,6 +179,45 @@ describe('SliceModal catalog selection', () => {
     expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
   });
 
+  it('surfaces PLA candidates and applies one verified profile to equivalent slots', async () => {
+    mockApi.listSlicerCatalogProfiles.mockResolvedValue([
+      profile(1, 'printer', 'P1S 0.4'),
+      profile(10, 'process', 'P1S process'),
+      profile(20, 'filament', 'Inslogic 95A TPU', { filament_type: 'TPU' }),
+      profile(40, 'filament', 'Voron Generic PLA', { filament_type: 'PLA' }),
+      profile(41, 'filament', 'Generic ABS', { filament_type: 'ABS' }),
+    ]);
+    mockApi.getSlicerCatalogGroups.mockResolvedValue({
+      selected_printer: [classified(10, 'process', 'P1S process'), classified(20, 'filament', 'Inslogic 95A TPU')],
+      other_installed_printers: [],
+      unclassified: [classified(41, 'filament', 'Generic ABS', 'unclassified'), classified(40, 'filament', 'Voron Generic PLA', 'unclassified')],
+      incompatible: [],
+    });
+    mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
+      file_id: 100, filename: 'Cube.3mf', plate_id: 1,
+      filaments: [1, 2, 3].map((slot_id) => ({ slot_id, type: 'PLA', color: `#${slot_id}00000`, used_grams: 1, used_meters: 1 })),
+    });
+
+    renderModal();
+    const user = await chooseTarget();
+    const slots = [1, 2, 3].map((index) => screen.getByRole('group', { name: `Filament ${index} · PLA` }));
+    expect(within(slots[0]).getByText('PLA matches (1)')).toBeVisible();
+    expect(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ })).toBeVisible();
+    expect(within(slots[0]).getByText(/Selected: Inslogic 95A TPU/)).toBeVisible();
+
+    await user.click(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ }));
+    await user.click(screen.getByRole('button', { name: 'Apply Voron Generic PLA to 2 other PLA slots' }));
+    for (const slot of slots) {
+      expect(within(slot).getByText(/Selected: Voron Generic PLA/)).toBeVisible();
+    }
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /Confirm current target and nozzle/ }));
+    await user.click(screen.getByRole('button', { name: 'Slice' }));
+    await waitFor(() => expect(mockApi.sliceLibraryFile).toHaveBeenCalledWith(100, expect.objectContaining({
+      catalog_filament_profile_ids: [40, 40, 40],
+    })));
+  });
+
   it('sends exact catalog identities, ordered multi-slot profiles, and evidence', async () => {
     mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
       file_id: 100,

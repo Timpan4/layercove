@@ -10,12 +10,14 @@ import {
 import {
   catalogClassification,
   catalogClassifications,
+  catalogFilamentMaterial,
   catalogSelectionReadiness,
   pickCatalogFilament,
   pickCatalogProcess,
   selectableCatalogProfile,
   type CatalogProfileChoice,
 } from '../utils/catalogSliceSelection';
+import { canonicalFilamentType } from '../utils/amsHelpers';
 
 export interface CatalogFilamentSlot {
   slot_id?: number;
@@ -240,6 +242,33 @@ export function useCatalogSliceSelection({
   const selectedFilamentProfiles = filamentChoices.map((choice) =>
     (profilesQuery.data ?? []).find((profile) => profile.profile_id === choice?.id));
 
+  const equivalentFilamentSlotCounts = filamentSlots.map((slot, index) => {
+    const material = catalogFilamentMaterial(selectedFilamentProfiles[index]);
+    const choice = filamentChoices[index];
+    const classification = choice && catalogClassification(groupsQuery.data, choice.id);
+    if (!classification || !selectableCatalogProfile(classification)
+      || !material || material !== canonicalFilamentType(slot.type) || slot.used_in_plate === false) return 0;
+    return filamentSlots.filter((candidate, candidateIndex) => candidateIndex !== index
+      && candidate.used_in_plate !== false
+      && canonicalFilamentType(candidate.type) === material
+      && filamentChoices[candidateIndex]?.id !== filamentChoices[index]?.id).length;
+  });
+
+  const applyFilamentToEquivalentSlots = useCallback((index: number) => {
+    const choice = filamentChoices[index];
+    const profile = selectedFilamentProfiles[index];
+    const material = catalogFilamentMaterial(profile);
+    const classification = choice && catalogClassification(groupsQuery.data, choice.id);
+    if (!choice || !classification || !selectableCatalogProfile(classification)
+      || !material || material !== canonicalFilamentType(filamentSlots[index]?.type)
+      || filamentSlots[index]?.used_in_plate === false) return;
+    setFilamentChoices((current) => filamentSlots.map((slot, slotIndex) =>
+      slot.used_in_plate !== false && canonicalFilamentType(slot.type) === material
+        ? { id: choice.id, reason: 'manual', manual: true }
+        : current[slotIndex] ?? null));
+    setAcknowledgementKey(null);
+  }, [filamentChoices, filamentSlots, groupsQuery.data, selectedFilamentProfiles]);
+
   const selectSavedFilament = useCallback(async (index: number, profileId: number) => {
     const targetBinding = bindingId;
     const [, refreshed] = await Promise.all([profilesQuery.refetch(), groupsQuery.refetch()]);
@@ -366,12 +395,15 @@ export function useCatalogSliceSelection({
     setBindingId,
     selectedBinding,
     groups: groupsQuery.data as SlicerCatalogGroups | undefined,
+    catalogProfiles: profilesQuery.data,
     allClassifications: catalogClassifications(groupsQuery.data),
     processChoice,
     filamentChoices,
     selectedPrinterPreset,
     selectedPrinterProfile,
     selectedFilamentProfiles,
+    equivalentFilamentSlotCounts,
+    applyFilamentToEquivalentSlots,
     selectSavedFilament,
     selectedProcessPreset,
     selectedFilamentPresets,

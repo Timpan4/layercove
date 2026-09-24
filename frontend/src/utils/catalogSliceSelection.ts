@@ -47,6 +47,12 @@ export function catalogClassification(
   return catalogClassifications(groups).find((profile) => profile.profile_id === profileId);
 }
 
+export function catalogFilamentMaterial(profile: SlicerCatalogProfile | undefined): string {
+  const metadata = profile?.compatibility_metadata ?? {};
+  const material = metadata.filament_type ?? metadata.material_type;
+  return typeof material === 'string' ? canonicalFilamentType(material.trim()) : '';
+}
+
 function autoCandidate(
   groups: SlicerCatalogGroups | undefined,
   profileId: number | null | undefined,
