@@ -212,18 +212,42 @@ export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
       || profile.classification.group === 'unclassified');
 }
 
+export function catalogMaterialWarnings(
+  slots: Array<{ type: string }>,
+  profiles: Array<SlicerCatalogProfile | undefined>,
+  revisions: Array<number | null | undefined>,
+) {
+  return slots.flatMap((slot, index) => {
+    const profile = profiles[index];
+    if (!profile) return [];
+    const declared = canonicalFilamentType(slot.type.trim());
+    const metadata = profile.compatibility_metadata ?? {};
+    const profileType = metadata.filament_type ?? metadata.material_type;
+    const selected = profile.revision_id === revisions[index] && typeof profileType === 'string'
+      ? canonicalFilamentType(profileType.trim()) : '';
+    if (declared && selected && declared === selected) return [];
+    const reason = declared && selected ? 'material_mismatch' : 'material_unverified';
+    const detail = declared
+      ? `project ${declared}, selected ${selected || 'profile material unknown'}`
+      : `source material unknown, selected ${selected || 'profile material unknown'}`;
+    return [{ reason, message: `Filament ${index + 1}: ${detail}` }];
+  });
+}
+
 /** Readiness of the chosen combination, not the binding's fallback defaults. */
 export function catalogSelectionReadiness({
   binding,
   process,
   filaments,
   filamentCount,
+  materialWarnings = [],
   unavailable = false,
 }: {
   binding: SlicerCatalogBinding | null | undefined;
   process: SlicerCatalogClassification | undefined;
   filaments: Array<SlicerCatalogClassification | null | undefined>;
   filamentCount: number;
+  materialWarnings?: Array<{ reason: string }>;
   unavailable?: boolean;
 }): SlicerCatalogBinding['readiness'] {
   const blocked = (reason_codes: string[]): SlicerCatalogBinding['readiness'] => ({
@@ -260,6 +284,7 @@ export function catalogSelectionReadiness({
       warnings.push(...(profile.classification.reason_codes.length ? profile.classification.reason_codes : ['compatibility_unknown']));
     }
   }
+  warnings.push(...materialWarnings.map((warning) => warning.reason));
   if (hardReasons.length > 0) return blocked(hardReasons);
   return warnings.length > 0
     ? { state: 'acknowledgement_required', reason_codes: [...new Set(warnings)] }

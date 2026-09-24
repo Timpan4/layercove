@@ -208,6 +208,7 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
                 "catalog_binding_id": binding_response.json()["id"],
                 "catalog_process_profile_id": profiles["process"],
                 "catalog_filament_profile_ids": [profiles["filament"]],
+                "catalog_acknowledgement": {"confirmed": True, "reason_codes": ["material_unverified"]},
             },
         )
         assert response.status_code == 202, response.text

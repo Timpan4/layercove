@@ -71,17 +71,16 @@ def _utc_now_naive() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 
-def _profile_compatibility_metadata(profile: SlicerProfile, revision: SlicerProfileRevision | None) -> dict[str, Any]:
+def _compatibility_metadata(profile: SlicerProfile, revision: SlicerProfileRevision | None) -> dict[str, Any]:
     if revision is None:
         return {}
     metadata = dict((revision.resolved_metadata or {}).get("metadata") or {})
-    if profile.profile_type != "filament":
-        return metadata
-    material = (revision.content or {}).get("filament_type")
-    if isinstance(material, list):
-        material = material[0] if len(material) == 1 else None
-    if isinstance(material, str) and material.strip():
-        metadata["filament_type"] = material.strip()
+    if profile.profile_type == "filament":
+        material = revision.content.get("filament_type")
+        values = material if isinstance(material, list) else [material]
+        types = {value.strip() for value in values if isinstance(value, str) and value.strip()}
+        if len(types) == 1:
+            metadata["filament_type"] = next(iter(types))
     return metadata
 
 
@@ -125,7 +124,7 @@ async def list_catalog_profiles(
                 "profile_type": profile.profile_type,
                 "display_name": profile.display_name,
                 "content_hash": revision.content_hash,
-                "compatibility_metadata": _profile_compatibility_metadata(profile, revision),
+                "compatibility_metadata": _compatibility_metadata(profile, revision),
                 "tombstoned": profile.tombstoned_at is not None,
                 "stale": profile.stale_at is not None,
                 "sharing_state": account.sharing_state,
@@ -167,7 +166,7 @@ async def list_catalog_profiles(
             "profile_type": profile.profile_type,
             "display_name": profile.display_name,
             "content_hash": revision.content_hash if revision is not None else None,
-            "compatibility_metadata": _profile_compatibility_metadata(profile, revision),
+            "compatibility_metadata": _compatibility_metadata(profile, revision),
             "tombstoned": profile.tombstoned_at is not None,
             "stale": profile.stale_at is not None,
             "sharing_state": account.sharing_state,

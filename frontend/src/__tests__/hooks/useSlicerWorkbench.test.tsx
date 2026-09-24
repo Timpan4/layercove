@@ -251,7 +251,10 @@ it('invalidates the output fingerprint when a selected filament revision changes
   act(() => queryClient.setQueryData(['slicerCatalogGroups', 1, 5], {
     ...groups, selected_printer: groups.selected_printer.map((p) => p.profile_id === 20 ? { ...p, revision_id: 120 } : p),
   }));
-  await waitFor(() => expect(result.current.request?.catalog_selection_evidence?.filaments[0].revision_id).toBe(120));
+  await waitFor(() => {
+    const evidence = result.current.request?.catalog_selection_evidence as {filaments: Array<{revision_id: number}>} | undefined;
+    expect(evidence?.filaments[0]?.revision_id).toBe(120);
+  });
   expect(result.current.requestFingerprint).not.toBe(previous);
 });
 
