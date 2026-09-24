@@ -187,6 +187,19 @@ describe('SliceModal catalog selection', () => {
     expect(await screen.findByRole('group', { name: 'Process profile' })).toBeInTheDocument();
   });
 
+  it('explains a P1S without a binding and links to its setup', async () => {
+    mockApi.listSlicerCatalogBindings.mockResolvedValue([]);
+    renderModal();
+    const user = userEvent.setup();
+    await screen.findByRole('option', { name: 'P1S' });
+    await user.selectOptions(await screen.findByRole('combobox', { name: 'Physical printer' }), '1');
+
+    expect(await screen.findByText('P1S has no active slicer binding. Add one before slicing.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Set up P1S binding' })).toHaveAttribute('href', '/#slicer-binding-1');
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    expect(mockApi.sliceLibraryFile).not.toHaveBeenCalled();
+  });
+
   it('requires material mismatch acknowledgement for every PLA project slot', async () => {
     mockApi.listSlicerCatalogProfiles.mockResolvedValue([
       profile(1, 'printer', 'P1S 0.4'),
@@ -254,6 +267,73 @@ describe('SliceModal catalog selection', () => {
     expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
     await user.click(screen.getByRole('checkbox', { name: /Confirm current target and nozzle/ }));
     expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
+  });
+
+  it('surfaces PLA candidates and applies one verified profile to equivalent slots', async () => {
+    mockApi.listSlicerCatalogProfiles.mockResolvedValue([
+      profile(1, 'printer', 'P1S 0.4'),
+      profile(10, 'process', 'P1S process'),
+      profile(20, 'filament', 'Inslogic 95A TPU', { filament_type: 'TPU' }),
+      profile(40, 'filament', 'Voron Generic PLA', { filament_type: 'PLA' }),
+      profile(41, 'filament', 'Generic ABS', { filament_type: 'ABS' }),
+    ]);
+    mockApi.getSlicerCatalogGroups.mockResolvedValue({
+      selected_printer: [classified(10, 'process', 'P1S process'), classified(20, 'filament', 'Inslogic 95A TPU')],
+      other_installed_printers: [],
+      unclassified: [classified(41, 'filament', 'Generic ABS', 'unclassified'), classified(40, 'filament', 'Voron Generic PLA', 'unclassified')],
+      incompatible: [],
+    });
+    mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
+      file_id: 100, filename: 'Cube.3mf', plate_id: 1,
+      filaments: [1, 2, 3].map((slot_id) => ({ slot_id, type: 'PLA', color: `#${slot_id}00000`, used_grams: 1, used_meters: 1 })),
+    });
+
+    renderModal();
+    const user = await chooseTarget();
+    const slots = [1, 2, 3].map((index) => screen.getByRole('group', { name: `Filament ${index} · PLA` }));
+    expect(within(slots[0]).getByText('PLA matches (1)')).toBeVisible();
+    expect(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ })).toBeVisible();
+    expect(within(slots[0]).getByText(/Selected: Inslogic 95A TPU/)).toBeVisible();
+
+    await user.click(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ }));
+    await user.click(screen.getByRole('button', { name: 'Apply Voron Generic PLA to 2 other PLA slots' }));
+    for (const slot of slots) {
+      expect(within(slot).getByText(/Selected: Voron Generic PLA/)).toBeVisible();
+    }
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: /Confirm current target and nozzle/ }));
+    await user.click(screen.getByRole('button', { name: 'Slice' }));
+    await waitFor(() => expect(mockApi.sliceLibraryFile).toHaveBeenCalledWith(100, expect.objectContaining({
+      catalog_filament_profile_ids: [40, 40, 40],
+    })));
+  });
+
+  it('does not match or bulk apply material from an older profile revision', async () => {
+    mockApi.listSlicerCatalogProfiles.mockResolvedValue([
+      profile(1, 'printer', 'P1S 0.4'),
+      profile(10, 'process', 'P1S process'),
+      profile(20, 'filament', 'TPU profile', { filament_type: 'TPU' }),
+      profile(40, 'filament', 'Former PLA profile', { filament_type: 'PLA' }),
+    ]);
+    mockApi.getSlicerCatalogGroups.mockResolvedValue({
+      selected_printer: [classified(10, 'process', 'P1S process'), classified(20, 'filament', 'TPU profile')],
+      other_installed_printers: [],
+      unclassified: [{ ...classified(40, 'filament', 'Former PLA profile', 'unclassified'), revision_id: 400 }],
+      incompatible: [],
+    });
+    mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
+      file_id: 100, filename: 'Cube.3mf', plate_id: 1,
+      filaments: [1, 2, 3].map((slot_id) => ({ slot_id, type: 'PLA', color: '' })),
+    });
+
+    renderModal();
+    const user = await chooseTarget();
+    const firstSlot = screen.getByRole('group', { name: 'Filament 1 · PLA' });
+    expect(within(firstSlot).queryByText('PLA matches (1)')).not.toBeInTheDocument();
+    await user.click(within(firstSlot).getByText('Unclassified (1)'));
+    await user.click(within(firstSlot).getByRole('radio', { name: /Former PLA profile/ }));
+    expect(screen.queryByRole('button', { name: /Apply Former PLA profile/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(mockApi.listSlicerCatalogProfiles).toHaveBeenCalledTimes(2));
   });
 
   it('sends exact catalog identities, ordered multi-slot profiles, and evidence', async () => {

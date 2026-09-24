@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "The printer inheritance parent is missing or unavailable for this revision.",
+      ambiguous_parent: "The printer inheritance parent is ambiguous for this revision.",
+      inheritance_cycle: "The printer inheritance chain contains a cycle.",
+    },
     selectPrinter: "Select a printer and an exact profile to view the bed.",
     loading: "Loading selected bed…",
     loadFailed: "Could not load the bed for {{profile}}.",

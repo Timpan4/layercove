@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "このリビジョンの継承元プリンタープロファイルが見つからないか、利用できません。",
+      ambiguous_parent: "このリビジョンの継承元プリンタープロファイルを一意に特定できません。",
+      inheritance_cycle: "プリンターの継承チェーンに循環があります。",
+    },
     selectPrinter: "プリンターと正確なプロファイルを選択してベッドを表示してください。",
     loading: "選択したベッドを読み込み中…",
     loadFailed: "{{profile}} のベッドを読み込めませんでした。",

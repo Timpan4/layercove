@@ -256,7 +256,7 @@ async def get_catalog_revision(
     )
     if revision is None:
         raise HTTPException(status_code=404, detail="Catalog revision not found")
-    bed_content, bed_parent_revision_id = await get_revision_bed_content(db, revision)
+    bed_content, bed_parent_revision_id, bed_issue = await get_revision_bed_content(db, revision)
     return {
         "id": revision.id,
         "profile_id": revision.profile_id,
@@ -265,6 +265,7 @@ async def get_catalog_revision(
         "content": await get_revision_content(db, revision.id),
         "bed_content": bed_content,
         "bed_parent_revision_id": bed_parent_revision_id,
+        "bed_issue": bed_issue,
         "resolved_metadata": revision.resolved_metadata,
         "created_at": revision.created_at,
     }

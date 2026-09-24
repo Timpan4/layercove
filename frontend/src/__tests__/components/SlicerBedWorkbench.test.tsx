@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../api/client';
+import i18n from '../../i18n';
 import { SlicerWorkbenchPage } from '../../pages/SlicerWorkbenchPage';
 import type { SlicerBed } from '../../utils/slicerBed';
 
@@ -66,7 +67,10 @@ beforeEach(() => {
   vi.spyOn(api, 'getSpoolmanSlotAssignments').mockResolvedValue([]);
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await i18n.changeLanguage('en');
+});
 
 async function selectMachine() {
   render(<MemoryRouter initialEntries={['/slicer?library_file=42&job=9']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
@@ -75,6 +79,17 @@ async function selectMachine() {
 }
 
 describe('bed geometry in the actual workbench', () => {
+  it('offers binding setup for a printer without an active binding', async () => {
+    vi.mocked(api.getPrinters).mockResolvedValue([{ id: 1, name: 'DOGGE\'S PRINTER', model: 'P1S', provider: 'bambu', is_active: true }] as Awaited<ReturnType<typeof api.getPrinters>>);
+    vi.mocked(api.listSlicerCatalogBindings).mockResolvedValue([]);
+    render(<MemoryRouter initialEntries={['/slicer?library_file=42']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
+    fireEvent.change(await screen.findByRole('combobox', { name: 'Physical printer' }), { target: { value: '1' } });
+
+    expect(await screen.findByText("DOGGE'S PRINTER has no active slicer binding. Add one before slicing.")).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: "Set up DOGGE'S PRINTER binding" })).toHaveAttribute('href', '/#slicer-binding-1');
+    expect(screen.getByRole('button', { name: 'Slice plate' })).toBeDisabled();
+  });
+
   it('uses inherited bed geometry for a cloud revision containing only overrides', async () => {
     vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({
       ...revision,
@@ -141,6 +156,17 @@ describe('bed geometry in the actual workbench', () => {
     expect(screen.getByTestId('model-bed')).toHaveTextContent('null');
     expect(screen.getByTestId('model-bed')).toHaveAttribute('data-bed', 'false');
     expect(screen.getByTestId('model-bed')).toHaveAttribute('data-centered', 'false');
+  });
+
+  it('names the missing inheritance parent when the selected revision cannot resolve its bed', async () => {
+    vi.mocked(api.getSlicerCatalogRevision).mockResolvedValue({
+      ...revision, content: { inherits: 'Missing machine' }, bed_content: {}, bed_issue: 'missing_parent',
+    });
+    await selectMachine();
+    expect(await screen.findByRole('alert')).toHaveTextContent('inheritance parent is missing');
+    expect(screen.getByTestId('model-bed')).toHaveAttribute('data-bed', 'false');
+    await act(async () => { await i18n.changeLanguage('de'); });
+    expect(screen.getByRole('alert')).toHaveTextContent('übergeordnete Druckerprofil fehlt');
   });
 
   it('shows loading while the selected revision is pending', async () => {

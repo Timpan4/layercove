@@ -194,6 +194,19 @@ describe('catalog slice defaulting', () => {
       null,
     )).toBeNull();
   });
+
+  it('does not auto-select material metadata from an older revision', () => {
+    expect(pickCatalogFilament(
+      groups([{ ...classified(20, 'filament', 'Former PLA'), revision_id: 200 }]),
+      [profile(20, 'PLA')],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PLA', color: '' },
+      [],
+      [],
+      null,
+    )).toBeNull();
+  });
 });
 
 

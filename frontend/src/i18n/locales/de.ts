@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "Das übergeordnete Druckerprofil fehlt oder ist für diese Revision nicht verfügbar.",
+      ambiguous_parent: "Das übergeordnete Druckerprofil ist für diese Revision nicht eindeutig.",
+      inheritance_cycle: "Die Vererbungskette des Druckers enthält einen Zyklus.",
+    },
     selectPrinter: "Wähle einen Drucker und ein genaues Profil, um das Druckbett anzuzeigen.",
     loading: "Ausgewähltes Druckbett wird geladen…",
     loadFailed: "Das Druckbett für {{profile}} konnte nicht geladen werden.",

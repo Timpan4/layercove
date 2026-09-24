@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "이 리비전의 상위 프린터 프로필이 없거나 사용할 수 없습니다.",
+      ambiguous_parent: "이 리비전의 상위 프린터 프로필을 명확히 식별할 수 없습니다.",
+      inheritance_cycle: "프린터 상속 체인에 순환이 있습니다.",
+    },
     selectPrinter: "프린터와 정확한 프로필을 선택하여 베드를 확인하세요.",
     loading: "선택한 베드를 불러오는 중…",
     loadFailed: "{{profile}}의 베드를 불러올 수 없습니다.",

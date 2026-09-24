@@ -242,17 +242,20 @@ it('invalidates the output fingerprint when a selected filament revision changes
   await chooseTarget(result);
   await waitFor(() => expect(result.current.requestFingerprint).not.toBeNull());
   const previous = result.current.requestFingerprint;
+  vi.mocked(api.listSlicerCatalogProfiles).mockResolvedValue([
+    profile(1, 'printer'),
+    profile(10, 'process'),
+    { ...profile(20, 'filament', 'PLA'), revision_id: 120 },
+    profile(21, 'filament', 'PETG'),
+  ] as Awaited<ReturnType<typeof api.listSlicerCatalogProfiles>>);
   act(() => queryClient.setQueryData(['slicerCatalogGroups', 1, 5], {
     ...groups, selected_printer: groups.selected_printer.map((p) => p.profile_id === 20 ? { ...p, revision_id: 120 } : p),
   }));
-  await waitFor(() => expect(result.current.catalogSelection.needsAcknowledgement).toBe(true));
-  expect(result.current.request).toBeNull();
-  act(() => result.current.catalogSelection.setAcknowledged(true));
   await waitFor(() => {
-    expect(result.current.requestFingerprint).not.toBe(previous);
     const evidence = result.current.request?.catalog_selection_evidence as {filaments: Array<{revision_id: number}>} | undefined;
     expect(evidence?.filaments[0]?.revision_id).toBe(120);
   });
+  expect(result.current.requestFingerprint).not.toBe(previous);
 });
 
 it('selects the saved local filament after refetch and sends it in the next real request', async () => {

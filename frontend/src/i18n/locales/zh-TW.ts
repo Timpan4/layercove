@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "此修訂版本的上層印表機設定檔不存在或無法使用。",
+      ambiguous_parent: "此修訂版本的上層印表機設定檔不明確。",
+      inheritance_cycle: "印表機繼承鏈中存在循環。",
+    },
     selectPrinter: "請選擇印表機及其確切設定檔以檢視列印平台。",
     loading: "正在載入所選列印平台…",
     loadFailed: "無法載入 {{profile}} 的列印平台。",

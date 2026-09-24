@@ -1711,6 +1711,7 @@ export interface SlicerCatalogRevisionContent {
   content: Record<string, unknown>;
   bed_content?: Record<string, unknown>;
   bed_parent_revision_id?: number | null;
+  bed_issue?: 'missing_parent' | 'ambiguous_parent' | 'inheritance_cycle' | null;
   content_hash: string;
   review_state: string;
 }

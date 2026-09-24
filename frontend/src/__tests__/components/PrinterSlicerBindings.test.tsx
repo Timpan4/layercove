@@ -1,5 +1,6 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrinterSlicerBindings } from '../../components/PrinterSlicerBindings';
 import { api, type Printer, type SlicerCatalogBinding, type SlicerCatalogClassification } from '../../api/client';
@@ -37,9 +38,9 @@ const emptyGroups = {
   incompatible: [],
 };
 
-function renderPanel(printers: Printer[]) {
+function renderPanel(printers: Printer[], url = '/') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(<QueryClientProvider client={client}><PrinterSlicerBindings printers={printers} /></QueryClientProvider>);
+  return render(<MemoryRouter initialEntries={[url]}><QueryClientProvider client={client}><PrinterSlicerBindings printers={printers} /></QueryClientProvider></MemoryRouter>);
 }
 
 describe('PrinterSlicerBindings', () => {
@@ -59,6 +60,12 @@ describe('PrinterSlicerBindings', () => {
     expect(screen.getByRole('dialog')).toHaveTextContent(/Confirm suggested slicer binding/);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm and bind' }));
     expect(await screen.findByRole('heading', { name: 'Create slicer binding' })).toBeInTheDocument();
+  });
+
+  it('lands a setup link on the selected printer binding card', async () => {
+    renderPanel([printer(1, 'P1S', 'P1S'), printer(2, 'Voron', null, 'moonraker')], '/#slicer-binding-1');
+    expect(await screen.findAllByRole('button', { name: 'Add binding' })).toHaveLength(2);
+    expect(document.getElementById('slicer-binding-1')).toHaveTextContent('P1S');
   });
 
   it('shows setup_required for an unbound Moonraker printer with no model', async () => {

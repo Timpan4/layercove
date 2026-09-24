@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import func, or_, select
+from sqlalchemy import or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.slicer_profile_catalog import (
@@ -196,6 +196,7 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                     SlicerProfile.profile_type == item.profile_type,
                 )
             )
+            previous_display_name = profile.display_name if profile is not None else None
             if profile is None:
                 profile = SlicerProfile(
                     account_id=account.id,
@@ -207,6 +208,18 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                 await session.flush()
                 changed = True
             elif profile.display_name != item.display_name:
+                if catalog.source == "standard":
+                    old_revisions = (
+                        await session.scalars(
+                            select(SlicerProfileRevision).where(SlicerProfileRevision.profile_id == profile.id)
+                        )
+                    ).all()
+                    for old_revision in old_revisions:
+                        if "display_name" not in (old_revision.resolved_metadata or {}):
+                            old_revision.resolved_metadata = {
+                                **(old_revision.resolved_metadata or {}),
+                                "display_name": profile.display_name,
+                            }
                 profile.display_name = item.display_name
                 changed = True
 
@@ -220,13 +233,30 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                 changed = True
             content = dict(item.content)
             metadata = dict(item.metadata or {})
-            digest = canonical_hash({"content": content, "metadata": metadata})
+            digest_input = {"content": content, "metadata": metadata}
+            if catalog.source == "standard":
+                digest_input["display_name"] = item.display_name
+            digest = canonical_hash(digest_input)
             revision = await session.scalar(
                 select(SlicerProfileRevision).where(
                     SlicerProfileRevision.profile_id == profile.id,
                     SlicerProfileRevision.content_hash == digest,
                 )
             )
+            if revision is None and catalog.source == "standard" and previous_display_name == item.display_name:
+                legacy_digest = canonical_hash({"content": content, "metadata": metadata})
+                revision = await session.scalar(
+                    select(SlicerProfileRevision).where(
+                        SlicerProfileRevision.profile_id == profile.id,
+                        SlicerProfileRevision.content_hash == legacy_digest,
+                    )
+                )
+                if revision is not None:
+                    revision.content_hash = digest
+                    revision.resolved_metadata = {
+                        **(revision.resolved_metadata or {}),
+                        "display_name": item.display_name,
+                    }
             if revision is None:
                 refs = _dependency_refs(content) | _dependency_refs(metadata)
                 revision = SlicerProfileRevision(
@@ -235,7 +265,12 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                     created_by_user_id=catalog.actor_user_id,
                     content=content,
                     content_hash=digest,
-                    resolved_metadata={"metadata": metadata, "dependency_refs": sorted(refs), "dependency_ids": []},
+                    resolved_metadata={
+                        "metadata": metadata,
+                        "display_name": item.display_name,
+                        "dependency_refs": sorted(refs),
+                        "dependency_ids": [],
+                    },
                     review_state="pending",
                 )
                 session.add(revision)
@@ -394,52 +429,81 @@ async def get_revision_content(session: AsyncSession, revision_id: int) -> dict[
 
 async def get_revision_bed_content(
     session: AsyncSession, revision: SlicerProfileRevision
-) -> tuple[dict[str, Any], int | None]:
+) -> tuple[dict[str, Any], int | None, str | None]:
     """Resolve display-only bed fields from an explicit bundled parent.
 
-    Standard snapshots are already flattened by the slicer. They need not be
-    activated for visualization; this never approves or changes slice inputs.
+    Read each parent as it existed when the selected revision was stored. This
+    never approves a profile or changes the content sent to the slicer.
     """
     field_pairs = (("printable_area", "bed_shape"), ("printable_height", "max_print_height"))
-    content = revision.content
-    bed = {key: content[key] for pair in field_pairs for key in pair if key in content}
-    missing = [pair for pair in field_pairs if not any(key in content for key in pair)]
-    parent_name = content.get("inherits")
-    if not missing or not isinstance(parent_name, str) or not parent_name.strip():
-        return bed, None
     profile = await session.get(SlicerProfile, revision.profile_id)
-    if profile.profile_type != "printer":
-        return bed, None
-    latest = (
-        select(func.max(SlicerProfileRevision.id))
-        .where(SlicerProfileRevision.profile_id == SlicerProfile.id)
-        .correlate(SlicerProfile)
-        .scalar_subquery()
-    )
-    parents = (
-        await session.scalars(
-            select(SlicerProfileRevision)
-            .select_from(SlicerProfile)
-            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-            .join(SlicerProfileRevision, SlicerProfileRevision.id == latest)
-            .where(
-                SlicerProfileAccount.source == "standard",
-                SlicerProfileAccount.sharing_state == "shared",
-                SlicerProfile.profile_type == "printer",
-                SlicerProfile.display_name == parent_name.strip(),
-                SlicerProfile.tombstoned_at.is_(None),
-                SlicerProfileRevision.review_state != "rejected",
-            )
+    if profile is None or profile.profile_type != "printer":
+        return (
+            {key: revision.content[key] for pair in field_pairs for key in pair if key in revision.content},
+            None,
+            None,
         )
-    ).all()
-    base_id = content.get("base_id")
-    if isinstance(base_id, str) and base_id.strip():
-        parents = [parent for parent in parents if parent.content.get("setting_id") == base_id]
-    if len(parents) != 1:
-        return bed, None
-    parent = parents[0]
-    inherited = {key: parent.content[key] for pair in missing for key in pair if key in parent.content}
-    return {**inherited, **bed}, parent.id if inherited else None
+
+    parent_rows = None
+
+    async def resolve(
+        current: SlicerProfileRevision, visited: set[int]
+    ) -> tuple[dict[str, Any], int | None, str | None]:
+        nonlocal parent_rows
+        content = current.content
+        bed = {key: content[key] for pair in field_pairs for key in pair if key in content}
+        missing = [pair for pair in field_pairs if not any(key in content for key in pair)]
+        parent_name = content.get("inherits")
+        if not missing or not isinstance(parent_name, str) or not parent_name.strip():
+            return bed, None, None
+        if current.id in visited:
+            return bed, None, "inheritance_cycle"
+
+        if parent_rows is None:
+            parent_rows = (
+                await session.execute(
+                    select(SlicerProfile, SlicerProfileRevision)
+                    .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+                    .join(SlicerProfileRevision, SlicerProfileRevision.profile_id == SlicerProfile.id)
+                    .where(
+                        SlicerProfileAccount.source == "standard",
+                        SlicerProfileAccount.sharing_state == "shared",
+                        SlicerProfile.profile_type == "printer",
+                        SlicerProfileRevision.id <= revision.id,
+                        SlicerProfileRevision.review_state != "rejected",
+                    )
+                    .order_by(SlicerProfileRevision.id.desc())
+                )
+            ).all()
+        latest_rows = {}
+        for parent_profile, parent_revision in parent_rows:
+            latest_rows.setdefault(parent_profile.id, (parent_profile, parent_revision))
+        name = parent_name.strip()
+        named_rows = [
+            (parent_profile, parent_revision)
+            for parent_profile, parent_revision in latest_rows.values()
+            if (parent_revision.resolved_metadata or {}).get("display_name", parent_revision.content.get("name"))
+            == name
+        ]
+        if not named_rows:
+            named_rows = [
+                (parent_profile, parent_revision)
+                for parent_profile, parent_revision in latest_rows.values()
+                if parent_profile.display_name == name
+            ]
+        parents = [parent_revision for _parent_profile, parent_revision in named_rows]
+        base_id = content.get("base_id")
+        if isinstance(base_id, str) and base_id.strip():
+            parents = [parent for parent in parents if parent.content.get("setting_id") == base_id.strip()]
+        if len(parents) != 1:
+            return bed, None, "missing_parent" if not parents else "ambiguous_parent"
+        parent = parents[0]
+        inherited, _, issue = await resolve(parent, visited | {current.id})
+        inherited = {key: inherited[key] for pair in missing for key in pair if key in inherited}
+        return {**inherited, **bed}, parent.id if inherited else None, issue
+
+    bed, parent_id, issue = await resolve(revision, set())
+    return ({}, None, issue) if issue else (bed, parent_id, None)
 
 
 async def resolve_dependency_ids(session: AsyncSession, revision_id: int) -> list[int]:
