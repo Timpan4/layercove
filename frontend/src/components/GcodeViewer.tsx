@@ -170,21 +170,23 @@ export function GcodeViewer({
         setLoading(false);
       });
 
-    // Handle resize
+    // Follow the container as the workbench switches between canvas and settings.
     const handleResize = () => {
       if (canvas.parentElement && previewRef.current) {
         const newRect = canvas.parentElement.getBoundingClientRect();
+        if (newRect.width === 0 || newRect.height === 0) return;
         canvas.width = newRect.width;
         canvas.height = newRect.height;
         previewRef.current.resize();
       }
     };
 
-    window.addEventListener('resize', handleResize);
+    const resizeObserver = new ResizeObserver(handleResize);
+    if (canvas.parentElement) resizeObserver.observe(canvas.parentElement);
 
     return () => {
       abort.abort();
-      window.removeEventListener('resize', handleResize);
+      resizeObserver.disconnect();
       if (renderTimeoutRef.current) {
         cancelAnimationFrame(renderTimeoutRef.current);
       }

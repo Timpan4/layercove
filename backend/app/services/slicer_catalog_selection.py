@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import json
+import zipfile
 from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 from typing import Any
 
 from sqlalchemy import select
@@ -24,6 +26,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerSelectionEvaluation,
 )
 from backend.app.schemas.slicer import DestinationArtifactKind, HistoricalReslicePrepareRequest, SliceRequest
+from backend.app.services.filament_requirements import extract_filament_requirements
 from backend.app.services.preset_resolver import materialize_orca_profile
 from backend.app.services.printer_manager import printer_manager
 from backend.app.services.printer_types import PrinterProvider
@@ -36,6 +39,7 @@ from backend.app.services.slicer_compatibility import (
     profile_compatible_printers,
     profile_nozzle_diameter,
 )
+from backend.app.utils.threemf_tools import extract_project_filaments_from_3mf
 
 
 class CatalogSelectionError(ValueError):
@@ -70,6 +74,36 @@ def _now() -> datetime:
 
 def _metadata(revision: SlicerProfileRevision) -> dict[str, Any]:
     return dict((revision.resolved_metadata or {}).get("metadata") or {})
+
+
+def _canonical_material(value: str) -> str:
+    material = value.strip().upper()
+    return "PA-CF" if material in {"PA-CF", "PA12-CF", "PAHT-CF"} else material
+
+
+def _profile_material(revision: SlicerProfileRevision) -> str:
+    raw = revision.content.get("filament_type")
+    if raw is not None:
+        values = raw if isinstance(raw, list) else [raw]
+        materials = {_canonical_material(value) for value in values if isinstance(value, str) and value.strip()}
+        return next(iter(materials)) if len(materials) == 1 else ""
+    metadata = _metadata(revision)
+    material = metadata.get("filament_type") or metadata.get("material_type")
+    return _canonical_material(material) if isinstance(material, str) else ""
+
+
+def _source_materials(source_path: Path, plate: int | None) -> list[str]:
+    if source_path.suffix.lower() != ".3mf":
+        return [""]
+    plate_id = None if plate == 0 else plate or 1
+    slots = extract_filament_requirements(source_path, plate_id)
+    if not slots:
+        try:
+            with zipfile.ZipFile(source_path) as zf:
+                slots = extract_project_filaments_from_3mf(zf)
+        except (OSError, zipfile.BadZipFile):
+            slots = []
+    return [slot.get("type") or "" for slot in slots] or [""]
 
 
 async def _active_revision(
@@ -272,6 +306,7 @@ async def _persist_profile_rows(
     *,
     force_validation: bool = False,
     history: dict[str, Any] | None = None,
+    source_path: Path | None = None,
 ) -> None:
     printer = await db.get(Printer, printer_id)
     binding = await db.get(PrinterSlicerBinding, binding_id)
@@ -340,17 +375,33 @@ async def _persist_profile_rows(
         elif classification.acknowledgement_required:
             warning_reasons.extend(classification.reason_codes)
 
+    material_reasons: list[str] = []
+    if source_path is not None:
+        source_materials = _source_materials(source_path, request.plate)
+        if len(source_materials) != len(filament_rows):
+            raise CatalogSelectionError("filament_slot_count_mismatch", ["filament_slot_count_mismatch"])
+        for source_material, (_profile, revision, _account) in zip(source_materials, filament_rows, strict=True):
+            source = _canonical_material(source_material)
+            selected = _profile_material(revision)
+            if source and selected and source == selected:
+                continue
+            material_reasons.append("material_mismatch" if source and selected else "material_unverified")
+    warning_reasons.extend(material_reasons)
+
     readiness_state = "blocked" if blocked_reasons else "acknowledgement_required" if warning_reasons else "ready"
     validation_required = force_validation or binding.enforcement_state == "enforced"
-    if validation_required:
-        if blocked_reasons:
-            raise CatalogSelectionError("slicer_profile_incompatible", sorted(set(blocked_reasons)))
-        if warning_reasons and not _acknowledged(request.catalog_acknowledgement):
-            raise CatalogSelectionError(
-                "slicer_acknowledgement_required",
-                sorted(set(warning_reasons)),
-                status_code=409,
-            )
+    if validation_required and blocked_reasons:
+        raise CatalogSelectionError("slicer_profile_incompatible", sorted(set(blocked_reasons)))
+    if (
+        warning_reasons
+        and (validation_required or material_reasons)
+        and not _acknowledged(request.catalog_acknowledgement)
+    ):
+        raise CatalogSelectionError(
+            "slicer_acknowledgement_required",
+            sorted(set(warning_reasons)),
+            status_code=409,
+        )
 
     # Persist what the worker will actually slice, including inferred destinations.
     job.request_snapshot = request.model_dump(mode="json", exclude_none=True, exclude_defaults=True)
@@ -437,6 +488,8 @@ async def persist_catalog_selection(
     db: AsyncSession,
     job: SliceJobRecord,
     request: SliceRequest,
+    *,
+    source_path: Path | None = None,
 ) -> None:
     """Validate and pin one request inside the slice-job transaction."""
     if request.catalog_history_job_id is not None:
@@ -479,6 +532,7 @@ async def persist_catalog_selection(
             process_row,
             filament_rows,
             force_validation=True,
+            source_path=source_path,
             history={
                 "source_job_id": request.catalog_history_job_id,
                 "mode": request.catalog_history_mode,
@@ -511,6 +565,7 @@ async def persist_catalog_selection(
         printer_row,
         process_row,
         filament_rows,
+        source_path=source_path,
     )
 
 
