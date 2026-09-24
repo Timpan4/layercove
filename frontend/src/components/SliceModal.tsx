@@ -204,7 +204,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // 1 server-side; multi-plate uses the user's pick.
   const effectivePlateId = selectedPlate ?? 1;
   const requirementsPlateId = sliceAllPlates ? undefined : effectivePlateId;
-  // Generate a request_id per (source, plate) pair so the backend's
+  // Generate a request_id per (source, plate scope) pair so the backend's
   // preview-slice and the FilamentAnalysisSpinner's progress poll share
   // the same id. useMemo keeps it stable across renders within the same
   // pair; switching plates regenerates so a stale poll doesn't bleed
@@ -214,10 +214,10 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    // Tag the id with the (source, plate) so logs/Network panel show which
+    // Tag the id with the (source, plate scope) so logs/Network panel show which
     // pair owns the poll. Also lets the lint rule see the deps in use.
-    return `${source.kind}-${source.id}-p${effectivePlateId}-${random}`;
-  }, [source.kind, source.id, effectivePlateId]);
+    return `${source.kind}-${source.id}-p${requirementsPlateId ?? 'all'}-${random}`;
+  }, [source.kind, source.id, requirementsPlateId]);
   const filamentReqsQuery = useQuery({
     queryKey: ['sliceFilamentReqs', source.kind, source.id, requirementsPlateId],
     queryFn: async () => {

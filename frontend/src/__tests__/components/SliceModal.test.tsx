@@ -277,11 +277,17 @@ describe('SliceModal catalog selection', () => {
     const user = userEvent.setup();
     await user.click(await screen.findByRole('button', { name: /Plate 1/ }));
     await chooseTarget();
+    const plateRequestId = mockApi.getLibraryFileFilamentRequirements.mock.calls
+      .find(([, plateId]) => plateId === 1)?.[2];
+    expect(plateRequestId).toEqual(expect.any(String));
     await user.click(screen.getByRole('checkbox', { name: 'Slice all 2 plates' }));
 
     await waitFor(() => expect(mockApi.getLibraryFileFilamentRequirements).toHaveBeenCalledWith(
       100, undefined, expect.any(String),
     ));
+    const allPlatesRequestId = mockApi.getLibraryFileFilamentRequirements.mock.calls
+      .find(([, plateId]) => plateId === undefined)?.[2];
+    expect(allPlatesRequestId).not.toBe(plateRequestId);
     expect(await screen.findByRole('group', { name: 'Filament 2 · PETG' })).toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Slice all 2 plates' }));
     await waitFor(() => expect(mockApi.sliceLibraryFile).toHaveBeenCalledWith(100,
