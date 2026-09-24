@@ -69,6 +69,34 @@ async def printer_with_queue(db_session):
 class TestWebhookStartPrint:
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_queue_add_rejects_klipper_gcode_for_bambu(
+        self, async_client: AsyncClient, api_key_data, printer_factory, archive_factory
+    ):
+        bambu = await printer_factory(provider="bambu", model="P1S")
+        voron = await printer_factory(provider="moonraker", model="Voron 2.4")
+        archive = await archive_factory(
+            voron.id,
+            filename="Voron_Design_Cube_v8.gcode",
+            file_path="archives/voron-cube.gcode",
+            extra_data={"destination_artifact_kind": "klipper_gcode"},
+        )
+
+        wrong = await async_client.post(
+            "/api/v1/webhook/queue/add",
+            headers={"X-API-Key": api_key_data},
+            json={"archive_id": archive.id, "printer_id": bambu.id},
+        )
+        assert wrong.status_code == 400
+
+        right = await async_client.post(
+            "/api/v1/webhook/queue/add",
+            headers={"X-API-Key": api_key_data},
+            json={"archive_id": archive.id, "printer_id": voron.id},
+        )
+        assert right.status_code == 200
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_clears_manual_start_on_next_pending_item(
         self, async_client: AsyncClient, db_session, api_key_data, printer_with_queue
     ):
