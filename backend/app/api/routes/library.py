@@ -4483,7 +4483,7 @@ async def slice_library_file(
         return response.model_dump()
 
     async def _before_commit(job_db: AsyncSession, job_record) -> None:
-        await persist_catalog_selection(job_db, job_record, request)
+        await persist_catalog_selection(job_db, job_record, request, source_path=src_path)
 
     try:
         job = await slice_dispatch.enqueue(

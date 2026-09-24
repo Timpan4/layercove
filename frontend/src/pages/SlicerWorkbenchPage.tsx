@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -219,6 +219,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
   const { t } = useTranslation();
   const model = useSlicerWorkbench(source, initialJobId);
   const [previewMode, setPreviewMode] = useState<'prepare' | 'preview'>('prepare');
+  const [mobilePanel, setMobilePanel] = useState<'canvas' | 'settings'>('canvas');
   const [sidebarWidth, setSidebarWidth] = useState(400);
   const [pageId, setPageId] = useState('');
   const [tool, setTool] = useState<SlicerTool>('move');
@@ -290,12 +291,12 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
     onRetry={() => { void model.printerProfileQuery.refetch(); }}
   />;
 
-  return <div className="flex h-[calc(100vh-5rem)] min-h-[42rem] flex-col gap-1 overflow-hidden bg-[#202125] p-1">
+  return <div className="flex h-[calc(100dvh-3.5rem)] min-h-0 flex-col gap-1 overflow-hidden bg-[#202125] p-1 md:h-[calc(100vh-5rem)] md:min-h-[42rem]">
     <SlicerTopBar
       backLabel="Return to source"
       onBack={onBack}
       mode={previewMode}
-      onModeChange={setPreviewMode}
+      onModeChange={(mode) => { setPreviewMode(mode); setMobilePanel('canvas'); }}
       title={model.sourceName}
       subtitle={`${schema.engine.name} ${schema.engine.version} · ${schema.schema_hash.slice(0, 10)}`}
       sliceState={sliceState}
@@ -304,8 +305,11 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       onPrint={() => setShowPrint(true)}
       canPrint={model.canPrint}
     />
-    <div className="flex min-h-0 flex-1">
-      <div style={{ width: sidebarWidth }} className="min-w-0 shrink-0">
+    <div className="flex shrink-0 rounded-md border border-white/10 bg-[#292a2e] p-1 text-xs text-white md:hidden">
+      {(['canvas', 'settings'] as const).map((panel) => <button key={panel} type="button" aria-pressed={mobilePanel === panel} onClick={() => setMobilePanel(panel)} className={`min-h-10 flex-1 rounded-sm font-semibold capitalize focus:ring-2 focus:ring-bambu-green ${mobilePanel === panel ? 'bg-bambu-green text-black' : 'text-bambu-gray-light'}`}>{panel}</button>)}
+    </div>
+    <div className="flex min-h-0 min-w-0 flex-1">
+      <div style={{ '--sidebar-width': `${sidebarWidth}px` } as CSSProperties} className={mobilePanel === 'settings' ? 'min-h-0 min-w-0 w-full flex-1 md:w-[var(--sidebar-width)] md:flex-none md:shrink-0' : 'hidden min-w-0 md:block md:w-[var(--sidebar-width)] md:shrink-0'}>
         <SlicerSettingsSidebar
           selectionPanel={<><CatalogSliceSelector selection={model.catalogSelection} filamentSlots={model.filamentSlots} />
             {!model.buildVolume && bedStatus}
@@ -335,8 +339,8 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
           onObjectLockChange={(id, locked) => model.updateObject(id, { locked })}
         />
       </div>
-      <SlicerResizeHandle width={sidebarWidth} onChange={setSidebarWidth} />
-      <SlicerCanvasWorkspace
+      <div className="hidden md:flex"><SlicerResizeHandle width={sidebarWidth} onChange={setSidebarWidth} /></div>
+      <div className={mobilePanel === 'canvas' ? 'flex min-h-0 min-w-0 flex-1 flex-col' : 'hidden min-h-0 min-w-0 flex-1 flex-col md:flex'}><SlicerCanvasWorkspace
         mode={previewMode}
         tool={tool}
         supportsObjectState={supportsModelState}
@@ -357,7 +361,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
         onPlateChange={model.setSelectedPlate}
         modelViewer={<ModelViewer buildVolume={model.buildVolume ?? undefined} showBuildPlate={Boolean(model.buildVolume)} centerOnBed={model.buildVolume ? model.arrange : false} url={model.modelUrl} fileType={filename.split('.').pop()} selectedPlateId={model.selectedPlate} filamentColors={model.selectedPlateMetadata?.filaments.map((filament) => filament.color)} className="h-full w-full" />}
         gcodeViewer={model.previewUrl ? <div className="relative h-full"><GcodeViewer buildVolume={model.buildVolume ?? undefined} showBuildPlate={Boolean(model.buildVolume)} gcodeUrl={model.previewUrl} filamentColors={model.selectedPlateMetadata?.filaments.map((filament) => filament.color)} className="h-full w-full" />{model.previewStale && <div className="absolute left-3 top-3 rounded-md border border-amber-400/40 bg-black/80 px-3 py-2 text-xs text-amber-300">Preview is stale. Slice again before printing.</div>}</div> : <div className="flex h-full items-center justify-center text-sm text-bambu-gray-light">Slice plate to generate preview.</div>}
-      >{!model.buildVolume && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">Bed geometry unavailable. Preview only; printer fit and placement are unverified.</p>}</SlicerCanvasWorkspace>
+      >{!model.buildVolume && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">Bed geometry unavailable. Preview only; printer fit and placement are unverified.</p>}</SlicerCanvasWorkspace></div>
     </div>
     <HistoricalReslice model={model} />
     <SlicerFooter status={sliceStatus ?? 'Ready'} plateName={model.selectedPlateMetadata?.name || `Plate ${model.selectedPlate ?? 1}`} objectCount={model.selectedPlateMetadata?.object_count ?? (model.objects.length || null)} engine={`${schema.engine.version} · ${schema.schema_hash.slice(0, 8)}`} />

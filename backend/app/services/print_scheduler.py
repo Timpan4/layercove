@@ -2603,12 +2603,9 @@ class PrintScheduler:
 
     @staticmethod
     def _artifact_matches_provider(printer: Printer, file_path: Path, metadata: dict | None) -> bool:
-        declared = (metadata or {}).get("destination_artifact_kind")
-        if printer.provider == PrinterProvider.MOONRAKER.value:
-            # A 3MF is only a candidate: its selected plate and Klipper flavor are
-            # verified by moonraker_gcode_source before any provider I/O.
-            return file_path.suffix.lower() in {".gcode", ".3mf"} and declared in (None, "klipper_gcode")
-        return file_path.suffix.lower() == ".3mf" and declared in (None, "bambu_3mf")
+        from backend.app.services.printer_types import artifact_matches_provider
+
+        return artifact_matches_provider(printer.provider, file_path, metadata)
 
     @staticmethod
     def _safe_moonraker_path(value: object) -> str:

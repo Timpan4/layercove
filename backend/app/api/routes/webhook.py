@@ -1,4 +1,5 @@
 import logging
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
@@ -14,7 +15,7 @@ from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.services.printer_backend import BackendError
 from backend.app.services.printer_manager import printer_manager
-from backend.app.services.printer_types import NormalizedPrinterState
+from backend.app.services.printer_types import NormalizedPrinterState, artifact_matches_provider
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +87,11 @@ async def webhook_add_to_queue(
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(status_code=404, detail="Printer not found")
+    if not artifact_matches_provider(printer.provider, Path(archive.file_path), archive.extra_data):
+        raise HTTPException(
+            status_code=400,
+            detail="Source artifact is not compatible with the selected printer. Re-slice for the selected printer.",
+        )
 
     # Get next position
     result = await db.execute(
