@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import zipfile
 from datetime import datetime, timezone
 from decimal import Decimal
 
@@ -63,6 +64,7 @@ async def setup_catalog(
     enforcement_state: str = "enforced",
     source: str = "standard",
     user_id: int | None = None,
+    filament_type: str | None = None,
 ) -> dict[str, int]:
     async with factory() as db:
         result = await ingest_catalog(
@@ -90,7 +92,7 @@ async def setup_catalog(
                         "filament",
                         "filament",
                         "P1S filament",
-                        {"type": "filament"},
+                        {"type": "filament", **({"filament_type": [filament_type]} if filament_type else {})},
                         metadata={"compatible_printers": ["Bambu Lab P1S 0.4 nozzle"]},
                     ),
                     CatalogProfile(
@@ -136,6 +138,59 @@ def request_for(ids: dict[str, int], *, process: str = "process", acknowledgemen
         catalog_acknowledgement=acknowledgement,
         catalog_selection_evidence={"process_reason": "binding_default"},
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "source_suffix,project_types,selected_type,reason",
+    [
+        (".3mf", ["PLA", "PLA", "PLA"], "TPU", "material_mismatch"),
+        (".stl", None, "TPU", "material_unverified"),
+        (".3mf", ["PLA", "PLA", "PLA"], "PLA", None),
+    ],
+)
+async def test_source_material_validation_before_catalog_slice(
+    catalog_db, monkeypatch, tmp_path, source_suffix, project_types, selected_type, reason
+):
+    ids = await setup_catalog(catalog_db, filament_type=selected_type)
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _printer_id: PrinterSnapshot(
+            PrinterProvider.BAMBU,
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+    source_path = tmp_path / f"project{source_suffix}"
+    if project_types is None:
+        source_path.write_bytes(b"solid cube\nendsolid cube\n")
+    else:
+        with zipfile.ZipFile(source_path, "w") as zf:
+            zf.writestr("Metadata/project_settings.config", json.dumps({"filament_type": project_types}))
+
+    request = request_for(ids)
+    slot_count = len(project_types) if project_types else 1
+    request.catalog_filament_profile_ids = [ids["filament"]] * slot_count
+    request.filament_presets = [PresetRef(source="standard", id="legacy-filament")] * slot_count
+    async with catalog_db() as db:
+        job = SliceJobRecord(
+            source_kind="library_file",
+            source_id=1,
+            source_name=source_path.name,
+            status="pending",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(job)
+        await db.flush()
+        if reason is not None:
+            with pytest.raises(CatalogSelectionError) as warning:
+                await persist_catalog_selection(db, job, request, source_path=source_path)
+            assert warning.value.code == "slicer_acknowledgement_required"
+            assert reason in warning.value.reason_codes
+            request.catalog_acknowledgement = {"confirmed": True, "reason_codes": [reason]}
+        await persist_catalog_selection(db, job, request, source_path=source_path)
 
 
 @pytest.mark.asyncio

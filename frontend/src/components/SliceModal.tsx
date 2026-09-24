@@ -203,7 +203,8 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // extraction. plate_id is always sent: single-plate falls through to plate
   // 1 server-side; multi-plate uses the user's pick.
   const effectivePlateId = selectedPlate ?? 1;
-  // Generate a request_id per (source, plate) pair so the backend's
+  const requirementsPlateId = sliceAllPlates ? undefined : effectivePlateId;
+  // Generate a request_id per (source, plate scope) pair so the backend's
   // preview-slice and the FilamentAnalysisSpinner's progress poll share
   // the same id. useMemo keeps it stable across renders within the same
   // pair; switching plates regenerates so a stale poll doesn't bleed
@@ -213,17 +214,17 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       typeof crypto !== 'undefined' && 'randomUUID' in crypto
         ? crypto.randomUUID()
         : `${Date.now()}-${Math.random().toString(36).slice(2)}`;
-    // Tag the id with the (source, plate) so logs/Network panel show which
+    // Tag the id with the (source, plate scope) so logs/Network panel show which
     // pair owns the poll. Also lets the lint rule see the deps in use.
-    return `${source.kind}-${source.id}-p${effectivePlateId}-${random}`;
-  }, [source.kind, source.id, effectivePlateId]);
+    return `${source.kind}-${source.id}-p${requirementsPlateId ?? 'all'}-${random}`;
+  }, [source.kind, source.id, requirementsPlateId]);
   const filamentReqsQuery = useQuery({
-    queryKey: ['sliceFilamentReqs', source.kind, source.id, effectivePlateId],
+    queryKey: ['sliceFilamentReqs', source.kind, source.id, requirementsPlateId],
     queryFn: async () => {
       if (source.kind === 'libraryFile') {
-        return api.getLibraryFileFilamentRequirements(source.id, effectivePlateId, previewRequestId);
+        return api.getLibraryFileFilamentRequirements(source.id, requirementsPlateId, previewRequestId);
       }
-      return api.getArchiveFilamentRequirements(source.id, effectivePlateId, previewRequestId);
+      return api.getArchiveFilamentRequirements(source.id, requirementsPlateId, previewRequestId);
     },
     enabled: !needsPlatePicker,
     staleTime: 60_000,
@@ -232,10 +233,8 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   // Filament slot list for the active plate. Falls back to one synthetic slot
   // for STL/STEP and any "no metadata available" case so the modal still
   // works (single dropdown, mono-color slice). In ``sliceAllPlates`` mode
-  // we keep the same slot list (the backend already returns every project
-  // slot via ``extract_project_filaments_from_3mf``'s fallback path when
-  // slice_info doesn't carry per-plate filaments) but override every
-  // slot's ``used_in_plate`` flag to ``true`` so the dropdown labels
+  // we fetch all project slots and override every slot's
+  // ``used_in_plate`` flag to ``true`` so the dropdown labels
   // drop the "— not used by this plate" suffix and the dropdowns become
   // selectable. Across the whole project, every defined slot IS used by
   // at least one plate, so this is correct in slice-all mode.
