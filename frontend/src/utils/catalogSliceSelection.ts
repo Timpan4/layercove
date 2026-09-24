@@ -47,6 +47,12 @@ export function catalogClassification(
   return catalogClassifications(groups).find((profile) => profile.profile_id === profileId);
 }
 
+export function catalogFilamentMaterial(profile: SlicerCatalogProfile | undefined): string {
+  const metadata = profile?.compatibility_metadata ?? {};
+  const material = metadata.filament_type ?? metadata.material_type;
+  return typeof material === 'string' ? canonicalFilamentType(material.trim()) : '';
+}
+
 function autoCandidate(
   groups: SlicerCatalogGroups | undefined,
   profileId: number | null | undefined,
@@ -176,7 +182,8 @@ export function pickCatalogFilament(
 
     const metadataMatches = (groups?.selected_printer ?? []).filter((candidate) => {
       if (candidate.profile_type !== 'filament' || !candidate.classification.auto_selectable) return false;
-      const profile = profiles.find((item) => item.profile_id === candidate.profile_id);
+      const profile = profiles.find((item) => item.profile_id === candidate.profile_id
+        && item.revision_id === candidate.revision_id);
       const metadata = profile?.compatibility_metadata ?? {};
       const candidateMaterial = metadata.filament_type ?? metadata.material_type;
       if (typeof candidateMaterial !== 'string' || canonicalFilamentType(candidateMaterial) !== material) {

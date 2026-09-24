@@ -459,6 +459,39 @@ async def test_private_account_visibility_requires_owner_consent(db):
     assert len(await list_catalog_profiles(db, outsider)) == 1
 
 
+async def test_catalog_profile_listing_exposes_filament_material_from_revision(db):
+    result = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="local",
+            remote_account_id="material-listing",
+            profiles=[
+                CatalogProfile(
+                    "pla",
+                    "filament",
+                    "Voron Generic PLA",
+                    {"filament_type": ["PLA"]},
+                    metadata={"compatible_printers": ["Voron 2.4"]},
+                ),
+                CatalogProfile("mixed", "filament", "Mixed", {"filament_type": ["PLA", "PETG"]}),
+            ],
+        ),
+    )
+    await approve_review_batch(db, result.review_batch_id, None)
+    for revision_id in result.revision_ids:
+        await activate_revision(db, revision_id, None)
+    await db.commit()
+
+    active = {row["display_name"]: row for row in await list_catalog_profiles(db, None)}
+    assert active["Voron Generic PLA"]["compatibility_metadata"] == {
+        "compatible_printers": ["Voron 2.4"],
+        "filament_type": "PLA",
+    }
+    assert "filament_type" not in active["Mixed"]["compatibility_metadata"]
+    inactive = {row["display_name"]: row for row in await list_catalog_profiles(db, None, True)}
+    assert inactive["Voron Generic PLA"]["compatibility_metadata"]["filament_type"] == "PLA"
+
+
 async def test_profile_listing_exposes_filament_material_from_existing_revision(db):
     result = await ingest_catalog(
         db,
