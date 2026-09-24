@@ -116,10 +116,9 @@ function renderModal(kind: 'libraryFile' | 'archive' = 'libraryFile', onClose = 
 async function chooseTarget() {
   const user = userEvent.setup();
   const printerSelect = await screen.findByRole('combobox', { name: 'Physical printer' });
-  await screen.findByRole('option', { name: 'P1S' });
+  await screen.findByRole('option', { name: /^P1S ·/ });
   await user.selectOptions(printerSelect, '1');
   const bindingSelect = await screen.findByRole('combobox', { name: 'Exact slicer binding' });
-  await screen.findByRole('option', { name: /P1S 0.4 · 0.4 mm · tool 0/ });
   await user.selectOptions(bindingSelect, '5');
   return user;
 }
@@ -153,6 +152,41 @@ beforeEach(() => {
 });
 
 describe('SliceModal catalog selection', () => {
+  it('shows the verified preset in the printer choice and skips its sole binding step', async () => {
+    mockApi.listSlicerCatalogBindings.mockResolvedValue([{
+      ...readyBinding,
+      confirmed_at: '2026-09-22T12:00:00Z',
+    }]);
+    renderModal();
+    const user = userEvent.setup();
+    const printerSelect = await screen.findByRole('combobox', { name: 'Physical printer' });
+    await screen.findByRole('option', { name: /P1S.*P1S 0\.4.*0\.4 mm/ });
+    await user.selectOptions(printerSelect, '1');
+
+    expect(await screen.findByRole('group', { name: 'Process profile' })).toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Exact slicer binding' })).not.toBeInTheDocument();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled());
+  });
+
+  it('keeps the binding choice when a printer has multiple verified presets', async () => {
+    mockApi.listSlicerCatalogBindings.mockResolvedValue([
+      { ...readyBinding, confirmed_at: '2026-09-22T12:00:00Z' },
+      { ...readyBinding, id: 6, profile_name: 'P1S 0.6', expected_nozzle_diameter: 0.6,
+        confirmed_at: '2026-09-22T12:00:00Z' },
+    ]);
+    renderModal();
+    const user = userEvent.setup();
+    const printerSelect = await screen.findByRole('combobox', { name: 'Physical printer' });
+    await screen.findByRole('option', { name: /2 presets/ });
+    await user.selectOptions(printerSelect, '1');
+
+    const bindingSelect = await screen.findByRole('combobox', { name: 'Exact slicer binding' });
+    expect(bindingSelect).toHaveValue('');
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    await user.selectOptions(bindingSelect, '5');
+    expect(await screen.findByRole('group', { name: 'Process profile' })).toBeInTheDocument();
+  });
+
   it('explains a P1S without a binding and links to its setup', async () => {
     mockApi.listSlicerCatalogBindings.mockResolvedValue([]);
     renderModal();

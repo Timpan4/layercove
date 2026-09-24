@@ -75,8 +75,7 @@ afterEach(async () => {
 async function selectMachine() {
   render(<MemoryRouter initialEntries={['/slicer?library_file=42&job=9']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
   fireEvent.change(await screen.findByRole('combobox', { name: 'Physical printer' }), { target: { value: '1' } });
-  await screen.findByRole('option', { name: /Cloud machine/ });
-  fireEvent.change(screen.getByRole('combobox', { name: 'Exact slicer binding' }), { target: { value: '5' } });
+  fireEvent.change(await screen.findByRole('combobox', { name: 'Exact slicer binding' }), { target: { value: '5' } });
 }
 
 describe('bed geometry in the actual workbench', () => {
