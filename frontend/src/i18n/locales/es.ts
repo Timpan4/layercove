@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "El perfil principal de la impresora no existe o no está disponible para esta revisión.",
+      ambiguous_parent: "El perfil principal de la impresora es ambiguo para esta revisión.",
+      inheritance_cycle: "La cadena de herencia de la impresora contiene un ciclo.",
+    },
     selectPrinter: "Selecciona una impresora y un perfil exacto para ver la cama.",
     loading: "Cargando la cama seleccionada…",
     loadFailed: "No se pudo cargar la cama de {{profile}}.",

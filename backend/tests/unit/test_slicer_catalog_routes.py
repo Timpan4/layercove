@@ -351,6 +351,12 @@ async def test_revision_bed_keeps_parent_name_at_historical_revision(db):
             ],
         ),
     )
+    old_revision = await db.get(SlicerProfileRevision, original.revision_ids[0])
+    old_revision.content_hash = canonical_hash({"content": old_revision.content, "metadata": {}})
+    old_revision.resolved_metadata = {
+        key: value for key, value in old_revision.resolved_metadata.items() if key != "display_name"
+    }
+    await db.flush()
     renamed = await ingest_catalog(
         db,
         CatalogInput(
@@ -391,6 +397,37 @@ async def test_revision_bed_keeps_parent_name_at_historical_revision(db):
     reopened = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
     assert reopened["bed_content"]["printable_height"] == "200"
     assert reopened["bed_issue"] is None
+
+
+async def test_revision_bed_rejects_old_parent_name_after_rename(db):
+    await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="bundled",
+            profiles=[CatalogProfile("parent", "printer", "Old name", {"printable_height": "200"})],
+        ),
+    )
+    await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="bundled",
+            profiles=[CatalogProfile("parent", "printer", "New name", {"printable_height": "200"})],
+        ),
+    )
+    child = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud",
+            remote_account_id="owner",
+            profiles=[CatalogProfile("child", "printer", "Child", {"inherits": "Old name"})],
+        ),
+    )
+
+    result = await catalog_routes.get_catalog_revision(child.revision_ids[0], db, None)
+    assert result["bed_issue"] == "missing_parent"
+    assert result["bed_content"] == {}
 
 
 async def test_private_account_visibility_requires_owner_consent(db):
@@ -552,6 +589,29 @@ async def test_standard_sync_reads_full_sidecar_snapshot_into_mirror(db, monkeyp
     revision = await db.get(SlicerProfileRevision, result["revision_ids"][0])
     assert revision.content == content
     assert revision.resolved_metadata["metadata"]["compatible_printers"] == ["Bambu Lab P1S 0.4 nozzle"]
+
+
+async def test_standard_sync_reuses_legacy_revision_hash(db):
+    content = {"printable_height": "200"}
+    catalog = CatalogInput(
+        source="standard",
+        remote_account_id="bundled",
+        profiles=[CatalogProfile("parent", "printer", "Old name", content)],
+    )
+    first = await ingest_catalog(db, catalog)
+    revision = await db.get(SlicerProfileRevision, first.revision_ids[0])
+    revision.content_hash = canonical_hash({"content": content, "metadata": {}})
+    revision.resolved_metadata = {"metadata": {}, "dependency_refs": [], "dependency_ids": []}
+    await db.flush()
+
+    second = await ingest_catalog(db, catalog)
+
+    assert second.review_batch_id is None
+    assert second.revision_ids == ()
+    assert revision.content_hash == canonical_hash(
+        {"content": content, "metadata": {}, "display_name": "Old name"}
+    )
+    assert revision.resolved_metadata["display_name"] == "Old name"
 
 
 async def test_management_listing_and_revision_history_show_lifecycle_state(db):

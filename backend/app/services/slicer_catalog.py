@@ -196,6 +196,7 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                     SlicerProfile.profile_type == item.profile_type,
                 )
             )
+            previous_display_name = profile.display_name if profile is not None else None
             if profile is None:
                 profile = SlicerProfile(
                     account_id=account.id,
@@ -207,6 +208,18 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                 await session.flush()
                 changed = True
             elif profile.display_name != item.display_name:
+                if catalog.source == "standard":
+                    old_revisions = (
+                        await session.scalars(
+                            select(SlicerProfileRevision).where(SlicerProfileRevision.profile_id == profile.id)
+                        )
+                    ).all()
+                    for old_revision in old_revisions:
+                        if "display_name" not in (old_revision.resolved_metadata or {}):
+                            old_revision.resolved_metadata = {
+                                **(old_revision.resolved_metadata or {}),
+                                "display_name": profile.display_name,
+                            }
                 profile.display_name = item.display_name
                 changed = True
 
@@ -230,6 +243,19 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                     SlicerProfileRevision.content_hash == digest,
                 )
             )
+            if revision is None and catalog.source == "standard" and previous_display_name == item.display_name:
+                legacy_digest = canonical_hash({"content": content, "metadata": metadata})
+                revision = await session.scalar(
+                    select(SlicerProfileRevision).where(
+                        SlicerProfileRevision.profile_id == profile.id,
+                        SlicerProfileRevision.content_hash == legacy_digest,
+                    )
+                )
+                if revision is not None:
+                    revision.content_hash = digest
+                    revision.resolved_metadata = {
+                        **(revision.resolved_metadata or {}), "display_name": item.display_name
+                    }
             if revision is None:
                 refs = _dependency_refs(content) | _dependency_refs(metadata)
                 revision = SlicerProfileRevision(
@@ -417,9 +443,12 @@ async def get_revision_bed_content(
             None,
         )
 
+    parent_rows = None
+
     async def resolve(
         current: SlicerProfileRevision, visited: set[int]
     ) -> tuple[dict[str, Any], int | None, str | None]:
+        nonlocal parent_rows
         content = current.content
         bed = {key: content[key] for pair in field_pairs for key in pair if key in content}
         missing = [pair for pair in field_pairs if not any(key in content for key in pair)]
@@ -429,38 +458,39 @@ async def get_revision_bed_content(
         if current.id in visited:
             return bed, None, "inheritance_cycle"
 
-        rows = (
-            await session.execute(
-                select(SlicerProfile, SlicerProfileRevision)
-                .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-                .join(SlicerProfileRevision, SlicerProfileRevision.profile_id == SlicerProfile.id)
-                .where(
-                    SlicerProfileAccount.source == "standard",
-                    SlicerProfileAccount.sharing_state == "shared",
-                    SlicerProfile.profile_type == "printer",
-                    SlicerProfileRevision.id <= revision.id,
-                    SlicerProfileRevision.review_state != "rejected",
+        if parent_rows is None:
+            parent_rows = (
+                await session.execute(
+                    select(SlicerProfile, SlicerProfileRevision)
+                    .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+                    .join(SlicerProfileRevision, SlicerProfileRevision.profile_id == SlicerProfile.id)
+                    .where(
+                        SlicerProfileAccount.source == "standard",
+                        SlicerProfileAccount.sharing_state == "shared",
+                        SlicerProfile.profile_type == "printer",
+                        SlicerProfileRevision.id <= revision.id,
+                        SlicerProfileRevision.review_state != "rejected",
+                    )
+                    .order_by(SlicerProfileRevision.id.desc())
                 )
-                .order_by(SlicerProfileRevision.id.desc())
-            )
-        ).all()
+            ).all()
+        latest_rows = {}
+        for parent_profile, parent_revision in parent_rows:
+            latest_rows.setdefault(parent_profile.id, (parent_profile, parent_revision))
         name = parent_name.strip()
         named_rows = [
             (parent_profile, parent_revision)
-            for parent_profile, parent_revision in rows
+            for parent_profile, parent_revision in latest_rows.values()
             if (parent_revision.resolved_metadata or {}).get("display_name", parent_revision.content.get("name"))
             == name
         ]
         if not named_rows:
             named_rows = [
                 (parent_profile, parent_revision)
-                for parent_profile, parent_revision in rows
+                for parent_profile, parent_revision in latest_rows.values()
                 if parent_profile.display_name == name
             ]
-        latest_by_profile = {}
-        for parent_profile, parent_revision in named_rows:
-            latest_by_profile.setdefault(parent_profile.id, parent_revision)
-        parents = list(latest_by_profile.values())
+        parents = [parent_revision for _parent_profile, parent_revision in named_rows]
         base_id = content.get("base_id")
         if isinstance(base_id, str) and base_id.strip():
             parents = [parent for parent in parents if parent.content.get("setting_id") == base_id.strip()]

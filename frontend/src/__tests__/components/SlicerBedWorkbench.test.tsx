@@ -3,6 +3,7 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { api } from '../../api/client';
+import i18n from '../../i18n';
 import { SlicerWorkbenchPage } from '../../pages/SlicerWorkbenchPage';
 import type { SlicerBed } from '../../utils/slicerBed';
 
@@ -66,7 +67,10 @@ beforeEach(() => {
   vi.spyOn(api, 'getSpoolmanSlotAssignments').mockResolvedValue([]);
 });
 
-afterEach(() => vi.restoreAllMocks());
+afterEach(async () => {
+  vi.restoreAllMocks();
+  await i18n.changeLanguage('en');
+});
 
 async function selectMachine() {
   render(<MemoryRouter initialEntries={['/slicer?library_file=42&job=9']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
@@ -150,6 +154,8 @@ describe('bed geometry in the actual workbench', () => {
     await selectMachine();
     expect(await screen.findByRole('alert')).toHaveTextContent('inheritance parent is missing');
     expect(screen.getByTestId('model-bed')).toHaveAttribute('data-bed', 'false');
+    await act(async () => { await i18n.changeLanguage('de'); });
+    expect(screen.getByRole('alert')).toHaveTextContent('übergeordnete Druckerprofil fehlt');
   });
 
   it('shows loading while the selected revision is pending', async () => {

@@ -1,5 +1,10 @@
 export default {
   slicerBed: {
+    parentIssues: {
+      missing_parent: "Bu revizyon için üst yazıcı profili eksik veya kullanılamıyor.",
+      ambiguous_parent: "Bu revizyon için üst yazıcı profili belirsiz.",
+      inheritance_cycle: "Yazıcının devralma zincirinde bir döngü var.",
+    },
     selectPrinter: "Tabla görünümü için bir yazıcı ve kesin bir profil seçin.",
     loading: "Seçili tabla yükleniyor…",
     loadFailed: "{{profile}} için tabla yüklenemedi.",
