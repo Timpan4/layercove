@@ -459,6 +459,34 @@ async def test_private_account_visibility_requires_owner_consent(db):
     assert len(await list_catalog_profiles(db, outsider)) == 1
 
 
+async def test_profile_listing_exposes_filament_material_from_existing_revision(db):
+    result = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="bundled",
+            profiles=[
+                CatalogProfile("pla", "filament", "Generic PLA", {"filament_type": ["PLA"]}),
+                CatalogProfile("tpu", "filament", "Inslogic 95A TPU", {"filament_type": ["TPU"]}),
+            ],
+        ),
+    )
+    await approve_review_batch(db, result.review_batch_id)
+    for revision_id in result.revision_ids:
+        await activate_revision(db, revision_id)
+
+    active = await list_catalog_profiles(db, None)
+    assert {profile["display_name"]: profile["compatibility_metadata"]["filament_type"] for profile in active} == {
+        "Generic PLA": "PLA",
+        "Inslogic 95A TPU": "TPU",
+    }
+    inactive = await list_catalog_profiles(db, None, True)
+    assert {profile["display_name"]: profile["compatibility_metadata"]["filament_type"] for profile in inactive} == {
+        "Generic PLA": "PLA",
+        "Inslogic 95A TPU": "TPU",
+    }
+
+
 async def test_sharing_requires_source_specific_cloud_permission(db):
     cloud_group = Group(name="Cloud only", permissions=[Permission.CLOUD_AUTH.value])
     owner = User(username="source-owner", groups=[cloud_group])

@@ -37,7 +37,7 @@ from backend.app.schemas.print_queue import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
-from backend.app.services.printer_types import PrinterProvider
+from backend.app.services.printer_types import PrinterProvider, artifact_matches_provider
 from backend.app.utils.printer_models import normalize_printer_model, normalize_printer_model_id
 from backend.app.utils.threemf_tools import (
     extract_bed_type_from_3mf,
@@ -48,6 +48,26 @@ from backend.app.utils.threemf_tools import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/queue", tags=["queue"])
+
+
+def _require_artifact_target_compatible(source: PrintArchive | LibraryFile, printers: list[Printer]) -> None:
+    metadata = source.extra_data if isinstance(source, PrintArchive) else source.file_metadata
+    if not all(artifact_matches_provider(printer.provider, Path(source.file_path), metadata) for printer in printers):
+        raise HTTPException(
+            400, "Source artifact is not compatible with the selected printer. Re-slice for the selected printer."
+        )
+
+
+async def _require_queue_item_target_compatible(
+    db: AsyncSession, item: PrintQueueItem, printers: list[Printer]
+) -> None:
+    source = (
+        await db.get(PrintArchive, item.archive_id)
+        if item.archive_id
+        else await db.get(LibraryFile, item.library_file_id)
+    )
+    if source:
+        _require_artifact_target_compatible(source, printers)
 
 
 def _extract_filament_types_from_3mf(file_path: Path, plate_id: int | None = None) -> list[str]:
@@ -395,11 +415,14 @@ async def add_to_queue(
         raise HTTPException(400, "Cannot specify both printer_id and target_model")
 
     # Validate printer exists (if assigned)
+    target_printers: list[Printer] = []
     if data.printer_id is not None:
         caller.require_printer_access(data.printer_id)
         result = await db.execute(select(Printer).where(Printer.id == data.printer_id))
-        if not result.scalar_one_or_none():
+        printer = result.scalar_one_or_none()
+        if not printer:
             raise HTTPException(400, "Printer not found")
+        target_printers = [printer]
 
     # Validate target_model has active printers
     if target_model_norm:
@@ -408,7 +431,8 @@ async def add_to_queue(
         result = await db.execute(
             select(Printer).where(Printer.model == target_model_norm).where(Printer.is_active == True)  # noqa: E712
         )
-        if not result.scalars().first():
+        target_printers = list(result.scalars().all())
+        if not target_printers:
             raise HTTPException(400, f"No active printers for model: {target_model_norm}")
 
     # Validate archive exists (if provided) and get it for filament extraction
@@ -472,6 +496,15 @@ async def add_to_queue(
             validate_print_filename(library_file.filename)
         except InvalidFilenameError as e:
             raise HTTPException(400, str(e)) from e
+
+    source = archive or library_file
+    if source and target_printers:
+        validation_printers = target_printers
+        if target_model_norm and data.target_location:
+            located = [printer for printer in target_printers if printer.location == data.target_location]
+            if located:
+                validation_printers = located
+        _require_artifact_target_compatible(source, validation_printers)
 
     # Extract filament types for model-based assignment (used by scheduler for validation)
     required_filament_types = None
@@ -758,10 +791,12 @@ async def bulk_update_queue_items(
         raise HTTPException(400, "No fields to update")
 
     # Validate printer_id if being changed
+    target_printer = None
     if "printer_id" in update_data and update_data["printer_id"] is not None:
         caller.require_printer_access(update_data["printer_id"])
         result = await db.execute(select(Printer).where(Printer.id == update_data["printer_id"]))
-        if not result.scalar_one_or_none():
+        target_printer = result.scalar_one_or_none()
+        if not target_printer:
             raise HTTPException(400, "Printer not found")
 
     # Fetch all items
@@ -781,6 +816,9 @@ async def bulk_update_queue_items(
         if not can_modify_all and item.created_by_id != user.id:
             skipped_count += 1
             continue
+
+        if target_printer:
+            await _require_queue_item_target_compatible(db, item, [target_printer])
 
         for field, value in update_data.items():
             setattr(item, field, value)
@@ -1117,21 +1155,34 @@ async def update_queue_item(
         raise HTTPException(400, "Cannot specify both printer_id and target_model")
 
     # Validate new printer_id if being changed (and not None)
+    target_printers: list[Printer] = []
     if "printer_id" in update_data and update_data["printer_id"] is not None:
         caller.require_printer_access(update_data["printer_id"])
         result = await db.execute(select(Printer).where(Printer.id == update_data["printer_id"]))
-        if not result.scalar_one_or_none():
+        target_printer = result.scalar_one_or_none()
+        if not target_printer:
             raise HTTPException(400, "Printer not found")
+        target_printers = [target_printer]
 
     # Validate target_model has active printers
-    if "target_model" in update_data and update_data["target_model"]:
+    if new_target_model and ("target_model" in update_data or "target_location" in update_data):
         if caller.printer_ids is not None:
             raise HTTPException(403, "Printer-scoped API keys cannot queue model-based jobs")
         result = await db.execute(
-            select(Printer).where(Printer.model == update_data["target_model"]).where(Printer.is_active == True)  # noqa: E712
+            select(Printer).where(Printer.model == new_target_model).where(Printer.is_active == True)  # noqa: E712
         )
-        if not result.scalars().first():
-            raise HTTPException(400, f"No active printers for model: {update_data['target_model']}")
+        target_printers = list(result.scalars().all())
+        if not target_printers and "target_model" in update_data:
+            raise HTTPException(400, f"No active printers for model: {new_target_model}")
+
+        target_location = update_data.get("target_location", item.target_location)
+        if target_location:
+            located = [printer for printer in target_printers if printer.location == target_location]
+            if located:
+                target_printers = located
+
+    if target_printers:
+        await _require_queue_item_target_compatible(db, item, target_printers)
 
     # Serialize ams_mapping to JSON for TEXT column storage
     if "ams_mapping" in update_data:

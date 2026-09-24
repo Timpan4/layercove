@@ -97,7 +97,8 @@ describe('bed geometry in the actual workbench', () => {
   it('renders Prepare and Preview for a Ready cloud profile with serialized coordinates', async () => {
     await selectMachine();
     expect(await screen.findByTestId('model-bed')).toHaveTextContent(JSON.stringify(bed));
-    expect(screen.getByText(/Readiness: ready/)).toBeInTheDocument();
+    expect(screen.getByText(/Readiness: acknowledgement_required/)).toBeInTheDocument();
+    expect(screen.getByText(/Filament 1: source material unknown, selected profile material unknown/)).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
     expect(await screen.findByTestId('gcode-bed')).toHaveTextContent(JSON.stringify(bed));
     expect(screen.queryByText(/Select a printer profile with bed geometry/)).not.toBeInTheDocument();

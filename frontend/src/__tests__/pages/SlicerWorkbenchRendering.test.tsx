@@ -32,6 +32,24 @@ function open() {
 }
 
 describe('Workbench with missing bed metadata', () => {
+  it('lets phone users reach settings and return to each canvas without losing the model', () => {
+    open();
+    const settings = screen.getByRole('button', { name: /settings/i });
+    expect(settings).toHaveAttribute('aria-pressed', 'false');
+    fireEvent.click(settings);
+    expect(settings).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.getByText('Target profiles')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /canvas/i }));
+    expect(screen.getByTestId('model')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'preview' }));
+    expect(screen.getByTestId('gcode')).toBeInTheDocument();
+    fireEvent.click(settings);
+    fireEvent.click(screen.getByRole('button', { name: /canvas/i }));
+    expect(screen.getByTestId('gcode')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'prepare' }));
+    expect(screen.getByTestId('model')).toBeInTheDocument();
+  });
+
   it('renders the model without inventing a printer bed', () => {
     open();
     expect(screen.getByTestId('model')).toHaveAttribute('data-bed', 'false');
