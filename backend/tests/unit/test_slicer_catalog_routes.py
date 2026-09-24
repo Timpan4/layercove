@@ -608,9 +608,7 @@ async def test_standard_sync_reuses_legacy_revision_hash(db):
 
     assert second.review_batch_id is None
     assert second.revision_ids == ()
-    assert revision.content_hash == canonical_hash(
-        {"content": content, "metadata": {}, "display_name": "Old name"}
-    )
+    assert revision.content_hash == canonical_hash({"content": content, "metadata": {}, "display_name": "Old name"})
     assert revision.resolved_metadata["display_name"] == "Old name"
 
 

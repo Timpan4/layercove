@@ -254,7 +254,8 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                 if revision is not None:
                     revision.content_hash = digest
                     revision.resolved_metadata = {
-                        **(revision.resolved_metadata or {}), "display_name": item.display_name
+                        **(revision.resolved_metadata or {}),
+                        "display_name": item.display_name,
                     }
             if revision is None:
                 refs = _dependency_refs(content) | _dependency_refs(metadata)
