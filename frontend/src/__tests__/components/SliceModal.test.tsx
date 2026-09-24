@@ -218,6 +218,34 @@ describe('SliceModal catalog selection', () => {
     })));
   });
 
+  it('does not match or bulk apply material from an older profile revision', async () => {
+    mockApi.listSlicerCatalogProfiles.mockResolvedValue([
+      profile(1, 'printer', 'P1S 0.4'),
+      profile(10, 'process', 'P1S process'),
+      profile(20, 'filament', 'TPU profile', { filament_type: 'TPU' }),
+      profile(40, 'filament', 'Former PLA profile', { filament_type: 'PLA' }),
+    ]);
+    mockApi.getSlicerCatalogGroups.mockResolvedValue({
+      selected_printer: [classified(10, 'process', 'P1S process'), classified(20, 'filament', 'TPU profile')],
+      other_installed_printers: [],
+      unclassified: [{ ...classified(40, 'filament', 'Former PLA profile', 'unclassified'), revision_id: 400 }],
+      incompatible: [],
+    });
+    mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
+      file_id: 100, filename: 'Cube.3mf', plate_id: 1,
+      filaments: [1, 2, 3].map((slot_id) => ({ slot_id, type: 'PLA', color: '' })),
+    });
+
+    renderModal();
+    const user = await chooseTarget();
+    const firstSlot = screen.getByRole('group', { name: 'Filament 1 · PLA' });
+    expect(within(firstSlot).queryByText('PLA matches (1)')).not.toBeInTheDocument();
+    await user.click(within(firstSlot).getByText('Unclassified (1)'));
+    await user.click(within(firstSlot).getByRole('radio', { name: /Former PLA profile/ }));
+    expect(screen.queryByRole('button', { name: /Apply Former PLA profile/ })).not.toBeInTheDocument();
+    await waitFor(() => expect(mockApi.listSlicerCatalogProfiles).toHaveBeenCalledTimes(2));
+  });
+
   it('sends exact catalog identities, ordered multi-slot profiles, and evidence', async () => {
     mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
       file_id: 100,

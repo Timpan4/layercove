@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery } from '@tanstack/react-query';
 import {
   api,
@@ -58,6 +58,7 @@ export function useCatalogSliceSelection({
   const [processChoice, setProcessChoice] = useState<CatalogProfileChoice | null>(null);
   const [filamentChoices, setFilamentChoices] = useState<Array<CatalogProfileChoice | null>>([]);
   const [acknowledgementKey, setAcknowledgementKey] = useState<string | null>(null);
+  const lastRevisionMismatch = useRef<string | null>(null);
 
   const printersQuery = useQuery({
     queryKey: ['printers'],
@@ -83,6 +84,23 @@ export function useCatalogSliceSelection({
     enabled: printerId !== null && bindingId !== null,
     refetchInterval: 30_000,
   });
+  const refetchProfiles = profilesQuery.refetch;
+  useEffect(() => {
+    const profiles = profilesQuery.data;
+    const mismatch = profiles && catalogClassifications(groupsQuery.data)
+      .map((classification) => {
+        const profile = profiles.find((item) => item.profile_id === classification.profile_id);
+        return profile && profile.revision_id !== classification.revision_id
+          ? `${profile.profile_id}:${profile.revision_id}:${classification.revision_id}` : null;
+      })
+      .filter(Boolean).join('|');
+    if (!mismatch) {
+      lastRevisionMismatch.current = null;
+    } else if (mismatch !== lastRevisionMismatch.current) {
+      lastRevisionMismatch.current = mismatch;
+      void refetchProfiles();
+    }
+  }, [groupsQuery.data, profilesQuery.data, refetchProfiles]);
   const preferencesQuery = useQuery({
     queryKey: ['slicerCatalogPreferences', bindingId],
     queryFn: () => api.listSlicerCatalogPreferences(bindingId!),
@@ -243,9 +261,10 @@ export function useCatalogSliceSelection({
     (profilesQuery.data ?? []).find((profile) => profile.profile_id === choice?.id));
 
   const equivalentFilamentSlotCounts = filamentSlots.map((slot, index) => {
-    const material = catalogFilamentMaterial(selectedFilamentProfiles[index]);
     const choice = filamentChoices[index];
     const classification = choice && catalogClassification(groupsQuery.data, choice.id);
+    const material = classification?.revision_id === selectedFilamentProfiles[index]?.revision_id
+      ? catalogFilamentMaterial(selectedFilamentProfiles[index]) : '';
     if (!classification || !selectableCatalogProfile(classification)
       || !material || material !== canonicalFilamentType(slot.type) || slot.used_in_plate === false) return 0;
     return filamentSlots.filter((candidate, candidateIndex) => candidateIndex !== index
@@ -257,8 +276,9 @@ export function useCatalogSliceSelection({
   const applyFilamentToEquivalentSlots = useCallback((index: number) => {
     const choice = filamentChoices[index];
     const profile = selectedFilamentProfiles[index];
-    const material = catalogFilamentMaterial(profile);
     const classification = choice && catalogClassification(groupsQuery.data, choice.id);
+    const material = classification?.revision_id === profile?.revision_id
+      ? catalogFilamentMaterial(profile) : '';
     if (!choice || !classification || !selectableCatalogProfile(classification)
       || !material || material !== canonicalFilamentType(filamentSlots[index]?.type)
       || filamentSlots[index]?.used_in_plate === false) return;

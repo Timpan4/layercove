@@ -170,7 +170,8 @@ function ProfileGroups({
   const materialMatches = materialKey && profiles
     ? [groups?.selected_printer ?? [], groups?.unclassified ?? []].flat().filter((profile) =>
       profile.profile_type === 'filament' && profile.classification.selectable
-      && catalogFilamentMaterial(profiles.find((item) => item.profile_id === profile.profile_id)) === materialKey)
+      && catalogFilamentMaterial(profiles.find((item) => item.profile_id === profile.profile_id
+        && item.revision_id === profile.revision_id)) === materialKey)
     : [];
   const visibleMaterialMatches = materialMatches.filter(matches);
   const matchedIds = new Set(materialMatches.map((profile) => profile.profile_id));
