@@ -1,0 +1,18 @@
+[package]
+name = "layercove-rs"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[dependencies]
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "tokio", "ws"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+tokio = { version = "1.53.1", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
+
+[dev-dependencies]
+futures-util = { version = "0.3.34", default-features = false, features = ["sink"] }
+tokio = { version = "1.53.1", features = ["io-util", "time"] }
+# Same version axum 0.8.9 uses, so the test client adds no second tungstenite tree.
+tokio-tungstenite = "0.29.0"

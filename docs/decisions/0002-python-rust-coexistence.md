@@ -1,8 +1,11 @@
 # ADR 0002: Python/Rust coexistence and Moonraker status pilot
 
-**Status:** Proposed
+**Status:** Accepted
 
 **Date:** 2026-09-25
+
+**Accepted:** 2026-09-25, by the repository owner merging
+[#155](https://github.com/Timpan4/layercove/pull/155)
 
 **Tracking:** [coexistence boundary #103](https://github.com/Timpan4/layercove/issues/103),
 [migration epic #112](https://github.com/Timpan4/layercove/issues/112),
@@ -219,7 +222,8 @@ configuration directly. Until then, Python sends it.
 - **Python restarted:** its session closes, and Rust closes the printer
   connections. The new Python process connects a fresh session.
 - **Hung peer:** both sides ping the session and treat a missed reply as a
-  close. The interval is set in #106 from measured behavior.
+  close. The interval is set when the Python session client lands, from
+  measured behavior.
 - **`shadow` with Rust unavailable:** the comparison is skipped. Python keeps
   owning status.
 

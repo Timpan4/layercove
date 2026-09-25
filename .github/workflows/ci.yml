@@ -276,3 +276,50 @@ jobs:
       - name: Cleanup
         if: always()
         run: docker compose down -v --remove-orphans
+
+  # ============================================================================
+  # Rust service (layercove-rs, ADR 0002)
+  # ============================================================================
+
+  rust:
+    name: Rust service
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v6
+
+      # Installs the toolchain pinned in rust/rust-toolchain.toml.
+      - name: Install Rust toolchain
+        run: rustup toolchain install
+
+      - name: Check formatting
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets -- -D warnings
+
+      - name: Tests
+        run: cargo test --locked
+
+      - name: Build image
+        run: docker build -t layercove-rs:test .
+
+      # Same constraints as the wall-e pod: read-only root, no capabilities.
+      - name: Verify image serves health
+        run: |
+          docker run -d --name layercove-rs --read-only --cap-drop ALL \
+            --security-opt no-new-privileges -e LAYERCOVE_INTERNAL_TOKEN=ci-token \
+            -p 8081:8081 layercove-rs:test
+          # Same startup bound as the integration job's --wait-timeout 120.
+          curl -fsS --retry 120 --retry-delay 1 --retry-connrefused http://localhost:8081/health \
+            || { docker logs layercove-rs; exit 1; }
+
+      - name: Verify image refuses to start without a token
+        run: |
+          if docker run --rm layercove-rs:test; then
+            echo "started without LAYERCOVE_INTERNAL_TOKEN"
+            exit 1
+          fi
