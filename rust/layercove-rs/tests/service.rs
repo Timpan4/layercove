@@ -85,10 +85,24 @@ fn rejected_status(result: Result<Client, tungstenite::Error>) -> u16 {
     }
 }
 
+/// Opens a session, waiting for a previous session's slot to be released:
+/// the server frees it when its session task ends, which can trail the close
+/// frame the client already saw.
 async fn authorized(addr: SocketAddr) -> Client {
-    connect(addr, Some(&format!("Bearer {TOKEN}")))
-        .await
-        .unwrap()
+    let authorization = format!("Bearer {TOKEN}");
+    timeout(WAIT, async {
+        loop {
+            match connect(addr, Some(&authorization)).await {
+                Ok(client) => return client,
+                Err(tungstenite::Error::Http(response)) if response.status() == 409 => {
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+                Err(other) => panic!("unexpected error: {other}"),
+            }
+        }
+    })
+    .await
+    .unwrap()
 }
 
 async fn next_message(client: &mut Client) -> Option<Message> {
@@ -198,8 +212,8 @@ async fn invalid_first_messages_close_the_session() {
             json!({"type": "error", "code": code})
         );
         expect_close(&mut client, CloseCode::Protocol).await;
-        // The slot frees once the session ends, so the next case can connect.
-        while next_message(&mut client).await.is_some() {}
+        // Nothing follows the close frame.
+        assert!(next_message(&mut client).await.is_none());
     }
 }
 
@@ -215,20 +229,7 @@ async fn only_one_session_is_accepted_at_a_time() {
     first.close(None).await.unwrap();
     while next_message(&mut first).await.is_some() {}
 
-    // Closing is asynchronous on the server; retry until the slot is released.
-    let mut second = timeout(WAIT, async {
-        loop {
-            match connect(service.internal, Some(&format!("Bearer {TOKEN}"))).await {
-                Ok(client) => return client,
-                Err(tungstenite::Error::Http(response)) if response.status() == 409 => {
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
-                Err(other) => panic!("unexpected error: {other}"),
-            }
-        }
-    })
-    .await
-    .unwrap();
+    let mut second = authorized(service.internal).await;
     handshake(&mut second).await;
 }
 
