@@ -8,9 +8,10 @@ on:
     types: [completed]
     branches: [main]
 
+# One run per commit. A shared group would let a late run for an older commit
+# cancel the publish of a newer one.
 concurrency:
-  group: publish-rust
-  cancel-in-progress: true
+  group: publish-rust-${{ github.event.workflow_run.head_sha }}
 
 env:
   IMAGE_NAME: ghcr.io/timpan4/layercove-rs
@@ -31,6 +32,19 @@ jobs:
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
+
+      - name: Choose tags
+        id: tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          tags="$IMAGE_NAME:sha-$SHA"
+          # A late or rerun CI for an older commit must not move :main back.
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SHA" ]; then
+            tags="$tags,$IMAGE_NAME:main"
+          fi
+          echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -53,9 +67,7 @@ jobs:
           file: rust/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: |
-            ${{ env.IMAGE_NAME }}:main
-            ${{ env.IMAGE_NAME }}:sha-${{ github.event.workflow_run.head_sha }}
+          tags: ${{ steps.tags.outputs.tags }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}

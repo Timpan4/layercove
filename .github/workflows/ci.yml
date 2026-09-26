@@ -277,10 +277,6 @@ jobs:
         if: always()
         run: docker compose down -v --remove-orphans
 
-  # ============================================================================
-  # Rust service (layercove-rs, ADR 0002)
-  # ============================================================================
-
   rust:
     name: Rust service
     runs-on: ubuntu-latest
