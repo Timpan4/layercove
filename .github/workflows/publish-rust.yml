@@ -1,17 +1,13 @@
 name: Publish layercove-rs
 
 # Publishes only a main commit whose CI run succeeded, built from that exact
-# SHA (#90). The image is tagged with the tested SHA.
+# SHA (#90). The image is tagged with the tested SHA, then :main is pointed at
+# the image for the current tip of main.
 on:
   workflow_run:
     workflows: [CI]
     types: [completed]
     branches: [main]
-
-# One run per commit. A shared group would let a late run for an older commit
-# cancel the publish of a newer one.
-concurrency:
-  group: publish-rust-${{ github.event.workflow_run.head_sha }}
 
 env:
   IMAGE_NAME: ghcr.io/timpan4/layercove-rs
@@ -27,24 +23,15 @@ jobs:
     name: Publish layercove-rs image
     if: github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.event == 'push'
     runs-on: ubuntu-latest
+    # One build per commit. A shared group would let a late run for an older
+    # commit cancel the build of a newer one.
+    concurrency:
+      group: publish-rust-${{ github.event.workflow_run.head_sha }}
     steps:
       - uses: actions/checkout@v6
         with:
           ref: ${{ github.event.workflow_run.head_sha }}
           persist-credentials: false
-
-      - name: Choose tags
-        id: tags
-        env:
-          GH_TOKEN: ${{ github.token }}
-          SHA: ${{ github.event.workflow_run.head_sha }}
-        run: |
-          tags="$IMAGE_NAME:sha-$SHA"
-          # A late or rerun CI for an older commit must not move :main back.
-          if [ "$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)" = "$SHA" ]; then
-            tags="$tags,$IMAGE_NAME:main"
-          fi
-          echo "tags=$tags" >> "$GITHUB_OUTPUT"
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
@@ -67,7 +54,7 @@ jobs:
           file: rust/Dockerfile
           platforms: linux/amd64,linux/arm64
           push: true
-          tags: ${{ steps.tags.outputs.tags }}
+          tags: ${{ env.IMAGE_NAME }}:sha-${{ github.event.workflow_run.head_sha }}
           labels: |
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.revision=${{ github.event.workflow_run.head_sha }}
@@ -83,3 +70,33 @@ jobs:
           subject-digest: ${{ steps.build.outputs.digest }}
           push-to-registry: true
           create-storage-record: false
+
+  promote:
+    name: Point main at the tip of main
+    needs: publish
+    runs-on: ubuntu-latest
+    # Serialized, and each run reads the tip immediately before retagging, so
+    # :main only moves forward. A late run for an older commit promotes the tip.
+    concurrency:
+      group: publish-rust-main
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Retag the tip's image as main
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          # Only this workflow pushes sha- tags, after CI passed for that commit.
+          if ! docker buildx imagetools inspect "$IMAGE_NAME:sha-$tip" > /dev/null; then
+            echo "::notice::No image for tip $tip yet; its own run will promote it."
+            exit 0
+          fi
+          # A single index source is copied unchanged, so the digest and its
+          # attestations are kept.
+          docker buildx imagetools create --tag "$IMAGE_NAME:main" "$IMAGE_NAME:sha-$tip"
