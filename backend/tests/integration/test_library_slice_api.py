@@ -18,6 +18,8 @@ import json
 import zipfile
 from collections.abc import Callable
 from datetime import datetime, timezone
+from email.parser import BytesParser
+from email.policy import default
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
@@ -28,6 +30,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 from backend.app.api.routes.library import (
+    _run_slicer_with_fallback,
     _slicer_rejection_message,
     slice_and_persist,
     slice_and_persist_as_archive,
@@ -39,7 +42,6 @@ from backend.app.models.local_preset import LocalPreset
 from backend.app.models.settings import Settings as SettingsModel
 from backend.app.schemas.slicer import SliceRequest
 from backend.app.services import slicer_api as slicer_api_module
-from backend.app.services.slice_dispatch import slice_dispatch
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -245,6 +247,240 @@ class TestSliceLibraryFile:
         assert final["result"]["library_file_id"] != slice_test_setup["src_file_id"]
         assert final["result"]["print_time_seconds"] == 656
         assert captured["url"].endswith("/slice")
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_schema_bound_requests_use_orca_but_legacy_requests_use_preferred_slicer(
+        self, db_session, slice_test_setup, monkeypatch
+    ):
+        preferred = await db_session.scalar(select(SettingsModel).where(SettingsModel.key == "preferred_slicer"))
+        assert preferred is not None
+        preferred.value = "bambu_studio"
+        db_session.add_all(
+            [
+                SettingsModel(key="orcaslicer_api_url", value="http://configured-orca:3000"),
+                SettingsModel(key="bambu_studio_api_url", value="http://configured-bambu:3001"),
+            ]
+        )
+        await db_session.commit()
+
+        captured_urls: list[str] = []
+
+        async def validate_workbench_request(self, **_kwargs):
+            return None
+
+        async def slice_with_profiles(self, **_kwargs):
+            captured_urls.append(self.base_url)
+            return slicer_api_module.SliceResult(b"gcode", 1, 2.0, 3.0)
+
+        monkeypatch.setattr(
+            slicer_api_module.SlicerApiService, "validate_workbench_request", validate_workbench_request
+        )
+        monkeypatch.setattr(slicer_api_module.SlicerApiService, "slice_with_profiles", slice_with_profiles)
+
+        request_kwargs = {
+            "printer_preset_id": slice_test_setup["printer_id"],
+            "process_preset_id": slice_test_setup["process_id"],
+            "filament_preset_id": slice_test_setup["filament_id"],
+        }
+        await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid cube",
+            model_filename="Cube.stl",
+            request=SliceRequest(**request_kwargs, schema_hash="a" * 64),
+        )
+        await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid cube",
+            model_filename="Cube.stl",
+            request=SliceRequest(**request_kwargs),
+        )
+
+        assert captured_urls == ["http://configured-orca:3000", "http://configured-bambu:3001"]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_standard_process_3mf_overrides_bed_and_support_pass_sidecar_validation(
+        self, db_session, slice_test_setup, monkeypatch
+    ):
+        printer_name = "Bambu Lab X1 Carbon 0.4 nozzle"
+        process_name = "0.20mm Standard @BBL X1 Carbon"
+        filament_name = "Bambu PLA Basic"
+        captured: dict = {}
+
+        async def validate_workbench_request(self, **_kwargs):
+            return None
+
+        monkeypatch.setattr(
+            slicer_api_module.SlicerApiService,
+            "validate_workbench_request",
+            validate_workbench_request,
+        )
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            message = BytesParser(policy=default).parsebytes(
+                f"Content-Type: {request.headers['content-type']}\r\n\r\n".encode() + request.content
+            )
+            profiles = {}
+            process_overrides = {}
+            for part in message.iter_parts():
+                field_name = part.get_param("name", header="content-disposition")
+                if field_name in {"printerProfile", "presetProfile", "filamentProfile"}:
+                    profiles[field_name] = json.loads(part.get_payload(decode=True))
+                elif field_name == "processOverrides":
+                    process_overrides = json.loads(part.get_payload(decode=True))
+
+            expected_profiles = (
+                ("printerProfile", "machine", printer_name),
+                ("presetProfile", "process", process_name),
+                ("filamentProfile", "filament", filament_name),
+            )
+            for field_name, expected_type, bundled_name in expected_profiles:
+                profile = profiles[field_name]
+                has_complete_identity = (
+                    profile.get("type") == expected_type
+                    and isinstance(profile.get("name"), str)
+                    and bool(profile["name"])
+                    and isinstance(profile.get("setting_id"), str)
+                    and bool(profile["setting_id"])
+                )
+                if has_complete_identity:
+                    continue
+
+                trusted_stub = (
+                    set(profile) == {"type", "name", "inherits", "from"}
+                    and profile.get("type") == expected_type
+                    and isinstance(profile.get("name"), str)
+                    and bool(profile["name"])
+                    and isinstance(profile.get("inherits"), str)
+                    and bool(profile["inherits"])
+                    and profile.get("from") == "system"
+                )
+                if trusted_stub:
+                    if profile["name"] != profile["inherits"]:
+                        detail = "bundled profile name must match inherits"
+                    elif profile["inherits"] != bundled_name:
+                        detail = f"unknown bundled {expected_type} profile"
+                    else:
+                        continue
+                else:
+                    detail = f"{expected_type} profile requires type, name, and setting_id"
+                return httpx.Response(
+                    status_code=400,
+                    json={"message": "Invalid slicer request", "details": detail},
+                )
+
+            invalid_override_type = (
+                not isinstance(process_overrides.get("enable_support"), bool)
+                or not isinstance(process_overrides.get("support_filament"), int)
+                or isinstance(process_overrides.get("support_filament"), bool)
+                or not isinstance(process_overrides.get("support_interface_filament"), int)
+                or isinstance(process_overrides.get("support_interface_filament"), bool)
+            )
+            if invalid_override_type:
+                return httpx.Response(
+                    status_code=400,
+                    json={"message": "Invalid slicer request", "details": "invalid support override type"},
+                )
+
+            process = dict(profiles["presetProfile"])
+            if "setting_id" not in process:
+                process["setting_id"] = "bundled-process"
+            process.update(process_overrides)
+            captured["process"] = process
+            return httpx.Response(
+                status_code=200,
+                content=b"PK\x03\x04 sliced-3mf",
+                headers={
+                    "x-print-time-seconds": "10",
+                    "x-filament-used-g": "0.1",
+                    "x-filament-used-mm": "1.0",
+                },
+            )
+
+        _install_mock_sidecar(handler)
+        result, used_embedded_settings = await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=_make_3mf_with_settings(
+                {
+                    "enable_support": "1",
+                    "support_filament": "2",
+                    "support_interface_filament": "3",
+                    "support_type": "tree",
+                }
+            ),
+            model_filename="source.3mf",
+            request=SliceRequest(
+                printer_preset={"source": "standard", "id": printer_name},
+                process_preset={"source": "standard", "id": process_name},
+                filament_preset={"source": "standard", "id": filament_name},
+                process_overrides={"layer_height": 0.16},
+                bed_type="Textured PEI Plate",
+                schema_hash="a" * 64,
+            ),
+        )
+
+        assert result.content == b"PK\x03\x04 sliced-3mf"
+        assert used_embedded_settings is False
+        assert captured["process"]["layer_height"] == 0.16
+        assert captured["process"]["curr_bed_type"] == "Textured PEI Plate"
+        assert captured["process"]["enable_support"] is True
+        assert type(captured["process"]["support_filament"]) is int
+        assert captured["process"]["support_filament"] == 2
+        assert type(captured["process"]["support_interface_filament"]) is int
+        assert captured["process"]["support_interface_filament"] == 3
+        assert captured["process"]["support_type"] == "tree"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_pinned_standard_process_keeps_profile_immutable_and_passes_overrides_to_sidecar(
+        self, db_session, slice_test_setup, monkeypatch
+    ):
+        from backend.app.services import slicer_catalog_selection
+
+        process = {"type": "process", "name": "Standard", "inherits": "Standard", "from": "system"}
+
+        async def load_pinned_profile_content(_db, _job_id):
+            return SimpleNamespace(
+                printer=json.dumps({"type": "machine", "name": "Printer", "inherits": "Printer", "from": "system"}),
+                process=json.dumps(process),
+                filaments=(
+                    json.dumps({"type": "filament", "name": "Filament", "inherits": "Filament", "from": "system"}),
+                ),
+                process_source="standard",
+            )
+
+        captured: dict = {}
+
+        async def validate_workbench_request(self, **_kwargs):
+            return None
+
+        async def slice_with_profiles(self, **kwargs):
+            captured.update(kwargs)
+            return slicer_api_module.SliceResult(b"gcode", 1, 2.0, 3.0)
+
+        monkeypatch.setattr(slicer_catalog_selection, "load_pinned_profile_content", load_pinned_profile_content)
+        monkeypatch.setattr(
+            slicer_api_module.SlicerApiService, "validate_workbench_request", validate_workbench_request
+        )
+        monkeypatch.setattr(slicer_api_module.SlicerApiService, "slice_with_profiles", slice_with_profiles)
+
+        await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid cube",
+            model_filename="Cube.stl",
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+                process_overrides={"layer_height": 0.16},
+                schema_hash="a" * 64,
+            ),
+            job_id=73,
+        )
+
+        assert json.loads(captured["process_profile_json"]) == process
+        assert captured["process_overrides"] == {"layer_height": 0.16}
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -597,7 +833,7 @@ class TestSliceLibraryFile:
                 return fixed_now
 
         monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
-        output_dir = archive_root / "unassigned" / "20260712_120000_Failure_sliced_preexisting"
+        output_dir = archive_root / "unassigned" / "20260712_120000_sliced_preexisting"
         preexisting = failure_method == "refresh"
         if preexisting:
             output_dir.mkdir(parents=True)
@@ -636,9 +872,7 @@ class TestSliceLibraryFile:
             )
 
         assert not list(archive_root.rglob("Failure.gcode"))
-        assert not list(
-            (archive_root / "unassigned").glob("20260712_120000_Failure_sliced_????????????????????????????????")
-        )
+        assert not list((archive_root / "unassigned").glob("20260712_120000_sliced_????????????????????????????????"))
         assert output_dir.exists() is preexisting
         if preexisting:
             assert (output_dir / "keep.txt").read_text() == "keep"
@@ -740,7 +974,7 @@ class TestSliceLibraryFile:
             "G28 ; job 1\n",
             "G28 ; job 3\n",
         ]
-        assert len(list((archive_root / "unassigned").glob("20260712_120000_Collision_sliced_*"))) == 2
+        assert len(list((archive_root / "unassigned").glob("20260712_120000_sliced_*"))) == 2
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -764,7 +998,7 @@ class TestSliceLibraryFile:
 
         monkeypatch.setattr(library_routes, "datetime", FixedDateTime)
         monkeypatch.setattr(library_routes.uuid, "uuid4", lambda: SimpleNamespace(hex="a" * 32))
-        existing_dir = archive_root / "unassigned" / f"20260712_120000_Collision_sliced_{'a' * 32}"
+        existing_dir = archive_root / "unassigned" / f"20260712_120000_sliced_{'a' * 32}"
         existing_dir.mkdir(parents=True)
         existing_file = existing_dir / "Collision.gcode"
         existing_file.write_bytes(b"existing sibling\n")
@@ -1111,8 +1345,6 @@ class TestSliceJobs:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_unknown_job_returns_404(self, async_client: AsyncClient):
-        # Sweep dispatcher state so a fresh ID is unknown.
-        slice_dispatch._jobs.clear()
         r = await async_client.get("/api/v1/slice-jobs/999999")
         assert r.status_code == 404
 
@@ -2295,3 +2527,256 @@ class TestNozzleClassGuard:
         if resp.status_code == 400:
             detail = resp.json().get("detail", "")
             assert "isn't supported" not in detail, f"guard still firing on preset path: {detail!r}"
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+async def test_archive_slice_rejects_catalog_incompatibility_before_enqueue(
+    async_client: AsyncClient,
+    db_session,
+    slice_test_setup,
+    printer_factory,
+    archive_factory,
+    monkeypatch,
+):
+    from decimal import Decimal
+
+    from backend.app.models.slicer_profile_catalog import PrinterSlicerBinding, SlicerProfile
+    from backend.app.services.printer_manager import printer_manager
+    from backend.app.services.printer_types import (
+        NormalizedPrinterState,
+        NozzleSnapshot,
+        PrinterProvider,
+        PrinterSnapshot,
+    )
+    from backend.app.services.slicer_catalog import (
+        CatalogInput,
+        CatalogProfile,
+        activate_revision,
+        approve_review_batch,
+        ingest_catalog,
+    )
+
+    tmp_path = slice_test_setup["tmp_path"]
+    src_dir = tmp_path / "archives" / "catalog"
+    src_dir.mkdir(parents=True, exist_ok=True)
+    source_path = src_dir / "cube.3mf"
+    source_path.write_bytes(_make_3mf_with_settings())
+    printer = await printer_factory()
+    source = await archive_factory(
+        printer.id,
+        filename="cube.3mf",
+        file_path=str(source_path.relative_to(tmp_path)),
+        sliced_for_model=None,
+        with_run=False,
+    )
+    result = await ingest_catalog(
+        db_session,
+        CatalogInput(
+            source="standard",
+            remote_account_id="archive-catalog-enforcement",
+            profiles=[
+                CatalogProfile(
+                    "printer",
+                    "printer",
+                    "P1S 0.4",
+                    {"type": "printer"},
+                    metadata={"compatible_printers": None},
+                ),
+                CatalogProfile(
+                    "dremel",
+                    "process",
+                    "Dremel process",
+                    {"type": "process"},
+                    metadata={"compatible_printers": ["Dremel 3D40"]},
+                ),
+                CatalogProfile(
+                    "filament",
+                    "filament",
+                    "P1S filament",
+                    {"type": "filament"},
+                    metadata={"compatible_printers": ["P1S 0.4"]},
+                ),
+            ],
+        ),
+    )
+    await approve_review_batch(db_session, result.review_batch_id)
+    for revision_id in result.revision_ids:
+        await activate_revision(db_session, revision_id)
+    profiles = {
+        profile.remote_profile_id: profile
+        for profile in (await db_session.scalars(select(SlicerProfile))).all()
+        if profile.remote_profile_id in {"printer", "dremel", "filament"}
+    }
+    binding = PrinterSlicerBinding(
+        printer_id=printer.id,
+        profile_id=profiles["printer"].id,
+        expected_nozzle_diameter=Decimal("0.4"),
+        tool_index=0,
+        enforcement_state="enforced",
+        is_active=True,
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _printer_id: PrinterSnapshot(
+            PrinterProvider.BAMBU,
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+
+    response = await async_client.post(
+        f"/api/v1/archives/{source.id}/slice",
+        json={
+            "printer_preset": {"source": "standard", "id": "printer"},
+            "process_preset": {"source": "standard", "id": "dremel"},
+            "filament_presets": [{"source": "standard", "id": "filament"}],
+            "catalog_printer_id": printer.id,
+            "catalog_binding_id": binding.id,
+            "catalog_process_profile_id": profiles["dremel"].id,
+            "catalog_filament_profile_ids": [profiles["filament"].id],
+        },
+    )
+
+    assert response.status_code == 422
+    assert response.json()["detail"] == {
+        "code": "slicer_profile_incompatible",
+        "reason_codes": ["resolved_metadata_mismatch"],
+    }
+
+
+class TestReviewSlicePersistenceRegressions:
+    @pytest.mark.parametrize("extension", ["stl", "step"])
+    async def test_arrange_all_non_3mf_uses_normal_slice_path(self, db_session, slice_test_setup, extension):
+        calls = []
+        artifact = _make_sliced_3mf("X1C")
+
+        def sidecar(request):
+            calls.append(request.read())
+            return httpx.Response(200, content=artifact)
+
+        _install_mock_sidecar(sidecar)
+        result, embedded = await _run_slicer_with_fallback(
+            db_session,
+            model_bytes=b"solid Cube\nendsolid\n",
+            model_filename=f"Cube.{extension}",
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+                arrange=True,
+                plate=0,
+                export_3mf=True,
+            ),
+            current_user_id=None,
+        )
+        assert result.content == artifact
+        assert not embedded
+        assert len(calls) == 1
+        assert b'name="arrange"\r\n\r\ntrue' in calls[0]
+        assert b'name="plate"\r\n\r\n0' in calls[0]
+
+    @pytest.mark.parametrize("stem", ["a" * 235, "å" * 117 + "a"])
+    async def test_long_klipper_archive_uses_bounded_storage_identity(
+        self, db_session, slice_test_setup, monkeypatch, stem
+    ):
+        archive_root = slice_test_setup["tmp_path"] / "archives"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        gcode = b"; filament_type = PLA\nG28\n"
+        _install_mock_sidecar(lambda _: httpx.Response(200, content=gcode, headers={"x-print-time-seconds": "582"}))
+        source = _bambu_source_archive(slice_test_setup["tmp_path"], print_name="Readable model")
+        result = await slice_and_persist_as_archive(
+            db_session,
+            model_bytes=b"solid Cube\nendsolid\n",
+            model_filename=f"{stem}.stl",
+            request=SliceRequest(
+                printer_preset_id=slice_test_setup["printer_id"],
+                process_preset_id=slice_test_setup["process_id"],
+                filament_preset_id=slice_test_setup["filament_id"],
+                destination_artifact_kind="klipper_gcode",
+            ),
+            source_archive=source,
+            current_user_id=None,
+        )
+        archive = await db_session.get(PrintArchive, result.archive_id)
+        assert archive.filename == f"{stem}_PLA_9m42s.gcode"
+        assert archive.print_name == "Readable model (re-sliced)"
+        path = app_settings.base_dir / archive.file_path
+        assert path.read_bytes() == gcode
+        assert len(path.parent.name.encode("utf-8")) == 55
+        assert all(len(part.encode("utf-8")) <= 255 for part in path.relative_to(archive_root).parts)
+
+    @pytest.mark.parametrize("destination", ["library", "archive"])
+    async def test_material_filename_limit_is_actionable_and_writes_no_output(
+        self, db_session, slice_test_setup, monkeypatch, destination
+    ):
+        from fastapi import HTTPException
+
+        archive_root = slice_test_setup["tmp_path"] / "archives"
+        monkeypatch.setattr(app_settings, "archive_dir", archive_root)
+        gcode = b"; filament_type = " + b"A" * 255 + b"\nG28\n"
+        _install_mock_sidecar(lambda _: httpx.Response(200, content=gcode))
+        request = SliceRequest(
+            printer_preset_id=slice_test_setup["printer_id"],
+            process_preset_id=slice_test_setup["process_id"],
+            filament_preset_id=slice_test_setup["filament_id"],
+            destination_artifact_kind="klipper_gcode",
+        )
+        with pytest.raises(HTTPException) as error:
+            if destination == "library":
+                await slice_and_persist(
+                    db_session,
+                    model_bytes=b"solid Cube\n",
+                    model_filename="Cube.stl",
+                    request=request,
+                    current_user_id=None,
+                    folder_id=None,
+                    extra_metadata=None,
+                )
+            else:
+                await slice_and_persist_as_archive(
+                    db_session,
+                    model_bytes=b"solid Cube\n",
+                    model_filename="Cube.stl",
+                    request=request,
+                    current_user_id=None,
+                    source_archive=_bambu_source_archive(slice_test_setup["tmp_path"]),
+                )
+        assert error.value.status_code == 400
+        assert error.value.detail == "Slicer filament metadata exceeds the filename limit"
+        assert not list(archive_root.rglob("*.gcode"))
+        assert not (await db_session.scalars(select(PrintArchive))).all()
+        files = (await db_session.scalars(select(LibraryFile))).all()
+        assert [file.id for file in files] == [slice_test_setup["src_file_id"]]
+
+
+@pytest.mark.parametrize("source_name", [None, "a" * 255, "å" * 255])
+async def test_resliced_display_name_respects_archive_column_limit(
+    db_session, slice_test_setup, monkeypatch, source_name
+):
+    monkeypatch.setattr(app_settings, "archive_dir", slice_test_setup["tmp_path"] / "archives")
+    gcode = b"; filament_type = PLA\nG28\n"
+    _install_mock_sidecar(lambda _: httpx.Response(200, content=gcode, headers={"x-print-time-seconds": "582"}))
+    result = await slice_and_persist_as_archive(
+        db_session,
+        model_bytes=b"solid Cube\nendsolid\n",
+        model_filename="a" * 251 + ".stl",
+        request=SliceRequest(
+            printer_preset_id=slice_test_setup["printer_id"],
+            process_preset_id=slice_test_setup["process_id"],
+            filament_preset_id=slice_test_setup["filament_id"],
+            destination_artifact_kind="klipper_gcode",
+        ),
+        source_archive=_bambu_source_archive(slice_test_setup["tmp_path"], print_name=source_name),
+        current_user_id=None,
+    )
+    archive = await db_session.get(PrintArchive, result.archive_id)
+    name_limit = PrintArchive.__table__.c.print_name.type.length
+    suffix = " (re-sliced)"
+    assert len(archive.print_name) <= name_limit
+    assert archive.print_name == (source_name or archive.filename[:-6])[: name_limit - len(suffix)] + suffix
+    assert (app_settings.base_dir / archive.file_path).read_bytes() == gcode

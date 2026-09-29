@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertCircle, AlertTriangle, Loader2, Pencil, Printer, X } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
@@ -317,6 +318,25 @@ export function PrintModal({
 
   // Get sliced_for_model from archive or library file
   const slicedForModel = archiveDetails?.sliced_for_model || libraryFileDetails?.sliced_for_model || null;
+  const artifactMetadata = isLibraryFile ? libraryFileDetails?.metadata : archiveDetails?.extra_data;
+  const declaredArtifactKind = artifactMetadata?.destination_artifact_kind;
+  const artifactKind = declaredArtifactKind === 'klipper_gcode' || declaredArtifactKind === 'bambu_3mf'
+    ? declaredArtifactKind
+    : ((isLibraryFile ? libraryFileDetails?.filename : archiveDetails?.filename) ?? archiveName).toLowerCase().endsWith('.gcode')
+      ? 'klipper_gcode'
+      : null;
+  const compatiblePrinters = useMemo(() => (printers ?? []).filter((printer) =>
+    !artifactKind || printer.provider === (artifactKind === 'klipper_gcode' ? 'moonraker' : 'bambu')
+  ), [printers, artifactKind]);
+
+  useEffect(() => {
+    if (!artifactKind || !printers) return;
+    const compatibleIds = new Set(compatiblePrinters.map((printer) => printer.id));
+    setSelectedPrinters((previous) => previous.filter((id) => compatibleIds.has(id)));
+    if (targetModel && !compatiblePrinters.some((printer) => printer.model === targetModel)) {
+      setTargetModel(null);
+    }
+  }, [artifactKind, printers, compatiblePrinters, targetModel]);
 
   // Fetch plates for archives
   const { data: archivePlatesData, isError: archivePlatesError } = useQuery({
@@ -366,7 +386,7 @@ export function PrintModal({
 
   // Only fetch printer status when single printer selected (for filament mapping)
   const { data: printerStatus } = useQuery({
-    queryKey: ['printer-status', effectivePrinterId],
+    queryKey: queryKeys.printerStatus(effectivePrinterId),
     queryFn: () => api.getPrinterStatus(effectivePrinterId!),
     enabled: !!effectivePrinterId,
   });
@@ -394,7 +414,7 @@ export function PrintModal({
       const statuses = await Promise.all(
         selectedPrinters.map((printerId) =>
           queryClient.fetchQuery({
-            queryKey: ['printer-status', printerId],
+            queryKey: queryKeys.printerStatus(printerId),
             queryFn: () => api.getPrinterStatus(printerId),
             staleTime: 0,
           }),
@@ -927,6 +947,12 @@ export function PrintModal({
   const canSubmit = useMemo(() => {
     if (isPending) return false;
 
+    if (artifactKind && (
+      assignmentMode === 'printer'
+        ? selectedPrinters.some((id) => !compatiblePrinters.some((printer) => printer.id === id))
+        : !compatiblePrinters.some((printer) => printer.model === targetModel)
+    )) return false;
+
     // Need valid printer/model selection
     if (assignmentMode === 'printer' && selectedPrinters.length === 0) return false;
     if (assignmentMode === 'model' && !targetModel) return false;
@@ -935,7 +961,7 @@ export function PrintModal({
     if (isMultiPlate && selectedPlates.size === 0) return false;
 
     return true;
-  }, [selectedPrinters.length, assignmentMode, targetModel, isMultiPlate, selectedPlates.size, isPending]);
+  }, [selectedPrinters, assignmentMode, targetModel, isMultiPlate, selectedPlates.size, isPending, artifactKind, compatiblePrinters]);
 
   // Quantity only applies for single-printer or model-based assignment (not multi-printer)
   const effectiveQuantity = (assignmentMode === 'printer' && selectedPrinters.length > 1) ? 1 : quantity;
@@ -1085,9 +1111,9 @@ export function PrintModal({
             />
 
             {/* Printer selection with per-printer mapping — hidden when printer is pre-selected via props */}
-            {!initialSelectedPrinterIds?.length && (
+            {(!initialSelectedPrinterIds?.length || selectedPrinters.length === 0) && (
               <PrinterSelector
-                printers={printers || []}
+                printers={compatiblePrinters}
                 selectedPrinterIds={selectedPrinters}
                 onMultiSelect={setSelectedPrinters}
                 isLoading={loadingPrinters}

@@ -35,6 +35,18 @@ def _make_spool(*, id=1, label_weight=1000, weight_used=0, tag_uid=None, tray_uu
     return spool
 
 
+def _mock_execute(responses):
+    """Return DB responses while ignoring atomic spool updates."""
+    responses = iter(responses)
+
+    async def execute(statement, *args, **kwargs):
+        if statement.is_update:
+            return MagicMock()
+        return next(responses)
+
+    return execute
+
+
 def _make_assignment(*, spool_id=1, printer_id=1, ams_id=0, tray_id=0, created_at=None):
     """Create a mock SpoolAssignment object."""
     assignment = MagicMock()
@@ -149,12 +161,14 @@ class TestOnPrintCompleteAMSDelta:
         # First 2 executes → _find_3mf_by_filename (library + archive search, uses scalars().all()),
         # then assignment, then spool for the AMS fallback path
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(),  # _find_3mf_by_filename: library search
-                MagicMock(),  # _find_3mf_by_filename: archive search
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(),  # _find_3mf_by_filename: library search
+                    MagicMock(),  # _find_3mf_by_filename: archive search
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         results = await on_print_complete(1, {"status": "completed"}, pm, db)
@@ -162,8 +176,8 @@ class TestOnPrintCompleteAMSDelta:
         assert len(results) == 1
         assert results[0]["weight_used"] == 100.0
         assert results[0]["percent_used"] == 10
-        # weight_used should be old (50) + delta (100)
-        assert spool.weight_used == 150.0
+        db.add.assert_called_once()
+        assert any(call.args[0].is_update for call in db.execute.await_args_list)
         db.commit.assert_called_once()
 
     @pytest.mark.asyncio
@@ -238,12 +252,14 @@ class TestOnPrintCompleteAMSDelta:
         t3_assignment = _make_assignment(spool_id=8, ams_id=0, tray_id=3)
         db = AsyncMock()
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(),  # _find_3mf_by_filename: library search
-                MagicMock(),  # _find_3mf_by_filename: archive search
-                MagicMock(scalar_one_or_none=MagicMock(return_value=t3_assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=t3_spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(),  # _find_3mf_by_filename: library search
+                    MagicMock(),  # _find_3mf_by_filename: archive search
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=t3_assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=t3_spool)),
+                ]
+            )
         )
 
         results = await on_print_complete(1, {"status": "completed"}, pm, db)
@@ -269,12 +285,14 @@ class TestTrackFrom3MF:
         db = AsyncMock()
         # archive, queue_item(None), assignment, spool
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         pm = _make_printer_manager(_make_printer_state([], tray_now=0))
@@ -301,8 +319,8 @@ class TestTrackFrom3MF:
         assert len(results) == 1
         assert results[0]["spool_id"] == 5
         assert results[0]["weight_used"] == 25.5
-        # weight_used = old (100) + 3MF (25.5)
-        assert spool.weight_used == 125.5
+        db.add.assert_called_once()
+        assert any(call.args[0].is_update for call in db.execute.await_args_list)
 
     @pytest.mark.asyncio
     async def test_scales_by_progress_for_failed_print(self):
@@ -315,12 +333,14 @@ class TestTrackFrom3MF:
         db = AsyncMock()
         # archive, queue_item(None), assignment, spool
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         # Print failed at 50% progress → 50g consumed from 100g estimate
@@ -347,7 +367,8 @@ class TestTrackFrom3MF:
 
         assert len(results) == 1
         assert results[0]["weight_used"] == 50.0
-        assert spool.weight_used == 50.0
+        db.add.assert_called_once()
+        assert any(call.args[0].is_update for call in db.execute.await_args_list)
 
     @pytest.mark.asyncio
     async def test_tracks_bl_spools_via_3mf(self):
@@ -360,12 +381,14 @@ class TestTrackFrom3MF:
         db = AsyncMock()
         # archive, queue_item(None), assignment, spool
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         pm = _make_printer_manager(_make_printer_state([], tray_now=0))
@@ -402,10 +425,12 @@ class TestTrackFrom3MF:
         db = AsyncMock()
         # archive, queue_item(None)
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                ]
+            )
         )
 
         pm = _make_printer_manager(_make_printer_state([], tray_now=0))
@@ -443,12 +468,14 @@ class TestTrackFrom3MF:
         db = AsyncMock()
         # archive, queue_item(None), assignment, spool
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         pm = _make_printer_manager(_make_printer_state([], tray_now=4))
@@ -541,11 +568,13 @@ class TestSpoolAssignmentSnapshot:
         # db: archive, queue_item(None), spool — NO assignment query needed
         db = AsyncMock()
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         pm = _make_printer_manager(_make_printer_state([], tray_now=0))
@@ -585,12 +614,14 @@ class TestSpoolAssignmentSnapshot:
         # db: archive, queue_item(None), assignment, spool
         db = AsyncMock()
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         pm = _make_printer_manager(_make_printer_state([], tray_now=0))
@@ -639,12 +670,14 @@ class TestSpoolAssignmentSnapshot:
         # then live assignment check (returns None), then spool lookup by snapshot spool_id
         db = AsyncMock()
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(),  # _find_3mf_by_filename: library search
-                MagicMock(),  # _find_3mf_by_filename: archive search
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # live assignment
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(),  # _find_3mf_by_filename: library search
+                    MagicMock(),  # _find_3mf_by_filename: archive search
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),  # live assignment
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         results = await on_print_complete(
@@ -680,12 +713,14 @@ class TestSpoolAssignmentSnapshot:
         # then assignment and spool for the AMS fallback path
         db = AsyncMock()
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(),  # _find_3mf_by_filename: library search
-                MagicMock(),  # _find_3mf_by_filename: archive search
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(),  # _find_3mf_by_filename: library search
+                    MagicMock(),  # _find_3mf_by_filename: archive search
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         results = await on_print_complete(
@@ -737,14 +772,16 @@ class TestSpoolAssignmentSnapshot:
         # NOTE: No assignment in db — it was deleted by on_ams_change mid-print!
         db = AsyncMock()
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-                # Cost-update block re-selects the archive to mutate cost.
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                    # Cost-update block re-selects the archive to mutate cost.
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                ]
+            )
         )
 
         with (
@@ -767,8 +804,8 @@ class TestSpoolAssignmentSnapshot:
         assert len(results) >= 1
         assert results[0]["spool_id"] == 8
         assert results[0]["weight_used"] == 14.2
-        # Spool weight should be updated: 50 + 14.2 = 64.2
-        assert spool.weight_used == 64.2
+        db.add.assert_called_once()
+        assert any(call.args[0].is_update for call in db.execute.await_args_list)
 
 
 class TestSpoolColorToHex:
@@ -883,12 +920,14 @@ class TestArchiveFilamentColorRewrite:
 
         db = AsyncMock()
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         pm = _make_printer_manager(_make_printer_state([], tray_now=0))
@@ -930,12 +969,14 @@ class TestArchiveFilamentColorRewrite:
 
         db = AsyncMock()
         db.execute = AsyncMock(
-            side_effect=[
-                MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
-                MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
-            ]
+            side_effect=_mock_execute(
+                [
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=archive)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=None)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=assignment)),
+                    MagicMock(scalar_one_or_none=MagicMock(return_value=spool)),
+                ]
+            )
         )
 
         pm = _make_printer_manager(_make_printer_state([], tray_now=0))

@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
 import { compareFwVersions } from '../utils/firmwareVersion';
@@ -20,7 +21,7 @@ import { isActivePrintState, normalizePrintState } from '../utils/printerState';
 // original bug at #1447).
 const DRYING_POPOVER_WIDTH = 240;
 const DRYING_POPOVER_ESTIMATED_HEIGHT = 320;
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
@@ -87,10 +88,10 @@ import {
   MonitorPlay,
 } from 'lucide-react';
 
-import { useNavigate } from 'react-router-dom';
+import { useLocation, useNavigate } from 'react-router-dom';
 import { api, discoveryApi, firmwareApi, withStreamToken, ApiError } from '../api/client';
 import { formatDateOnly, formatETA, formatDuration, parseUTCDate } from '../utils/date';
-import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult } from '../api/client';
+import type { Printer, PrinterCreate, PrinterStatus, AMSUnit, DiscoveredPrinter, FirmwareUpdateInfo, FirmwareUploadStatus, LinkedSpoolInfo, SpoolAssignment, HMSError, InventorySpool, SmartPlug, PrinterDiagnosticResult, NetworkSiteInput } from '../api/client';
 import { Card, CardContent } from '../components/Card';
 import { Button } from '../components/Button';
 import { ConfirmModal } from '../components/ConfirmModal';
@@ -122,6 +123,9 @@ import { FilamentSlotCircle } from '../components/FilamentSlotCircle';
 import { Collapsible } from '../components/Collapsible';
 import { ConnectionDiagnosticModal, DiagnosticChecklist } from '../components/ConnectionDiagnostic';
 import { getColorName, parseFilamentColor, isLightColor } from '../utils/colors';
+import { networkSiteHostname, networkSiteMoonrakerUrls } from '../utils/networkSites';
+import { PrintersPagePrototype } from './PrintersPagePrototype';
+import { PrinterSlicerBindings } from '../components/PrinterSlicerBindings';
 
 export interface SpoolmanSlotAssignmentRow {
   printer_id: number;
@@ -985,7 +989,7 @@ function StatusSummaryBar({ printers }: { printers: Printer[] | undefined }) {
     let nextProgress: number = 0;
 
     printers?.forEach((printer) => {
-      const status = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null; progress: number | null; hms_errors?: HMSError[] }>(['printerStatus', printer.id]);
+      const status = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null; progress: number | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(printer.id));
       if (status === undefined) {
         // Status not yet loaded - don't count as offline yet
         loading++;
@@ -1928,7 +1932,7 @@ function PrinterCard({
   const [plateCheckLightWasOff, setPlateCheckLightWasOff] = useState(false);
 
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', printer.id],
+    queryKey: queryKeys.printerStatus(printer.id),
     queryFn: () => api.getPrinterStatus(printer.id),
     refetchInterval: 30000, // Fallback polling, WebSocket handles real-time
   });
@@ -2214,14 +2218,14 @@ function PrinterCard({
   const connectMutation = useMutation({
     mutationFn: () => api.connectPrinter(printer.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
   });
 
   const forceRefreshMutation = useMutation({
     mutationFn: () => api.refreshPrinterStatus(printer.id),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       showToast(t('printers.forceRefreshSuccess'), 'success');
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
@@ -2246,7 +2250,7 @@ function PrinterCard({
       api.startDrying(printer.id, amsId, temp, duration, filament, rotateTray),
     onSuccess: () => {
       setDryingPopoverAmsId(null);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2254,7 +2258,7 @@ function PrinterCard({
   const stopDryingMutation = useMutation({
     mutationFn: (amsId: number) => api.stopDrying(printer.id, amsId),
     onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2267,8 +2271,8 @@ function PrinterCard({
   const setAmsBackupMutation = useMutation({
     mutationFn: (enabled: boolean) => api.setAmsFilamentBackup(printer.id, enabled),
     onSuccess: (_data, enabled) => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
-      queryClient.invalidateQueries({ queryKey: ['printer-status', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       showToast(t(enabled ? 'printers.amsBackup.toastEnabled' : 'printers.amsBackup.toastDisabled'), 'success');
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
@@ -2307,7 +2311,7 @@ function PrinterCard({
     mutationFn: () => api.stopPrint(printer.id),
     onSuccess: () => {
       showToast(t('printers.toast.printStopped'));
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToStopPrint'), 'error'),
   });
@@ -2316,7 +2320,7 @@ function PrinterCard({
     mutationFn: () => api.pausePrint(printer.id),
     onSuccess: () => {
       showToast(t('printers.toast.printPaused'));
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToPausePrint'), 'error'),
   });
@@ -2325,7 +2329,7 @@ function PrinterCard({
     mutationFn: () => api.resumePrint(printer.id),
     onSuccess: () => {
       showToast(t('printers.toast.printResumed'));
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToResumePrint'), 'error'),
   });
@@ -2334,7 +2338,7 @@ function PrinterCard({
     mutationFn: () => api.emergencyStop(printer.id),
     onSuccess: () => {
       showToast(t('printers.emergencyStopSent'), 'success');
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.emergencyStopFailed'), 'error'),
   });
@@ -2343,10 +2347,10 @@ function PrinterCard({
     mutationFn: () => api.clearPlate(printer.id),
     onSuccess: () => {
       showToast(t('queue.clearPlateSuccess'));
-      queryClient.setQueryData(['printerStatus', printer.id], (old: PrinterStatus | undefined) =>
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: PrinterStatus | undefined) =>
         old ? { ...old, awaiting_plate_clear: false } : old
       );
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       queryClient.invalidateQueries({ queryKey: ['queue', printer.id] });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
@@ -2358,7 +2362,7 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2368,7 +2372,7 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2378,7 +2382,7 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToSendCommand'), 'error'),
   });
@@ -2387,14 +2391,14 @@ function PrinterCard({
     mutationFn: ({ fan, speed }: { fan: 'part' | 'aux' | 'chamber'; speed: number }) =>
       api.setFanSpeed(printer.id, fan, speed),
     onMutate: async ({ fan, speed }) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
       const fanField = {
         part: 'cooling_fan_speed',
         aux: 'big_fan1_speed',
         chamber: 'big_fan2_speed',
       }[fan];
-      queryClient.setQueryData(['printerStatus', printer.id], (old: PrinterStatus | undefined) =>
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: PrinterStatus | undefined) =>
         old ? { ...old, [fanField]: speed } : old
       );
       return { previousStatus };
@@ -2402,11 +2406,11 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error, _variables, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToSendCommand'), 'error');
     },
@@ -2415,9 +2419,9 @@ function PrinterCard({
   const selectExtruderMutation = useMutation({
     mutationFn: (extruder: number) => api.selectExtruder(printer.id, extruder),
     onMutate: async (extruder) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
-      queryClient.setQueryData(['printerStatus', printer.id], (old: PrinterStatus | undefined) =>
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: PrinterStatus | undefined) =>
         old ? { ...old, active_extruder: extruder } : old
       );
       return { previousStatus };
@@ -2425,11 +2429,11 @@ function PrinterCard({
     onSuccess: (result) => {
       setStatusControlMenu(null);
       showToast(result.message);
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
     },
     onError: (error: Error, _extruder, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToSendCommand'), 'error');
     },
@@ -2440,11 +2444,11 @@ function PrinterCard({
     mutationFn: (on: boolean) => api.setChamberLight(printer.id, on),
     onMutate: async (on) => {
       // Cancel any outgoing refetches
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       // Snapshot the previous value
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
       // Optimistically update
-      queryClient.setQueryData(['printerStatus', printer.id], (old: typeof status) => ({
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: typeof status) => ({
         ...old,
         chamber_light: on,
       }));
@@ -2456,7 +2460,7 @@ function PrinterCard({
     onError: (error: Error, _, context) => {
       // Rollback on error
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToControlChamberLight'), 'error');
     },
@@ -2466,9 +2470,9 @@ function PrinterCard({
   const printSpeedMutation = useMutation({
     mutationFn: (mode: number) => api.setPrintSpeed(printer.id, mode),
     onMutate: async (mode) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
-      queryClient.setQueryData(['printerStatus', printer.id], (old: typeof status) => ({
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: typeof status) => ({
         ...old,
         speed_level: mode,
       }));
@@ -2476,7 +2480,7 @@ function PrinterCard({
     },
     onError: (error: Error, _, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToSetSpeed'), 'error');
     },
@@ -2485,9 +2489,9 @@ function PrinterCard({
   const airductMutation = useMutation({
     mutationFn: (mode: 'cooling' | 'heating') => api.setAirductMode(printer.id, mode),
     onMutate: async (mode) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printer.id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printer.id]);
-      queryClient.setQueryData(['printerStatus', printer.id], (old: typeof status) => ({
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printer.id));
+      queryClient.setQueryData(queryKeys.printerStatus(printer.id), (old: typeof status) => ({
         ...old,
         airduct_mode: mode === 'cooling' ? 0 : 1,
       }));
@@ -2495,7 +2499,7 @@ function PrinterCard({
     },
     onError: (error: Error, _, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printer.id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printer.id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToSendCommand'), 'error');
     },
@@ -2555,7 +2559,7 @@ function PrinterCard({
     mutationFn: (isActive: boolean) => api.updatePrinter(printer.id, { is_active: isActive }),
     onSuccess: (_data, isActive) => {
       queryClient.invalidateQueries({ queryKey: ['printers'] });
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       showToast(
         isActive
           ? t('printers.maintenance.toastExited', { name: printer.name })
@@ -3225,6 +3229,14 @@ function PrinterCard({
                 <div className="flex items-center justify-between gap-2">
                   <div className="flex min-w-0 items-center gap-2">
                     <h3 className={`font-semibold text-white ${getTitleSize()}`}>{printer.name}</h3>
+                    {printer.network_site && (
+                      <span
+                        className="shrink-0 rounded-full border border-bambu-green/40 bg-bambu-green/10 px-2 py-0.5 text-[10px] font-medium text-bambu-green"
+                        title={`${printer.network_site.name} · ${printer.network_site.site_number}`}
+                      >
+                        {printer.network_site.name}
+                      </span>
+                    )}
                     {/* Connection indicator dot for compact mode */}
                     {viewMode === 'compact' && (() => {
                       const hmsErrors = isBambu && status?.connected && status.hms_errors ? filterKnownHMSErrors(status.hms_errors) : [];
@@ -6332,7 +6344,7 @@ function PrinterCard({
             // Refresh slot presets to show updated profile name
             queryClient.invalidateQueries({ queryKey: ['slotPresets', printer.id] });
             // Printer status will update automatically via WebSocket when AMS data changes
-            queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+            queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
           }}
         />
       )}
@@ -6550,6 +6562,9 @@ export function AddPrinterModal({
   existingSerials: string[];
 }) {
   const { t } = useTranslation();
+  const { authEnabled, hasPermission } = useAuth();
+  const { showToast } = useToast();
+  const queryClient = useQueryClient();
   const [form, setForm] = useState<PrinterCreate>({
     name: '',
     provider: 'bambu',
@@ -6562,6 +6577,26 @@ export function AddPrinterModal({
   });
   const [moonraker, setMoonraker] = useState({
     base_url: '', websocket_url_override: '', api_key: '', authorization: '', tls_verify: true,
+  });
+  const [networkSiteId, setNetworkSiteId] = useState('');
+  const [networkSiteLanIp, setNetworkSiteLanIp] = useState('');
+  const [networkSiteError, setNetworkSiteError] = useState('');
+  const [moonrakerPort, setMoonrakerPort] = useState(7125);
+  const [showNewSite, setShowNewSite] = useState(false);
+  const [newSite, setNewSite] = useState<NetworkSiteInput>({ name: '', site_number: 1, ipv4_cidr: '' });
+  const { data: networkSites = [] } = useQuery({ queryKey: ['networkSites'], queryFn: api.getNetworkSites });
+  const selectedNetworkSite = networkSites.find((site) => site.id === Number(networkSiteId));
+  const networkHost = selectedNetworkSite ? networkSiteHostname(selectedNetworkSite, networkSiteLanIp) : null;
+  const canCreateSite = !authEnabled || hasPermission('printers:create');
+  const createSiteMutation = useMutation({
+    mutationFn: api.createNetworkSite,
+    onSuccess: (site) => {
+      queryClient.invalidateQueries({ queryKey: ['networkSites'] });
+      setNetworkSiteId(String(site.id));
+      setShowNewSite(false);
+      setNewSite({ name: '', site_number: 1, ipv4_cidr: '' });
+    },
+    onError: (error: Error) => showToast(error.message, 'error'),
   });
   const isMoonraker = form.provider === 'moonraker';
 
@@ -6613,27 +6648,51 @@ export function AddPrinterModal({
   // Filter out already-added printers
   const newPrinters = discovered.filter(p => !existingSerials.includes(p.serial));
 
+  const buildPrinterData = (): PrinterCreate => {
+    const siteFields = selectedNetworkSite
+      ? { network_site_id: selectedNetworkSite.id, network_site_lan_ip: networkSiteLanIp.trim() }
+      : {};
+    if (isMoonraker) {
+      const siteUrls = selectedNetworkSite && networkHost
+        ? networkSiteMoonrakerUrls(
+            moonraker.base_url,
+            moonraker.websocket_url_override,
+            networkHost,
+            moonrakerPort,
+          )
+        : null;
+      return {
+        name: form.name,
+        provider: 'moonraker',
+        model: form.model || undefined,
+        location: form.location || undefined,
+        auto_archive: form.auto_archive,
+        external_camera_url: form.external_camera_url || undefined,
+        external_camera_type: form.external_camera_type || undefined,
+        external_camera_enabled: form.external_camera_enabled || false,
+        ...siteFields,
+        moonraker_config: {
+          base_url: siteUrls?.baseUrl ?? moonraker.base_url.trim(),
+          websocket_url_override: siteUrls?.websocketUrl ?? (moonraker.websocket_url_override.trim() || undefined),
+          api_key: moonraker.api_key || undefined,
+          authorization: moonraker.authorization || undefined,
+          tls_verify: moonraker.tls_verify,
+        },
+      };
+    }
+    const data: PrinterCreate = { ...form, ...siteFields };
+    if (selectedNetworkSite) delete data.ip_address;
+    return data;
+  };
+
   const handleAddSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    const data: PrinterCreate = isMoonraker
-      ? {
-          name: form.name,
-          provider: 'moonraker',
-          model: form.model || undefined,
-          location: form.location || undefined,
-          auto_archive: form.auto_archive,
-          external_camera_url: form.external_camera_url || undefined,
-          external_camera_type: form.external_camera_type || undefined,
-          external_camera_enabled: form.external_camera_enabled || false,
-          moonraker_config: {
-            base_url: moonraker.base_url.trim(),
-            websocket_url_override: moonraker.websocket_url_override.trim() || undefined,
-            api_key: moonraker.api_key || undefined,
-            authorization: moonraker.authorization || undefined,
-            tls_verify: moonraker.tls_verify,
-          },
-        }
-      : form;
+    if (selectedNetworkSite && !networkHost) {
+      setNetworkSiteError(t('networkSites.invalidPrinterIp'));
+      return;
+    }
+    setNetworkSiteError('');
+    const data = buildPrinterData();
     if (isMoonraker) {
       onAdd(data);
       return;
@@ -6641,7 +6700,7 @@ export function AddPrinterModal({
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
-        ip_address: form.ip_address?.trim() ?? '',
+        ip_address: networkHost ?? form.ip_address?.trim() ?? '',
         serial_number: form.serial_number?.trim() || undefined,
         access_code: form.access_code || undefined,
       });
@@ -6942,7 +7001,34 @@ export function AddPrinterModal({
                 placeholder={t('printers.modal.myPrinter')}
               />
             </div>
-            {!isMoonraker && <>
+            <div className="space-y-2">
+              <label htmlFor="add_network_site" className="block text-sm text-bambu-gray">{t('networkSites.connection')}</label>
+              <select
+                id="add_network_site"
+                value={networkSiteId}
+                onChange={(event) => { setNetworkSiteId(event.target.value); setNetworkSiteLanIp(''); setNetworkSiteError(''); }}
+                className="w-full rounded-lg border border-bambu-dark-tertiary bg-bambu-dark px-3 py-2 text-white"
+              >
+                <option value="">{t('networkSites.localDirect')}</option>
+                {networkSites.map((site) => <option key={site.id} value={site.id}>{site.name} · {site.ipv4_cidr}</option>)}
+              </select>
+              {canCreateSite && <button type="button" className="text-xs text-bambu-green hover:underline" onClick={() => setShowNewSite(!showNewSite)}>{t('networkSites.createHere')}</button>}
+              {showNewSite && (
+                <div className="grid grid-cols-1 gap-2 rounded-lg border border-bambu-dark-tertiary p-2 sm:grid-cols-3">
+                  <input aria-label={t('networkSites.name')} value={newSite.name} onChange={(event) => setNewSite({ ...newSite, name: event.target.value })} placeholder={t('networkSites.namePlaceholder')} className="rounded bg-bambu-dark px-2 py-1 text-white" />
+                  <input aria-label={t('networkSites.siteNumber')} type="number" min={1} max={65535} value={newSite.site_number} onChange={(event) => setNewSite({ ...newSite, site_number: Number(event.target.value) })} className="rounded bg-bambu-dark px-2 py-1 text-white" />
+                  <input aria-label={t('networkSites.subnet')} value={newSite.ipv4_cidr} onChange={(event) => setNewSite({ ...newSite, ipv4_cidr: event.target.value })} placeholder="192.168.1.0/24" className="rounded bg-bambu-dark px-2 py-1 text-white" />
+                  <Button type="button" size="sm" disabled={createSiteMutation.isPending || !newSite.name || !newSite.ipv4_cidr} onClick={() => createSiteMutation.mutate(newSite)}>{t('common.add')}</Button>
+                </div>
+              )}
+              {selectedNetworkSite && <>
+                <input required aria-label={t('networkSites.printerIp')} value={networkSiteLanIp} onChange={(event) => { setNetworkSiteLanIp(event.target.value); setNetworkSiteError(''); }} placeholder={selectedNetworkSite.ipv4_cidr.replace('.0/24', '.87')} className="w-full rounded-lg border border-bambu-dark-tertiary bg-bambu-dark px-3 py-2 text-white" />
+                {networkHost && <p className="text-xs text-bambu-gray">{t('networkSites.targetPreview', { host: networkHost })}</p>}
+                {networkSiteError && <p className="text-xs text-red-400">{networkSiteError}</p>}
+                {isMoonraker && <input required aria-label={t('networkSites.moonrakerPort')} type="number" min={1} max={65535} value={moonrakerPort} onChange={(event) => setMoonrakerPort(Number(event.target.value))} className="w-full rounded-lg border border-bambu-dark-tertiary bg-bambu-dark px-3 py-2 text-white" />}
+              </>}
+            </div>
+            {!isMoonraker && !selectedNetworkSite &&
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.ipAddress')}</label>
               <input
@@ -6955,6 +7041,8 @@ export function AddPrinterModal({
                 placeholder="192.168.1.100 or printer.local"
               />
             </div>
+            }
+            {!isMoonraker &&
             <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.serialNumber')}</label>
               <input
@@ -6966,12 +7054,14 @@ export function AddPrinterModal({
                 placeholder="01P00A000000000"
               />
             </div>
-            </>}
+            }
             {isMoonraker && <>
+            {!selectedNetworkSite && (
             <div>
               <label htmlFor="add_moonraker_base_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerBaseUrl')}</label>
               <input id="add_moonraker_base_url" type="url" required className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.base_url} onChange={(e) => setMoonraker({ ...moonraker, base_url: e.target.value })} placeholder="https://klipper.local:7125" />
             </div>
+            )}
             <div>
               <label htmlFor="add_moonraker_websocket_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerWebsocketUrl')}</label>
               <input id="add_moonraker_websocket_url" type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.websocket_url_override} onChange={(e) => setMoonraker({ ...moonraker, websocket_url_override: e.target.value })} placeholder="wss://klipper.local/websocket" />
@@ -7065,7 +7155,7 @@ export function AddPrinterModal({
             {!isMoonraker && <button
               type="button"
               onClick={() => setShowDiagnostic(true)}
-              disabled={!form.ip_address?.trim()}
+              disabled={!(networkHost || form.ip_address?.trim())}
               className="w-full flex items-center justify-center gap-2 px-3 py-2 text-sm text-bambu-gray hover:text-white disabled:opacity-40 disabled:cursor-not-allowed border border-bambu-dark-tertiary rounded-lg transition-colors"
             >
               <Stethoscope className="w-4 h-4" />
@@ -7087,7 +7177,7 @@ export function AddPrinterModal({
                   >
                     {t('printers.addPreflight.back')}
                   </Button>
-                  <Button type="button" onClick={() => onAdd(form)} className="flex-1">
+                  <Button type="button" onClick={() => onAdd(buildPrinterData())} className="flex-1">
                     {t('printers.addPreflight.saveAnyway')}
                   </Button>
                 </div>
@@ -7109,7 +7199,7 @@ export function AddPrinterModal({
     {!isMoonraker && showDiagnostic && (
       <ConnectionDiagnosticModal
         connection={{
-          ip_address: form.ip_address?.trim() ?? '',
+          ip_address: networkHost ?? form.ip_address?.trim() ?? '',
           serial_number: form.serial_number?.trim() || undefined,
           access_code: form.access_code || undefined,
         }}
@@ -7411,6 +7501,15 @@ function EditPrinterModal({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const { data: networkSites = [], isPending: networkSitesLoading } = useQuery({
+    queryKey: ['networkSites'],
+    queryFn: api.getNetworkSites,
+  });
+  const [networkSiteId, setNetworkSiteId] = useState(printer.network_site_id ? String(printer.network_site_id) : '');
+  const [networkSiteLanIp, setNetworkSiteLanIp] = useState(printer.network_site_lan_ip || '');
+  const [networkSiteError, setNetworkSiteError] = useState('');
+  const selectedNetworkSite = networkSites.find((site) => site.id === Number(networkSiteId));
+  const networkHost = selectedNetworkSite ? networkSiteHostname(selectedNetworkSite, networkSiteLanIp) : null;
   const [form, setForm] = useState({
     name: printer.name,
     ip_address: printer.ip_address,
@@ -7431,6 +7530,10 @@ function EditPrinterModal({
     spoolman_accounting_owner: printer.moonraker_config?.spoolman_accounting_owner ?? 'moonraker' as 'layercove' | 'moonraker',
     spoolman_spool_id: printer.moonraker_config?.spoolman_spool_id ?? null as number | null,
   });
+  const [moonrakerPort, setMoonrakerPort] = useState(() => {
+    try { return Number(new URL(printer.moonraker_config?.base_url || 'http://localhost:7125').port || 7125); }
+    catch { return 7125; }
+  });
   const { data: spoolmanSpools = [] } = useQuery({
     queryKey: ['spoolman-inventory-spools'],
     queryFn: () => api.getSpoolmanInventorySpools(false),
@@ -7447,7 +7550,7 @@ function EditPrinterModal({
     mutationFn: (data: Partial<PrinterCreate>) => api.updatePrinter(printer.id, data),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ['printers'] });
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', printer.id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
       onClose();
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToUpdate'), 'error'),
@@ -7463,6 +7566,10 @@ function EditPrinterModal({
   }, [onClose]);
 
   const doSave = () => {
+    if (networkSiteId && !selectedNetworkSite) {
+      setNetworkSiteError(t('common.error'));
+      return;
+    }
     const data: Partial<PrinterCreate> = {
       name: form.name,
       model: form.model || undefined,
@@ -7472,17 +7579,27 @@ function EditPrinterModal({
       external_camera_url: form.external_camera_url || undefined,
       external_camera_enabled: form.external_camera_enabled || false,
       external_camera_type: form.external_camera_enabled ? (form.external_camera_type || 'mjpeg') : undefined,
+      network_site_id: networkSiteId ? Number(networkSiteId) : null,
+      network_site_lan_ip: networkSiteId ? networkSiteLanIp.trim() : null,
     };
     // Only include access_code if it was changed
     if (form.access_code) {
       data.access_code = form.access_code;
     }
     if (isMoonraker) {
+      const siteUrls = selectedNetworkSite && networkHost
+        ? networkSiteMoonrakerUrls(
+            moonraker.base_url,
+            moonraker.websocket_url_override,
+            networkHost,
+            moonrakerPort,
+          )
+        : null;
       delete data.ip_address;
       delete data.access_code;
       data.moonraker_config = {
-        base_url: moonraker.base_url.trim(),
-        websocket_url_override: moonraker.websocket_url_override.trim() || undefined,
+        base_url: siteUrls?.baseUrl ?? moonraker.base_url.trim(),
+        websocket_url_override: siteUrls?.websocketUrl ?? (moonraker.websocket_url_override.trim() || undefined),
         api_key: moonraker.api_key || undefined,
         authorization: moonraker.authorization || undefined,
         tls_verify: moonraker.tls_verify,
@@ -7490,7 +7607,7 @@ function EditPrinterModal({
         spoolman_spool_id: moonraker.spoolman_accounting_owner === 'layercove' ? moonraker.spoolman_spool_id : null,
       };
     } else {
-      data.ip_address = form.ip_address ?? undefined;
+      if (!networkSiteId) data.ip_address = form.ip_address ?? undefined;
     }
     updateMutation.mutate(data);
   };
@@ -7507,6 +7624,15 @@ function EditPrinterModal({
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    if (networkSiteId && !selectedNetworkSite) {
+      setNetworkSiteError(t('common.error'));
+      return;
+    }
+    if (selectedNetworkSite && !networkHost) {
+      setNetworkSiteError(t('networkSites.invalidPrinterIp'));
+      return;
+    }
+    setNetworkSiteError('');
     if (isMoonraker) {
       doSave();
       return;
@@ -7514,7 +7640,7 @@ function EditPrinterModal({
     setCheckingSave(true);
     try {
       const result = await api.diagnoseConnection({
-        ip_address: form.ip_address?.trim() ?? '',
+        ip_address: networkHost ?? form.ip_address?.trim() ?? '',
         serial_number: printer.serial_number ?? undefined,
         access_code: form.access_code || undefined,
       });
@@ -7550,7 +7676,20 @@ function EditPrinterModal({
                 placeholder={t('printers.modal.myPrinter')}
               />
             </div>
-            {!isMoonraker && <div>
+            <div className="space-y-2">
+              <label htmlFor="edit_network_site" className="block text-sm text-bambu-gray">{t('networkSites.connection')}</label>
+              <select id="edit_network_site" value={networkSiteId} onChange={(event) => { setNetworkSiteId(event.target.value); setNetworkSiteLanIp(''); setNetworkSiteError(''); }} className="w-full rounded-lg border border-bambu-dark-tertiary bg-bambu-dark px-3 py-2 text-white">
+                <option value="">{t('networkSites.localDirect')}</option>
+                {networkSites.map((site) => <option key={site.id} value={site.id}>{site.name} · {site.ipv4_cidr}</option>)}
+              </select>
+              {selectedNetworkSite && <>
+                <input required aria-label={t('networkSites.printerIp')} value={networkSiteLanIp} onChange={(event) => { setNetworkSiteLanIp(event.target.value); setNetworkSiteError(''); }} placeholder={selectedNetworkSite.ipv4_cidr.replace('.0/24', '.87')} className="w-full rounded-lg border border-bambu-dark-tertiary bg-bambu-dark px-3 py-2 text-white" />
+                {networkHost && <p className="text-xs text-bambu-gray">{t('networkSites.targetPreview', { host: networkHost })}</p>}
+                {networkSiteError && <p className="text-xs text-red-400">{networkSiteError}</p>}
+                {isMoonraker && <input required aria-label={t('networkSites.moonrakerPort')} type="number" min={1} max={65535} value={moonrakerPort} onChange={(event) => setMoonrakerPort(Number(event.target.value))} className="w-full rounded-lg border border-bambu-dark-tertiary bg-bambu-dark px-3 py-2 text-white" />}
+              </>}
+            </div>
+            {!isMoonraker && !selectedNetworkSite && <div>
               <label className="block text-sm text-bambu-gray mb-1">{t('printers.ipAddress')}</label>
               <input
                 type="text"
@@ -7573,7 +7712,7 @@ function EditPrinterModal({
               <p className="text-xs text-bambu-gray mt-1">{t('printers.serialCannotBeChanged')}</p>
             </div>}
             {isMoonraker && <>
-              <div><label htmlFor="edit_moonraker_base_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerBaseUrl')}</label><input id="edit_moonraker_base_url" type="url" required className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.base_url} onChange={(e) => setMoonraker({ ...moonraker, base_url: e.target.value })} /></div>
+              {!selectedNetworkSite && <div><label htmlFor="edit_moonraker_base_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerBaseUrl')}</label><input id="edit_moonraker_base_url" type="url" required className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.base_url} onChange={(e) => setMoonraker({ ...moonraker, base_url: e.target.value })} /></div>}
               <div><label htmlFor="edit_moonraker_websocket_url" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerWebsocketUrl')}</label><input id="edit_moonraker_websocket_url" type="url" className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white" value={moonraker.websocket_url_override} onChange={(e) => setMoonraker({ ...moonraker, websocket_url_override: e.target.value })} /></div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2"><div><label htmlFor="edit_moonraker_api_key" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerApiKey')}</label><input id="edit_moonraker_api_key" type="password" autoComplete="new-password" placeholder={printer.moonraker_config?.api_key_configured ? t('printers.moonrakerSecretRetained') : ''} disabled={!!moonraker.authorization} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.api_key} onChange={(e) => setMoonraker({ ...moonraker, api_key: e.target.value })} /></div><div><label htmlFor="edit_moonraker_authorization" className="block text-sm text-bambu-gray mb-1">{t('printers.moonrakerAuthorization')}</label><input id="edit_moonraker_authorization" type="password" autoComplete="new-password" placeholder={printer.moonraker_config?.authorization_configured ? t('printers.moonrakerSecretRetained') : ''} disabled={!!moonraker.api_key} className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white disabled:opacity-50" value={moonraker.authorization} onChange={(e) => setMoonraker({ ...moonraker, authorization: e.target.value })} /></div></div>
               <label htmlFor="edit_moonraker_tls_verify" className="flex items-center gap-2 text-sm text-bambu-gray"><input id="edit_moonraker_tls_verify" type="checkbox" checked={moonraker.tls_verify} onChange={(e) => setMoonraker({ ...moonraker, tls_verify: e.target.checked })} />{t('printers.moonrakerTlsVerify')}</label>
@@ -7706,7 +7845,7 @@ function EditPrinterModal({
                     type="button"
                     onClick={doSave}
                     className="flex-1"
-                    disabled={updateMutation.isPending}
+                    disabled={updateMutation.isPending || networkSitesLoading || (!!networkSiteId && !selectedNetworkSite)}
                   >
                     {t('printers.addPreflight.saveAnyway')}
                   </Button>
@@ -7720,7 +7859,7 @@ function EditPrinterModal({
                 <Button
                   type="submit"
                   className="flex-1"
-                  disabled={updateMutation.isPending || checkingSave}
+                  disabled={updateMutation.isPending || checkingSave || networkSitesLoading || (!!networkSiteId && !selectedNetworkSite)}
                 >
                   {checkingSave
                     ? t('printers.addPreflight.checking')
@@ -7740,7 +7879,7 @@ function EditPrinterModal({
 // Component to check if a printer is offline (for power dropdown)
 function usePrinterOfflineStatus(printerId: number) {
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', printerId],
+    queryKey: queryKeys.printerStatus(printerId),
     queryFn: () => api.getPrinterStatus(printerId),
     refetchInterval: 30000,
   });
@@ -7806,6 +7945,7 @@ function PowerDropdownItem({
 }
 
 export function PrintersPage() {
+  const location = useLocation();
   const { t } = useTranslation();
   const { resolvedMode, darkAccent, lightAccent } = useTheme();
   const activeAccent = resolvedMode === 'dark' ? darkAccent : lightAccent;
@@ -7859,6 +7999,7 @@ export function PrintersPage() {
   // Derive viewMode from cardSize: S=compact, M/L/XL=expanded
   const viewMode: ViewMode = cardSize === 1 ? 'compact' : 'expanded';
   const [compactDrilldownPrinterId, setCompactDrilldownPrinterId] = useState<number | null>(null);
+  const [commandDeckControlsPrinterId, setCommandDeckControlsPrinterId] = useState<number | null>(null);
   const scrollPrinterIntoView = useCallback((printerId: number) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -7882,6 +8023,7 @@ export function PrintersPage() {
   const returnToCompactCards = useCallback(() => {
     const printerId = compactDrilldownPrinterId;
     setCompactDrilldownPrinterId(null);
+    setCommandDeckControlsPrinterId(null);
     setCardSize(1);
     localStorage.setItem('printerCardSize', '1');
     if (printerId != null) {
@@ -7930,6 +8072,13 @@ export function PrintersPage() {
   const { data: printers, isLoading } = useQuery({
     queryKey: ['printers'],
     queryFn: api.getPrinters,
+  });
+  useQueries({
+    queries: (printers ?? []).map((printer) => ({
+      queryKey: queryKeys.printerStatus(printer.id),
+      queryFn: () => api.getPrinterStatus(printer.id),
+      refetchInterval: 30000,
+    })),
   });
 
   // Fetch the UI-rendering subset of settings. Uses /ui-preferences (not /settings)
@@ -8164,7 +8313,7 @@ export function PrintersPage() {
 
     // Filter to only applicable printers based on cached state
     const applicableIds = ids.filter(id => {
-      const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', id]);
+      const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(id));
       if (!status?.connected) return false;
       const printer = printers?.find(item => item.id === id);
       if (!printer) return false;
@@ -8210,7 +8359,7 @@ export function PrintersPage() {
 
     // Invalidate status queries for affected printers
     applicableIds.forEach(id => {
-      queryClient.invalidateQueries({ queryKey: ['printerStatus', id] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(id) });
     });
 
     setBulkActionPending(false);
@@ -8295,7 +8444,7 @@ export function PrintersPage() {
     // Status filter
     if (statusFilter !== 'all') {
       result = result.filter(p => {
-        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', p.id]);
+        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(p.id));
         if (!status?.connected) return statusFilter === 'offline';
         return classifyPrinterStatus(status, p.provider !== 'moonraker') === statusFilter;
       });
@@ -8335,8 +8484,8 @@ export function PrintersPage() {
       case 'status':
         // Sort by status: HMS errors > printing > idle > offline
         sorted.sort((a, b) => {
-          const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', a.id]);
-          const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', b.id]);
+          const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(a.id));
+          const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(b.id));
 
           const priorities: Record<PrinterState, number> = {
             error: 0, printing: 1, paused: 2, finished: 3, idle: 4, offline: 5,
@@ -8347,8 +8496,8 @@ export function PrintersPage() {
         break;
       case 'eta':
         sorted.sort((a, b) => {
-          const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null }>(['printerStatus', a.id]);
-          const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null }>(['printerStatus', b.id]);
+          const statusA = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null }>(queryKeys.printerStatus(a.id));
+          const statusB = queryClient.getQueryData<{ connected: boolean; state: string | null; remaining_time: number | null }>(queryKeys.printerStatus(b.id));
 
           const tier = (s: typeof statusA) => {
             if (!s?.connected) return 3; // offline last
@@ -8386,7 +8535,7 @@ export function PrintersPage() {
     setSelectedPrinterIds(prev => {
       const next = new Set(prev);
       sortedPrinters.forEach(p => {
-        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', p.id]);
+        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(p.id));
         if (classifyPrinterStatus(status, p.provider !== 'moonraker') === state) next.add(p.id);
       });
       return next;
@@ -8440,7 +8589,7 @@ export function PrintersPage() {
       });
     } else if (sortBy === 'status') {
       sortedPrinters.forEach(printer => {
-        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(['printerStatus', printer.id]);
+        const status = queryClient.getQueryData<{ connected: boolean; state: string | null; hms_errors?: HMSError[] }>(queryKeys.printerStatus(printer.id));
         const group = classifyPrinterStatus(status, printer.provider !== 'moonraker');
         if (!groups[group]) groups[group] = [];
         groups[group].push(printer);
@@ -8725,6 +8874,50 @@ export function PrintersPage() {
     </>
   );
 
+  const prototypePrinters = sortedPrinters
+    .map((printer) => ({
+      printer,
+      status: queryClient.getQueryData<PrinterStatus>(queryKeys.printerStatus(printer.id)),
+    }))
+    .filter(({ status }) => !hideDisconnected || status?.connected);
+
+  if (commandDeckControlsPrinterId == null && !/^#slicer-binding-\d+$/.test(location.hash)) {
+    return (
+      <>
+        <PrintersPagePrototype
+          printers={prototypePrinters}
+          totalPrinters={printers?.length ?? 0}
+          isLoading={isLoading}
+          search={search}
+          statusFilter={statusFilter}
+          locationFilter={locationFilter}
+          availableLocations={availableLocations}
+          hideOffline={hideDisconnected}
+          sortBy={sortBy}
+          canAdd={hasPermission('printers:create')}
+          onSearchChange={setSearch}
+          onStatusFilterChange={setStatusFilter}
+          onLocationFilterChange={setLocationFilter}
+          onHideOfflineChange={toggleHideDisconnected}
+          onSortChange={handleSortChange}
+          onAddPrinter={() => setShowAddModal(true)}
+          onOpenControls={(printerId) => {
+            setCommandDeckControlsPrinterId(printerId);
+            openCompactCard(printerId);
+          }}
+          production
+        />
+        {showAddModal && (
+          <AddPrinterModal
+            onClose={() => setShowAddModal(false)}
+            onAdd={(data) => addMutation.mutate(data)}
+            existingSerials={printers?.flatMap(p => p.serial_number ? [p.serial_number] : []) || []}
+          />
+        )}
+      </>
+    );
+  }
+
   return (
     <div className="p-4 md:p-8">
       <div className="space-y-3 mb-6">
@@ -8793,6 +8986,8 @@ export function PrintersPage() {
           )}
         </div>
       </div>
+
+      {!isLoading && printers && printers.length > 0 && <PrinterSlicerBindings printers={printers} />}
 
       {isLoading ? (
         <div className="text-center py-12 text-bambu-gray">{t('common.loading')}</div>

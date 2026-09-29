@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc" color="#0d2430">
+  <title id="title">LayerCove mark, dark</title>
+  <desc id="desc">Dark cove and three-layer mark for light backgrounds.</desc>
+  <g fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="6">
+    <path d="M48 16H28C20 16 14 23 14 32s6 16 14 16h20"/>
+    <path d="M18 24h24M14 32h33M18 40h24"/>
+  </g>
+</svg>

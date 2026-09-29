@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useMemo } from 'react';
 import { useQueries } from '@tanstack/react-query';
 import { api } from '../api/client';
@@ -304,7 +305,7 @@ export function useMultiPrinterFilamentMapping(
   // Fetch printer status for all selected printers in parallel
   const statusQueries = useQueries({
     queries: selectedPrinterIds.map((printerId) => ({
-      queryKey: ['printer-status', printerId],
+      queryKey: queryKeys.printerStatus(printerId),
       queryFn: () => api.getPrinterStatus(printerId),
       enabled: selectedPrinterIds.length > 0,
       staleTime: 5000, // Consider data fresh for 5 seconds

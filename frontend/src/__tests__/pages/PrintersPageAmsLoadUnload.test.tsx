@@ -98,6 +98,13 @@ async function hoverSlot(slot: Element) {
   });
 }
 
+async function openControls() {
+  const user = userEvent.setup();
+  render(<PrintersPage />);
+  await screen.findByRole('heading', { name: 'X1 Carbon', level: 2 });
+  await user.click(screen.getByRole('button', { name: /open controls/i }));
+}
+
 describe('PrintersPage - AMS load/unload (#891)', () => {
   beforeEach(() => {
     server.use(
@@ -119,7 +126,7 @@ describe('PrintersPage - AMS load/unload (#891)', () => {
       }),
     );
 
-    render(<PrintersPage />);
+    await openControls();
 
     await waitFor(() => {
       expect(screen.getAllByTestId('filament-slot').length).toBeGreaterThan(0);
@@ -148,7 +155,7 @@ describe('PrintersPage - AMS load/unload (#891)', () => {
       }),
     );
 
-    render(<PrintersPage />);
+    await openControls();
 
     await waitFor(() => {
       expect(screen.getAllByTestId('filament-slot').length).toBeGreaterThan(0);
@@ -168,7 +175,7 @@ describe('PrintersPage - AMS load/unload (#891)', () => {
       http.get('/api/v1/printers/:id/status', () => HttpResponse.json(mockRunningStatus)),
     );
 
-    render(<PrintersPage />);
+    await openControls();
 
     await waitFor(() => {
       expect(screen.getAllByTestId('filament-slot').length).toBeGreaterThan(0);
@@ -206,7 +213,7 @@ describe('PrintersPage - AMS load/unload (#891)', () => {
       }),
     );
 
-    render(<PrintersPage />);
+    await openControls();
 
     await waitFor(() => {
       expect(screen.getAllByTestId('filament-slot').length).toBeGreaterThan(0);

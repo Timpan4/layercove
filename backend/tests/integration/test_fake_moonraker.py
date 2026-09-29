@@ -1,6 +1,7 @@
 import asyncio
 import io
-from pathlib import Path
+import json
+import zipfile
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -48,7 +49,9 @@ def _http_client(fake: FakeMoonraker, **options) -> MoonrakerHTTPClient:
     return MoonrakerHTTPClient(base_url=fake.base_url, resolver=fake.resolver, **options)
 
 
-def _backend(fake: FakeMoonraker, monkeypatch, events, *, sleep=asyncio.sleep) -> MoonrakerBackend:
+def _backend(
+    fake: FakeMoonraker, monkeypatch, events, *, sleep=asyncio.sleep, bootstrap_timeout=0.2
+) -> MoonrakerBackend:
     _allow_test_peer(monkeypatch)
     emit = events if callable(events) else events.append
 
@@ -65,7 +68,7 @@ def _backend(fake: FakeMoonraker, monkeypatch, events, *, sleep=asyncio.sleep) -
         http_client_factory=http_client_factory,
         sleep=sleep,
         jitter=lambda: 0,
-        bootstrap_timeout=0.2,
+        bootstrap_timeout=bootstrap_timeout,
     )
 
 
@@ -254,12 +257,19 @@ async def test_printer_manager_forwards_fake_backed_lifecycle_once(fake_moonrake
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("container", ["gcode", "gcode.3mf"])
 async def test_queue_lifecycle_runs_through_fake_backed_backend(
-    fake_moonraker, monkeypatch, test_engine, db_session, tmp_path
+    fake_moonraker, monkeypatch, test_engine, db_session, tmp_path, container
 ):
     _allow_test_peer(monkeypatch)
-    source = tmp_path / "cube.gcode"
-    source.write_bytes(b"G28\n")
+    source = tmp_path / f"cube.{container}"
+    if container == "gcode.3mf":
+        with zipfile.ZipFile(source, "w") as bundle:
+            bundle.writestr("Metadata/project_settings.config", json.dumps({"gcode_flavor": "klipper"}))
+            bundle.writestr("Metadata/plate_1.gcode", "G1 X999\n")
+            bundle.writestr("Metadata/plate_2.gcode", "G28\n")
+    else:
+        source.write_bytes(b"G28\n")
     config = MoonrakerPrinterConfig(base_url=fake_moonraker.base_url)
     printer = Printer(
         name="Voron",
@@ -276,11 +286,11 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
         file_size=source.stat().st_size,
         status="archived",
         print_name="Cube",
-        extra_data={"destination_artifact_kind": "klipper_gcode", "source": "library"},
+        extra_data=None if container == "gcode.3mf" else {"destination_artifact_kind": "klipper_gcode"},
     )
     db_session.add(archive)
     await db_session.flush()
-    item = PrintQueueItem(printer_id=printer.id, archive_id=archive.id, status="pending")
+    item = PrintQueueItem(printer_id=printer.id, archive_id=archive.id, status="pending", plate_id=2)
     db_session.add(item)
     await db_session.commit()
     ids = SimpleNamespace(printer=printer.id, archive=archive.id, item=item.id)
@@ -321,6 +331,7 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
             patch.object(scheduler_module.settings, "base_dir", tmp_path),
             patch.object(scheduler_module.notification_service, "on_queue_job_started", AsyncMock()),
             patch.object(scheduler, "_propagate_owner_to_printer_manager", AsyncMock()),
+            patch.object(scheduler, "_schedule_moonraker_start_reconciliation"),
         ):
             async with sessions() as db:
                 await scheduler._start_print(db, await db.get(PrintQueueItem, ids.item))
@@ -330,9 +341,10 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
                 remote_path = queued.provider_job_id
                 correlation_id = queued.provider_correlation_id
                 assert queued.status == "printing"
-                assert queued.start_reconcile_after is None
-                assert remote_path and remote_path.startswith("queue/queued-")
+                assert queued.start_reconcile_after is not None
                 assert correlation_id
+                assert remote_path == f"layercove/{correlation_id}/cube.gcode"
+                assert (await db.get(PrintArchive, ids.archive)).filename == source.name
 
             assert fake_moonraker.uploads[0][1] == b"G28\n"
             assert fake_moonraker.commands == [("start", remote_path)]
@@ -348,6 +360,7 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
             async with sessions() as db:
                 current = await db.get(PrintQueueItem, ids.item)
                 assert current.provider_job_id == "42"
+                assert current.start_reconcile_after is None
 
             await fake_moonraker.finish_job(status="completed", filename=remote_path, job_id="42")
             await _wait_for(lambda: bool(terminal_outcomes))
@@ -401,3 +414,28 @@ async def test_malformed_jsonrpc_and_websocket_payloads_reconnect_safely(fake_mo
         assert backend.snapshot().state is NormalizedPrinterState.IDLE
     finally:
         await backend.disconnect()
+
+
+@pytest.mark.parametrize("observer_fails", [False, True])
+async def test_real_http_upload_reports_file_bytes_without_claiming_acceptance(
+    fake_moonraker, monkeypatch, observer_fails
+):
+    _allow_test_peer(monkeypatch)
+    client = _http_client(fake_moonraker)
+    content = b"G1 X10 Y10\n" * 20000
+    observed = []
+
+    def progress(transferred, total):
+        observed.append((transferred, total))
+        if observer_fails:
+            raise RuntimeError("observer unavailable")
+
+    result = await client.upload_gcode(
+        io.BytesIO(content), filename="progress.gcode", size=len(content), progress_callback=progress
+    )
+    assert result == "queue/progress.gcode"
+    assert fake_moonraker.uploads == [("progress.gcode", content)]
+    assert len(observed) > 1
+    assert observed[-1] == (len(content), len(content))
+    assert [done for done, _ in observed] == sorted(done for done, _ in observed)
+    assert fake_moonraker.commands == []  # Reading all bytes is NOT a start acknowledgement.

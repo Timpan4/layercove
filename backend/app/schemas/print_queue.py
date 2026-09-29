@@ -100,7 +100,17 @@ class PrintQueueItemUpdate(BaseModel):
     nozzle_mapping: list[int] | None = None
 
 
+class DispatchProgressResponse(BaseModel):
+    stage: Literal["preparing", "uploading", "awaiting_printer"]
+    started_at: str
+    stage_started_at: str
+    updated_at: str | None = None
+    bytes_transferred: int | None = None
+    total_bytes: int | None = None
+
+
 class PrintQueueItemResponse(BaseModel):
+    dispatch_progress: DispatchProgressResponse | None = None
     id: int
     printer_id: int | None  # None = unassigned
     target_model: str | None = None  # Target printer model for model-based assignment

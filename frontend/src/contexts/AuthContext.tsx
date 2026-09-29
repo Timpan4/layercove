@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { ApiError, api, getAuthToken, setAuthToken } from '../api/client';
 import type { LoginResponse, Permission, TokenPersistence, UserResponse } from '../api/client';
+import { createAuthorization, type ArchiveAction, type AuthorizationDecision, type AuthorizationPolicy, type LibraryFileAction, type Resource, type ResourceAction } from '../domain/authorization';
 
 interface AuthContextType {
   user: UserResponse | null;
@@ -15,10 +16,13 @@ interface AuthContextType {
   logout: () => void;
   refreshUser: () => Promise<void>;
   refreshAuth: () => Promise<void>;
+  authorization: AuthorizationPolicy;
   hasPermission: (permission: Permission) => boolean;
   hasAnyPermission: (...permissions: Permission[]) => boolean;
   hasAllPermissions: (...permissions: Permission[]) => boolean;
-  canModify: (resource: 'queue' | 'archives' | 'library', action: 'update' | 'delete' | 'reprint', createdById: number | null | undefined) => boolean;
+  canModify: <R extends Resource>(resource: R, action: ResourceAction<R>, createdById: number | null | undefined) => boolean;
+  canArchiveAction: (action: ArchiveAction, createdById: number | null | undefined) => AuthorizationDecision;
+  canLibraryFileAction: (action: LibraryFileAction, createdById: number | null | undefined) => AuthorizationDecision;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -205,60 +209,18 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     await checkAuthStatus();
   };
 
-  // Memoize permission set for efficient lookups
-  const permissionSet = useMemo(() => {
-    return new Set(user?.permissions ?? []);
-  }, [user?.permissions]);
-
-  // Computed admin status
-  const isAdmin = useMemo(() => {
-    if (!authEnabled) return true; // Auth disabled = admin access
-    return user?.is_admin ?? false;
-  }, [authEnabled, user?.is_admin]);
-
-  // Permission check functions
-  const hasPermission = useCallback((permission: Permission): boolean => {
-    if (!authEnabled) return true; // Auth disabled = allow all
-    if (isAdmin) return true; // Admins have all permissions
-    return permissionSet.has(permission);
-  }, [authEnabled, isAdmin, permissionSet]);
-
-  const hasAnyPermission = useCallback((...permissions: Permission[]): boolean => {
-    if (!authEnabled) return true;
-    if (isAdmin) return true;
-    return permissions.some(p => permissionSet.has(p));
-  }, [authEnabled, isAdmin, permissionSet]);
-
-  const hasAllPermissions = useCallback((...permissions: Permission[]): boolean => {
-    if (!authEnabled) return true;
-    if (isAdmin) return true;
-    return permissions.every(p => permissionSet.has(p));
-  }, [authEnabled, isAdmin, permissionSet]);
-
-  // Ownership-based permission check
-  const canModify = useCallback((
-    resource: 'queue' | 'archives' | 'library',
-    action: 'update' | 'delete' | 'reprint',
+  const authorization = useMemo(() => createAuthorization({ authEnabled, user }), [authEnabled, user]);
+  const isAdmin = authorization.isAdmin;
+  const hasPermission = useCallback((permission: Permission) => authorization.permission(permission).allowed, [authorization]);
+  const hasAnyPermission = useCallback((...permissions: Permission[]) => authorization.anyPermission(...permissions).allowed, [authorization]);
+  const hasAllPermissions = useCallback((...permissions: Permission[]) => authorization.allPermissions(...permissions).allowed, [authorization]);
+  const canModify = useCallback(<R extends Resource>(
+    resource: R,
+    action: ResourceAction<R>,
     createdById: number | null | undefined,
-  ): boolean => {
-    if (!authEnabled) return true;  // Auth disabled, allow all
-    if (isAdmin) return true;  // Admins can modify anything
-
-    const allPerm = `${resource}:${action}_all` as Permission;
-    const ownPerm = `${resource}:${action}_own` as Permission;
-
-    // User has *_all permission - can modify any item
-    if (permissionSet.has(allPerm)) return true;
-
-    // User has *_own permission - can only modify their own items
-    if (permissionSet.has(ownPerm)) {
-      // Ownerless items (null created_by_id) require *_all permission
-      if (createdById == null) return false;
-      return createdById === user?.id;
-    }
-
-    return false;
-  }, [authEnabled, isAdmin, permissionSet, user?.id]);
+  ) => authorization.resourceAction(resource, action, createdById).allowed, [authorization]);
+  const canArchiveAction = useCallback((action: ArchiveAction, createdById: number | null | undefined) => authorization.archiveAction(action, createdById), [authorization]);
+  const canLibraryFileAction = useCallback((action: LibraryFileAction, createdById: number | null | undefined) => authorization.libraryFileAction(action, createdById), [authorization]);
 
   return (
     <AuthContext.Provider
@@ -268,6 +230,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         requiresSetup,
         loading,
         isAdmin,
+        authorization,
         login,
         loginWithToken,
         logout,
@@ -277,6 +240,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         hasAnyPermission,
         hasAllPermissions,
         canModify,
+        canArchiveAction,
+        canLibraryFileAction,
       }}
     >
       {children}

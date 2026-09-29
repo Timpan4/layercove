@@ -61,6 +61,7 @@ from backend.app.services.orca_cloud import (
     generate_pkce,
     parse_callback_url,
 )
+from backend.app.services.slicer_catalog_sync import sync_orca_account
 
 logger = logging.getLogger(__name__)
 
@@ -434,6 +435,28 @@ async def _build_authenticated_service(
     return svc
 
 
+async def _sync_catalog_after_connect(
+    db: AsyncSession,
+    current_user: User | None,
+    service: OrcaCloudService,
+    email: str | None,
+    remote_user_id: str | None,
+) -> None:
+    remote_account_id = remote_user_id or (
+        f"layercove-user:{current_user.id}" if current_user is not None else "layercove-installation"
+    )
+    try:
+        await sync_orca_account(
+            db,
+            service,
+            remote_account_id=remote_account_id,
+            display_name=email or remote_account_id,
+            user_id=current_user.id if current_user is not None else None,
+        )
+    except (OrcaCloudError, ValueError) as error:
+        logger.warning("Initial Orca catalog sync failed after successful connection: %s", error)
+
+
 # ---------------------------------------------------------------------------
 # Route handlers
 # ---------------------------------------------------------------------------
@@ -491,6 +514,7 @@ async def auth_password(
         logger.warning("Orca Cloud user-info fetch failed after successful password auth: %s", e)
 
     await _persist_tokens(db, current_user, svc.access_token, svc.refresh_token, svc.token_expiry, email, user_id)
+    await _sync_catalog_after_connect(db, current_user, svc, email, user_id)
     return OrcaAuthStatusResponse(connected=True, email=email, user_id=user_id)
 
 
@@ -560,6 +584,7 @@ async def auth_finish(
         logger.warning("Orca Cloud user-info fetch failed after successful auth: %s", e)
 
     await _persist_tokens(db, current_user, svc.access_token, svc.refresh_token, svc.token_expiry, email, user_id)
+    await _sync_catalog_after_connect(db, current_user, svc, email, user_id)
     return OrcaAuthStatusResponse(connected=True, email=email, user_id=user_id)
 
 

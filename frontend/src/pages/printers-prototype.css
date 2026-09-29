@@ -1,0 +1,95 @@
+.lc-prototype {
+  isolation: isolate;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+  font-optical-sizing: auto;
+}
+
+.lc-ambient {
+  position: fixed;
+  inset: 0 0 auto;
+  z-index: -1;
+  height: 32rem;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 18% 0%, color-mix(in srgb, var(--color-bambu-green, #8b5cf6) 16%, transparent) 0, transparent 34%),
+    radial-gradient(circle at 76% -12%, rgba(99, 102, 241, 0.12) 0, transparent 30%);
+  opacity: 0.7;
+}
+
+.lc-glass {
+  background: linear-gradient(145deg, rgba(32, 30, 38, 0.82), rgba(21, 20, 25, 0.76));
+  -webkit-backdrop-filter: blur(24px) saturate(145%);
+  backdrop-filter: blur(24px) saturate(145%);
+}
+
+.lc-pressable {
+  transition: transform 120ms ease-out, border-color 160ms ease, background-color 160ms ease, color 160ms ease, opacity 160ms ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.lc-pressable:not(:disabled):active {
+  transform: scale(0.97);
+  transition-duration: 80ms;
+}
+
+.lc-printer-card {
+  transition: transform 220ms cubic-bezier(0.2, 0.8, 0.2, 1), border-color 180ms ease, box-shadow 220ms ease;
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .lc-printer-card:hover {
+    transform: translateY(-2px);
+    border-color: rgba(255, 255, 255, 0.16);
+    box-shadow: 0 30px 70px rgba(0, 0, 0, 0.32);
+  }
+}
+
+.lc-variant-enter {
+  animation: lc-materialize 280ms cubic-bezier(0.2, 0.8, 0.2, 1) both;
+}
+
+@keyframes lc-materialize {
+  from {
+    opacity: 0;
+    transform: translateY(5px) scale(0.997);
+    filter: blur(3px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+    filter: blur(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lc-prototype *,
+  .lc-prototype *::before,
+  .lc-prototype *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 1ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 1ms !important;
+  }
+
+  .lc-printer-card:hover,
+  .lc-pressable:active {
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-transparency: reduce) {
+  .lc-glass,
+  .lc-switcher {
+    background: #1b191f;
+    -webkit-backdrop-filter: none;
+    backdrop-filter: none;
+  }
+}
+
+@media (prefers-contrast: more) {
+  .lc-glass,
+  .lc-switcher {
+    background: #111;
+    border-color: rgba(255, 255, 255, 0.5);
+  }
+}

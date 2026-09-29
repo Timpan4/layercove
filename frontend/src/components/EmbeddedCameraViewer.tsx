@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -8,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { ChamberLight } from './icons/ChamberLight';
 import { SkipObjectsModal, SkipObjectsIcon } from './SkipObjectsModal';
 import { CameraDiagnoseModal } from './CameraDiagnoseModal';
+import { resolveMoonrakerCameraId } from '../utils/moonrakerCameras';
 
 interface EmbeddedCameraViewerProps {
   printerId: number;
@@ -86,6 +88,7 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
 
   // Stream state
   const [streamError, setStreamError] = useState(false);
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [streamLoading, setStreamLoading] = useState(true);
   const [imageKey, setImageKey] = useState(Date.now());
   const [reconnectAttempts, setReconnectAttempts] = useState(0);
@@ -110,10 +113,22 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     queryFn: () => api.getPrinter(printerId),
     enabled: printerId > 0,
   });
+  const { data: cameras = [] } = useQuery({
+    queryKey: ['printerCameras', printerId],
+    queryFn: () => api.listPrinterCameras(printerId),
+    enabled: printer?.provider === 'moonraker',
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (printer?.provider !== 'moonraker' || cameras.length === 0) return;
+    const nextCameraId = resolveMoonrakerCameraId(cameras, selectedCameraId);
+    if (nextCameraId !== selectedCameraId) setSelectedCameraId(nextCameraId);
+  }, [cameras, printer?.provider, selectedCameraId]);
 
   // Fetch printer status for light toggle and skip objects
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', printerId],
+    queryKey: queryKeys.printerStatus(printerId),
     queryFn: () => api.getPrinterStatus(printerId),
     refetchInterval: 30000,
     enabled: printerId > 0,
@@ -123,9 +138,9 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
   const chamberLightMutation = useMutation({
     mutationFn: (on: boolean) => api.setChamberLight(printerId, on),
     onMutate: async (on) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', printerId] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', printerId]);
-      queryClient.setQueryData(['printerStatus', printerId], (old: typeof status) => ({
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(printerId) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(printerId));
+      queryClient.setQueryData(queryKeys.printerStatus(printerId), (old: typeof status) => ({
         ...old,
         chamber_light: on,
       }));
@@ -136,7 +151,7 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     },
     onError: (error: Error, _, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', printerId], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(printerId), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToControlChamberLight'), 'error');
     },
@@ -555,7 +570,9 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
     }
   }, [isDragging, isResizing, dragOffset]);
 
-  const streamUrl = withStreamToken(`/api/v1/printers/${printerId}/camera/stream?fps=15&t=${imageKey}`);
+  const streamUrl = withStreamToken(selectedCameraId
+    ? `/api/v1/printers/${printerId}/cameras/${selectedCameraId}/stream?fps=15&t=${imageKey}`
+    : `/api/v1/printers/${printerId}/camera/stream?fps=15&t=${imageKey}`);
 
   return (
     <div
@@ -578,6 +595,30 @@ export function EmbeddedCameraViewer({ printerId, printerName, viewerIndex = 0, 
         <div className="flex items-center gap-2 text-sm text-white truncate">
           <GripVertical className="w-4 h-4 text-bambu-gray flex-shrink-0" />
           <span className="truncate">{printer?.name || printerName}</span>
+          {printer?.provider === 'moonraker' && cameras.length > 1 && (
+            <select
+              aria-label={t('printers.camera')}
+              value={selectedCameraId ?? ''}
+              onMouseDown={(event) => event.stopPropagation()}
+              onChange={(event) => {
+                setSelectedCameraId(Number(event.target.value));
+                setStreamError(false);
+                setStreamLoading(true);
+                setImageKey(Date.now());
+              }}
+              className="max-w-28 rounded bg-bambu-dark-secondary px-1 py-0.5 text-xs text-white"
+            >
+              {cameras.map((camera) => (
+                <option
+                  key={camera.id}
+                  value={camera.id}
+                  disabled={!camera.enabled || !camera.available || (!camera.supported_live && !camera.snapshot_available)}
+                >
+                  {camera.name}
+                </option>
+              ))}
+            </select>
+          )}
         </div>
         <div className="flex items-center gap-1 no-drag">
           <button

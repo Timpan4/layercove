@@ -3,6 +3,7 @@ import os
 import re as _re
 from pathlib import Path
 
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 # Application version - single source of truth
@@ -37,31 +38,21 @@ _log_dir_env = os.environ.get("LOG_DIR")
 _log_dir = Path(_log_dir_env) if _log_dir_env else _app_dir / "logs"
 
 
-def _migrate_database() -> Path:
-    """Migrate database from old name to new name if needed."""
-    old_db = _data_dir / "bambutrack.db"
-    new_db = _data_dir / "bambuddy.db"
-
-    # If old database exists and new one doesn't, rename it
-    if old_db.exists() and not new_db.exists():
-        try:
-            old_db.rename(new_db)
-            logging.info("Migrated database: %s -> %s", old_db, new_db)
-        except Exception as e:
-            logging.warning("Could not migrate database: %s. Using old location.", e)
-            return old_db
-
-    # If old database exists (and new one now exists too), it was migrated
-    # If only new exists, use new
-    # If neither exists, use new (will be created)
-    return new_db if new_db.exists() or not old_db.exists() else old_db
-
-
-# External DATABASE_URL takes priority (PostgreSQL support)
+# External DATABASE_URL takes priority (PostgreSQL support).
 _external_db_url = os.environ.get("DATABASE_URL")
 
-# Determine database path (handles migration) — only used for SQLite
-_db_path = _migrate_database() if not _external_db_url else None
+# Fresh LayerCove installs use this SQLite database. Legacy Bambuddy and
+# BambuTrack databases are never renamed, overwritten, or opened implicitly.
+_db_path = _data_dir / "layercove.db"
+_default_db_url = f"sqlite+aiosqlite:///{_db_path}"
+if not _external_db_url:
+    legacy_databases = [path for path in (_data_dir / "bambutrack.db", _data_dir / "bambuddy.db") if path.exists()]
+    if legacy_databases:
+        names = ", ".join(str(path) for path in legacy_databases)
+        raise RuntimeError(
+            f"Legacy database found: {names}. LayerCove will not modify it. "
+            "Back up or export it, then configure DATABASE_URL for a new database or remove the legacy file."
+        )
 
 
 class Settings(BaseSettings):
@@ -70,17 +61,22 @@ class Settings(BaseSettings):
 
     # Paths
     base_dir: Path = _data_dir  # For backwards compatibility
-    # `app_dir` is where the source code is checked out — distinct from `base_dir`
-    # on native installs where DATA_DIR is set to a sibling like INSTALL_PATH/data.
-    # Use this when you need the working tree (requirements.txt, frontend/, etc.)
-    # rather than the data dir. On Docker / local dev where DATA_DIR is unset,
-    # app_dir == base_dir.
+    # `app_dir` is where the source code is checked out. It matches `base_dir`
+    # unless DATA_DIR points at persistent container storage.
     app_dir: Path = _app_dir
     archive_dir: Path = _data_dir / "archive"
     plate_calibration_dir: Path = _plate_cal_dir  # Plate detection references
     static_dir: Path = _app_dir / "static"  # Static files are part of app, not data
     log_dir: Path = _log_dir
-    database_url: str = _external_db_url or f"sqlite+aiosqlite:///{_db_path}"
+    database_url: str = _external_db_url or _default_db_url
+    db_pool_size: int = Field(default=10, ge=1)
+    db_max_overflow: int = Field(default=2, ge=0)
+    db_pool_timeout: float = Field(default=5.0, gt=0)
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def default_empty_database_url(cls, value):
+        return value or _default_db_url
 
     # Logging
     log_level: str = "INFO"  # Override with LOG_LEVEL env var or DEBUG=true
@@ -89,10 +85,11 @@ class Settings(BaseSettings):
     # API
     api_prefix: str = "/api/v1"
 
-    # Slicer API sidecars. Defaults match the docker-compose.yml ports in the
-    # orca-slicer-api fork (https://github.com/maziggy/orca-slicer-api):
-    #   OrcaSlicer  → port 3003 (default profile)
-    #   BambuStudio → port 3001 (built locally via Dockerfile.bambu-studio)
+    # Slicer API sidecars. The standalone Orca service lives at
+    # https://github.com/Timpan4/orca-slicer-api. Defaults preserve the legacy
+    # host ports used by existing LayerCove installations:
+    #   OrcaSlicer  → port 3003
+    #   BambuStudio → port 3001
     # The slice route picks which one based on the user's preferred_slicer
     # setting.
     slicer_api_url: str = "http://localhost:3003"

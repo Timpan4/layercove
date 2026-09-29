@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "이 리비전의 상위 프린터 프로필이 없거나 사용할 수 없습니다.",
+      ambiguous_parent: "이 리비전의 상위 프린터 프로필을 명확히 식별할 수 없습니다.",
+      inheritance_cycle: "프린터 상속 체인에 순환이 있습니다.",
+    },
+    selectPrinter: "프린터와 정확한 프로필을 선택하여 베드를 확인하세요.",
+    loading: "선택한 베드를 불러오는 중…",
+    loadFailed: "{{profile}}의 베드를 불러올 수 없습니다.",
+    unavailable: "{{profile}}의 베드 형상을 사용할 수 없습니다.",
+    missingArea: "선택한 리비전에 printable_area 또는 bed_shape가 없습니다.",
+    invalidArea: "선택한 리비전의 printable_area 또는 bed_shape 좌표가 잘못되었습니다.",
+    missingHeight: "선택한 리비전에 printable_height 또는 max_print_height가 없습니다.",
+    invalidHeight: "선택한 리비전의 printable_height 또는 max_print_height 값이 잘못되었습니다.",
+    revision: "프로필 리비전 {{revision}}",
+    retry: "베드 다시 불러오기",
+    bounds: "베드 크기: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "선택한 프로필 리비전을 사용할 수 없습니다. 프로필 카탈로그를 다시 불러오세요.",
+  },
+
   nav: {
     printers: '프린터',
     archives: '아카이브',
@@ -1002,6 +1022,9 @@ export default {
     }
   },
   dispatchToast: {
+    preparingFile: "전송할 파일 준비 중…",
+    uploadingBytes: "업로드 중 {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "업로드 중 {{transferred}} / {{total}} ({{percent}}%)",
     untitled: '인쇄 작업',
     startingPrints: '인쇄 시작 중',
     progressSummary: '{{complete}}/{{total}} 완료 • 처리 중: {{processing}}',
@@ -1069,6 +1092,18 @@ export default {
   },
 
   queue: {
+    printDispatch: "인쇄 작업 전송",
+    dispatch: {
+      progressLabel: "인쇄 작업 전송 진행 상황",
+      preparing: "전송 준비 중",
+      uploading: "프린터에 업로드 중",
+      awaitingPrinter: "프린터 확인 대기 중",
+      uploadProgress: "업로드 진행 상황",
+      elapsed: "{{seconds}}초",
+      uploadSummary: "{{total}} 중 {{transferred}} ({{percent}}%)",
+      waitingForUpload: "파일 전송 완료. 업로드 응답을 기다리는 중입니다.",
+      waitingForStart: "업로드가 수락되었습니다. 인쇄 시작은 아직 확인되지 않았습니다.",
+    },
     title: '인쇄 대기열',
     subtitle: '인쇄 작업을 예약하고 관리하세요',
     editQueueItem: '대기열 항목 편집',
@@ -1535,6 +1570,40 @@ export default {
     noPermissionEditIntervals: '간격을 편집할 권한이 없습니다',
     configureSettings: '유지보수 유형 및 간격 설정'
   },
+  networkSites: {
+    title: '네트워크 사이트',
+    description: '각 Tailscale 4via6 서브넷에 이름을 지정하고 프린터를 해당 사이트에 할당합니다.',
+    copyFailed: '클립보드에 복사하지 못했습니다',
+    setupGuide: 'Raspberry Pi Tailscale 설정',
+    printWarning: '이 Raspberry Pi가 출력 중일 때 네트워크를 변경하지 마세요.',
+    prerequisites: 'Raspberry Pi OS 또는 Debian 기반 ARM64용입니다. 현재 출력이 끝난 후 Pi에서 실행하세요.',
+    install: '1. 최신 안정 Tailscale 설치',
+    join: '2. 전용 출력 tailnet 참가',
+    forwarding: '3. 전달 활성화',
+    advertise: '4. 이 4via6 경로 알림',
+    approve: '5. tailnet 소유자로서 알림 경로를 승인하세요.',
+    openAdmin: 'Tailscale 장치 열기',
+    printerIp: '프린터 LAN IPv4 주소',
+    invalidPrinterIp: '이 /24 안의 사용 가능한 IPv4 주소를 입력하세요.',
+    magicDns: '프린터 MagicDNS 호스트 이름',
+    discoveryNote: '브로드캐스트 검색은 라우팅된 사이트를 통과하지 않습니다. 이 MagicDNS 이름으로 수동 추가하세요.',
+    created: '네트워크 사이트를 만들었습니다',
+    name: '사이트 이름',
+    namePlaceholder: 'Timpa 집',
+    siteNumber: '사이트 ID',
+    subnet: '사설 /24',
+    empty: '구성된 네트워크 사이트가 없습니다.',
+    siteSummary: '사이트 {{number}} · {{subnet}} · 프린터 {{count}}대',
+    rename: '사이트 이름 변경',
+    renamePrompt: '새 사이트 이름',
+    deleteConfirm: '{{name}}을(를) 삭제할까요?',
+    connection: '연결',
+    localDirect: '로컬 / 직접',
+    createHere: '여기에서 네트워크 사이트 만들기',
+    targetPreview: '연결 대상: {{host}}',
+    moonrakerPort: 'Moonraker 포트',
+  },
+
   settings: {
     title: '설정',
     general: '일반',
@@ -2902,6 +2971,24 @@ export default {
     stopRecording: '녹화 중지',
     chamberLight: '챔버 조명 전환',
     unavailable: '카메라 사용 불가',
+    moonraker: {
+      title: 'Moonraker 카메라',
+      refresh: '카메라 새로고침',
+      primary: '기본',
+      unsupported: '지원되지 않음',
+      disabledInMoonraker: 'Moonraker에서 비활성화됨',
+      editManual: '수동 카메라 편집',
+      streamUrl: '스트림 URL',
+      newStreamOrSnapshotUrl: '새 스트림 또는 스냅샷 URL',
+      snapshotUrl: '스냅샷 URL',
+      newSnapshotUrl: '새 스냅샷 URL(선택 사항)',
+      noCameras: '발견된 카메라가 없습니다.',
+      history: '카메라 기록({{count}})',
+      lastSeen: '마지막 확인: {{date}}',
+      restoreAsManual: '수동 카메라로 복원',
+      removeHistory: '기록에서 삭제',
+      moreCameras: '더 많은 카메라',
+    },
     diagnose: {
       button: '진단',
       modalTitle: '카메라 진단',
@@ -6383,8 +6470,8 @@ export default {
       },
       "camera-connection-refused": {
         name: '카메라 스트림 연결 불가',
-        cause: '포트 RTSPS 322에서 라이브 카메라에 연결할 수 없었습니다. 포트가 차단됐거나 프린터에서 카메라 또는 LAN 라이브뷰가 꺼져 있습니다.',
-        fix: '프린터에서 카메라와 LAN 라이브뷰를 활성화하고 포트 322가 차단되지 않았는지 확인하세요. 인쇄에는 영향을 주지 않습니다.'
+        cause: '포트 {{cameraEndpoint}}에서 라이브 카메라에 연결할 수 없었습니다. 포트가 차단됐거나 프린터에서 카메라 또는 LAN 라이브뷰가 꺼져 있습니다.',
+        fix: '프린터에서 카메라와 LAN 라이브뷰를 활성화하고 포트 {{cameraPort}}가 차단되지 않았는지 확인하세요. 인쇄에는 영향을 주지 않습니다.'
       },
       "database-locked": {
         name: '데이터베이스 쓰기 경합',

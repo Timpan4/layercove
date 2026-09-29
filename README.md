@@ -1,5 +1,8 @@
 <p align="center">
-  <img src="static/img/bambuddy_logo_dark.png" alt="LayerCove" width="300">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="static/img/layercove-wordmark-light.svg">
+    <img src="frontend/public/img/layercove-wordmark-dark.svg" alt="LayerCove" width="300">
+  </picture>
 </p>
 
 <h1 align="center">LayerCove</h1>
@@ -80,14 +83,14 @@ Perfect for remote print farms, traveling makers, or accessing your home printer
 
 **No desktop slicer required.** Drop an STL or 3MF into Bambuddy's File Manager, hit **Slice**, and the result lands as a ready-to-print `.gcode.3mf` in the same folder — without ever opening Bambu Studio or Orca Slicer.
 
-- 🍰 **One-click slicing** — Slice from any browser. The job runs server-side in a [tiny sidecar container](slicer-api/README.md), progress streams back as a toast, and the sliced file appears in your library when it's done.
+- 🍰 **One-click slicing** — Slice from any browser. The job runs server-side in a [tiny sidecar container](https://github.com/Timpan4/orca-slicer-api), progress streams back as a toast, and the sliced file appears in your library when it's done.
 - 📱 **Slice from your phone or tablet** — Bambuddy's PWA + the new server-side slicer means you can drop an STL in from mobile and queue a print without ever touching a desktop.
 - 🎒 **Bring your own profiles** — Import a `Printer Preset Bundle` (`.bbscfg`) exported from Bambu Studio: pick a curated **printer + process + filament** triplet from a dropdown in the Slice dialog, no more juggling JSON files.
 - 🔄 **Re-slice for a different printer in one click** — Open any sliced archive in Bambuddy and re-slice it for any printer, including across the single-nozzle ↔ dual-nozzle (H2D / H2D Pro) boundary that BambuStudio's CLI would normally reject. Bambuddy detects the class change and auto-arranges objects laid out for the source bed (e.g. X1C 256×256) so they land safely on the target (e.g. H2D 350×320 with its per-nozzle dead zones).
 - 🍱 **Slice all plates at once** — Multi-plate projects (parted statues, multi-part kits) get a "Slice all N plates" toggle in the Slice dialog. One click produces a single `.gcode.3mf` containing every plate's gcode, ready for the printer. The toast shows "Plate 2 of 5 — Generating G-code (47%)" as the loop runs.
 - 🔁 **Same dispatch as the rest of Bambuddy** — The sliced output flows into the existing queue / plate-picker / AMS-mapping path, so all the regular conveniences (multi-printer dispatch, AMS routing, scheduled prints) just work.
 
-Optional but recommended — drop the [`slicer-api/` Compose stack](slicer-api/README.md) next to your Bambuddy install and the **Slice** button lights up everywhere.
+Optional but recommended — run the [Orca Slicer API Compose stack](https://github.com/Timpan4/orca-slicer-api) next to your Bambuddy install and the **Slice** button lights up everywhere.
 
 👉 **[Slicer Integration Guide →](https://wiki.bambuddy.cool/features/slicer-api/)**
 
@@ -214,7 +217,7 @@ Optional but recommended — drop the [`slicer-api/` Compose stack](slicer-api/R
 - Plate selection for multi-plate 3MF files
 - Duplicate detection via file hash
 - Mobile-friendly with always-visible action buttons
-- **Server-side Slice button** (optional) — slice STL/3MF without a desktop slicer when the [`slicer-api/` Compose stack](slicer-api/README.md) is running; the result lands as a new `.gcode.3mf` in the same folder, with progress shown via a toast tracker that follows the job to completion. Supports importing **Bambu Studio Printer Preset Bundles** (`.bbscfg`) so a curated printer + process + filament triplet can be picked in the Slice dialog without re-uploading JSON profiles ([details](https://wiki.bambuddy.cool/features/slicer-api/#slicer-bundles-bbscfg))
+- **Server-side Slice button** (optional) — slice STL/3MF without a desktop slicer when the [Orca Slicer API Compose stack](https://github.com/Timpan4/orca-slicer-api) is running; the result lands as a new `.gcode.3mf` in the same folder, with progress shown via a toast tracker that follows the job to completion. Supports importing **Bambu Studio Printer Preset Bundles** (`.bbscfg`) so a curated printer + process + filament triplet can be picked in the Slice dialog without re-uploading JSON profiles ([details](https://wiki.bambuddy.cool/features/slicer-api/#slicer-bundles-bbscfg))
 
 ### 🌍 MakerWorld Integration
 - Paste any `makerworld.com/models/…` URL → preview, plate picker, and import without leaving Bambuddy
@@ -488,7 +491,7 @@ Optional but recommended — drop the [`slicer-api/` Compose stack](slicer-api/R
 
 ### Requirements
 
-- Python 3.10+ for a native development install, or Docker
+- Docker Engine with Compose v2, or Docker Desktop
 - A Bambu Lab printer in Developer Mode and/or a Klipper printer with Moonraker
 - Network access from LayerCove to each configured printer
 - OrcaSlicer profiles for server-side slicing
@@ -512,19 +515,11 @@ docker compose up -d --build
 
 Open **http://localhost:8000**. Linux host networking supports printer discovery; Docker Desktop users should use the documented port mapping and add printers manually by address.
 
-The checked-in Compose file intentionally retains the `bambuddy` service/container name and the `bambuddy_data` and `bambuddy_logs` volumes. Existing Bambuddy and LayerCove deployments therefore upgrade in place without renaming volumes or moving data; fresh deployments use the LayerCove image and repository while keeping those storage-compatible identifiers. See [UPDATING.md](UPDATING.md) before replacing an existing Compose file.
+The checked-in Compose file uses the `layercove` service/container name and `layercove_data` and `layercove_logs` volumes. LayerCove does not attach inherited Bambuddy volumes or databases automatically. See [UPDATING.md](UPDATING.md) before replacing an existing Compose file.
 
 ### Configuration compatibility
 
-LayerCove-prefixed variables take precedence when both names are present. Existing Bambuddy variables remain supported:
-
-| Preferred | Compatibility fallback | Purpose |
-|---|---|---|
-| `LAYERCOVE_LOCAL_LOGIN` | `BAMBUDDY_LOCAL_LOGIN` | Emergency local-login recovery when SSO is unavailable |
-| `LAYERCOVE_EXTERNAL_ROOTS` | `BAMBUDDY_EXTERNAL_ROOTS` | External library root allowlist |
-| `LAYERCOVE_VP_DUMP_WIRE` | `BAMBUDDY_VP_DUMP_WIRE` | Virtual-printer protocol diagnostics |
-
-Generic operational variables such as `DATABASE_URL`, `DATA_DIR`, `LOG_DIR`, `PORT`, and `MFA_ENCRYPTION_KEY` are unchanged. The SQLite filename, API paths, database schema, service identifiers, and named volumes remain compatible.
+LayerCove-prefixed variables are the supported product-specific names. Generic operational variables such as `DATABASE_URL`, `DATA_DIR`, `LOG_DIR`, `PORT`, and `MFA_ENCRYPTION_KEY` are unchanged. The default SQLite filename is `layercove.db`.
 
 ### Development
 

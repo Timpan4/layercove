@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useOutletContext } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -52,7 +53,7 @@ export function SpoolBuddyAmsPage() {
   const { showToast } = useToast();
 
   const { data: status } = useQuery<PrinterStatus>({
-    queryKey: ['printerStatus', selectedPrinterId],
+    queryKey: queryKeys.printerStatus(selectedPrinterId),
     queryFn: () => api.getPrinterStatus(selectedPrinterId!),
     enabled: selectedPrinterId !== null,
     staleTime: 30 * 1000,
@@ -690,7 +691,7 @@ export function SpoolBuddyAmsPage() {
           fullScreen
           onSuccess={() => {
             queryClient.invalidateQueries({ queryKey: ['slotPresets', selectedPrinterId] });
-            queryClient.invalidateQueries({ queryKey: ['printerStatus', selectedPrinterId] });
+            queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(selectedPrinterId) });
           }}
         />
       )}

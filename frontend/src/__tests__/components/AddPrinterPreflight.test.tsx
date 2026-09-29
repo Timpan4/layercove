@@ -18,6 +18,7 @@ describe('AddPrinterModal pre-flight', () => {
     server.use(
       http.get('/api/v1/printers/', () => HttpResponse.json([])),
       http.get('/api/v1/queue/', () => HttpResponse.json([])),
+      http.get('/api/v1/network-sites', () => HttpResponse.json([])),
       http.get('/api/v1/discovery/info', () =>
         HttpResponse.json({ is_docker: false, ssdp_running: false, scan_running: false, subnets: [] }),
       ),
@@ -89,5 +90,51 @@ describe('AddPrinterModal pre-flight', () => {
 
     await waitFor(() => expect(created).toBe(true));
     expect(screen.queryByText(/Some connection checks failed/i)).not.toBeInTheDocument();
+  });
+
+  it('saves a named site using its generated MagicDNS target', async () => {
+    const user = userEvent.setup();
+    let diagnosticTarget = '';
+    let createBody: Record<string, unknown> = {};
+    server.use(
+      http.get('/api/v1/network-sites', () =>
+        HttpResponse.json([
+          {
+            id: 1,
+            name: 'Timpa Home',
+            site_number: 1,
+            ipv4_cidr: '192.168.1.0/24',
+            four_via_six_cidr: 'fd7a:115c:a1e0:b1a:0:1:c0a8:100/120',
+            printer_count: 0,
+          },
+        ]),
+      ),
+      http.post('/api/v1/printers/diagnostic', async ({ request }) => {
+        diagnosticTarget = ((await request.json()) as { ip_address: string }).ip_address;
+        return HttpResponse.json({ overall: 'ok', checks: [] });
+      }),
+      http.post('/api/v1/printers/', async ({ request }) => {
+        createBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ id: 9, name: 'Friend Bambu' });
+      }),
+    );
+
+    render(<PrintersPage />);
+    await user.click(await screen.findByText(/add printer/i));
+    await user.type(await screen.findByPlaceholderText('My Printer'), 'Friend Bambu');
+    await user.selectOptions(screen.getByLabelText('Connection'), '1');
+    await user.type(screen.getByLabelText('Printer LAN IPv4 address'), '192.168.1.87');
+    await user.type(screen.getByPlaceholderText('01P00A000000000'), '01P00A000000000');
+    await user.type(screen.getByPlaceholderText('From printer settings'), '12345678');
+
+    const submit = screen
+      .getAllByRole('button', { name: /add printer/i })
+      .find((button) => button.getAttribute('type') === 'submit')!;
+    await user.click(submit);
+
+    await waitFor(() => expect(createBody.network_site_id).toBe(1));
+    expect(diagnosticTarget).toBe('192-168-1-87-via-1');
+    expect(createBody.network_site_lan_ip).toBe('192.168.1.87');
+    expect(createBody.ip_address).toBeUndefined();
   });
 });

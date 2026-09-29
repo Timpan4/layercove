@@ -18,11 +18,17 @@ from backend.app.services.printer_backend import (
     BackendError,
     BackendEventSink,
     JobLifecycle,
+    MoonrakerStartJob,
     ProviderEvent,
+    StartJob,
+    StartResult,
     StatusChanged,
+    UploadJob,
+    UploadResult,
 )
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
+    NozzleSnapshot,
     PrinterCapabilities,
     PrinterProvider,
     PrinterSnapshot,
@@ -33,11 +39,10 @@ _OBJECTS = {
     "print_stats": None,
     "virtual_sdcard": None,
     "display_status": None,
-    "gcode_move": None,
-    "toolhead": None,
     "extruder": None,
     "heater_bed": None,
 }
+_QUERY_OBJECTS = {**_OBJECTS, "configfile": ["settings"]}
 _BACKOFF_SECONDS = (1, 2, 4, 8, 16, 30)
 _BOOTSTRAP_RESPONSE_TIMEOUT_SECONDS = 10.0
 _STABLE_CONNECTION_SECONDS = 30
@@ -58,6 +63,17 @@ _STATE_MAP = {
     "canceled": NormalizedPrinterState.CANCELLED,
     "error": NormalizedPrinterState.ERROR,
 }
+
+
+# Klipper retains complete/cancelled until SDCARD_RESET_FILE or a new print.
+# These states are ready for a new job; errors, paused and unknown are not.
+MOONRAKER_STARTABLE_STATES = frozenset(
+    {
+        NormalizedPrinterState.IDLE,
+        NormalizedPrinterState.COMPLETED,
+        NormalizedPrinterState.CANCELLED,
+    }
+)
 
 
 class _MoonrakerConnection(Protocol):
@@ -97,6 +113,29 @@ def _seconds(value: object) -> int | None:
 def _layer(value: object) -> int | None:
     number = _finite_number(value)
     return max(0, int(number)) if number is not None else None
+
+
+def _configured_nozzles(configfile: object) -> tuple[NozzleSnapshot, ...]:
+    if not isinstance(configfile, dict) or not isinstance(configfile.get("settings"), dict):
+        return ()
+    settings = configfile["settings"]
+    nozzles: dict[int, NozzleSnapshot] = {}
+    for name, values in settings.items():
+        if name == "extruder":
+            tool_index = 0
+        elif isinstance(name, str) and name.startswith("extruder") and name[8:].isdigit():
+            tool_index = int(name[8:])
+        else:
+            continue
+        diameter = _finite_number(values.get("nozzle_diameter")) if isinstance(values, dict) else None
+        nozzle = (
+            NozzleSnapshot(tool_index, None, "unknown")
+            if diameter is None or diameter <= 0
+            else NozzleSnapshot(tool_index, diameter, "confirmed")
+        )
+        if tool_index not in nozzles or name == "extruder":
+            nozzles[tool_index] = nozzle
+    return tuple(nozzles[index] for index in sorted(nozzles))
 
 
 class MoonrakerBackend:
@@ -199,10 +238,15 @@ class MoonrakerBackend:
         """Return the exact provider job id and filename in the latest snapshot."""
         return self._provider_job_id(), self._snapshot.filename
 
+    async def start(self, job: StartJob) -> StartResult:
+        if not isinstance(job, MoonrakerStartJob):
+            raise BackendError("Moonraker start job is invalid", code="invalid_start_job")
+        self._require_command("start_print", MOONRAKER_STARTABLE_STATES)
+        await self._run_command(self._http.start_print(job.filename))
+        return StartResult(started=True)
+
     async def start_print(self, filename: str, *args: object, **options: object) -> bool:
-        self._require_command("start_print", {NormalizedPrinterState.IDLE})
-        await self._run_command(self._http.start_print(filename))
-        return True
+        return (await self.start(MoonrakerStartJob(filename))).started
 
     async def pause(self) -> bool:
         self._require_command("pause", {NormalizedPrinterState.PRINTING})
@@ -221,19 +265,32 @@ class MoonrakerBackend:
         await self._run_command(self._http.cancel_print())
         return True
 
+    async def upload(self, job: UploadJob) -> UploadResult:
+        if not isinstance(job, UploadJob):
+            raise BackendError("Moonraker upload job is invalid", code="invalid_upload_job")
+        self._require_command("upload_gcode", MOONRAKER_STARTABLE_STATES)
+        options = {"progress_callback": job.progress_callback} if job.progress_callback is not None else {}
+        if job.directory is not None:
+            options["directory"] = job.directory
+        path = await self._run_command(
+            self._http.upload_gcode(job.file, filename=job.filename, size=job.size, **options)
+        )
+        return UploadResult(path)
+
     async def upload_gcode(self, file, *, filename: str, start: bool, size: int | None) -> str:
-        self._require_command("upload_gcode", {NormalizedPrinterState.IDLE})
-        path = await self._run_command(self._http.upload_gcode(file, filename=filename, size=size))
+        upload = await self.upload(UploadJob(file, filename, size))
         if start:
-            await self._run_command(self._http.start_print(path))
-        return path
+            await self.start(MoonrakerStartJob(upload.path))
+        return upload.path
 
     async def emergency_stop(self) -> bool:
         await self._run_command(self._http.emergency_stop())
         return True
 
-    def _require_command(self, capability: str, states: set[NormalizedPrinterState]) -> None:
-        if not getattr(self.capabilities, capability) or not self._snapshot.connected:
+    def _require_command(
+        self, capability: str, states: set[NormalizedPrinterState] | frozenset[NormalizedPrinterState]
+    ) -> None:
+        if not getattr(self.capabilities, capability) or not self._snapshot.connected or self._snapshot.telemetry_stale:
             raise BackendError("Moonraker command is unavailable.", code="command_unavailable")
         if self._snapshot.state not in states:
             raise BackendError("Moonraker command is not valid for the current printer state.", code="invalid_state")
@@ -242,7 +299,7 @@ class MoonrakerBackend:
         try:
             return await command
         except MoonrakerHTTPError as exc:
-            raise BackendError(exc.message, code=exc.code) from exc
+            raise BackendError(exc.message, code=exc.code, retryable=exc.code in {"timeout", "unavailable"}) from exc
 
     async def _run(self) -> None:
         attempt = 0
@@ -254,15 +311,28 @@ class MoonrakerBackend:
                 self._connection = connection
                 connected_at = self._clock()
                 await asyncio.wait_for(
-                    self._request(connection, 1, "printer.objects.query"), timeout=self._bootstrap_timeout
+                    self._request(connection, 1, "printer.objects.query", _QUERY_OBJECTS),
+                    timeout=self._bootstrap_timeout,
                 )
                 await asyncio.wait_for(
-                    self._request(connection, 2, "printer.objects.subscribe"), timeout=self._bootstrap_timeout
+                    self._request(connection, 2, "printer.objects.subscribe", _OBJECTS), timeout=self._bootstrap_timeout
                 )
                 while True:
                     if self._clock() - connected_at >= self._stable_connection_seconds:
                         attempt = 0
-                    self._process_message(await connection.receive_json(), bootstrap=False)
+                    message = await connection.receive_json()
+                    if isinstance(message, dict) and message.get("method") == "notify_klippy_ready":
+                        await asyncio.wait_for(
+                            self._request(
+                                connection,
+                                3,
+                                "printer.objects.query",
+                                {"configfile": ["settings"]},
+                            ),
+                            timeout=self._bootstrap_timeout,
+                        )
+                    else:
+                        self._process_message(message, bootstrap=False)
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -281,9 +351,15 @@ class MoonrakerBackend:
                 if self._connection is connection:
                     self._connection = None
 
-    async def _request(self, connection: _MoonrakerConnection, request_id: int, method: str) -> None:
+    async def _request(
+        self,
+        connection: _MoonrakerConnection,
+        request_id: int,
+        method: str,
+        objects: dict[str, list[str] | None],
+    ) -> None:
         await connection.send_json(
-            {"jsonrpc": "2.0", "method": method, "params": {"objects": _OBJECTS}, "id": request_id}
+            {"jsonrpc": "2.0", "method": method, "params": {"objects": objects}, "id": request_id}
         )
         while True:
             message = await connection.receive_json()
@@ -387,6 +463,7 @@ class MoonrakerBackend:
             current_layer=_layer(info.get("current_layer")),
             total_layers=_layer(info.get("total_layer")),
             temperatures=temperatures,
+            nozzles=_configured_nozzles(self._objects.get("configfile")),
             provider_detail={"print_state": str(raw_state).lower()} if raw_state is not None else {},
         )
 

@@ -27,6 +27,8 @@ vi.mock('../../api/client', () => ({
     getBuiltinFilaments: vi.fn().mockResolvedValue([]),
     getPrinters: vi.fn().mockResolvedValue([]),
     getSpoolUsageHistory: vi.fn().mockResolvedValue([]),
+    getSpools: vi.fn().mockResolvedValue([]),
+    getSpoolmanInventorySpools: vi.fn().mockResolvedValue([]),
     createSpool: vi.fn().mockResolvedValue({ id: 99 }),
     createSpoolmanInventorySpool: vi.fn().mockResolvedValue({ id: 88 }),
     updateSpool: vi.fn().mockResolvedValue({ id: 1 }),
@@ -43,6 +45,9 @@ vi.mock('../../api/client', () => ({
     getSpoolmanSlotAssignments: vi.fn().mockResolvedValue([]),
     unassignSpool: vi.fn().mockResolvedValue({}),
     unassignSpoolmanSlot: vi.fn().mockResolvedValue({}),
+  },
+  spoolbuddyApi: {
+    updateSpoolWeight: vi.fn().mockResolvedValue({}),
   },
   ApiError: class ApiError extends Error {
     status: number;
@@ -459,7 +464,7 @@ describe('SpoolFormModal weightTouched', () => {
         onClose={vi.fn()}
         mode="create"
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 
@@ -513,7 +518,7 @@ describe('SpoolFormModal weightTouched', () => {
         onClose={vi.fn()}
         mode="create"
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 
@@ -639,7 +644,7 @@ describe('SpoolFormModal Spoolman K-profile support', () => {
         spool={spoolmanSpool}
         mode="edit"
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 
@@ -659,7 +664,7 @@ describe('SpoolFormModal Spoolman K-profile support', () => {
         spool={spoolmanSpool}
         mode="edit"
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 
@@ -719,7 +724,7 @@ describe('SpoolFormModal — SpoolmanFilamentPicker integration (T2)', () => {
         isOpen={true}
         onClose={vi.fn()}
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 
@@ -734,7 +739,7 @@ describe('SpoolFormModal — SpoolmanFilamentPicker integration (T2)', () => {
         isOpen={true}
         onClose={vi.fn()}
         currencySymbol="$"
-        spoolmanMode={false}
+        source="local"
       />
     );
 
@@ -749,7 +754,7 @@ describe('SpoolFormModal — SpoolmanFilamentPicker integration (T2)', () => {
         isOpen={true}
         onClose={vi.fn()}
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 
@@ -771,8 +776,7 @@ describe('SpoolFormModal — SpoolmanFilamentPicker integration (T2)', () => {
         isOpen={true}
         onClose={vi.fn()}
         currencySymbol="$"
-        spoolmanMode={true}
-        spoolsQueryKey={['spoolman-spools']}
+        source="spoolman"
       />
     );
 
@@ -801,7 +805,7 @@ describe('SpoolFormModal — SpoolmanFilamentPicker integration (T2)', () => {
         isOpen={true}
         onClose={vi.fn()}
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 
@@ -893,7 +897,7 @@ describe('SpoolFormModal — Unassign button (#1336)', () => {
         spool={spoolmanSpool}
         mode="edit"
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 
@@ -920,7 +924,7 @@ describe('SpoolFormModal — Unassign button (#1336)', () => {
         spool={spoolmanSpool}
         mode="edit"
         currencySymbol="$"
-        spoolmanMode={true}
+        source="spoolman"
       />
     );
 

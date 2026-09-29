@@ -1,66 +1,46 @@
-"""In-memory background dispatcher for slice jobs.
-
-Slice jobs are independent (no printer-busy gating), short-lived (typically
-5-60s), and the result is a `LibraryFile` or `PrintArchive` row rather than a
-printer-side dispatch.
-
-The frontend kicks off a slice via `POST /library/files/{id}/slice` or
-`POST /archives/{id}/slice`, gets back `{job_id, status_url}`, then polls
-`GET /slice-jobs/{id}` until status is `completed` or `failed`.
-"""
+"""Durable background dispatcher for slice jobs."""
 
 from __future__ import annotations
 
 import asyncio
+import hashlib
+import json
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any, Literal
+
+from sqlalchemy import delete, select, update
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.core import database
+from backend.app.models.slice_job import SliceJobRecord
+from backend.app.models.slicer_profile_catalog import SlicerJobProvenance
 
 logger = logging.getLogger(__name__)
 
+SliceJobStatus = Literal[
+    "pending",
+    "running",
+    "completed",
+    "failed",
+    "cancel-requested",
+    "cancelled",
+]
 
-SliceJobStatus = Literal["pending", "running", "completed", "failed"]
-
-
-@dataclass(slots=True)
-class SliceJob:
-    id: int
-    kind: Literal["library_file", "archive"]
-    source_id: int
-    source_name: str
-    status: SliceJobStatus = "pending"
-    created_at: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    started_at: datetime | None = None
-    completed_at: datetime | None = None
-    # On success: the body returned to the caller — usually a SliceResponse
-    # or SliceArchiveResponse dict.
-    result: dict[str, Any] | None = None
-    # On failure: HTTP status + error message.
-    error_status: int | None = None
-    error_detail: str | None = None
-    # Live progress fed by the sidecar's --pipe channel while the slicer
-    # is running. Populated by a polling task spawned alongside the
-    # blocking POST /slice request; None when the sidecar doesn't
-    # support progress (older sidecars, no request_id, etc.). Surfaced
-    # in the SliceJobState response so the persistent toast can render
-    # "Generating G-code (75%)" instead of just elapsed time.
-    progress: dict[str, Any] | None = None
+_RETENTION = timedelta(minutes=30)
 
 
-# Retention: keep finished jobs around for 30 minutes so the polling client
-# always sees a terminal state on its next tick. After that, the next access
-# sweep prunes them.
-_RETENTION_SECONDS = 30 * 60
+def _now() -> datetime:
+    return datetime.now(timezone.utc)
 
 
 class SliceDispatchService:
+    """Run jobs in-process while persisting API-visible state in the database."""
+
     def __init__(self) -> None:
-        self._jobs: dict[int, SliceJob] = {}
-        self._next_id: int = 1
-        self._lock = asyncio.Lock()
         self._tasks: dict[int, asyncio.Task] = {}
+        self._progress_tasks: set[asyncio.Task] = set()
 
     async def enqueue(
         self,
@@ -69,103 +49,223 @@ class SliceDispatchService:
         source_id: int,
         source_name: str,
         run: Callable[[int], Awaitable[dict[str, Any]]],
-    ) -> SliceJob:
-        """Register a new slice job and start it on the event loop.
-
-        ``run`` is an async callable that takes the freshly-created
-        ``job_id`` (so it can wire up live-progress reporting via
-        :meth:`set_progress`) and returns the response body the caller
-        will receive once status flips to ``completed``.
-        """
-        async with self._lock:
-            job = SliceJob(
-                id=self._next_id,
-                kind=kind,
+        owner_id: int | None = None,
+        request_snapshot: dict[str, Any] | None = None,
+        schema_hash: str | None = None,
+        before_commit: Callable[[AsyncSession, SliceJobRecord], Awaitable[None]] | None = None,
+    ) -> SliceJobRecord:
+        now = _now()
+        async with database.async_session() as db:
+            await db.execute(
+                delete(SliceJobRecord).where(
+                    SliceJobRecord.expires_at.is_not(None),
+                    SliceJobRecord.expires_at <= now,
+                )
+            )
+            job = SliceJobRecord(
+                owner_id=owner_id,
+                source_kind=kind,
                 source_id=source_id,
                 source_name=source_name,
+                request_snapshot=request_snapshot,
+                request_fingerprint=None,
+                schema_hash=schema_hash,
+                status="pending",
+                created_at=now,
+                expires_at=None,
             )
-            self._next_id += 1
-            self._jobs[job.id] = job
-            self._sweep_locked()
+            db.add(job)
+            await db.flush()
+            if before_commit is not None:
+                await before_commit(db, job)
+            # Catalog validation can infer the physical target's output contract.
+            # Hash the final durable request, not the pre-validation input.
+            if job.request_snapshot is not None:
+                canonical_request = json.dumps(
+                    job.request_snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+                ).encode()
+                job.request_fingerprint = hashlib.sha256(canonical_request).hexdigest()
+            await db.commit()
+            await db.refresh(job)
 
-        task = asyncio.create_task(self._run_job(job, run), name=f"slice-job-{job.id}")
+        task = asyncio.create_task(self._run_job(job.id, run), name=f"slice-job-{job.id}")
         self._tasks[job.id] = task
         return job
 
     async def _run_job(
         self,
-        job: SliceJob,
+        job_id: int,
         run: Callable[[int], Awaitable[dict[str, Any]]],
     ) -> None:
-        job.started_at = datetime.now(timezone.utc)
-        job.status = "running"
         try:
-            result = await run(job.id)
-            job.result = result
-            job.status = "completed"
+            if not await self._set_running(job_id):
+                return
+            result = await run(job_id)
+            await self._set_completed(job_id, result)
         except _SliceJobError as exc:
-            # Caller-controlled HTTP error — propagate status + detail.
-            job.status = "failed"
-            job.error_status = exc.status_code
-            job.error_detail = exc.detail
+            await self._set_failed(job_id, exc.status_code, exc.code, exc.detail)
         except Exception as exc:
-            logger.exception("Slice job %s failed unexpectedly", job.id)
-            job.status = "failed"
-            job.error_status = 500
-            job.error_detail = f"Unexpected error: {exc}"
+            logger.error("Slice job %s failed unexpectedly (%s)", job_id, type(exc).__name__)
+            await self._set_failed(
+                job_id,
+                500,
+                "unexpected_error",
+                f"Slice job {job_id} failed internally. Check the selected profiles, slicer service and server logs before retrying.",
+            )
         finally:
-            job.completed_at = datetime.now(timezone.utc)
-            self._tasks.pop(job.id, None)
+            self._tasks.pop(job_id, None)
 
-    def get(self, job_id: int) -> SliceJob | None:
-        return self._jobs.get(job_id)
+    async def _set_running(self, job_id: int) -> bool:
+        async with database.async_session() as db:
+            result = await db.execute(
+                update(SliceJobRecord)
+                .where(SliceJobRecord.id == job_id, SliceJobRecord.status == "pending")
+                .values(status="running", started_at=_now(), sidecar_request_id=str(job_id))
+            )
+            await db.commit()
+            return result.rowcount == 1
+
+    async def _expires_at(self, db: AsyncSession, job_id: int, now: datetime) -> datetime | None:
+        resolved = await db.scalar(
+            select(SlicerJobProvenance.id).where(
+                SlicerJobProvenance.slice_job_id == job_id,
+                SlicerJobProvenance.provenance_state == "resolved",
+            )
+        )
+        return None if resolved is not None else now + _RETENTION
+
+    async def _set_completed(self, job_id: int, result: dict[str, Any]) -> None:
+        now = _now()
+        artifact_kind = None
+        artifact_id = None
+        if isinstance(result.get("library_file_id"), int):
+            artifact_kind = "library_file"
+            artifact_id = result["library_file_id"]
+        elif isinstance(result.get("archive_id"), int):
+            artifact_kind = "archive"
+            artifact_id = result["archive_id"]
+        async with database.async_session() as db:
+            expires_at = await self._expires_at(db, job_id, now)
+            await db.execute(
+                update(SliceJobRecord)
+                .where(
+                    SliceJobRecord.id == job_id,
+                    SliceJobRecord.status.not_in(("completed", "failed", "cancelled")),
+                )
+                .values(
+                    status="completed",
+                    progress={"stage": "Completed", "total_percent": 100},
+                    result=result,
+                    result_artifact_kind=artifact_kind,
+                    result_artifact_id=artifact_id,
+                    completed_at=now,
+                    expires_at=expires_at,
+                )
+            )
+            await db.commit()
+
+    async def _set_failed(self, job_id: int, status: int, code: str, detail: str) -> None:
+        now = _now()
+        async with database.async_session() as db:
+            expires_at = await self._expires_at(db, job_id, now)
+            await db.execute(
+                update(SliceJobRecord)
+                .where(
+                    SliceJobRecord.id == job_id,
+                    SliceJobRecord.status.not_in(("completed", "failed", "cancelled")),
+                )
+                .values(
+                    status="failed",
+                    error_status=status,
+                    error_code=code,
+                    error_detail=detail,
+                    completed_at=now,
+                    expires_at=expires_at,
+                )
+            )
+            await db.commit()
+
+    async def get(self, job_id: int) -> SliceJobRecord | None:
+        async with database.async_session() as db:
+            return await db.scalar(
+                select(SliceJobRecord).where(
+                    SliceJobRecord.id == job_id,
+                    (SliceJobRecord.expires_at.is_(None) | (SliceJobRecord.expires_at > _now())),
+                )
+            )
+
+    async def get_provenance(self, job_id: int) -> SlicerJobProvenance | None:
+        async with database.async_session() as db:
+            return await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job_id))
 
     def set_progress(self, job_id: int, progress: dict[str, Any] | None) -> None:
-        """Update the live-progress snapshot for a running job.
+        task = asyncio.create_task(self._persist_progress(job_id, progress), name=f"slice-progress-{job_id}")
+        self._progress_tasks.add(task)
+        task.add_done_callback(self._progress_tasks.discard)
 
-        Called by the slice route's progress poller every ~1s while the
-        sidecar slice request is in flight. Silently ignores unknown ids
-        (the job may have just finished and been retention-swept) so a
-        late poll doesn't crash the polling task.
-        """
-        job = self._jobs.get(job_id)
-        if job is not None:
-            job.progress = progress
+    async def _persist_progress(self, job_id: int, progress: dict[str, Any] | None) -> None:
+        try:
+            async with database.async_session() as db:
+                await db.execute(
+                    update(SliceJobRecord)
+                    .where(SliceJobRecord.id == job_id, SliceJobRecord.status == "running")
+                    .values(progress=progress)
+                )
+                await db.commit()
+        except Exception:
+            logger.warning("Failed to persist progress for slice job %s", job_id, exc_info=True)
 
-    def _sweep_locked(self) -> None:
-        """Drop finished jobs older than the retention window. Caller holds
-        the lock."""
-        now = datetime.now(timezone.utc)
-        stale_ids = [
-            jid
-            for jid, job in self._jobs.items()
-            if job.status in ("completed", "failed")
-            and job.completed_at is not None
-            and (now - job.completed_at).total_seconds() > _RETENTION_SECONDS
-        ]
-        for jid in stale_ids:
-            self._jobs.pop(jid, None)
+    async def mark_interrupted_jobs_failed(self) -> int:
+        """Fail jobs left non-terminal by a previous process."""
+        now = _now()
+        async with database.async_session() as db:
+            retained_ids = select(SlicerJobProvenance.slice_job_id).where(
+                SlicerJobProvenance.provenance_state == "resolved"
+            )
+            values = {
+                "status": "failed",
+                "error_status": 503,
+                "error_code": "worker_restarted",
+                "error_detail": "Slicer worker restarted before the job completed",
+                "completed_at": now,
+            }
+            retained = await db.execute(
+                update(SliceJobRecord)
+                .where(
+                    SliceJobRecord.status.in_(("pending", "running", "cancel-requested")),
+                    SliceJobRecord.id.in_(retained_ids),
+                )
+                .values(**values, expires_at=None)
+            )
+            expiring = await db.execute(
+                update(SliceJobRecord)
+                .where(
+                    SliceJobRecord.status.in_(("pending", "running", "cancel-requested")),
+                    SliceJobRecord.id.not_in(retained_ids),
+                )
+                .values(**values, expires_at=now + _RETENTION)
+            )
+            await db.commit()
+            return (retained.rowcount or 0) + (expiring.rowcount or 0)
 
 
 class _SliceJobError(Exception):
-    """Raised inside a slice job's `run` callable to surface a specific
-    HTTP status + detail. The dispatcher catches these and stores them on
-    the job. Callers convert ``HTTPException`` to this on the boundary.
-    """
-
-    def __init__(self, status_code: int, detail: str) -> None:
+    def __init__(self, status_code: int, detail: str, code: str = "slice_failed") -> None:
         super().__init__(detail)
         self.status_code = status_code
         self.detail = detail
+        self.code = code
 
 
 def http_exception_to_job_error(exc) -> _SliceJobError:
-    """Convert a starlette ``HTTPException`` into the dispatcher's error
-    type. Handles the common case where slice helpers raise FastAPI's
-    ``HTTPException`` for validation / sidecar failures.
-    """
-    return _SliceJobError(exc.status_code, str(exc.detail))
+    detail = exc.detail
+    if isinstance(detail, dict):
+        return _SliceJobError(
+            exc.status_code,
+            str(detail.get("detail") or detail.get("message") or detail),
+            str(detail.get("code") or "slice_failed"),
+        )
+    return _SliceJobError(exc.status_code, str(detail))
 
 
-# Module-level singleton, started/stopped by main.py's lifespan.
 slice_dispatch = SliceDispatchService()

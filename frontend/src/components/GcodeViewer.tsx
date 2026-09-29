@@ -5,7 +5,8 @@ import { getAuthToken } from '../api/client';
 
 interface GcodeViewerProps {
   gcodeUrl: string;
-  buildVolume?: { x: number; y: number; z: number };
+  buildVolume?: { x: number; y: number; z: number; origin?: [number, number] };
+  showBuildPlate?: boolean;
   filamentColors?: string[];
   className?: string;
 }
@@ -13,6 +14,7 @@ interface GcodeViewerProps {
 export function GcodeViewer({
   gcodeUrl,
   buildVolume = { x: 256, y: 256, z: 256 },
+  showBuildPlate = true,
   filamentColors,
   className = ''
 }: GcodeViewerProps) {
@@ -50,7 +52,7 @@ export function GcodeViewer({
     // Create preview
     const preview = new WebGLPreview({
       canvas,
-      buildVolume,
+      ...(showBuildPlate ? { buildVolume } : {}),
       backgroundColor: 0x1a1a1a,
       // Pass full color array - library uses index as tool number
       extrusionColor: hasMultiColor ? filamentColors : primaryColor,
@@ -61,7 +63,21 @@ export function GcodeViewer({
       renderExtrusion: true,
     });
 
+    // gcode-preview centers a zero-origin bed. Translate only rendered layer
+    // groups for nonzero machine origins, including subsequent layer-slider renders.
+    const render = preview.render.bind(preview);
+    preview.render = () => {
+      render();
+      for (const group of preview.scene.children) {
+        if (group.name === 'allLayers') {
+          group.position.x -= buildVolume.origin?.[0] ?? 0;
+          group.position.z += buildVolume.origin?.[1] ?? 0;
+        }
+      }
+      preview.renderer.render(preview.scene, preview.camera);
+    };
     previewRef.current = preview;
+    const abort = new AbortController();
 
     // Fetch and process gcode
     const headers: HeadersInit = {};
@@ -70,7 +86,7 @@ export function GcodeViewer({
       headers['Authorization'] = `Bearer ${token}`;
     }
 
-    fetch(gcodeUrl, { headers })
+    fetch(gcodeUrl, { headers, signal: abort.signal })
       .then(async response => {
         if (!response.ok) {
           if (response.status === 404) {
@@ -85,6 +101,7 @@ export function GcodeViewer({
         return response.text();
       })
       .then(gcode => {
+        if (abort.signal.aborted) return;
         // The gcode-preview library only supports T0-T7
         // We need to remap higher tool numbers to fit within this range
         // First, find all unique tool numbers used
@@ -146,26 +163,30 @@ export function GcodeViewer({
         setLoading(false);
       })
       .catch(err => {
+        if (abort.signal.aborted) return;
         if (err.message !== 'not_sliced') {
           setError(err.message);
         }
         setLoading(false);
       });
 
-    // Handle resize
+    // Follow the container as the workbench switches between canvas and settings.
     const handleResize = () => {
       if (canvas.parentElement && previewRef.current) {
         const newRect = canvas.parentElement.getBoundingClientRect();
+        if (newRect.width === 0 || newRect.height === 0) return;
         canvas.width = newRect.width;
         canvas.height = newRect.height;
         previewRef.current.resize();
       }
     };
 
-    window.addEventListener('resize', handleResize);
+    const resizeObserver = new ResizeObserver(handleResize);
+    if (canvas.parentElement) resizeObserver.observe(canvas.parentElement);
 
     return () => {
-      window.removeEventListener('resize', handleResize);
+      abort.abort();
+      resizeObserver.disconnect();
       if (renderTimeoutRef.current) {
         cancelAnimationFrame(renderTimeoutRef.current);
       }
@@ -176,7 +197,7 @@ export function GcodeViewer({
       initRef.current = false;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [gcodeUrl, colorsKey]); // Intentionally use colorsKey instead of filamentColors, buildVolume rarely changes
+  }, [gcodeUrl, colorsKey, showBuildPlate, buildVolume.x, buildVolume.y, buildVolume.z, buildVolume.origin?.[0], buildVolume.origin?.[1]]);
 
   const handleLayerChange = useCallback((layer: number) => {
     if (!previewRef.current) return;

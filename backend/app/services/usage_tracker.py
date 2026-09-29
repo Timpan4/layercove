@@ -12,14 +12,37 @@ import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 
-from sqlalchemy import select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.spool import Spool
 from backend.app.models.spool_assignment import SpoolAssignment
 from backend.app.models.spool_usage_history import SpoolUsageHistory
+from backend.app.services.filament_accounting import print_usage_delta
 
 logger = logging.getLogger(__name__)
+
+
+async def _record_print_usage(
+    db: AsyncSession, spool_id: int, grams: object, history: SpoolUsageHistory
+) -> float | None:
+    """Atomically add a completed/partial print delta and its history row.
+
+    The caller owns the transaction and decides when to commit.
+    """
+    delta = print_usage_delta(grams)
+    if delta is None:
+        return None
+    await db.execute(
+        update(Spool)
+        .where(Spool.id == spool_id)
+        .values(
+            weight_used=func.coalesce(Spool.weight_used, 0) + delta,
+            last_used=datetime.now(timezone.utc),
+        )
+    )
+    db.add(history)
+    return delta
 
 
 def _decode_mqtt_mapping(mapping_raw: list | None) -> list[int] | None:
@@ -631,10 +654,6 @@ async def on_print_complete(
                 # Compute weight consumed
                 weight_grams = (delta_pct / 100.0) * spool.label_weight
 
-                # Update spool
-                spool.weight_used = (spool.weight_used or 0) + weight_grams
-                spool.last_used = datetime.now(timezone.utc)
-
                 # Calculate cost for this usage
                 cost = None
                 cost_per_kg = spool.cost_per_kg if spool.cost_per_kg is not None else default_filament_cost
@@ -652,7 +671,8 @@ async def on_print_complete(
                     cost=cost,
                     archive_id=archive_id,
                 )
-                db.add(history)
+                if await _record_print_usage(db, spool.id, weight_grams, history) is None:
+                    continue
 
                 handled_trays.add(key)
                 results.append(
@@ -1179,9 +1199,6 @@ async def _track_from_3mf(
                 if not spool:
                     continue
 
-                spool.weight_used = (spool.weight_used or 0) + segment_grams
-                spool.last_used = datetime.now(timezone.utc)
-
                 percent = round(segment_grams / (spool.label_weight or 1000) * 100)
 
                 cost = None
@@ -1199,7 +1216,8 @@ async def _track_from_3mf(
                     cost=cost,
                     archive_id=archive_id,
                 )
-                db.add(history)
+                if await _record_print_usage(db, spool.id, segment_grams, history) is None:
+                    continue
 
                 handled_trays.add(seg_key)
                 results.append(
@@ -1319,10 +1337,6 @@ async def _track_from_3mf(
         if weight_grams <= 0:
             continue
 
-        # Update spool
-        spool.weight_used = (spool.weight_used or 0) + weight_grams
-        spool.last_used = datetime.now(timezone.utc)
-
         percent = round(weight_grams / (spool.label_weight or 1000) * 100)
 
         # Calculate cost for this usage
@@ -1342,7 +1356,8 @@ async def _track_from_3mf(
             cost=cost,
             archive_id=archive_id,
         )
-        db.add(history)
+        if await _record_print_usage(db, spool.id, weight_grams, history) is None:
+            continue
 
         handled_trays.add(key)
         results.append(

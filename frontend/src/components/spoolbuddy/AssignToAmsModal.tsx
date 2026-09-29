@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -101,7 +102,7 @@ export function AssignToAmsModal({ isOpen, onClose, spool, printerId, spoolmanMo
   }, [isOpen, handleKeyDown]);
 
   const { data: status } = useQuery<PrinterStatus>({
-    queryKey: ['printerStatus', printerId],
+    queryKey: queryKeys.printerStatus(printerId),
     queryFn: () => api.getPrinterStatus(printerId!),
     enabled: isOpen && printerId !== null,
     refetchInterval: 5000,

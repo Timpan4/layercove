@@ -10,17 +10,23 @@ import { Button } from './Button';
 import { getAuthToken } from '../api/client';
 
 interface BuildVolume {
+  origin?: [number, number];
+  outline?: Array<[number, number]>;
   x: number;
   y: number;
   z: number;
 }
 
+const DEFAULT_BUILD_VOLUME: BuildVolume = { x: 256, y: 256, z: 256 };
+
 interface ModelViewerProps {
   url: string;
   fileType?: string;
   buildVolume?: BuildVolume;
+  showBuildPlate?: boolean;
   filamentColors?: string[];
   selectedPlateId?: number | null;
+  centerOnBed?: boolean;
   className?: string;
 }
 
@@ -622,9 +628,11 @@ function buildModelGroup(
 export function ModelViewer({
   url,
   fileType,
-  buildVolume = { x: 256, y: 256, z: 256 },
+  buildVolume = DEFAULT_BUILD_VOLUME,
+  showBuildPlate = true,
   filamentColors,
   selectedPlateId = null,
+  centerOnBed,
   className = '',
 }: ModelViewerProps) {
   const { t } = useTranslation();
@@ -687,11 +695,17 @@ export function ModelViewer({
     const gridSize = Math.max(buildVolume.x, buildVolume.y);
     const gridDivisions = Math.ceil(gridSize / 16);
     const gridHelper = new THREE.GridHelper(gridSize, gridDivisions, 0x444444, 0x333333);
+    gridHelper.visible = showBuildPlate;
     scene.add(gridHelper);
     gridRef.current = gridHelper;
 
     // Build plate indicator
-    const plateGeometry = new THREE.PlaneGeometry(buildVolume.x, buildVolume.y);
+    const plateGeometry = buildVolume.outline
+      ? new THREE.ShapeGeometry(new THREE.Shape(buildVolume.outline.map(([x, y]) => new THREE.Vector2(
+          x - (buildVolume.origin?.[0] ?? 0) - buildVolume.x / 2,
+          -(y - (buildVolume.origin?.[1] ?? 0) - buildVolume.y / 2),
+        ))))
+      : new THREE.PlaneGeometry(buildVolume.x, buildVolume.y);
     const plateMaterial = new THREE.MeshBasicMaterial({
       color: 0x00ae42,
       transparent: true,
@@ -699,6 +713,7 @@ export function ModelViewer({
       side: THREE.DoubleSide,
     });
     const plate = new THREE.Mesh(plateGeometry, plateMaterial);
+    plate.visible = showBuildPlate;
     plate.rotation.x = -Math.PI / 2;
     plate.position.y = -0.5; // Slightly below Y=0 so models sit on top
     scene.add(plate);
@@ -793,7 +808,7 @@ export function ModelViewer({
       plateRef.current = null;
       gridRef.current = null;
     };
-  }, [url, buildVolume, fileType, t]);
+  }, [url, buildVolume, showBuildPlate, fileType, t]);
 
   useEffect(() => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
@@ -831,9 +846,10 @@ export function ModelViewer({
     const selectedPlateOffset = (!isStlModel && selectedPlateId != null)
       ? parsedData!.plateOffsets.get(selectedPlateId)
       : undefined;
-    const shouldCenterOnPlate = isStlModel
-      || parsedData!.buildItems.length === 0
-      || (selectedPlateId != null && !selectedPlateBounds && !selectedPlateOffset);
+    // Orca centers standalone STL imports even without --arrange. The
+    // arrangement choice preserves saved placement only for project formats.
+    const shouldCenterOnPlate = isStlModel || (centerOnBed ?? (parsedData!.buildItems.length === 0
+      || (selectedPlateId != null && !selectedPlateBounds && !selectedPlateOffset)));
     const centerOffsetX = shouldCenterOnPlate ? -center.x : 0;
     const centerOffsetZ = shouldCenterOnPlate ? -center.z : 0;
 
@@ -845,10 +861,13 @@ export function ModelViewer({
       plateOffsetZ = plateBox.min.z - selectedPlateBounds.minY;
     }
 
-    const plateCenterX = buildVolume.x / 2;
-    const plateCenterZ = buildVolume.y / 2;
+    const plateCenterX = showBuildPlate ? (buildVolume.origin?.[0] ?? 0) + buildVolume.x / 2 : 0;
+    const plateCenterZ = showBuildPlate ? (buildVolume.origin?.[1] ?? 0) + buildVolume.y / 2 : 0;
 
-    if (!isStlModel && selectedPlateId != null && parsedData!.buildItems.length > 0 && selectedPlateBounds) {
+    if (centerOnBed === true) {
+      group.position.x = plateCenterX - center.x;
+      group.position.z = plateCenterZ - center.z;
+    } else if (!isStlModel && selectedPlateId != null && parsedData!.buildItems.length > 0 && selectedPlateBounds) {
       group.position.x = centerOffsetX - plateOffsetX;
       group.position.z = centerOffsetZ - plateOffsetZ;
     } else if (!isStlModel && selectedPlateId != null && selectedPlateOffset) {
@@ -889,7 +908,7 @@ export function ModelViewer({
     controlsRef.current.update();
 
     setLoading(false);
-  }, [parsedData, stlGeometry, selectedPlateId, filamentColors, buildVolume]);
+  }, [parsedData, stlGeometry, selectedPlateId, filamentColors, buildVolume, centerOnBed, showBuildPlate]);
 
   const resetView = () => {
     if (cameraRef.current && controlsRef.current) {

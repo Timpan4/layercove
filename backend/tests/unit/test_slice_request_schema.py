@@ -167,3 +167,48 @@ class TestPresetsRequired:
     def test_empty_request_rejected(self):
         with pytest.raises(ValidationError):
             SliceRequest()
+
+
+class TestWorkbenchState:
+    def test_legacy_request_does_not_require_schema_hash(self):
+        request = SliceRequest(printer_preset_id=1, process_preset_id=2, filament_preset_id=3)
+        assert request.schema_hash is None
+
+    def test_overrides_require_schema_hash(self):
+        with pytest.raises(ValidationError, match="schema_hash is required"):
+            SliceRequest(
+                printer_preset_id=1,
+                process_preset_id=2,
+                filament_preset_id=3,
+                process_overrides={"layer_height": 0.16},
+            )
+
+    def test_non_finite_transform_is_rejected(self):
+        with pytest.raises(ValidationError, match="transform values must be finite"):
+            SliceRequest(
+                printer_preset_id=1,
+                process_preset_id=2,
+                filament_preset_id=3,
+                schema_hash="a" * 64,
+                model_state={
+                    "objects": [
+                        {
+                            "id": "object-1",
+                            "transform": {"position": [float("inf"), 0, 0]},
+                        }
+                    ]
+                },
+            )
+
+    def test_hidden_object_must_use_known_stable_id(self):
+        with pytest.raises(ValidationError, match="unknown object ID"):
+            SliceRequest(
+                printer_preset_id=1,
+                process_preset_id=2,
+                filament_preset_id=3,
+                schema_hash="a" * 64,
+                model_state={
+                    "objects": [{"id": "object-1"}],
+                    "hidden_object_ids": ["object-2"],
+                },
+            )

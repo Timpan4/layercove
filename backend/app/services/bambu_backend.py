@@ -1,8 +1,10 @@
 """Bambu implementation of the printer backend boundary."""
 
 import asyncio
+import math
 from collections.abc import Callable
 from datetime import datetime, timezone
+from pathlib import PurePosixPath
 from typing import Any
 from uuid import uuid4
 
@@ -10,12 +12,16 @@ from backend.app.services.bambu_mqtt import BambuMQTTClient, PrinterState
 from backend.app.services.printer_backend import (
     BackendError,
     BackendEventSink,
+    BambuStartJob,
     JobLifecycle,
     ProviderEvent,
+    StartJob,
+    StartResult,
     StatusChanged,
 )
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
+    NozzleSnapshot,
     PrinterCapabilities,
     PrinterProvider,
     PrinterSnapshot,
@@ -32,6 +38,21 @@ _BAMBU_STATES = {
     "FAILED": NormalizedPrinterState.ERROR,
     "STOPPED": NormalizedPrinterState.CANCELLED,
 }
+
+
+def _nozzle_snapshots(state: PrinterState) -> tuple[NozzleSnapshot, ...]:
+    raw_nozzles = state.nozzles if isinstance(state.nozzles, (list, tuple)) else ()
+    snapshots = []
+    for tool_index, nozzle in enumerate(raw_nozzles):
+        try:
+            diameter = float(nozzle.nozzle_diameter)
+        except (AttributeError, TypeError, ValueError):
+            diameter = None
+        if diameter is None or not math.isfinite(diameter) or diameter <= 0:
+            snapshots.append(NozzleSnapshot(tool_index, None, "unknown"))
+        else:
+            snapshots.append(NozzleSnapshot(tool_index, diameter, "confirmed"))
+    return tuple(snapshots)
 
 
 class BambuBackend:
@@ -164,6 +185,7 @@ class BambuBackend:
         normalized = _BAMBU_STATES.get(state.state, NormalizedPrinterState.UNKNOWN)
         if not state.connected:
             normalized = NormalizedPrinterState.OFFLINE
+        stale = self.client.is_stale()
         return PrinterSnapshot(
             provider=self.provider,
             connected=state.connected,
@@ -174,7 +196,30 @@ class BambuBackend:
             current_layer=state.layer_num,
             total_layers=state.total_layers,
             temperatures=dict(state.temperatures),
+            nozzles=_nozzle_snapshots(state),
+            telemetry_stale=stale if isinstance(stale, bool) else False,
         )
+
+    async def start(self, job: StartJob) -> StartResult:
+        if (
+            not isinstance(job, BambuStartJob)
+            or not isinstance(job.filename, str)
+            or not job.filename
+            or job.filename.startswith("/")
+            or "\\" in job.filename
+            or any(part in {".", ".."} for part in PurePosixPath(job.filename).parts)
+            or isinstance(job.plate_id, bool)
+            or not isinstance(job.plate_id, int)
+            or job.plate_id < 1
+        ):
+            raise BackendError("Bambu start job is invalid", code="invalid_start_job")
+        try:
+            started = self.client.start_print(job.filename, job.plate_id)
+        except OSError as exc:
+            raise BackendError("Bambu print command could not be sent.", code="unavailable", retryable=True) from exc
+        if not started:
+            raise BackendError("Bambu print command is unavailable.", code="command_unavailable")
+        return StartResult(started=True)
 
     async def start_print(self, filename: str, plate_id: int = 1, **options: object) -> bool:
         return self.client.start_print(filename, plate_id, **options)

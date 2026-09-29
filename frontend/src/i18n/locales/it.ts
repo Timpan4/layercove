@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "Il profilo padre della stampante manca o non è disponibile per questa revisione.",
+      ambiguous_parent: "Il profilo padre della stampante è ambiguo per questa revisione.",
+      inheritance_cycle: "La catena di ereditarietà della stampante contiene un ciclo.",
+    },
+    selectPrinter: "Seleziona una stampante e un profilo esatto per visualizzare il piano.",
+    loading: "Caricamento del piano selezionato…",
+    loadFailed: "Impossibile caricare il piano per {{profile}}.",
+    unavailable: "La geometria del piano non è disponibile per {{profile}}.",
+    missingArea: "La revisione selezionata non contiene printable_area né bed_shape.",
+    invalidArea: "La revisione selezionata contiene coordinate printable_area o bed_shape non valide.",
+    missingHeight: "La revisione selezionata non contiene printable_height né max_print_height.",
+    invalidHeight: "La revisione selezionata contiene un valore printable_height o max_print_height non valido.",
+    revision: "Revisione del profilo {{revision}}",
+    retry: "Ricarica il piano",
+    bounds: "Dimensioni del piano: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "La revisione del profilo selezionata non è disponibile. Ricarica il catalogo dei profili.",
+  },
+
   // Navigation
   nav: {
     printers: 'Stampanti',
@@ -1047,6 +1067,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "Preparazione del file per il trasferimento…",
+    uploadingBytes: "Caricamento {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Caricamento {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Lavoro di stampa',
     startingPrints: 'Avvio delle stampe',
     progressSummary: '{{complete}}/{{total}} completate • In corso: {{processing}}',
@@ -1116,6 +1139,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "Invio della stampa",
+    dispatch: {
+      progressLabel: "Avanzamento dell’invio della stampa",
+      preparing: "Preparazione del trasferimento",
+      uploading: "Caricamento sulla stampante",
+      awaitingPrinter: "In attesa di conferma dalla stampante",
+      uploadProgress: "Avanzamento del caricamento",
+      elapsed: "{{seconds}} s",
+      uploadSummary: "{{transferred}} di {{total}} ({{percent}}%)",
+      waitingForUpload: "File inviato; in attesa della risposta al caricamento.",
+      waitingForStart: "Caricamento accettato. L’avvio della stampa non è ancora stato confermato.",
+    },
     filamentShort: {
       rowBadge: 'Filamento insufficiente per la bobina assegnata',
       rowTooltip: 'Lo scheduler ha segnalato questo elemento. Premi Play per vedere il deficit per slot e decidere se stampare comunque.',
@@ -1620,6 +1655,40 @@ export default {
   },
 
   // Settings page
+  networkSites: {
+    title: 'Siti di rete',
+    description: 'Assegna un nome a ogni sottorete Tailscale 4via6, poi collega le stampanti al sito.',
+    copyFailed: 'Impossibile copiare negli appunti',
+    setupGuide: 'Configurazione Tailscale per Raspberry Pi',
+    printWarning: 'Non modificare la rete mentre questo Raspberry Pi sta stampando.',
+    prerequisites: 'Per Raspberry Pi OS o un sistema ARM64 basato su Debian. Esegui i comandi al termine della stampa corrente.',
+    install: '1. Installa l’ultima versione stabile di Tailscale',
+    join: '2. Accedi alla tailnet di stampa dedicata',
+    forwarding: '3. Abilita l’inoltro',
+    advertise: '4. Pubblicizza questa rotta 4via6',
+    approve: '5. Approva la rotta pubblicizzata come proprietario della tailnet.',
+    openAdmin: 'Apri i dispositivi Tailscale',
+    printerIp: 'Indirizzo IPv4 LAN della stampante',
+    invalidPrinterIp: 'Inserisci un indirizzo IPv4 utilizzabile in questa /24.',
+    magicDns: 'Nome host MagicDNS della stampante',
+    discoveryNote: 'Il rilevamento broadcast non attraversa siti instradati. Aggiungi manualmente la stampante con questo nome MagicDNS.',
+    created: 'Sito di rete creato',
+    name: 'Nome del sito',
+    namePlaceholder: 'Casa Timpa',
+    siteNumber: 'ID sito',
+    subnet: '/24 privata',
+    empty: 'Nessun sito di rete configurato.',
+    siteSummary: 'Sito {{number}} · {{subnet}} · {{count}} stampante/i',
+    rename: 'Rinomina sito',
+    renamePrompt: 'Nuovo nome del sito',
+    deleteConfirm: 'Eliminare {{name}}?',
+    connection: 'Connessione',
+    localDirect: 'Locale / diretta',
+    createHere: 'Crea qui un sito di rete',
+    targetPreview: 'Destinazione connessione: {{host}}',
+    moonrakerPort: 'Porta Moonraker',
+  },
+
   settings: {
     title: 'Impostazioni',
     general: 'Generale',
@@ -3057,6 +3126,24 @@ export default {
     stopRecording: 'Ferma registrazione',
     chamberLight: 'Accendi/Spegni luce camera',
     unavailable: 'Telecamera non disponibile',
+    moonraker: {
+      title: 'Fotocamere Moonraker',
+      refresh: 'Aggiorna fotocamere',
+      primary: 'Principale',
+      unsupported: 'Non supportata',
+      disabledInMoonraker: 'Disattivata in Moonraker',
+      editManual: 'Modifica fotocamera manuale',
+      streamUrl: 'URL flusso',
+      newStreamOrSnapshotUrl: 'Nuovo URL flusso o istantanea',
+      snapshotUrl: 'URL istantanea',
+      newSnapshotUrl: 'Nuovo URL istantanea (facoltativo)',
+      noCameras: 'Nessuna fotocamera rilevata.',
+      history: 'Cronologia fotocamere ({{count}})',
+      lastSeen: 'Ultimo rilevamento: {{date}}',
+      restoreAsManual: 'Ripristina come manuale',
+      removeHistory: 'Rimuovi dalla cronologia',
+      moreCameras: 'Altre fotocamere',
+    },
     diagnose: {
       button: 'Diagnostica',
       modalTitle: 'Diagnostica telecamera',
@@ -6325,8 +6412,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Flusso della telecamera non raggiungibile',
-        cause: 'Non è stato possibile raggiungere la telecamera dal vivo sulla porta RTSPS 322. La porta è bloccata, oppure la telecamera o la visione dal vivo via LAN è disattivata sulla stampante.',
-        fix: 'Attiva la telecamera e la visione dal vivo via LAN sulla stampante e assicurati che la porta 322 non sia bloccata. Questo non influisce sulla stampa.',
+        cause: 'Non è stato possibile raggiungere la telecamera dal vivo sulla porta {{cameraEndpoint}}. La porta è bloccata, oppure la telecamera o la visione dal vivo via LAN è disattivata sulla stampante.',
+        fix: 'Attiva la telecamera e la visione dal vivo via LAN sulla stampante e assicurati che la porta {{cameraPort}} non sia bloccata. Questo non influisce sulla stampa.',
       },
       'database-locked': {
         name: 'Conflitti di scrittura nel database',

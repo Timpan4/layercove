@@ -20,6 +20,7 @@ interface DispatchToastJob {
   sourceName: string;
   printerName: string;
   status: DispatchJobStatus;
+  stage?: 'preparing' | 'uploading' | 'awaiting_printer';
   uploadBytes?: number;
   uploadTotalBytes?: number;
   uploadProgressPct?: number;
@@ -94,6 +95,7 @@ const DISPATCH_TERMINAL_DISMISS_MS = 3500;
 
 interface DispatchEventDetail {
   type: string;
+  stage?: 'preparing' | 'awaiting_printer';
   queue_item_id: number;
   printer_id?: number | null;
   printer_name?: string | null;
@@ -105,14 +107,8 @@ interface DispatchEventDetail {
 }
 
 function isAwaitingPrinter(job: DispatchToastJob): boolean {
-  // Same trick the legacy code used to derive "Awaiting printer…" without
-  // a separate status. While the job is still 'processing' AND upload pct
-  // has reached 99.9%, the printer hasn't yet acked our project_file.
-  return (
-    job.status === 'processing'
-    && typeof job.uploadProgressPct === 'number'
-    && job.uploadProgressPct >= 99.9
-  );
+  // Reading all upload bytes is not the printer's upload/start acknowledgement.
+  return job.status === 'processing' && job.stage === 'awaiting_printer';
 }
 
 function recomputeAggregate(jobs: DispatchToastJob[]): DispatchToastData {
@@ -221,6 +217,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
           || (detail.printer_id ? `Printer ${detail.printer_id}` : '');
 
         switch (detail.type) {
+          case 'queue_item_dispatch_stage':
+            if (detail.stage !== 'preparing' && detail.stage !== 'awaiting_printer') return prev;
+            if (detail.stage === 'awaiting_printer' && existingJob?.status === 'completed') return prev;
+            nextJob = {
+              ...existingJob, jobId, sourceName, printerName,
+              status: 'processing', stage: detail.stage,
+            };
+            break;
           case 'queue_item_uploading':
             // Materialization point — job appears here, never on queue-add.
             nextJob = {
@@ -228,13 +232,14 @@ export function ToastProvider({ children }: { children: ReactNode }) {
               sourceName,
               printerName,
               status: 'processing',
+              stage: 'uploading',
               uploadBytes: 0,
               uploadTotalBytes: detail.total_bytes,
               uploadProgressPct: 0,
             };
             break;
           case 'queue_item_upload_progress':
-            if (!existingJob) return prev;
+            if (!existingJob || existingJob.status !== 'processing' || existingJob.stage !== 'uploading') return prev;
             nextJob = {
               ...existingJob,
               uploadBytes: detail.bytes_transferred,
@@ -378,7 +383,7 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                         failed: 'bg-red-500',
                       };
                       const progressByStatus: Record<DispatchJobStatus, number> = {
-                        processing: 60,
+                        processing: 0,
                         completed: 100,
                         failed: 100,
                       };
@@ -409,17 +414,22 @@ export function ToastProvider({ children }: { children: ReactNode }) {
                               <div className="text-[11px] text-bambu-gray truncate">
                                 {t('dispatchToast.awaitingPrinter')}
                               </div>
+                            ) : job.stage === 'preparing' ? (
+                              <div className="text-[11px] text-bambu-gray">{t('dispatchToast.preparingFile')}</div>
                             ) : typeof job.uploadBytes === 'number'
                                 && typeof job.uploadTotalBytes === 'number'
                                 && job.uploadTotalBytes > 0 ? (
                               <div className="text-[11px] text-bambu-gray truncate">
-                                {formatFileSize(job.uploadBytes)} / {formatFileSize(job.uploadTotalBytes)}
-                                {typeof job.uploadProgressPct === 'number' ? ` (${job.uploadProgressPct.toFixed(1)}%)` : ''}
+                                {t(typeof job.uploadProgressPct === 'number' ? 'dispatchToast.uploadingBytesWithProgress' : 'dispatchToast.uploadingBytes', {
+                                  transferred: formatFileSize(job.uploadBytes),
+                                  total: formatFileSize(job.uploadTotalBytes),
+                                  percent: job.uploadProgressPct?.toFixed(1),
+                                })}
                               </div>
                             ) : null
                           ) : job.status === 'failed' && job.failReason ? (
                             <div className="text-[11px] text-red-400 truncate">
-                              {t(`dispatchToast.failed.${job.failReason}`, { defaultValue: t('dispatchToast.failed.generic') })}
+                              {t(`dispatchToast.failed.${job.failReason}`, { defaultValue: job.failReason })}
                             </div>
                           ) : null}
                           <div className="mt-1 h-1.5 w-full rounded bg-white/10 overflow-hidden">

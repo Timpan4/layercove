@@ -12,9 +12,10 @@ from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.app.core.auth import RequirePermissionIfAuthEnabled, require_ownership_permission
+from backend.app.core.auth import require_caller_identity_if_auth_enabled, require_ownership_caller_identity
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
+from backend.app.core.identity import CallerIdentity
 from backend.app.core.permissions import Permission
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
@@ -36,7 +37,7 @@ from backend.app.schemas.print_queue import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
-from backend.app.services.printer_types import PrinterProvider
+from backend.app.services.printer_types import PrinterProvider, artifact_matches_provider
 from backend.app.utils.printer_models import normalize_printer_model, normalize_printer_model_id
 from backend.app.utils.threemf_tools import (
     extract_bed_type_from_3mf,
@@ -47,6 +48,26 @@ from backend.app.utils.threemf_tools import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/queue", tags=["queue"])
+
+
+def _require_artifact_target_compatible(source: PrintArchive | LibraryFile, printers: list[Printer]) -> None:
+    metadata = source.extra_data if isinstance(source, PrintArchive) else source.file_metadata
+    if not all(artifact_matches_provider(printer.provider, Path(source.file_path), metadata) for printer in printers):
+        raise HTTPException(
+            400, "Source artifact is not compatible with the selected printer. Re-slice for the selected printer."
+        )
+
+
+async def _require_queue_item_target_compatible(
+    db: AsyncSession, item: PrintQueueItem, printers: list[Printer]
+) -> None:
+    source = (
+        await db.get(PrintArchive, item.archive_id)
+        if item.archive_id
+        else await db.get(LibraryFile, item.library_file_id)
+    )
+    if source:
+        _require_artifact_target_compatible(source, printers)
 
 
 def _extract_filament_types_from_3mf(file_path: Path, plate_id: int | None = None) -> list[str]:
@@ -209,6 +230,18 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
         "nozzles_info": nozzles_info_parsed,
         "cleanup_library_after_dispatch": item.cleanup_library_after_dispatch,
     }
+    from backend.app.services import dispatch_progress
+
+    if item.status in {"pending", "printing"}:
+        item_dict["dispatch_progress"] = dispatch_progress.snapshot(item.id)
+        if item_dict["dispatch_progress"] is None and item.start_reconcile_after is not None:
+            item_dict["dispatch_progress"] = {
+                "stage": "awaiting_printer",
+                "started_at": (item.started_at or item.created_at).isoformat(),
+                "stage_started_at": (item.started_at or item.created_at).isoformat(),
+            }
+    else:
+        dispatch_progress.clear(item.id)
     response = PrintQueueItemResponse(**item_dict)
     if item.archive:
         # Soft-deleted archive: files are gone from disk but the row stays
@@ -290,15 +323,16 @@ async def list_queue(
         None, description="Filter by target model (also includes model-based items when combined with printer_id)"
     ),
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_READ_ALL,
             Permission.QUEUE_READ_OWN,
         )
     ),
 ):
     """List all queue items, optionally filtered by printer or status."""
-    user, can_read_all = auth_result
+    caller, can_read_all = auth_result
+    user = caller.user
     query = (
         select(PrintQueueItem)
         .options(
@@ -312,8 +346,12 @@ async def list_queue(
     )
     if user is not None and not can_read_all:
         query = query.where(PrintQueueItem.created_by_id == user.id)
+    if caller.printer_ids is not None:
+        query = query.where(PrintQueueItem.printer_id.in_(caller.printer_ids))
 
     if printer_id is not None:
+        if printer_id != -1:
+            caller.require_printer_access(printer_id)
         if printer_id == -1:
             # Special value: filter for unassigned items
             query = query.where(PrintQueueItem.printer_id.is_(None))
@@ -355,9 +393,10 @@ async def list_queue(
 async def add_to_queue(
     data: PrintQueueItemCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.QUEUE_CREATE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.QUEUE_CREATE)),
 ):
     """Add an item to the print queue."""
+    current_user = caller.user
     # Normalize target_model (e.g., "Bambu Lab X1E" / "C13" -> "X1E")
     target_model_norm = None
     if data.target_model:
@@ -376,17 +415,24 @@ async def add_to_queue(
         raise HTTPException(400, "Cannot specify both printer_id and target_model")
 
     # Validate printer exists (if assigned)
+    target_printers: list[Printer] = []
     if data.printer_id is not None:
+        caller.require_printer_access(data.printer_id)
         result = await db.execute(select(Printer).where(Printer.id == data.printer_id))
-        if not result.scalar_one_or_none():
+        printer = result.scalar_one_or_none()
+        if not printer:
             raise HTTPException(400, "Printer not found")
+        target_printers = [printer]
 
     # Validate target_model has active printers
     if target_model_norm:
+        if caller.printer_ids is not None:
+            raise HTTPException(403, "Printer-scoped API keys cannot queue model-based jobs")
         result = await db.execute(
             select(Printer).where(Printer.model == target_model_norm).where(Printer.is_active == True)  # noqa: E712
         )
-        if not result.scalars().first():
+        target_printers = list(result.scalars().all())
+        if not target_printers:
             raise HTTPException(400, f"No active printers for model: {target_model_norm}")
 
     # Validate archive exists (if provided) and get it for filament extraction
@@ -396,6 +442,7 @@ async def add_to_queue(
         archive = result.scalar_one_or_none()
         if not archive:
             raise HTTPException(400, "Archive not found")
+        caller.require_printer_access(archive.printer_id)
         # IDOR fix (maziggy/bambuddy-security #2): without this check, a
         # caller with QUEUE_CREATE could queue any user's archive even
         # without ARCHIVES_READ on it — Landon's PoC enumerated this on
@@ -450,6 +497,15 @@ async def add_to_queue(
         except InvalidFilenameError as e:
             raise HTTPException(400, str(e)) from e
 
+    source = archive or library_file
+    if source and target_printers:
+        validation_printers = target_printers
+        if target_model_norm and data.target_location:
+            located = [printer for printer in target_printers if printer.location == data.target_location]
+            if located:
+                validation_printers = located
+        _require_artifact_target_compatible(source, validation_printers)
+
     # Extract filament types for model-based assignment (used by scheduler for validation)
     required_filament_types = None
     if target_model_norm:
@@ -493,6 +549,7 @@ async def add_to_queue(
         existing_batch = result.scalar_one_or_none()
         if not existing_batch:
             raise HTTPException(404, "Batch not found")
+        await _require_batch_printer_access(db, caller, existing_batch.id)
         if existing_batch.status != "active":
             raise HTTPException(400, "Cannot add items to a non-active batch")
         if (
@@ -651,6 +708,9 @@ async def add_to_queue(
         items.append(item)
 
     await db.commit()
+    from backend.app.services.print_scheduler import scheduler
+
+    scheduler.notify_queue_changed()
 
     # Refresh the first item for the response
     item = items[0]
@@ -707,8 +767,8 @@ async def add_to_queue(
 async def bulk_update_queue_items(
     data: PrintQueueBulkUpdate,
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_UPDATE_ALL,
             Permission.QUEUE_UPDATE_OWN,
         )
@@ -719,7 +779,8 @@ async def bulk_update_queue_items(
     Only pending items can be updated. Non-pending items are skipped.
     Items not owned by the user are also skipped (unless user has *_all permission).
     """
-    user, can_modify_all = auth_result
+    caller, can_modify_all = auth_result
+    user = caller.user
 
     if not data.item_ids:
         raise HTTPException(400, "No item IDs provided")
@@ -730,9 +791,12 @@ async def bulk_update_queue_items(
         raise HTTPException(400, "No fields to update")
 
     # Validate printer_id if being changed
+    target_printer = None
     if "printer_id" in update_data and update_data["printer_id"] is not None:
+        caller.require_printer_access(update_data["printer_id"])
         result = await db.execute(select(Printer).where(Printer.id == update_data["printer_id"]))
-        if not result.scalar_one_or_none():
+        target_printer = result.scalar_one_or_none()
+        if not target_printer:
             raise HTTPException(400, "Printer not found")
 
     # Fetch all items
@@ -743,6 +807,7 @@ async def bulk_update_queue_items(
     skipped_count = 0
 
     for item in items:
+        caller.require_printer_access(item.printer_id)
         if item.status != "pending":
             skipped_count += 1
             continue
@@ -751,6 +816,9 @@ async def bulk_update_queue_items(
         if not can_modify_all and item.created_by_id != user.id:
             skipped_count += 1
             continue
+
+        if target_printer:
+            await _require_queue_item_target_compatible(db, item, [target_printer])
 
         for field, value in update_data.items():
             setattr(item, field, value)
@@ -770,11 +838,17 @@ async def bulk_update_queue_items(
 # --- Batch endpoints ---
 
 
+async def _require_batch_printer_access(db: AsyncSession, caller: CallerIdentity, batch_id: int) -> None:
+    result = await db.execute(select(PrintQueueItem.printer_id).where(PrintQueueItem.batch_id == batch_id))
+    for printer_id in result.scalars():
+        caller.require_printer_access(printer_id)
+
+
 @router.post("/batches", response_model=PrintBatchResponse)
 async def create_batch(
     data: PrintBatchCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.QUEUE_CREATE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.QUEUE_CREATE)),
 ):
     """Create a batch.
 
@@ -785,6 +859,7 @@ async def create_batch(
       pass the returned ``id`` on subsequent ``POST /queue/`` calls. Used by
       the multi-plate auto-batch flow in PrintModal.
     """
+    current_user = caller.user
     if not data.name or not data.name.strip():
         raise HTTPException(400, "Batch name is required")
 
@@ -804,6 +879,7 @@ async def create_batch(
         result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id.in_(data.item_ids)))
         items = result.scalars().all()
         for item in items:
+            caller.require_printer_access(item.printer_id)
             if item.status != "pending":
                 continue
             if item.batch_id is not None:
@@ -829,17 +905,19 @@ async def create_batch(
 async def ungroup_batch(
     batch_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.QUEUE_UPDATE_OWN),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.QUEUE_UPDATE_OWN)),
 ):
     """Disband a batch: clear batch_id from all members and delete the batch row.
 
     Items stay in the queue. Only ungroups items the caller owns (unless they
     hold QUEUE_UPDATE_ALL). A batch with all members ungrouped is deleted.
     """
+    current_user = caller.user
     result = await db.execute(select(PrintBatch).where(PrintBatch.id == batch_id))
     batch = result.scalar_one_or_none()
     if not batch:
         raise HTTPException(404, "Batch not found")
+    await _require_batch_printer_access(db, caller, batch.id)
 
     can_modify_all = current_user is None or current_user.has_permission(Permission.QUEUE_UPDATE_ALL.value)
     if not can_modify_all and batch.created_by_id != (current_user.id if current_user else None):
@@ -874,15 +952,16 @@ async def ungroup_batch(
 async def list_batches(
     status: str | None = Query(None, description="Filter by status (active, completed, cancelled)"),
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_READ_ALL,
             Permission.QUEUE_READ_OWN,
         )
     ),
 ):
     """List all print batches with progress stats."""
-    current_user, can_read_all = auth_result
+    caller, can_read_all = auth_result
+    current_user = caller.user
     query = select(PrintBatch).order_by(PrintBatch.created_at.desc())
     if status:
         query = query.where(PrintBatch.status == status)
@@ -893,6 +972,7 @@ async def list_batches(
 
     responses = []
     for batch in batches:
+        await _require_batch_printer_access(db, caller, batch.id)
         responses.append(await _build_batch_response(db, batch))
     return responses
 
@@ -901,19 +981,21 @@ async def list_batches(
 async def get_batch(
     batch_id: int,
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_READ_ALL,
             Permission.QUEUE_READ_OWN,
         )
     ),
 ):
     """Get a print batch with progress stats."""
-    current_user, can_read_all = auth_result
+    caller, can_read_all = auth_result
+    current_user = caller.user
     result = await db.execute(select(PrintBatch).where(PrintBatch.id == batch_id))
     batch = result.scalar_one_or_none()
     if not batch:
         raise HTTPException(404, "Batch not found")
+    await _require_batch_printer_access(db, caller, batch.id)
     if (
         current_user is not None
         and not can_read_all
@@ -927,13 +1009,14 @@ async def get_batch(
 async def cancel_batch(
     batch_id: int,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.QUEUE_DELETE_ALL),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.QUEUE_DELETE_ALL)),
 ):
     """Cancel all pending items in a batch and mark batch as cancelled."""
     result = await db.execute(select(PrintBatch).where(PrintBatch.id == batch_id))
     batch = result.scalar_one_or_none()
     if not batch:
         raise HTTPException(404, "Batch not found")
+    await _require_batch_printer_access(db, caller, batch.id)
 
     # Cancel all pending queue items in this batch
     result = await db.execute(
@@ -991,15 +1074,16 @@ async def _build_batch_response(db: AsyncSession, batch: PrintBatch) -> PrintBat
 async def get_queue_item(
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_READ_ALL,
             Permission.QUEUE_READ_OWN,
         )
     ),
 ):
     """Get a specific queue item."""
-    current_user, can_read_all = auth_result
+    caller, can_read_all = auth_result
+    current_user = caller.user
     result = await db.execute(
         select(PrintQueueItem)
         .options(
@@ -1014,6 +1098,7 @@ async def get_queue_item(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Queue item not found")
+    caller.require_printer_access(item.printer_id)
     if (
         current_user is not None
         and not can_read_all
@@ -1028,20 +1113,22 @@ async def update_queue_item(
     item_id: int,
     data: PrintQueueItemUpdate,
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_UPDATE_ALL,
             Permission.QUEUE_UPDATE_OWN,
         )
     ),
 ):
     """Update a queue item."""
-    user, can_modify_all = auth_result
+    caller, can_modify_all = auth_result
+    user = caller.user
 
     result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id == item_id))
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Queue item not found")
+    caller.require_printer_access(item.printer_id)
 
     # Ownership check
     if not can_modify_all:
@@ -1068,18 +1155,34 @@ async def update_queue_item(
         raise HTTPException(400, "Cannot specify both printer_id and target_model")
 
     # Validate new printer_id if being changed (and not None)
+    target_printers: list[Printer] = []
     if "printer_id" in update_data and update_data["printer_id"] is not None:
+        caller.require_printer_access(update_data["printer_id"])
         result = await db.execute(select(Printer).where(Printer.id == update_data["printer_id"]))
-        if not result.scalar_one_or_none():
+        target_printer = result.scalar_one_or_none()
+        if not target_printer:
             raise HTTPException(400, "Printer not found")
+        target_printers = [target_printer]
 
     # Validate target_model has active printers
-    if "target_model" in update_data and update_data["target_model"]:
+    if new_target_model and ("target_model" in update_data or "target_location" in update_data):
+        if caller.printer_ids is not None:
+            raise HTTPException(403, "Printer-scoped API keys cannot queue model-based jobs")
         result = await db.execute(
-            select(Printer).where(Printer.model == update_data["target_model"]).where(Printer.is_active == True)  # noqa: E712
+            select(Printer).where(Printer.model == new_target_model).where(Printer.is_active == True)  # noqa: E712
         )
-        if not result.scalars().first():
-            raise HTTPException(400, f"No active printers for model: {update_data['target_model']}")
+        target_printers = list(result.scalars().all())
+        if not target_printers and "target_model" in update_data:
+            raise HTTPException(400, f"No active printers for model: {new_target_model}")
+
+        target_location = update_data.get("target_location", item.target_location)
+        if target_location:
+            located = [printer for printer in target_printers if printer.location == target_location]
+            if located:
+                target_printers = located
+
+    if target_printers:
+        await _require_queue_item_target_compatible(db, item, target_printers)
 
     # Serialize ams_mapping to JSON for TEXT column storage
     if "ams_mapping" in update_data:
@@ -1112,20 +1215,22 @@ async def update_queue_item(
 async def delete_queue_item(
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_DELETE_ALL,
             Permission.QUEUE_DELETE_OWN,
         )
     ),
 ):
     """Remove an item from the queue."""
-    user, can_modify_all = auth_result
+    caller, can_modify_all = auth_result
+    user = caller.user
 
     result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id == item_id))
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Queue item not found")
+    caller.require_printer_access(item.printer_id)
 
     # Ownership check
     if not can_modify_all:
@@ -1146,12 +1251,14 @@ async def delete_queue_item(
 async def reorder_queue(
     data: PrintQueueReorder,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.QUEUE_UPDATE_ALL),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.QUEUE_UPDATE_ALL)),
 ):
     """Bulk update positions for queue items."""
     for reorder_item in data.items:
         result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id == reorder_item.id))
         item = result.scalar_one_or_none()
+        if item:
+            caller.require_printer_access(item.printer_id)
         if item and item.status == "pending":
             item.position = reorder_item.position
 
@@ -1164,7 +1271,7 @@ async def reorder_queue(
 async def resume_queue_after_failure(
     printer_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.QUEUE_UPDATE_ALL),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.QUEUE_UPDATE_ALL)),
 ):
     """Clear the previous-success gate for a printer and restore skipped items.
 
@@ -1180,6 +1287,7 @@ async def resume_queue_after_failure(
     Returns counts so the UI can render a precise toast. No-op endpoint
     (zero counts) when called against a printer with no gate to clear.
     """
+    caller.require_printer_access(printer_id)
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()
     if not printer:
@@ -1222,20 +1330,22 @@ async def resume_queue_after_failure(
 async def cancel_queue_item(
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_UPDATE_ALL,
             Permission.QUEUE_UPDATE_OWN,
         )
     ),
 ):
     """Cancel a pending queue item."""
-    user, can_modify_all = auth_result
+    caller, can_modify_all = auth_result
+    user = caller.user
 
     result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id == item_id))
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Queue item not found")
+    caller.require_printer_access(item.printer_id)
 
     # Ownership check
     if not can_modify_all:
@@ -1257,8 +1367,8 @@ async def cancel_queue_item(
 async def stop_queue_item(
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_UPDATE_ALL,
             Permission.QUEUE_UPDATE_OWN,
         )
@@ -1274,12 +1384,14 @@ async def stop_queue_item(
 
     from backend.app.services.printer_manager import printer_manager
 
-    user, can_modify_all = auth_result
+    caller, can_modify_all = auth_result
+    user = caller.user
 
     result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.id == item_id))
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Queue item not found")
+    caller.require_printer_access(item.printer_id)
 
     # Ownership check — mirrors /cancel. Ownerless items (created_by_id IS NULL)
     # require _ALL: stop is destructive and an _OWN holder can't claim "they
@@ -1358,8 +1470,8 @@ async def start_queue_item(
     item_id: int,
     skip_filament_check: bool = Query(default=False),
     db: AsyncSession = Depends(get_db),
-    auth_result: tuple[User | None, bool] = Depends(
-        require_ownership_permission(
+    auth_result: tuple[CallerIdentity, bool] = Depends(
+        require_ownership_caller_identity(
             Permission.QUEUE_UPDATE_ALL,
             Permission.QUEUE_UPDATE_OWN,
         )
@@ -1380,7 +1492,8 @@ async def start_queue_item(
     payload so the caller can show a confirm dialog and retry with
     ``skip_filament_check=true``.
     """
-    user, can_modify_all = auth_result
+    caller, can_modify_all = auth_result
+    user = caller.user
 
     result = await db.execute(
         select(PrintQueueItem)
@@ -1395,6 +1508,7 @@ async def start_queue_item(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(404, "Queue item not found")
+    caller.require_printer_access(item.printer_id)
 
     # Ownership check — softer than /cancel because /start is the entry point
     # for #1670's VP-import flow: an unowned item is claimable by the first
@@ -1439,6 +1553,9 @@ async def start_queue_item(
     if user is not None and item.created_by_id is None:
         item.created_by_id = user.id
     await db.commit()
+    from backend.app.services.print_scheduler import scheduler
+
+    scheduler.notify_queue_changed()
     await db.refresh(item, ["archive", "printer", "library_file", "created_by", "batch"])
 
     logger.info(

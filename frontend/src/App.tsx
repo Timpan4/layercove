@@ -3,6 +3,7 @@ import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-route
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
 import { PrintersPage } from './pages/PrintersPage';
+import { PrintersPrototypeDemo } from './pages/PrintersPagePrototype';
 import { ArchivesPage } from './pages/ArchivesPage';
 import { QueuePage } from './pages/QueuePage';
 import { StatsPage } from './pages/StatsPage';
@@ -24,12 +25,14 @@ import { LoginPage } from './pages/LoginPage';
 import { SetupPage } from './pages/SetupPage';
 import { NotificationsPage } from './pages/NotificationsPage';
 import { GCodeViewerPage } from './pages/GCodeViewerPage';
+import { SlicerWorkbenchPage } from './pages/SlicerWorkbenchPage';
 import { useWebSocket } from './hooks/useWebSocket';
 import { useStreamTokenSync } from './hooks/useCameraStreamToken';
 import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { SliceJobTrackerProvider } from './contexts/SliceJobTrackerContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import type { Permission } from './api/client';
 import { ColorCatalogProvider } from './contexts/ColorCatalogContext';
 import { SpoolBuddyLayout } from './components/spoolbuddy/SpoolBuddyLayout';
 import { SpoolBuddyDashboard } from './pages/spoolbuddy/SpoolBuddyDashboard';
@@ -106,13 +109,13 @@ function ProtectedRoute({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
-function PermissionRoute({ permission, children }: { permission: string; children: React.ReactNode }) {
+function PermissionRoute({ permission, children }: { permission: Permission; children: React.ReactNode }) {
   // Permission-gated route: any user with the given permission can enter, not
   // just admins. Individual components below this guard apply their own
   // per-action permission checks. Used for pages where delegation is supported
   // (e.g. settings:read grants read-only access to Settings; specific tabs
   // require their own permissions like users:read, groups:update, etc.).
-  const { authEnabled, loading, user, hasPermission } = useAuth();
+  const { authEnabled, loading, user, authorization } = useAuth();
   const location = useLocation();
 
   if (loading) {
@@ -128,7 +131,7 @@ function PermissionRoute({ permission, children }: { permission: string; childre
     return <Navigate to="/login" replace state={{ from: location }} />;
   }
 
-  if (!hasPermission(permission as Parameters<typeof hasPermission>[0])) {
+  if (!authorization.route(permission).allowed) {
     return <Navigate to="/" replace />;
   }
 
@@ -176,6 +179,8 @@ function App() {
                 {/* Login page */}
                 <Route path="/login" element={<LoginPage />} />
 
+                {import.meta.env.DEV && <Route path="/prototype/printers" element={<PrintersPrototypeDemo />} />}
+
                 {/* Camera page - standalone, no layout, no WebSocket (doesn't need real-time updates) */}
                 <Route path="/camera/:printerId" element={<CameraPage />} />
 
@@ -218,6 +223,7 @@ function App() {
                   <Route path="system" element={<SystemInfoPage />} />
                   <Route path="notifications" element={<NotificationsPage />} />
                   <Route path="gcode-viewer" element={<GCodeViewerPage />} />
+                  <Route path="slicer/workbench" element={<SlicerWorkbenchPage />} />
                   <Route path="external/:id" element={<ExternalLinkPage />} />
                   <Route path="camera-tokens" element={<Navigate to="/settings?tab=apikeys#card-camera-tokens" replace />} />
                 </Route>

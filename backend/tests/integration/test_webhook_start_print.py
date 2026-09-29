@@ -69,6 +69,34 @@ async def printer_with_queue(db_session):
 class TestWebhookStartPrint:
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_queue_add_rejects_klipper_gcode_for_bambu(
+        self, async_client: AsyncClient, api_key_data, printer_factory, archive_factory
+    ):
+        bambu = await printer_factory(provider="bambu", model="P1S")
+        voron = await printer_factory(provider="moonraker", model="Voron 2.4")
+        archive = await archive_factory(
+            voron.id,
+            filename="Voron_Design_Cube_v8.gcode",
+            file_path="archives/voron-cube.gcode",
+            extra_data={"destination_artifact_kind": "klipper_gcode"},
+        )
+
+        wrong = await async_client.post(
+            "/api/v1/webhook/queue/add",
+            headers={"X-API-Key": api_key_data},
+            json={"archive_id": archive.id, "printer_id": bambu.id},
+        )
+        assert wrong.status_code == 400
+
+        right = await async_client.post(
+            "/api/v1/webhook/queue/add",
+            headers={"X-API-Key": api_key_data},
+            json={"archive_id": archive.id, "printer_id": voron.id},
+        )
+        assert right.status_code == 200
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_clears_manual_start_on_next_pending_item(
         self, async_client: AsyncClient, db_session, api_key_data, printer_with_queue
     ):
@@ -96,6 +124,75 @@ class TestWebhookStartPrint:
         assert item.timelapse is True
         assert item.bed_levelling is True
         assert item.vibration_cali is True
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_queue_item_from_owned_api_key_remains_ownerless(
+        self, async_client: AsyncClient, db_session, printer_with_queue, archive_factory
+    ):
+        """API keys retain coarse permissions, not row ownership."""
+        from backend.app.core.auth import generate_api_key
+        from backend.app.models.api_key import APIKey
+        from backend.app.models.print_queue import PrintQueueItem
+        from backend.app.models.user import User
+
+        printer, _ = printer_with_queue
+        archive = await archive_factory(printer.id)
+        owner = User(username="webhook-api-key-owner")
+        db_session.add(owner)
+        await db_session.flush()
+        full_key, key_hash, key_prefix = generate_api_key()
+        db_session.add(
+            APIKey(
+                name="owned-webhook-key",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                user_id=owner.id,
+                can_queue=True,
+            )
+        )
+        await db_session.commit()
+
+        response = await async_client.post(
+            "/api/v1/webhook/queue/add",
+            headers={"X-API-Key": full_key},
+            json={"archive_id": archive.id, "printer_id": printer.id},
+        )
+        assert response.status_code == 200, response.text
+
+        queue_item = await db_session.get(PrintQueueItem, response.json()["id"])
+        assert queue_item.created_by_id is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_printer_scoped_key_cannot_queue_another_printers_archive(
+        self, async_client: AsyncClient, db_session, printer_factory, archive_factory
+    ):
+        from backend.app.core.auth import generate_api_key
+        from backend.app.models.api_key import APIKey
+
+        allowed_printer = await printer_factory()
+        denied_printer = await printer_factory()
+        denied_archive = await archive_factory(denied_printer.id)
+        full_key, key_hash, key_prefix = generate_api_key()
+        db_session.add(
+            APIKey(
+                name="scoped-webhook-key",
+                key_hash=key_hash,
+                key_prefix=key_prefix,
+                can_queue=True,
+                printer_ids=[allowed_printer.id],
+            )
+        )
+        await db_session.commit()
+
+        response = await async_client.post(
+            "/api/v1/webhook/queue/add",
+            headers={"X-API-Key": full_key},
+            json={"archive_id": denied_archive.id, "printer_id": allowed_printer.id},
+        )
+
+        assert response.status_code == 403
 
     @pytest.mark.asyncio
     @pytest.mark.integration

@@ -3,7 +3,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { X, Loader2, Save, Beaker, Palette, Zap, Tag, Unlink } from 'lucide-react';
 import { api, ApiError } from '../api/client';
-import type { InventorySpool, SlicerSetting, SpoolCatalogEntry, LocalPreset, BuiltinFilament, SpoolmanBulkCreateResult, SpoolKProfileInput, SpoolmanFilamentEntry } from '../api/client';
+import type { InventorySpool, SlicerSetting, SpoolCatalogEntry, LocalPreset, BuiltinFilament, SpoolKProfileInput, SpoolmanFilamentEntry } from '../api/client';
 import { Button } from './Button';
 import { useToast } from '../contexts/ToastContext';
 import type { SpoolFormData, PrinterWithCalibrations, ColorPreset } from './spool-form/types';
@@ -17,9 +17,14 @@ import { SpoolmanFilamentPicker } from './spool-form/SpoolmanFilamentPicker';
 import { PAProfileSection } from './spool-form/PAProfileSection';
 import { SpoolUsageHistory } from './SpoolUsageHistory';
 import {
+  inventoryData,
+  inventoryQueryKeys,
+  invalidateInventory,
+  invalidateInventoryAssignments,
   invalidateInventoryLocations,
-  invalidateSpoolAndLocationQueries,
-} from '../utils/inventoryQueries';
+  normalizeBulkCreate,
+} from '../api/inventoryData';
+import type { InventorySource, SpoolData } from '../api/inventoryData';
 
 type TabId = 'filament' | 'pa-profile';
 
@@ -35,10 +40,8 @@ interface SpoolFormModalProps {
   printersWithCalibrations?: PrinterWithCalibrations[];
   currencySymbol: string;
   onSpoolsCreated?: (spools: InventorySpool[]) => void;
-  /** When true, CRUD operations target the Spoolman inventory proxy endpoints. */
-  spoolmanMode?: boolean;
-  /** Query key to invalidate after mutations (differs for Spoolman vs local). */
-  spoolsQueryKey?: string[];
+  /** Inventory backend that owns CRUD, assignment, and query identities. */
+  source?: InventorySource;
 }
 
 export function SpoolFormModal({
@@ -49,15 +52,15 @@ export function SpoolFormModal({
   printersWithCalibrations = [],
   currencySymbol,
   onSpoolsCreated,
-  spoolmanMode = false,
-  spoolsQueryKey = ['inventory-spools'],
+  source = 'local',
 }: SpoolFormModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const inventory = inventoryData(source);
+  const spoolmanMode = source === 'spoolman';
 
-  const refreshSpoolQueries = () =>
-    invalidateSpoolAndLocationQueries(queryClient, spoolsQueryKey);
+  const refreshSpoolQueries = () => invalidateInventory(queryClient, source);
 
   const isEditing = mode === 'edit';
   const isCopying = mode === 'copy';
@@ -118,9 +121,9 @@ export function SpoolFormModal({
   // Fetch Spoolman filament catalog when in Spoolman mode
   // retry:false — Spoolman may be intentionally disabled (400); don't flood the server
   const { data: spoolmanFilaments = [], isLoading: isLoadingFilaments, error: filamentsError } = useQuery<SpoolmanFilamentEntry[], Error>({
-    queryKey: ['spoolman-inventory-filaments'],
+    queryKey: inventoryQueryKeys.spoolmanFilaments,
     queryFn: () => api.getSpoolmanInventoryFilaments(),
-    enabled: spoolmanMode && isOpen,
+    enabled: inventory.supports.filamentCatalog && isOpen,
     staleTime: 60_000,
     retry: false,
   });
@@ -465,12 +468,9 @@ export function SpoolFormModal({
     setRecentColors(prev => saveRecentColor(color, prev));
   };
 
-  // Mutations – dispatch to Spoolman proxy or local inventory based on mode
+  // Mutations dispatch through inventory source adapter.
   const createMutation = useMutation({
-    mutationFn: (data: Record<string, unknown>) =>
-      spoolmanMode
-        ? api.createSpoolmanInventorySpool(data as Parameters<typeof api.createSpoolmanInventorySpool>[0])
-        : api.createSpool(data as Parameters<typeof api.createSpool>[0]),
+    mutationFn: (data: Record<string, unknown>) => inventory.create(data as SpoolData),
     onSuccess: async (newSpool) => {
       if (newSpool?.id) {
         const ok = await saveKProfiles(newSpool.id);
@@ -490,25 +490,11 @@ export function SpoolFormModal({
     },
   });
 
-  const bulkCreateMutation = useMutation<
-    SpoolmanBulkCreateResult | InventorySpool[],
-    Error,
-    { data: Record<string, unknown>; qty: number }
-  >({
-    mutationFn: ({ data, qty }) =>
-      spoolmanMode
-        ? api.bulkCreateSpoolmanInventorySpools(data as Parameters<typeof api.bulkCreateSpoolmanInventorySpools>[0], qty)
-        : api.bulkCreateSpools(data as Parameters<typeof api.bulkCreateSpools>[0], qty),
+  const bulkCreateMutation = useMutation({
+    mutationFn: ({ data, qty }: { data: Record<string, unknown>; qty: number }) =>
+      inventory.bulkCreate(data as SpoolData, qty),
     onSuccess: async (result) => {
-      // Spoolman bulk-create returns SpoolmanBulkCreateResult (207); local returns InventorySpool[].
-      // Cast via unknown to satisfy strict TypeScript — the runtime shape is guaranteed by
-      // the duck-type check ('created' in result) before any property access.
-      const spoolmanResult = (spoolmanMode && 'created' in result)
-        ? (result as unknown as SpoolmanBulkCreateResult)
-        : null;
-      const createdSpools: InventorySpool[] = spoolmanResult
-        ? spoolmanResult.created
-        : (result as InventorySpool[]);
+      const { created: createdSpools, failed, requested } = normalizeBulkCreate(result);
 
       if (selectedProfiles.size > 0) {
         for (const s of createdSpools) {
@@ -517,11 +503,11 @@ export function SpoolFormModal({
       }
       await refreshSpoolQueries();
       if (onSpoolsCreated) onSpoolsCreated(createdSpools);
-      if (spoolmanResult && spoolmanResult.failed_count > 0) {
+      if (failed > 0) {
         showToast(
           t('inventory.spoolsPartiallyCreated', {
             created: createdSpools.length,
-            total: spoolmanResult.requested_count,
+            total: requested,
           }),
           'warning',
         );
@@ -541,9 +527,7 @@ export function SpoolFormModal({
 
   const updateMutation = useMutation({
     mutationFn: (data: Record<string, unknown>) =>
-      spoolmanMode
-        ? api.updateSpoolmanInventorySpool(spool!.id, data as Parameters<typeof api.updateSpoolmanInventorySpool>[1])
-        : api.updateSpool(spool!.id, data as Parameters<typeof api.updateSpool>[1]),
+      inventory.update(spool!.id, data as Partial<SpoolData>),
     onSuccess: async () => {
       if (spool?.id) {
         const ok = await saveKProfiles(spool.id);
@@ -563,12 +547,7 @@ export function SpoolFormModal({
   });
 
   const deleteTagMutation = useMutation({
-    mutationFn: () => {
-      if (spoolmanMode) {
-        return api.updateSpoolmanInventorySpool(spool!.id, CLEAR_TAG_PAYLOAD as Parameters<typeof api.updateSpoolmanInventorySpool>[1]);
-      }
-      return api.updateSpool(spool!.id, CLEAR_TAG_PAYLOAD as Parameters<typeof api.updateSpool>[1]);
-    },
+    mutationFn: () => inventory.update(spool!.id, CLEAR_TAG_PAYLOAD),
     onSuccess: async () => {
       await refreshSpoolQueries();
       showToast(t('inventory.rfidCleared', 'RFID tag cleared'), 'success');
@@ -588,12 +567,12 @@ export function SpoolFormModal({
   // spoolman_spool_id, not in the legacy spool_assignments table — #1336 was the
   // resulting "Unassign button is always disabled" report.
   const { data: assignments } = useQuery({
-    queryKey: ['spool-assignments'],
+    queryKey: inventoryQueryKeys.assignments,
     queryFn: () => api.getAssignments(),
     enabled: isOpen && isEditing && !spoolmanMode,
   });
   const { data: spoolmanSlotAssignments } = useQuery({
-    queryKey: ['spoolman-slot-assignments-all'],
+    queryKey: inventoryQueryKeys.spoolmanAssignments,
     queryFn: () => api.getSpoolmanSlotAssignments(),
     enabled: isOpen && isEditing && spoolmanMode,
   });
@@ -608,8 +587,8 @@ export function SpoolFormModal({
   // Read inventory + settings caches (already populated by InventoryPage) to
   // drive the category autocomplete and low-stock-threshold placeholder. #729
   const { data: allSpools } = useQuery({
-    queryKey: ['inventory-spools'],
-    queryFn: () => api.getSpools(true),
+    queryKey: inventoryQueryKeys.spools(source),
+    queryFn: inventory.getSpools,
     enabled: isOpen,
   });
   const { data: settingsForForm } = useQuery({
@@ -629,21 +608,11 @@ export function SpoolFormModal({
 
   const unassignMutation = useMutation({
     mutationFn: async () => {
-      if (!spoolAssignment) throw new Error('No assignment');
-      if (spoolmanMode) {
-        if (!spool) throw new Error('No spool');
-        await api.unassignSpoolmanSlot(spool.id);
-        return;
-      }
-      await api.unassignSpool(spoolAssignment.printer_id, spoolAssignment.ams_id, spoolAssignment.tray_id);
+      if (!spool || !spoolAssignment) throw new Error('No assignment');
+      await inventory.unassign(spool.id, spoolAssignment);
     },
     onSuccess: async () => {
-      if (spoolmanMode) {
-        await queryClient.invalidateQueries({ queryKey: ['spoolman-slot-assignments-all'] });
-        await queryClient.invalidateQueries({ queryKey: ['spoolman-slot-assignments'] });
-      } else {
-        await queryClient.invalidateQueries({ queryKey: ['spool-assignments'] });
-      }
+      await invalidateInventoryAssignments(queryClient, source);
       showToast(t('inventory.unassignSuccess', 'Spool unassigned'), 'success');
       onClose();
     },
@@ -654,7 +623,7 @@ export function SpoolFormModal({
 
   // Save K-profiles for selected calibrations. Returns false if any error occurred.
   const saveKProfiles = async (spoolId: number): Promise<boolean> => {
-    const saveApi = spoolmanMode ? api.saveSpoolmanKProfiles : api.saveSpoolKProfiles;
+    const saveApi = inventory.saveKProfiles;
 
     if (selectedProfiles.size === 0) {
       try {

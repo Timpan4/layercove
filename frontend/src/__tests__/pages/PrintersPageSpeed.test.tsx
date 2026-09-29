@@ -70,6 +70,14 @@ const mockIdleStatus = {
   speed_level: 2,
 };
 
+async function openControls() {
+  const user = userEvent.setup();
+  render(<PrintersPage />);
+  await screen.findByRole('heading', { name: 'X1 Carbon', level: 2 });
+  await user.click(screen.getByRole('button', { name: /open controls/i }));
+  return user;
+}
+
 describe('PrintersPage - Print Speed Control', () => {
   beforeEach(() => {
     server.use(
@@ -90,7 +98,7 @@ describe('PrintersPage - Print Speed Control', () => {
         })
       );
 
-      render(<PrintersPage />);
+      await openControls();
 
       await waitFor(() => {
         const button = screen.getByTestId('speed-control');
@@ -106,7 +114,7 @@ describe('PrintersPage - Print Speed Control', () => {
         })
       );
 
-      render(<PrintersPage />);
+      await openControls();
 
       await waitFor(() => {
         const button = screen.getByTestId('speed-control');
@@ -125,7 +133,7 @@ describe('PrintersPage - Print Speed Control', () => {
         })
       );
 
-      render(<PrintersPage />);
+      await openControls();
 
       await waitFor(() => {
         expect(screen.getByTestId('speed-control')).toBeEnabled();
@@ -150,7 +158,7 @@ describe('PrintersPage - Print Speed Control', () => {
         })
       );
 
-      render(<PrintersPage />);
+      await openControls();
 
       await waitFor(() => {
         expect(screen.getByTestId('speed-control')).toBeEnabled();
@@ -185,7 +193,7 @@ describe('PrintersPage - Print Speed Control', () => {
         })
       );
 
-      render(<PrintersPage />);
+      await openControls();
 
       await waitFor(() => {
         expect(screen.getByTestId('speed-control')).toBeEnabled();
@@ -216,7 +224,7 @@ describe('PrintersPage - Print Speed Control', () => {
         })
       );
 
-      render(<PrintersPage />);
+      await openControls();
 
       await waitFor(() => {
         expect(screen.getByTestId('speed-control')).toBeEnabled();
@@ -255,7 +263,7 @@ describe('PrintersPage - Print Speed Control', () => {
         })
       );
 
-      render(<PrintersPage />);
+      await openControls();
 
       await waitFor(() => {
         expect(screen.getByTestId('speed-control')).toBeEnabled();

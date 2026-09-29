@@ -65,6 +65,40 @@ class TestExtractFilamentRequirements:
             {"slot_id": 2, "type": "PETG", "color": "#000000", "tray_info_idx": "", "used_grams": 4.2},
         ]
 
+    def test_document_consumed_filaments_preserve_plate_records(self, tmp_path: Path):
+        from backend.app.utils.threemf_tools import ThreeMFDocument
+
+        f = tmp_path / "model.3mf"
+        _make_3mf(
+            f,
+            plates=[
+                (
+                    1,
+                    [
+                        {
+                            "id": "1",
+                            "type": "PLA",
+                            "color": "#FFFFFF",
+                            "used_g": "12.5",
+                            "tray_info_idx": "3",
+                        },
+                        {"id": "2", "type": "PETG", "color": "#000000", "used_g": "0"},
+                    ],
+                )
+            ],
+        )
+
+        with zipfile.ZipFile(f) as zf:
+            assert ThreeMFDocument(zf).consumed_filaments(1) == [
+                {
+                    "slot_id": "1",
+                    "type": "PLA",
+                    "color": "#FFFFFF",
+                    "tray_info_idx": "3",
+                    "used_grams": 12.5,
+                }
+            ]
+
     def test_skips_zero_use_filaments(self, tmp_path: Path):
         """Slot present in slice_info.config but `used_g <= 0` means the
         plate doesn't actually consume that filament — must not show up."""
@@ -78,6 +112,8 @@ class TestExtractFilamentRequirements:
                         {"id": "1", "type": "PLA", "color": "#FFFFFF", "used_g": "10.0"},
                         {"id": "2", "type": "ABS", "color": "#FF0000", "used_g": "0"},
                         {"id": "3", "type": "PETG", "color": "#00FF00", "used_g": "-1"},
+                        {"id": "4", "type": "TPU", "color": "#0000FF", "used_g": "inf"},
+                        {"id": "5", "type": "PVA", "color": "#FFFF00", "used_g": "nan"},
                     ],
                 )
             ],
@@ -108,6 +144,22 @@ class TestExtractFilamentRequirements:
         out = extract_filament_requirements(f, plate_id=None)
         assert len(out) == 1
         assert out[0]["type"] == "PLA"
+
+    def test_no_plate_id_ignores_flat_filaments_when_plates_exist(self, tmp_path: Path):
+        f = tmp_path / "mixed.3mf"
+        config = (
+            '<?xml version="1.0" encoding="utf-8"?><config>'
+            '<filament id="1" type="GLOBAL" color="#000" used_g="99"/>'
+            '<plate><metadata key="index" value="1"/>'
+            '<filament id="1" type="PLA" color="#FFF" used_g="5"/>'
+            "</plate></config>"
+        )
+        with zipfile.ZipFile(f, "w") as zf:
+            zf.writestr("Metadata/slice_info.config", config)
+
+        assert extract_filament_requirements(f) == [
+            {"slot_id": 1, "type": "PLA", "color": "#FFF", "tray_info_idx": "", "used_grams": 5.0}
+        ]
 
     def test_no_plate_id_collects_from_all_plates(self, tmp_path: Path):
         """Modern BambuStudio wraps filaments inside <plate> elements.  When

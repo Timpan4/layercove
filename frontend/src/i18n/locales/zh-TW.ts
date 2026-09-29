@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "此修訂版本的上層印表機設定檔不存在或無法使用。",
+      ambiguous_parent: "此修訂版本的上層印表機設定檔不明確。",
+      inheritance_cycle: "印表機繼承鏈中存在循環。",
+    },
+    selectPrinter: "請選擇印表機及其確切設定檔以檢視列印平台。",
+    loading: "正在載入所選列印平台…",
+    loadFailed: "無法載入 {{profile}} 的列印平台。",
+    unavailable: "{{profile}} 的列印平台幾何資訊無法使用。",
+    missingArea: "所選修訂版本缺少 printable_area 或 bed_shape。",
+    invalidArea: "所選修訂版本的 printable_area 或 bed_shape 座標無效。",
+    missingHeight: "所選修訂版本缺少 printable_height 或 max_print_height。",
+    invalidHeight: "所選修訂版本的 printable_height 或 max_print_height 無效。",
+    revision: "設定檔修訂版本 {{revision}}",
+    retry: "重新載入列印平台",
+    bounds: "列印平台尺寸：{{x}} × {{y}} × {{z}} mm。",
+    missingRevision: "所選設定檔修訂版本無法使用。請重新載入設定檔目錄。",
+  },
+
   // Navigation
   nav: {
     printers: '印表機',
@@ -1047,6 +1067,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "正在準備傳輸檔案…",
+    uploadingBytes: "正在上傳 {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "正在上傳 {{transferred}} / {{total}} ({{percent}}%)",
     untitled: '列印任務',
     startingPrints: '正在開始列印',
     progressSummary: '{{complete}}/{{total}} 已完成 • 處理中: {{processing}}',
@@ -1116,6 +1139,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "列印工作傳輸",
+    dispatch: {
+      progressLabel: "列印工作傳輸進度",
+      preparing: "正在準備傳輸",
+      uploading: "正在上傳至印表機",
+      awaitingPrinter: "等待印表機確認",
+      uploadProgress: "上傳進度",
+      elapsed: "{{seconds}}秒",
+      uploadSummary: "已傳送 {{transferred}} / {{total}} ({{percent}}%)",
+      waitingForUpload: "檔案已傳送，正在等待上傳回應。",
+      waitingForStart: "上傳已接受，但尚未確認開始列印。",
+    },
     filamentShort: {
       rowBadge: '所分配料盤的線材不足',
       rowTooltip: '調度程式已標記此項目。點擊播放查看各槽位的不足量，並決定是否仍要列印。',
@@ -1620,6 +1655,40 @@ export default {
   },
 
   // Settings page
+  networkSites: {
+    title: '網路站點',
+    description: '為每個 Tailscale 4via6 子網路命名，再將印表機指派到該站點。',
+    copyFailed: '無法複製到剪貼簿',
+    setupGuide: 'Raspberry Pi Tailscale 設定',
+    printWarning: '此 Raspberry Pi 正在列印時請勿變更網路。',
+    prerequisites: '適用於 Raspberry Pi OS 或其他以 Debian 為基礎的 ARM64 系統。請在目前列印完成後執行。',
+    install: '1. 安裝最新穩定版 Tailscale',
+    join: '2. 加入專用列印 tailnet',
+    forwarding: '3. 啟用轉送',
+    advertise: '4. 發布此 4via6 路由',
+    approve: '5. 以 tailnet 擁有者身分核准已發布的路由。',
+    openAdmin: '開啟 Tailscale 裝置',
+    printerIp: '印表機 LAN IPv4 位址',
+    invalidPrinterIp: '請輸入此 /24 中可用的 IPv4 位址。',
+    magicDns: '印表機 MagicDNS 主機名稱',
+    discoveryNote: '廣播探索無法跨越路由站點。請使用此 MagicDNS 主機名稱手動新增印表機。',
+    created: '網路站點已建立',
+    name: '站點名稱',
+    namePlaceholder: 'Timpa 家',
+    siteNumber: '站點 ID',
+    subnet: '私有 /24',
+    empty: '尚未設定網路站點。',
+    siteSummary: '站點 {{number}} · {{subnet}} · {{count}} 台印表機',
+    rename: '重新命名站點',
+    renamePrompt: '新站點名稱',
+    deleteConfirm: '刪除 {{name}}？',
+    connection: '連線',
+    localDirect: '本機 / 直接',
+    createHere: '在此建立網路站點',
+    targetPreview: '連線目標：{{host}}',
+    moonrakerPort: 'Moonraker 連接埠',
+  },
+
   settings: {
     title: '設定',
     general: '通用',
@@ -3057,6 +3126,24 @@ export default {
     stopRecording: '停止錄製',
     chamberLight: '切換腔室燈',
     unavailable: '攝影機無法使用',
+    moonraker: {
+      title: 'Moonraker 攝影機',
+      refresh: '重新整理攝影機',
+      primary: '主要攝影機',
+      unsupported: '不支援',
+      disabledInMoonraker: '已在 Moonraker 中停用',
+      editManual: '編輯手動攝影機',
+      streamUrl: '串流 URL',
+      newStreamOrSnapshotUrl: '新的串流或快照 URL',
+      snapshotUrl: '快照 URL',
+      newSnapshotUrl: '新的快照 URL（選填）',
+      noCameras: '未發現攝影機。',
+      history: '攝影機歷史（{{count}}）',
+      lastSeen: '最後發現：{{date}}',
+      restoreAsManual: '還原為手動攝影機',
+      removeHistory: '從歷史中移除',
+      moreCameras: '更多攝影機',
+    },
     diagnose: {
       button: '診斷',
       modalTitle: '攝影機診斷',
@@ -6324,8 +6411,8 @@ export default {
       },
       'camera-connection-refused': {
         name: '無法存取攝影機串流',
-        cause: '無法在 RTSPS 322 連接埠連線即時攝影機。該連接埠被封鎖，或印表機上的攝影機或區域網路即時影像已關閉。',
-        fix: '請在印表機上啟用攝影機和區域網路即時影像，並確認 322 連接埠未被封鎖。這不會影響列印。',
+        cause: '無法在 {{cameraEndpoint}} 連接埠連線即時攝影機。該連接埠被封鎖，或印表機上的攝影機或區域網路即時影像已關閉。',
+        fix: '請在印表機上啟用攝影機和區域網路即時影像，並確認 {{cameraPort}} 連接埠未被封鎖。這不會影響列印。',
       },
       'database-locked': {
         name: '資料庫寫入衝突',

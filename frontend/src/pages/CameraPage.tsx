@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
@@ -6,10 +7,10 @@ import { RefreshCw, AlertTriangle, Camera, Maximize, Minimize, WifiOff, ZoomIn, 
 import { api, getAuthToken, getStreamToken, withStreamToken } from '../api/client';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
-import { useStreamTokenSync } from '../hooks/useCameraStreamToken';
 import { ChamberLight } from '../components/icons/ChamberLight';
 import { SkipObjectsModal, SkipObjectsIcon } from '../components/SkipObjectsModal';
 import { CameraDiagnoseModal } from '../components/CameraDiagnoseModal';
+import { resolveMoonrakerCameraId } from '../utils/moonrakerCameras';
 
 const MAX_RECONNECT_ATTEMPTS = 5;
 const INITIAL_RECONNECT_DELAY = 2000; // 2 seconds
@@ -20,26 +21,25 @@ export function CameraPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission, authEnabled, user } = useAuth();
+  const { hasPermission, authEnabled, user, loading: authLoading } = useAuth();
   const { printerId } = useParams<{ printerId: string }>();
   const id = parseInt(printerId || '0', 10);
   const [searchParams] = useSearchParams();
   const fpsParam = parseInt(searchParams.get('fps') || '15', 10);
   const fps = Math.min(Math.max(isNaN(fpsParam) ? 15 : fpsParam, 1), 30);
 
-  // Subscribe to the stream-token query so this page re-renders once the token
-  // arrives. useStreamTokenSync (mounted in App) already owns the fetch; this
-  // useQuery call dedupes via the shared key and just reads the cached value.
-  useStreamTokenSync();
+  // Subscribe to the shared stream-token query so this page re-renders once the
+  // token arrives. App uses the same key, so React Query deduplicates the fetch.
   const { data: streamTokenData } = useQuery({
     queryKey: ['camera-stream-token', user?.id ?? null],
     queryFn: () => api.getCameraStreamToken(),
-    enabled: authEnabled ? !!user : true,
+    enabled: !authLoading && (!authEnabled || user !== null),
     staleTime: 50 * 60 * 1000,
   });
   const streamTokenValue = streamTokenData?.token ?? getStreamToken();
 
   const [streamMode, setStreamMode] = useState<'stream' | 'snapshot'>('stream');
+  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const [showSkipObjectsModal, setShowSkipObjectsModal] = useState(false);
   const [showDiagnoseModal, setShowDiagnoseModal] = useState(false);
   const [streamError, setStreamError] = useState(false);
@@ -68,10 +68,22 @@ export function CameraPage() {
     queryFn: () => api.getPrinter(id),
     enabled: id > 0,
   });
+  const { data: cameras = [] } = useQuery({
+    queryKey: ['printerCameras', id],
+    queryFn: () => api.listPrinterCameras(id),
+    enabled: id > 0 && printer?.provider === 'moonraker',
+    staleTime: 30_000,
+  });
+
+  useEffect(() => {
+    if (printer?.provider !== 'moonraker' || cameras.length === 0) return;
+    const nextCameraId = resolveMoonrakerCameraId(cameras, selectedCameraId);
+    if (nextCameraId !== selectedCameraId) setSelectedCameraId(nextCameraId);
+  }, [cameras, printer?.provider, selectedCameraId]);
 
   // Fetch printer status for light toggle and skip objects
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', id],
+    queryKey: queryKeys.printerStatus(id),
     queryFn: () => api.getPrinterStatus(id),
     refetchInterval: 30000,
     enabled: id > 0,
@@ -81,9 +93,9 @@ export function CameraPage() {
   const chamberLightMutation = useMutation({
     mutationFn: (on: boolean) => api.setChamberLight(id, on),
     onMutate: async (on) => {
-      await queryClient.cancelQueries({ queryKey: ['printerStatus', id] });
-      const previousStatus = queryClient.getQueryData(['printerStatus', id]);
-      queryClient.setQueryData(['printerStatus', id], (old: typeof status) => ({
+      await queryClient.cancelQueries({ queryKey: queryKeys.printerStatus(id) });
+      const previousStatus = queryClient.getQueryData(queryKeys.printerStatus(id));
+      queryClient.setQueryData(queryKeys.printerStatus(id), (old: typeof status) => ({
         ...old,
         chamber_light: on,
       }));
@@ -94,7 +106,7 @@ export function CameraPage() {
     },
     onError: (error: Error, _, context) => {
       if (context?.previousStatus) {
-        queryClient.setQueryData(['printerStatus', id], context.previousStatus);
+        queryClient.setQueryData(queryKeys.printerStatus(id), context.previousStatus);
       }
       showToast(error.message || t('printers.toast.failedToControlChamberLight'), 'error');
     },
@@ -598,14 +610,18 @@ export function CameraPage() {
   // the token directly from the reactive query value instead of relying on the
   // module-level cache in withStreamToken(), because that cache is updated in a
   // useEffect that runs after render.
-  const waitingForStreamToken = authEnabled && !streamTokenValue;
+  const waitingForStreamToken = authLoading || (authEnabled && !streamTokenValue);
   const appendToken = (url: string) =>
     streamTokenValue ? `${url}&token=${encodeURIComponent(streamTokenValue)}` : withStreamToken(url);
   const currentUrl = transitioning || waitingForStreamToken
     ? ''
     : streamMode === 'stream'
-      ? appendToken(`/api/v1/printers/${id}/camera/stream?fps=${fps}&t=${imageKey}`)
-      : appendToken(`/api/v1/printers/${id}/camera/snapshot?t=${imageKey}`);
+      ? appendToken(selectedCameraId
+        ? `/api/v1/printers/${id}/cameras/${selectedCameraId}/stream?fps=${fps}&t=${imageKey}`
+        : `/api/v1/printers/${id}/camera/stream?fps=${fps}&t=${imageKey}`)
+      : appendToken(selectedCameraId
+        ? `/api/v1/printers/${id}/cameras/${selectedCameraId}/snapshot?t=${imageKey}`
+        : `/api/v1/printers/${id}/camera/snapshot?t=${imageKey}`);
 
   const isDisabled = streamLoading || transitioning || isReconnecting;
 
@@ -626,6 +642,47 @@ export function CameraPage() {
           {printer?.name || `Printer ${id}`}
         </h1>
         <div className="flex items-center gap-2">
+          {printer?.provider === 'moonraker' && cameras.length > 1 && (
+            <div className="flex items-center gap-1">
+              {cameras.slice(0, 3).map((camera) => (
+                <button
+                  key={camera.id}
+                  type="button"
+                  disabled={!camera.enabled || !camera.available || (!camera.supported_live && !camera.snapshot_available)}
+                  onClick={() => {
+                    setSelectedCameraId(camera.id);
+                    setStreamError(false);
+                    setStreamLoading(true);
+                    setImageKey(Date.now());
+                  }}
+                  className={`rounded px-2 py-1 text-xs ${camera.id === selectedCameraId ? 'bg-bambu-green text-white' : 'bg-bambu-dark text-bambu-gray'} disabled:opacity-40`}
+                  title={camera.name}
+                >
+                  {camera.name}
+                </button>
+              ))}
+              {cameras.length > 3 && (
+                <select
+                  aria-label={t('camera.moonraker.moreCameras')}
+                  value={cameras.slice(3).some((camera) => camera.id === selectedCameraId) ? selectedCameraId ?? '' : ''}
+                  onChange={(event) => {
+                    setSelectedCameraId(Number(event.target.value));
+                    setStreamError(false);
+                    setStreamLoading(true);
+                    setImageKey(Date.now());
+                  }}
+                  className="rounded bg-bambu-dark px-2 py-1 text-xs text-white"
+                >
+                  <option value="">{t('common.more', { count: cameras.length - 3 })}</option>
+                  {cameras.slice(3).map((camera) => (
+                    <option key={camera.id} value={camera.id} disabled={!camera.enabled || !camera.available}>
+                      {camera.name}
+                    </option>
+                  ))}
+                </select>
+              )}
+            </div>
+          )}
           {/* Mode toggle */}
           <div className="flex bg-bambu-dark rounded p-0.5">
             <button

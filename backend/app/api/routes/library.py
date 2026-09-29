@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.routes.cloud import resolve_api_key_cloud_owner
+from backend.app.api.routes.slicer import resolve_orca_api_url
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     require_ownership_permission,
@@ -62,7 +63,12 @@ from backend.app.schemas.library import (
     ZipExtractResponse,
     ZipExtractResult,
 )
-from backend.app.schemas.slicer import DestinationArtifactKind, SliceRequest, SliceResponse
+from backend.app.schemas.slicer import (
+    DestinationArtifactKind,
+    LibraryFilePlatesResponse,
+    SliceRequest,
+    SliceResponse,
+)
 from backend.app.services.archive import ThreeMFParser
 from backend.app.services.plate_thumbnail import inject_plate_thumbnails_if_missing
 from backend.app.services.stl_thumbnail import MIN_USABLE_STL_BYTES, generate_stl_thumbnail
@@ -2595,7 +2601,7 @@ async def add_files_to_queue(
     return AddToQueueResponse(added=added, errors=errors)
 
 
-@router.get("/files/{file_id}/plates")
+@router.get("/files/{file_id}/plates", response_model=LibraryFilePlatesResponse)
 async def get_library_file_plates(
     file_id: int,
     db: AsyncSession = Depends(get_db),
@@ -2848,6 +2854,7 @@ async def get_library_file_plates(
                         "index": idx,
                         "name": plate_name,
                         "objects": objects,
+                        "object_ids": plate_object_ids.get(idx, []),
                         "object_count": len(objects),
                         "has_thumbnail": has_thumbnail,
                         "thumbnail_url": f"/api/v1/library/files/{file_id}/plate-thumbnail/{idx}"
@@ -3263,6 +3270,17 @@ def _sanitize_project_settings_sentinels(zip_bytes: bytes) -> bytes:
         return zip_bytes
 
 
+def _patch_process_overrides(process_json: str, overrides: dict) -> str:
+    """Merge validated sparse overrides into a copy of the resolved profile."""
+    try:
+        profile = json.loads(process_json)
+    except json.JSONDecodeError as exc:
+        raise HTTPException(status_code=400, detail="Resolved process preset is not valid JSON") from exc
+    if not isinstance(profile, dict):
+        raise HTTPException(status_code=400, detail="Resolved process preset must be a JSON object")
+    return json.dumps({**profile, **overrides})
+
+
 def _patch_process_bed_type(process_json: str, bed_type: str) -> str:
     """Overwrite ``curr_bed_type`` in a process-profile JSON before forwarding
     to the slicer sidecar.
@@ -3302,7 +3320,29 @@ _SOURCE_PROCESS_SUPPORT_KEYS_TO_PRESERVE = (
 )
 
 
-def _patch_process_support_settings(process_json: str, source_3mf_bytes: bytes) -> str:
+def _schema_native_support_value(key: str, value: object) -> object:
+    if key == "enable_support":
+        if type(value) is int and value in (0, 1):
+            return bool(value)
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            if normalized in {"1", "true"}:
+                return True
+            if normalized in {"0", "false"}:
+                return False
+    if key in {"support_filament", "support_interface_filament"} and isinstance(value, str):
+        normalized = value.strip()
+        if re.fullmatch(r"-?\d+", normalized):
+            return int(normalized)
+    return value
+
+
+def _patch_process_support_settings(
+    process_json: str,
+    source_3mf_bytes: bytes,
+    *,
+    schema_native: bool = False,
+) -> str:
     """Overlay the source 3MF's support configuration onto the process JSON.
 
     Only fires on 3MF sources — STL / STEP don't carry `project_settings.
@@ -3332,7 +3372,8 @@ def _patch_process_support_settings(process_json: str, source_3mf_bytes: bytes) 
 
     for key in _SOURCE_PROCESS_SUPPORT_KEYS_TO_PRESERVE:
         if key in src_cfg:
-            process_cfg[key] = src_cfg[key]
+            value = src_cfg[key]
+            process_cfg[key] = _schema_native_support_value(key, value) if schema_native else value
 
     return json.dumps(process_cfg)
 
@@ -3431,49 +3472,61 @@ async def _run_slicer_with_fallback(
         SlicerApiService,
         SlicerApiUnavailableError,
         SlicerInputError,
+        SlicerSchemaMismatchError,
     )
 
     user: User | None = None
     presets: dict[str, str] = {}
     filament_jsons: list[str] = []
-    # Resolve each slot via the source-aware resolver. The schema
-    # validator has already normalised legacy `*_preset_id: int`
-    # fields into `PresetRef(source='local', id=str(int))`, so all
-    # three are guaranteed non-None here.
     if current_user_id is not None:
         user = await db.get(User, current_user_id)
 
-    refs = {
-        "printer": request.printer_preset,
-        "process": request.process_preset,
-    }
-    for slot, ref in refs.items():
-        assert ref is not None, "schema validator guarantees PresetRef is set"
-        presets[slot] = await resolve_preset_ref(db, user, ref, slot)
-    # Multi-color: resolve each filament slot in plate order. The schema
-    # validator backfilled `filament_presets` from the legacy `filament_preset`
-    # field for single-color callers, so this list is always non-empty.
-    for ref in request.filament_presets:
-        assert ref is not None, "schema validator guarantees filament list is non-None"
-        filament_jsons.append(await resolve_preset_ref(db, user, ref, "filament"))
+    from backend.app.services.slicer_catalog_selection import load_pinned_profile_content
 
-    # Bed-type override (#1337): patch curr_bed_type onto the resolved
-    # process JSON so the slicer's StaticPrintConfig pass picks up the
-    # user's pick instead of whatever the process preset defaults to.
-    # Without this, slicing an STL of ABS onto a process preset whose
-    # default is "Cool Plate" fails with "Plate 1: Cool Plate does not
-    # support filament 1" — the reporter's exact scenario.
+    pinned = await load_pinned_profile_content(db, job_id)
+    if pinned is not None:
+        presets = {"printer": pinned.printer, "process": pinned.process}
+        filament_jsons = list(pinned.filaments)
+    else:
+        refs = {
+            "printer": request.printer_preset,
+            "process": request.process_preset,
+        }
+        for slot, ref in refs.items():
+            assert ref is not None, "schema validator guarantees PresetRef is set"
+            presets[slot] = await resolve_preset_ref(db, user, ref, slot)
+        for ref in request.filament_presets:
+            assert ref is not None, "schema validator guarantees filament list is non-None"
+            filament_jsons.append(await resolve_preset_ref(db, user, ref, "filament"))
+
+    is_standard_process = (
+        pinned.process_source == "standard"
+        if pinned is not None
+        else request.process_preset is not None and request.process_preset.source == "standard"
+    )
+    process_overrides_for_sidecar: dict | None = dict(request.process_overrides) if is_standard_process else None
+
+    if request.process_overrides and not is_standard_process:
+        presets["process"] = _patch_process_overrides(presets["process"], request.process_overrides)
+
+    # Bed-type override (#1337): patch curr_bed_type onto full profiles. Standard
+    # profiles remain exact trusted stubs; the sidecar applies this setting only
+    # after resolving the selected bundled profile.
     if request.bed_type:
-        presets["process"] = _patch_process_bed_type(presets["process"], request.bed_type)
+        if process_overrides_for_sidecar is not None:
+            process_overrides_for_sidecar["curr_bed_type"] = request.bed_type
+        else:
+            presets["process"] = _patch_process_bed_type(presets["process"], request.bed_type)
 
-    # Slicer routing — pick the sidecar URL by preferred_slicer.
-    # The per-install URL setting (Settings UI → Slicer card) wins; an
-    # empty value falls back to the SLICER_API_URL / BAMBU_STUDIO_API_URL
-    # env defaults defined in core/config.py.
+    # Klipper and schema-bound workbench requests require Orca. Legacy Bambu
+    # requests retain preferred_slicer routing.
     preferred = (await get_setting(db, "preferred_slicer")) or "bambu_studio"
-    if preferred == "orcaslicer":
-        configured = await get_setting(db, "orcaslicer_api_url")
-        api_url = (configured or app_settings.slicer_api_url).strip()
+    if (
+        request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
+        or request.schema_hash is not None
+        or preferred == "orcaslicer"
+    ):
+        api_url = await resolve_orca_api_url(db)
     elif preferred == "bambu_studio":
         configured = await get_setting(db, "bambu_studio_api_url")
         api_url = (configured or app_settings.bambu_studio_api_url).strip()
@@ -3519,7 +3572,16 @@ async def _run_slicer_with_fallback(
         # assignments get discarded and the slice comes out single-material
         # with a PVA slot loaded but never used.
         if is_bambu_3mf:
-            presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
+            if process_overrides_for_sidecar is not None:
+                process_overrides_for_sidecar = json.loads(
+                    _patch_process_support_settings(
+                        json.dumps(process_overrides_for_sidecar),
+                        primary_bytes,
+                        schema_native=True,
+                    )
+                )
+            else:
+                presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
 
     used_embedded_settings = False
     service = SlicerApiService(api_url)
@@ -3546,7 +3608,13 @@ async def _run_slicer_with_fallback(
         from backend.app.utils.printer_models import is_dual_nozzle_model
 
         source_model = extract_source_printer_model(primary_bytes)
-        target_model = await _resolve_target_printer_model(db, user, request)
+        try:
+            target_data = json.loads(presets["printer"])
+            target_model = _canonical_printer_model(
+                target_data.get("printer_model") or target_data.get("printer_settings_id") or target_data.get("name")
+            )
+        except (AttributeError, TypeError, ValueError):
+            target_model = None
         if source_model and target_model and is_dual_nozzle_model(source_model) != is_dual_nozzle_model(target_model):
             logger.info(
                 "Cross-nozzle-class re-slice (%s -> %s): enabling --arrange so BS reconciles "
@@ -3597,9 +3665,24 @@ async def _run_slicer_with_fallback(
     # Same-class slice-all goes through the regular path below — the
     # sidecar's native ``--slice 0`` produces the right shape directly.
     export_3mf = request.export_3mf and request.destination_artifact_kind is DestinationArtifactKind.BAMBU_3MF
-    use_cross_class_slice_all = cross_class_arrange and request.plate == 0 and export_3mf
+    use_cross_class_slice_all = (
+        (cross_class_arrange or request.arrange) and is_3mf and request.plate == 0 and export_3mf
+    )
 
     try:
+        if process_overrides_for_sidecar and request.schema_hash is None:
+            raise HTTPException(
+                status_code=400,
+                detail="schema_hash is required when standard process settings are patched",
+            )
+        if request.schema_hash is not None:
+            await service.validate_workbench_request(
+                schema_hash=request.schema_hash,
+                process_overrides=process_overrides_for_sidecar
+                if process_overrides_for_sidecar is not None
+                else request.process_overrides,
+                model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
+            )
         try:
             if use_cross_class_slice_all:
                 from backend.app.services.slicer_3mf_convert import (
@@ -3654,9 +3737,12 @@ async def _run_slicer_with_fallback(
                         printer_profile_json=presets["printer"],
                         process_profile_json=presets["process"],
                         filament_profile_jsons=filament_jsons,
+                        process_overrides=process_overrides_for_sidecar,
                         plate=plate_num,
                         export_3mf=True,
                         arrange=True,
+                        schema_hash=request.schema_hash,
+                        model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
                         request_id=progress_request_id,
                         on_progress=plate_cb,
                     )
@@ -3687,9 +3773,14 @@ async def _run_slicer_with_fallback(
                     printer_profile_json=presets["printer"],
                     process_profile_json=presets["process"],
                     filament_profile_jsons=filament_jsons,
+                    process_overrides=process_overrides_for_sidecar,
                     plate=request.plate,
                     export_3mf=export_3mf,
-                    arrange=cross_class_arrange,
+                    arrange=request.arrange
+                    or cross_class_arrange
+                    or bool(request.model_state and request.model_state.arrange),
+                    schema_hash=request.schema_hash,
+                    model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
                     request_id=progress_request_id,
                     on_progress=progress_callback,
                 )
@@ -3703,7 +3794,11 @@ async def _run_slicer_with_fallback(
                 # (e.g. re-slicing an H2D model for an X1C: the object is off
                 # the smaller bed). Surface the slicer's reason instead.
                 raise HTTPException(status_code=400, detail=rejection) from exc
-            if not is_3mf or request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE:
+            if (
+                not is_3mf
+                or request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
+                or request.schema_hash is not None
+            ):
                 raise
             logger.warning(
                 "Slicer CLI failed on the --load-settings path for %s (%s); retrying with embedded settings",
@@ -3729,6 +3824,11 @@ async def _run_slicer_with_fallback(
             used_embedded_settings = True
     except SlicerInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except SlicerSchemaMismatchError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail={"code": "slicer_schema_mismatch", "detail": str(exc)},
+        ) from exc
     except SlicerApiServerError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except SlicerApiUnavailableError as exc:
@@ -3835,12 +3935,18 @@ async def slice_and_persist(
     )
 
     if is_klipper_gcode:
+        from backend.app.services.moonraker_artifact import ArtifactValidationError, validate_raw_gcode
         from backend.app.utils.filename import validate_moonraker_gcode_basename
 
-        safe_source_name = Path(model_filename.replace("\\", "/")).name
-        base_name = safe_source_name.rsplit(".", 1)[0]
-        out_filename = f"{base_name}.gcode"
         try:
+            validate_raw_gcode(result.content)
+        except ArtifactValidationError as exc:
+            raise HTTPException(status_code=502, detail=f"Slicer returned an invalid Klipper artifact: {exc}") from exc
+
+        from backend.app.services.slicer_output import orca_gcode_filename
+
+        try:
+            out_filename = orca_gcode_filename(model_filename, result.content, result.print_time_seconds)
             validate_moonraker_gcode_basename(out_filename)
         except InvalidFilenameError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -3987,6 +4093,13 @@ async def slice_and_persist(
     )
 
 
+def _resliced_print_name(name: str) -> str:
+    """Reserve the suffix inside the archive column's character limit."""
+    suffix = " (re-sliced)"
+    limit = PrintArchive.__table__.c.print_name.type.length
+    return name[: limit - len(suffix)] + suffix
+
+
 async def slice_and_persist_as_archive(
     db: AsyncSession,
     *,
@@ -4019,22 +4132,29 @@ async def slice_and_persist_as_archive(
     )
 
     if is_klipper_gcode:
+        from backend.app.services.moonraker_artifact import ArtifactValidationError, validate_raw_gcode
         from backend.app.utils.filename import validate_moonraker_gcode_basename
 
-        safe_source_name = Path(model_filename.replace("\\", "/")).name
-        base_name = safe_source_name.rsplit(".", 1)[0]
-        out_filename = f"{base_name}.gcode"
         try:
+            validate_raw_gcode(result.content)
+        except ArtifactValidationError as exc:
+            raise HTTPException(status_code=502, detail=f"Slicer returned an invalid Klipper artifact: {exc}") from exc
+
+        from backend.app.services.slicer_output import orca_gcode_filename
+
+        try:
+            out_filename = orca_gcode_filename(model_filename, result.content, result.print_time_seconds)
             validate_moonraker_gcode_basename(out_filename)
         except InvalidFilenameError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+        base_name = out_filename[:-6]
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
         printer_folder = str(source_archive.printer_id) if source_archive.printer_id is not None else "unassigned"
         archive_dir = safe_join_under(
             app_settings.archive_dir,
             printer_folder,
-            f"{timestamp}_{base_name}_sliced_{uuid.uuid4().hex}",
+            f"{timestamp}_sliced_{uuid.uuid4().hex}",
         )
         out_path = safe_join_under(archive_dir, out_filename)
         archive_dir_created = False
@@ -4056,7 +4176,7 @@ async def slice_and_persist_as_archive(
             file_size=len(result.content),
             content_hash=hashlib.sha256(result.content).hexdigest(),
             thumbnail_path=None,
-            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_name=_resliced_print_name(source_archive.print_name or base_name),
             print_time_seconds=result.print_time_seconds,
             filament_used_grams=result.filament_used_g or None,
             filament_type=source_archive.filament_type,
@@ -4217,7 +4337,7 @@ async def slice_and_persist_as_archive(
             thumbnail_path=thumbnail_path,
             # Inherit identity from the source archive so the new entry shows
             # up alongside its sibling in the archives list.
-            print_name=(source_archive.print_name or base_name) + " (re-sliced)",
+            print_name=_resliced_print_name(source_archive.print_name or base_name),
             print_time_seconds=result.print_time_seconds,
             filament_used_grams=filament_g or None,
             filament_type=new_filament_type,
@@ -4274,6 +4394,12 @@ async def slice_library_file(
     request: SliceRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = Depends(require_permission_if_auth_enabled(Permission.LIBRARY_UPLOAD)),
+    auth_result: tuple[User | None, bool] = Depends(
+        require_ownership_permission(
+            Permission.LIBRARY_READ_ALL,
+            Permission.LIBRARY_READ_OWN,
+        )
+    ),
     api_key_cloud_owner: User | None = Depends(resolve_api_key_cloud_owner),
 ):
     """Enqueue a slice job for a library file. Returns 202 + job_id; the
@@ -4284,11 +4410,11 @@ async def slice_library_file(
         http_exception_to_job_error,
         slice_dispatch,
     )
+    from backend.app.services.slicer_catalog_selection import CatalogSelectionError, persist_catalog_selection
 
     src_result = await db.execute(LibraryFile.active().where(LibraryFile.id == file_id))
-    lib_file = src_result.scalar_one_or_none()
-    if not lib_file:
-        raise HTTPException(status_code=404, detail="File not found")
+    visibility_user, can_read_all = auth_result
+    lib_file = _ensure_library_file_visible(src_result.scalar_one_or_none(), visibility_user, can_read_all)
 
     src_lower = (lib_file.filename or "").lower()
     if not (
@@ -4356,12 +4482,25 @@ async def slice_library_file(
                 raise http_exception_to_job_error(exc) from exc
         return response.model_dump()
 
-    job = await slice_dispatch.enqueue(
-        kind="library_file",
-        source_id=lib_file.id,
-        source_name=lib_file.filename,
-        run=_run,
-    )
+    async def _before_commit(job_db: AsyncSession, job_record) -> None:
+        await persist_catalog_selection(job_db, job_record, request, source_path=src_path)
+
+    try:
+        job = await slice_dispatch.enqueue(
+            kind="library_file",
+            source_id=lib_file.id,
+            source_name=lib_file.filename,
+            owner_id=user_id,
+            request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
+            schema_hash=request.schema_hash,
+            run=_run,
+            before_commit=_before_commit,
+        )
+    except CatalogSelectionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "reason_codes": error.reason_codes},
+        ) from error
     return {
         "job_id": job.id,
         "status": job.status,

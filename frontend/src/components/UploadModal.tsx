@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -46,7 +47,7 @@ export function UploadModal({ onClose, initialFiles }: UploadModalProps) {
     onSuccess: (result) => {
       setUploadResult(result);
       queryClient.invalidateQueries({ queryKey: ['archives'] });
-      queryClient.invalidateQueries({ queryKey: ['archiveStats'] });
+      queryClient.invalidateQueries({ queryKey: queryKeys.archiveStats() });
 
       // Update file statuses based on result
       setFiles((prev) =>

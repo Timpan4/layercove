@@ -107,7 +107,7 @@ Use repository-declared tooling. On Windows, run Python/frontend tooling through
 | Migrations | Existing-database startup/migration tests for SQLite and applicable PostgreSQL paths | Schema, model, config, or startup changes |
 | Frontend | `bun install --frozen-lockfile`, lint, TypeScript check, tests, and build | Frontend/API/schema/identity changes |
 | Generated output | Compare source and generated manifest/metadata; inspect tracked `static/` diff | Frontend build or identity changes |
-| Slicer | Provider-aware slicing tests and `docker compose -f slicer-api/docker-compose.yml config` | Slicer/profile/output changes |
+| Slicer | Provider-aware slicing tests and the [public Orca Slicer API](https://github.com/Timpan4/orca-slicer-api) Compose config check | Slicer/profile/output changes |
 | Compose | `docker compose config` plus compatibility-name assertions | Compose/install/update changes |
 | Production image | `docker build`, backend import/static checks, start, `/health`, settings API, frontend HTTP smoke | Docker/dependency/frontend/startup changes |
 | Installer syntax | `bash -n install/*.sh` and PowerShell parser check | Install/update changes |

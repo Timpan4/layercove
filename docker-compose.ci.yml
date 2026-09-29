@@ -1,0 +1,6 @@
+# CI-only override: use the image already built and loaded by Buildx.
+# Local docker-compose.test.yml builds remain unchanged.
+services:
+  integration:
+    image: bambuddy:test
+    pull_policy: never

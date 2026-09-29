@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { useQuery, useQueries } from '@tanstack/react-query';
@@ -125,7 +126,7 @@ export function SpoolBuddyLayout() {
   });
   const statusQueries = useQueries({
     queries: printers.map((printer: Printer) => ({
-      queryKey: ['printerStatus', printer.id],
+      queryKey: queryKeys.printerStatus(printer.id),
       queryFn: () => api.getPrinterStatus(printer.id),
       refetchInterval: 10000,
       select: (data: PrinterStatus) => ({ connected: data?.connected }),

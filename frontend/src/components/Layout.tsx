@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { NavLink, Outlet, useNavigate, useLocation } from 'react-router-dom';
 import { Printer, Archive, ListOrdered, BarChart3, Cloud, Settings, Sun, Moon, Monitor, ChevronLeft, ChevronRight, Keyboard, Github, ArrowUpCircle, Wrench, FolderKanban, FolderOpen, X, Menu, Info, Plug, Bug, LogOut, Key, Loader2, Disc3, ShieldAlert, Globe, Bell, type LucideIcon } from 'lucide-react';
@@ -91,6 +92,9 @@ export function Layout() {
     const stored = localStorage.getItem('sidebarExpanded');
     return stored !== 'false';
   });
+  const sidebarPreferenceBeforeWorkbench = useRef(sidebarExpanded);
+  const wasSlicerWorkbench = useRef(false);
+  const isSlicerWorkbench = location.pathname === '/slicer/workbench';
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSwitchbar, setShowSwitchbar] = useState(false);
@@ -246,7 +250,7 @@ export function Layout() {
 
   const printerStatusQueries = useQueries({
     queries: queuePrinterIds.map(id => ({
-      queryKey: ['printerStatus', id],
+      queryKey: queryKeys.printerStatus(id),
       queryFn: () => api.getPrinterStatus(id),
       staleTime: 30 * 1000, // WebSocket keeps this warm
     })),
@@ -384,8 +388,20 @@ export function Layout() {
   }, [location.pathname, navigate]);
 
   useEffect(() => {
-    localStorage.setItem('sidebarExpanded', String(sidebarExpanded));
-  }, [sidebarExpanded]);
+    if (isSlicerWorkbench && !wasSlicerWorkbench.current) {
+      sidebarPreferenceBeforeWorkbench.current = sidebarExpanded;
+      setSidebarExpanded(false);
+    } else if (!isSlicerWorkbench && wasSlicerWorkbench.current) {
+      setSidebarExpanded(sidebarPreferenceBeforeWorkbench.current);
+    }
+    wasSlicerWorkbench.current = isSlicerWorkbench;
+  }, [isSlicerWorkbench, sidebarExpanded]);
+
+  useEffect(() => {
+    if (!isSlicerWorkbench) {
+      localStorage.setItem('sidebarExpanded', String(sidebarExpanded));
+    }
+  }, [isSlicerWorkbench, sidebarExpanded]);
 
   useEffect(() => {
     const refreshSidebarLayout = () => {
@@ -490,7 +506,7 @@ export function Layout() {
             <Menu className="w-6 h-6 text-white" />
           </button>
           <img
-            src={resolvedMode === 'dark' ? '/img/bambuddy_logo_dark_transparent.png' : '/img/bambuddy_logo_light.png'}
+            src={resolvedMode === 'dark' ? '/img/layercove-wordmark-light.svg' : '/img/layercove-wordmark-dark.svg'}
             alt="LayerCove"
             className="h-8 ml-3"
           />
@@ -516,9 +532,15 @@ export function Layout() {
         {/* Logo */}
         <div className={`border-b border-bambu-dark-tertiary flex items-center justify-center ${isSidebarCompact || sidebarExpanded ? 'p-4' : 'p-2'}`}>
           <img
-            src={resolvedMode === 'dark' ? '/img/bambuddy_logo_dark_transparent.png' : '/img/bambuddy_logo_light.png'}
+            src={isSidebarCompact || sidebarExpanded
+              ? resolvedMode === 'dark'
+                ? '/img/layercove-wordmark-light.svg'
+                : '/img/layercove-wordmark-dark.svg'
+              : resolvedMode === 'dark'
+                ? '/img/layercove-mark-light.svg'
+                : '/img/layercove-mark-dark.svg'}
             alt="LayerCove"
-            className={isSidebarCompact || sidebarExpanded ? 'h-16 w-auto' : 'h-8 w-8 object-cover object-left'}
+            className={isSidebarCompact || sidebarExpanded ? 'h-16 w-auto' : 'h-8 w-8'}
           />
         </div>
 

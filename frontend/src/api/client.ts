@@ -1,3 +1,4 @@
+import type { components } from './generated';
 import type { ArchivePlatesResponse, LibraryFilePlatesResponse } from '../types/plates';
 
 const API_BASE = '/api/v1';
@@ -143,7 +144,18 @@ async function request<T>(
       // to pick an i18n key, message is the English fallback, any extra
       // fields land on ApiError.detail (e.g. `deficit` for #1496).
       code = typeof detail.code === 'string' ? detail.code : null;
-      message = typeof detail.message === 'string' ? detail.message : `HTTP ${response.status}`;
+      const reasonCodes: string[] = Array.isArray(detail.reason_codes)
+        ? (detail.reason_codes as unknown[]).filter(
+            (reason: unknown): reason is string => typeof reason === 'string',
+          )
+        : [];
+      const readableCode = code?.replaceAll('_', ' ');
+      const readableReasons = reasonCodes.map((reason) => reason.replaceAll('_', ' '));
+      message = typeof detail.message === 'string'
+        ? detail.message
+        : readableCode
+          ? `${readableCode}${readableReasons.length ? `: ${readableReasons.join(', ')}` : ''}`
+          : `HTTP ${response.status}`;
     } else {
       message = `HTTP ${response.status}`;
     }
@@ -303,6 +315,24 @@ export interface LongLivedCameraToken {
 }
 
 // Printer types
+export interface NetworkSiteSummary {
+  id: number;
+  name: string;
+  site_number: number;
+}
+
+export interface NetworkSite extends NetworkSiteSummary {
+  ipv4_cidr: string;
+  four_via_six_cidr: string;
+  printer_count: number;
+}
+
+export interface NetworkSiteInput {
+  name: string;
+  site_number: number;
+  ipv4_cidr: string;
+}
+
 export interface Printer {
   id: number;
   name: string;
@@ -315,6 +345,9 @@ export interface Printer {
   access_code?: string;
   model: string | null;
   location: string | null;  // Group/location name
+  network_site_id: number | null;
+  network_site_lan_ip: string | null;
+  network_site: NetworkSiteSummary | null;
   nozzle_count: number;  // 1 or 2, auto-detected from MQTT
   is_active: boolean;
   auto_archive: boolean;
@@ -329,6 +362,39 @@ export interface Printer {
   updated_at: string;
   capabilities: PrinterCapabilities;
   moonraker_config: MoonrakerPrinterConfigResponse | null;
+}
+
+export interface PrinterCamera {
+  id: number;
+  printer_id: number;
+  source: 'moonraker' | 'manual';
+  source_uid: string;
+  name: string;
+  location: string | null;
+  service: string | null;
+  camera_type: 'mjpeg' | 'rtsp' | 'snapshot' | 'unsupported';
+  source_enabled: boolean;
+  enabled: boolean;
+  is_primary: boolean;
+  rotation: 0 | 90 | 180 | 270;
+  sort_order: number;
+  available: boolean;
+  supported_live: boolean;
+  snapshot_available: boolean;
+  history: boolean;
+  first_seen_at: string;
+  last_seen_at: string;
+  missing_since: string | null;
+}
+
+export interface PrinterCameraUpdate {
+  enabled?: boolean;
+  is_primary?: boolean;
+  rotation?: 0 | 90 | 180 | 270;
+  name?: string;
+  stream_url?: string;
+  snapshot_url?: string;
+  camera_type?: 'mjpeg' | 'rtsp' | 'snapshot';
 }
 
 export interface PrinterCapabilities {
@@ -585,6 +651,8 @@ export interface PrinterCreate {
   moonraker_config?: MoonrakerPrinterConfigInput;
   model?: string;
   location?: string;
+  network_site_id?: number | null;
+  network_site_lan_ip?: string | null;
   auto_archive?: boolean;
   // Maintenance Mode flag (#1476). Backend already gates MQTT, queue dispatch,
   // scheduler, metrics and the print picker on this; toggling via PATCH
@@ -1506,12 +1574,11 @@ export interface BuiltinFilament {
 //   - Source-aware refs (`*_preset: PresetRef`) — new SliceModal that picks
 //     across cloud / local / standard tiers. Source-aware refs win when both
 //     are present in the same payload.
-export type PresetSource = 'orca_cloud' | 'cloud' | 'local' | 'standard';
-export interface PresetRef {
-  source: PresetSource;
-  id: string;
-}
+export type PresetSource = components['schemas']['PresetRef']['source'];
+export type PresetRef = components['schemas']['PresetRef'];
 export interface SliceRequest {
+  /** Arrange on the selected bed; false preserves source placement. */
+  arrange?: boolean;
   printer_preset_id?: number;
   process_preset_id?: number;
   filament_preset_id?: number;
@@ -1523,6 +1590,15 @@ export interface SliceRequest {
   // backend validator promotes a singular into a one-element list when this
   // is omitted, so legacy single-color clients keep working unchanged.
   filament_presets?: PresetRef[];
+  catalog_printer_id?: number;
+  catalog_binding_id?: number;
+  catalog_process_profile_id?: number;
+  catalog_filament_profile_ids?: number[];
+  catalog_acknowledgement?: Record<string, unknown> | null;
+  catalog_selection_evidence?: Record<string, unknown>;
+  catalog_history_job_id?: number;
+  catalog_history_mode?: 'exact' | 'upgrade';
+  catalog_tombstone_acknowledgement?: Record<string, unknown> | null;
   plate?: number;
   export_3mf?: boolean;
   destination_artifact_kind?: 'bambu_3mf' | 'klipper_gcode';
@@ -1532,6 +1608,64 @@ export interface SliceRequest {
   // "Textured PEI Plate", "Smooth PEI Plate", "Cool Plate (SuperTack)",
   // "Supertack Plate".
   bed_type?: string | null;
+  schema_hash?: string | null;
+  process_overrides?: Record<string, string | number | boolean | null | Array<string | number | boolean>>;
+  model_state?: SlicerModelState | null;
+}
+
+export interface SlicerModelTransform {
+  position: [number, number, number];
+  rotation: [number, number, number];
+  scale: [number, number, number];
+}
+
+export interface SlicerModelObjectState {
+  id: string;
+  transform?: SlicerModelTransform | null;
+  overrides?: Record<string, string | number | boolean | null | Array<string | number | boolean>>;
+}
+
+export interface SlicerModelState {
+  objects: SlicerModelObjectState[];
+  hidden_object_ids: string[];
+  lay_flat_object_ids: string[];
+  arrange: boolean;
+}
+
+export interface SlicerContractIdentity {
+  contract_version: string;
+  engine: { name: 'OrcaSlicer'; version: string; commit: string };
+  image_identity: { digest: string };
+  schema_hash: string;
+  capabilities: { process_schema: boolean; model_state: boolean; progress: boolean; cancel: boolean };
+  supported_scopes: Array<'global' | 'object'>;
+}
+
+export interface SlicerSchemaOption {
+  key: string;
+  type: string;
+  label?: string;
+  tooltip?: string;
+  mode?: 'simple' | 'advanced' | 'expert' | number;
+  units?: string | null;
+  min?: number | null;
+  max?: number | null;
+  choices?: Array<string | number> | null;
+  default?: unknown;
+}
+
+export interface SlicerProcessSchema extends SlicerContractIdentity {
+  pages: Array<{ name: string; groups: Array<{ name: string; options: string[] }> }>;
+  options: SlicerSchemaOption[];
+  scopes: Record<string, 'global' | 'object' | Array<'global' | 'object'>>;
+  samples: Record<string, unknown>;
+}
+
+export interface ResolvedSlicerProfile {
+  preset_type: 'printer' | 'process' | 'filament';
+  source: PresetSource;
+  id: string;
+  values: Record<string, unknown>;
 }
 
 // GET /api/v1/slicer/presets — unified listing across cloud / local / standard.
@@ -1569,6 +1703,156 @@ export interface UnifiedPresetsResponse {
   standard: UnifiedPresetsBySlot;
   cloud_status: SlicerCloudStatus;
   orca_cloud_status: SlicerCloudStatus;
+}
+
+export interface SlicerCatalogRevisionContent {
+  id: number;
+  profile_id: number;
+  content: Record<string, unknown>;
+  bed_content?: Record<string, unknown>;
+  bed_parent_revision_id?: number | null;
+  bed_issue?: 'missing_parent' | 'ambiguous_parent' | 'inheritance_cycle' | null;
+  content_hash: string;
+  review_state: string;
+}
+
+export interface FilamentProfileCopy {
+  profile_id: number;
+  revision_id: number;
+  local_preset_id: number;
+}
+
+export interface SlicerCatalogProfile {
+  profile_id: number;
+  revision_id: number;
+  latest_revision_id?: number;
+  active_revision_id?: number | null;
+  active?: boolean;
+  review_state?: 'pending' | 'approved' | 'rejected';
+  source: PresetSource;
+  account_id: number;
+  account_name: string | null;
+  remote_profile_id: string;
+  profile_type: 'printer' | 'process' | 'filament';
+  display_name: string;
+  content_hash: string;
+  compatibility_metadata: Record<string, unknown>;
+  tombstoned: boolean;
+  stale: boolean;
+  sharing_state: 'private' | 'pending' | 'shared';
+}
+
+export interface SlicerCatalogRevision {
+  id: number;
+  content_hash: string;
+  review_state: 'pending' | 'approved' | 'rejected';
+  created_at: string;
+  active: boolean;
+}
+
+export interface SlicerCatalogAccount {
+  id: number;
+  source: PresetSource;
+  remote_account_id: string;
+  display_name: string | null;
+  sharing_state: 'private' | 'pending' | 'shared';
+  consent_at: string | null;
+  sync_cursor: string | null;
+  last_sync_at: string | null;
+  last_successful_sync_at: string | null;
+  last_sync_error: string | null;
+  sync_frozen: boolean;
+}
+
+export interface SlicerCatalogReviewBatch {
+  id: number;
+  status: 'pending' | 'approved' | 'rejected' | 'superseded';
+  summary: { profiles?: number; revisions?: number } | null;
+  revisions: Array<{ id: number; profile_id: number; display_name: string }>;
+  sync_cursor_before: string | null;
+  sync_cursor_after: string | null;
+  reviewed_at: string | null;
+  created_at: string;
+}
+
+export type SlicerReadinessState = 'ready' | 'acknowledgement_required' | 'blocked';
+export interface SlicerCatalogBinding {
+  id: number;
+  printer_id: number;
+  printer_name: string | null;
+  profile_id: number;
+  profile_name: string;
+  expected_nozzle_diameter: number;
+  tool_index: number;
+  default_process_profile_id: number | null;
+  default_filament_profile_id: number | null;
+  enforcement_state: 'shadow' | 'enforced';
+  is_active: boolean;
+  confirmed_at: string | null;
+  readiness: { state: SlicerReadinessState; reason_codes: string[] };
+  nozzle: { status: 'confirmed' | 'offline' | 'stale' | 'unknown'; diameter: number | null; tool_index: number };
+}
+
+export interface SlicerCatalogBindingInput {
+  printer_id: number;
+  profile_id: number;
+  expected_nozzle_diameter: number;
+  tool_index?: number;
+  default_process_profile_id?: number | null;
+  default_filament_profile_id?: number | null;
+  enforcement_state?: 'shadow' | 'enforced';
+}
+
+export interface SlicerCatalogClassification {
+  profile_id: number;
+  revision_id: number;
+  profile_type: 'process' | 'filament';
+  display_name: string;
+  source: PresetSource;
+  account_id: number;
+  account_name: string | null;
+  stale: boolean;
+  classification: {
+    group: 'selected_printer' | 'other_installed_printers' | 'unclassified' | 'incompatible';
+    compatibility: 'match' | 'mismatch' | 'unknown';
+    readiness: SlicerReadinessState;
+    reason_codes: string[];
+    reason_details: string[];
+    selectable: boolean;
+    auto_selectable: boolean;
+    acknowledgement_required: boolean;
+  };
+}
+
+export type SlicerCatalogGroups = Record<
+  'selected_printer' | 'other_installed_printers' | 'unclassified' | 'incompatible',
+  SlicerCatalogClassification[]
+>;
+
+export interface SlicerCompatibilityMapping {
+  id: number;
+  profile_id: number;
+  printer_id: number;
+}
+
+export interface SlicerCatalogPreference {
+  id: number;
+  key: 'process_profile' | 'filament_profile';
+  value: { profile_id: number };
+}
+
+export interface SlicerFilamentRule {
+  id: number;
+  scope: 'exact_external' | 'signature';
+  filament_profile_id: number;
+  binding_id: number | null;
+  external_source: string | null;
+  external_identity: string | null;
+  material_type: string | null;
+  vendor: string | null;
+  nozzle_diameter_min: number | null;
+  nozzle_diameter_max: number | null;
+  is_active: boolean;
 }
 
 // Slicer Pipelines (#1425) — named bundles of preset slots the SliceModal
@@ -1724,7 +2008,7 @@ export interface SliceArchiveResponse {
 
 // Background slice-job lifecycle. POST /slice returns 202 + this shape;
 // the frontend polls /slice-jobs/{id} until status is terminal.
-export type SliceJobStatus = 'pending' | 'running' | 'completed' | 'failed';
+export type SliceJobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'cancel-requested' | 'cancelled';
 
 export interface SliceJobEnqueueResponse {
   job_id: number;
@@ -1755,6 +2039,8 @@ export interface SliceJobState {
   kind: 'library_file' | 'archive';
   source_id: number;
   source_name: string;
+  schema_hash: string | null;
+  request_fingerprint: string | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
@@ -1764,7 +2050,26 @@ export interface SliceJobState {
   progress: SliceJobProgress | null;
   result?: SliceResponse | SliceArchiveResponse;
   error_status?: number;
+  error_code?: string;
   error_detail?: string;
+  provenance: SliceJobProvenance | null;
+}
+
+export interface SliceJobProvenance {
+  state: 'provenance_unknown' | 'resolved';
+  printer_revision_id: number | null;
+  process_revision_id: number | null;
+  filament_revision_ids: number[] | null;
+  selection_evidence: Record<string, unknown> | null;
+  created_at: string;
+}
+
+export interface ResliceRequestResponse {
+  source_kind: 'library_file' | 'archive';
+  source_id: number;
+  request: SliceRequest;
+  tombstoned: boolean;
+  revision_ids: { printer: number; process: number; filaments: number[] };
 }
 
 // Local preset types (OrcaSlicer imports)
@@ -2109,7 +2414,17 @@ export interface DiscoveredTasmotaDevice {
 }
 
 // Print Queue types
+export interface QueueDispatchProgress {
+  stage: 'preparing' | 'uploading' | 'awaiting_printer';
+  started_at: string;
+  stage_started_at: string;
+  updated_at?: string | null;
+  bytes_transferred?: number | null;
+  total_bytes?: number | null;
+}
+
 export interface PrintQueueItem {
+  dispatch_progress?: QueueDispatchProgress | null;
   id: number;
   printer_id: number | null;  // null = unassigned
   target_model: string | null;  // Target printer model for model-based assignment
@@ -2796,11 +3111,7 @@ export interface NotificationLogStats {
 }
 
 // Spoolman types
-export interface SpoolmanStatus {
-  enabled: boolean;
-  connected: boolean;
-  url: string | null;
-}
+export type SpoolmanStatus = components['schemas']['SpoolmanStatus'];
 
 export interface SkippedSpool {
   location: string;
@@ -3065,16 +3376,7 @@ export interface UpdateCheckResult {
   message?: string;
   is_docker?: boolean;
   is_ha_addon?: boolean;
-  is_windows_installer?: boolean;
-  update_method?: 'docker' | 'git' | 'ha_addon' | 'windows_installer';
-  installer_download_url?: string | null;
-}
-
-export interface UpdateStatus {
-  status: 'idle' | 'checking' | 'downloading' | 'installing' | 'complete' | 'error';
-  progress: number;
-  message: string;
-  error: string | null;
+  update_method?: 'docker' | 'ha_addon';
 }
 
 // Maintenance types
@@ -3746,6 +4048,13 @@ export const api = {
     }),
 
   // Printers
+  getNetworkSites: () => request<NetworkSite[]>('/network-sites'),
+  createNetworkSite: (data: NetworkSiteInput) =>
+    request<NetworkSite>('/network-sites', { method: 'POST', body: JSON.stringify(data) }),
+  updateNetworkSite: (id: number, data: Partial<NetworkSiteInput>) =>
+    request<NetworkSite>(`/network-sites/${id}`, { method: 'PATCH', body: JSON.stringify(data) }),
+  deleteNetworkSite: (id: number) =>
+    request<void>(`/network-sites/${id}`, { method: 'DELETE' }),
   getPrinters: () => request<Printer[]>('/printers/'),
   getPrinter: (id: number) => request<Printer>(`/printers/${id}`),
   createPrinter: (data: PrinterCreate) =>
@@ -5643,11 +5952,6 @@ export const api = {
   // Updates
   getVersion: () => request<VersionInfo>('/updates/version'),
   checkForUpdates: () => request<UpdateCheckResult>('/updates/check'),
-  applyUpdate: () =>
-    request<{ success: boolean; message: string; status?: UpdateStatus; is_docker?: boolean; is_ha_addon?: boolean; is_windows_installer?: boolean }>('/updates/apply', {
-      method: 'POST',
-    }),
-  getUpdateStatus: () => request<UpdateStatus>('/updates/status'),
 
   // Maintenance
   getMaintenanceTypes: () => request<MaintenanceType[]>('/maintenance/types'),
@@ -5723,6 +6027,25 @@ export const api = {
     withStreamToken(`${API_BASE}/printers/${printerId}/camera/stream?fps=${fps}`),
   getCameraSnapshotUrl: (printerId: number) =>
     withStreamToken(`${API_BASE}/printers/${printerId}/camera/snapshot`),
+  listPrinterCameras: (printerId: number, includeHistory = false) =>
+    request<PrinterCamera[]>(`/printers/${printerId}/cameras?include_history=${includeHistory}`),
+  syncPrinterCameras: (printerId: number) =>
+    request<PrinterCamera[]>(`/printers/${printerId}/cameras/sync`, { method: 'POST' }),
+  updatePrinterCamera: (printerId: number, cameraId: number, payload: PrinterCameraUpdate) =>
+    request<PrinterCamera>(`/printers/${printerId}/cameras/${cameraId}`, {
+      method: 'PATCH',
+      body: JSON.stringify(payload),
+    }),
+  restorePrinterCameraAsManual: (printerId: number, cameraId: number) =>
+    request<PrinterCamera>(`/printers/${printerId}/cameras/${cameraId}/restore-as-manual`, {
+      method: 'POST',
+    }),
+  deletePrinterCamera: (printerId: number, cameraId: number) =>
+    request<void>(`/printers/${printerId}/cameras/${cameraId}`, { method: 'DELETE' }),
+  getPrinterCameraStreamUrl: (printerId: number, cameraId: number, fps = 10) =>
+    withStreamToken(`${API_BASE}/printers/${printerId}/cameras/${cameraId}/stream?fps=${fps}`),
+  getPrinterCameraSnapshotUrl: (printerId: number, cameraId: number) =>
+    withStreamToken(`${API_BASE}/printers/${printerId}/cameras/${cameraId}/snapshot`),
   testCameraConnection: (printerId: number) =>
     request<{ success: boolean; message?: string; error?: string }>(`/printers/${printerId}/camera/test`),
   getCameraStatus: (printerId: number) =>
@@ -6397,6 +6720,16 @@ export const api = {
       body: JSON.stringify({ url }),
     }),
 
+  // Pinned Orca workbench contract. Schema discovery fails closed in the backend.
+  getSlicerCapabilities: () =>
+    request<SlicerContractIdentity>('/slicer/capabilities'),
+  getSlicerProcessSchema: (refresh = false) =>
+    request<SlicerProcessSchema>(`/slicer/schema/process${refresh ? '?refresh=true' : ''}`),
+  getResolvedSlicerProfile: (presetType: 'printer' | 'process' | 'filament', ref: PresetRef) =>
+    request<ResolvedSlicerProfile>(
+      `/slicer/profiles/${presetType}?source=${encodeURIComponent(ref.source)}&id=${encodeURIComponent(ref.id)}`,
+    ),
+
   // Slicer API — slice in the background. Both endpoints return 202 + a
   // job_id; poll /slice-jobs/{id} until status is `completed` or `failed`.
   sliceLibraryFile: (fileId: number, body: SliceRequest) =>
@@ -6411,6 +6744,14 @@ export const api = {
     }),
   getSliceJob: (jobId: number) =>
     request<SliceJobState>(`/slice-jobs/${jobId}`),
+  prepareResliceRequest: (jobId: number, body: {
+    mode: 'exact' | 'upgrade';
+    catalog_acknowledgement?: Record<string, unknown>;
+    catalog_tombstone_acknowledgement?: Record<string, unknown>;
+  }) => request<ResliceRequestResponse>(`/slice-jobs/${jobId}/reslice-request`, {
+    method: 'POST',
+    body: JSON.stringify(body),
+  }),
 
   // Unified slicer-preset listing — cloud + local + standard, deduped by name.
   // Used by the SliceModal; see UnifiedPresetsResponse for the shape and
@@ -6422,6 +6763,132 @@ export const api = {
     request<UnifiedPresetsResponse>(
       options?.refresh ? '/slicer/presets?refresh=true' : '/slicer/presets',
     ),
+
+  // Persistent installed-printer slicer catalog.
+  getSlicerCatalogRevision: (revisionId: number) => request<SlicerCatalogRevisionContent>(`/slicer/catalog/revisions/${revisionId}`),
+  copySlicerFilament: (profileId: number, body: {
+    base_revision_id: number; name: string; overrides: Record<string, unknown>; share_local_copy: boolean;
+  }) => request<FilamentProfileCopy>(`/slicer/catalog/profiles/${profileId}/filament-copy`, {
+    method: 'POST', body: JSON.stringify(body),
+  }),
+  listSlicerCatalogProfiles: (options?: { includeInactive?: boolean; limit?: number; offset?: number }) => {
+    const search = new URLSearchParams();
+    if (options?.includeInactive) search.set('include_inactive', 'true');
+    if (options?.limit !== undefined) search.set('limit', String(options.limit));
+    if (options?.offset !== undefined) search.set('offset', String(options.offset));
+    const query = search.toString();
+    return request<SlicerCatalogProfile[]>(`/slicer/catalog/profiles${query ? `?${query}` : ''}`);
+  },
+  listSlicerCatalogProfileRevisions: (profileId: number) =>
+    request<SlicerCatalogRevision[]>(`/slicer/catalog/profiles/${profileId}/revisions`),
+  listSlicerCatalogAccounts: () =>
+    request<SlicerCatalogAccount[]>('/slicer/catalog/accounts'),
+  syncOrcaCatalog: () =>
+    request<{ account_id: number; review_batch_id: number | null; revision_ids: number[]; cursor: string | null }>(
+      '/slicer/catalog/orca/sync',
+      { method: 'POST' },
+    ),
+  syncCloudCatalog: () =>
+    request<{ account_id: number; review_batch_id: number | null; revision_ids: number[]; cursor: string | null }>(
+      '/slicer/catalog/cloud/sync',
+      { method: 'POST' },
+    ),
+  syncStandardCatalog: () =>
+    request<{ account_id: number; review_batch_id: number | null; revision_ids: number[]; cursor: string | null }>(
+      '/slicer/catalog/standard/sync',
+      { method: 'POST' },
+    ),
+  setSlicerCatalogSharing: (accountId: number, shared: boolean) =>
+    request<SlicerCatalogAccount>(`/slicer/catalog/accounts/${accountId}/sharing`, {
+      method: 'PUT',
+      body: JSON.stringify({ shared }),
+    }),
+  listSlicerCatalogReviews: (accountId: number) =>
+    request<SlicerCatalogReviewBatch[]>(`/slicer/catalog/accounts/${accountId}/reviews`),
+  reviewSlicerCatalogBatch: (batchId: number, approved: boolean, revisionIds?: number[]) =>
+    request<{ id: number; status: string }>(`/slicer/catalog/reviews/${batchId}`, {
+      method: 'POST',
+      body: JSON.stringify({ approved, revision_ids: revisionIds }),
+    }),
+  activateSlicerCatalogRevision: (profileId: number, revisionId: number) =>
+    request<{ profile_id: number; revision_id: number }>(`/slicer/catalog/profiles/${profileId}/activate`, {
+      method: 'POST',
+      body: JSON.stringify({ revision_id: revisionId }),
+    }),
+  rollbackSlicerCatalogRevision: (profileId: number, revisionId: number) =>
+    request<{ profile_id: number; revision_id: number }>(`/slicer/catalog/profiles/${profileId}/rollback`, {
+      method: 'POST',
+      body: JSON.stringify({ revision_id: revisionId }),
+    }),
+  retireSlicerCatalogProfile: (
+    profileId: number,
+    options: { replacementProfileId?: number; disableReferences?: boolean } = {},
+  ) => request<{
+    profile_id: number;
+    replacement_profile_id: number | null;
+    disabled_binding_ids: number[];
+    retired: boolean;
+  }>(`/slicer/catalog/profiles/${profileId}/retire`, {
+    method: 'POST',
+    body: JSON.stringify({
+      replacement_profile_id: options.replacementProfileId,
+      disable_references: options.disableReferences ?? false,
+    }),
+  }),
+  freezeSlicerCatalogAccount: (accountId: number) =>
+    request<{ id: number; stale: boolean }>(`/slicer/catalog/accounts/${accountId}/freeze`, { method: 'POST' }),
+  resumeSlicerCatalogAccount: (accountId: number) =>
+    request<{ id: number; stale: boolean }>(`/slicer/catalog/accounts/${accountId}/resume`, { method: 'POST' }),
+  listSlicerCatalogBindings: (printerId?: number) =>
+    request<SlicerCatalogBinding[]>(`/slicer/catalog/bindings${printerId == null ? '' : `?printer_id=${printerId}`}`),
+  createSlicerCatalogBinding: (data: SlicerCatalogBindingInput) =>
+    request<SlicerCatalogBinding>('/slicer/catalog/bindings', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  updateSlicerCatalogBinding: (bindingId: number, data: Partial<SlicerCatalogBindingInput> & { is_active?: boolean }) =>
+    request<SlicerCatalogBinding>(`/slicer/catalog/bindings/${bindingId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  disableSlicerCatalogBinding: (bindingId: number) =>
+    request<{ id: number; is_active: false }>(`/slicer/catalog/bindings/${bindingId}/disable`, { method: 'POST' }),
+  getSlicerCatalogBindingSuggestion: (printerId: number) =>
+    request<{ printer_id: number; suggested_profile_ids: number[]; requires_confirmation: boolean; readiness: string }>(
+      `/slicer/catalog/printers/${printerId}/suggestion`,
+    ),
+  getSlicerCatalogGroups: (printerId: number, bindingId: number) =>
+    request<SlicerCatalogGroups>(`/slicer/catalog/printers/${printerId}/classification?binding_id=${bindingId}`),
+  listSlicerCompatibilityMappings: () =>
+    request<SlicerCompatibilityMapping[]>('/slicer/catalog/mappings'),
+  createSlicerCompatibilityMapping: (profileId: number, printerId: number) =>
+    request<SlicerCompatibilityMapping>('/slicer/catalog/mappings', {
+      method: 'POST',
+      body: JSON.stringify({ profile_id: profileId, printer_id: printerId }),
+    }),
+  deleteSlicerCompatibilityMapping: (mappingId: number) =>
+    request<void>(`/slicer/catalog/mappings/${mappingId}`, { method: 'DELETE' }),
+  listSlicerFilamentRules: () =>
+    request<SlicerFilamentRule[]>('/slicer/catalog/filament-rules'),
+  createSlicerFilamentRule: (data: Omit<SlicerFilamentRule, 'id' | 'is_active'>) =>
+    request<Pick<SlicerFilamentRule, 'id' | 'scope' | 'filament_profile_id'>>('/slicer/catalog/filament-rules', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    }),
+  deleteSlicerFilamentRule: (ruleId: number) =>
+    request<void>(`/slicer/catalog/filament-rules/${ruleId}`, { method: 'DELETE' }),
+  listSlicerCatalogPreferences: (bindingId: number) =>
+    request<SlicerCatalogPreference[]>(`/slicer/catalog/preferences/${bindingId}`),
+  saveSlicerCatalogPreference: (
+    bindingId: number,
+    profileId: number,
+    profileType: 'process' | 'filament',
+  ) => request<SlicerCatalogPreference>('/slicer/catalog/preferences', {
+    method: 'PUT',
+    body: JSON.stringify({ binding_id: bindingId, profile_id: profileId, profile_type: profileType }),
+  }),
+  deleteSlicerCatalogPreference: (preferenceId: number) =>
+    request<void>(`/slicer/catalog/preferences/${preferenceId}`, { method: 'DELETE' }),
 
   // Slicer Pipelines (#1425) — preset bundles the SliceModal can apply in
   // one click. CRUD is gated on PIPELINES_READ / PIPELINES_WRITE.

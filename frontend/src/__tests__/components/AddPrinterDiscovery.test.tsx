@@ -3,7 +3,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
-import { screen, waitFor } from '@testing-library/react';
+import { screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { render } from '../utils';
 import { PrintersPage } from '../../pages/PrintersPage';
@@ -41,6 +41,13 @@ const mockPrinterStatus = {
   vt_tray: [],
 };
 
+async function openAddPrinterModal() {
+  render(<PrintersPage />);
+  await userEvent.click(await screen.findByRole('button', { name: /^add printer$/i }));
+  const heading = await screen.findByRole('heading', { name: /^add printer$/i });
+  return heading.closest('div.fixed') as HTMLElement;
+}
+
 describe('AddPrinterModal Discovery', () => {
   beforeEach(() => {
     server.use(
@@ -68,21 +75,12 @@ describe('AddPrinterModal Discovery', () => {
       })
     );
 
-    render(<PrintersPage />);
-
-    // Wait for printer page to load
-    await waitFor(() => {
-      expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
-    });
-
-    // Click the Add Printer button
-    const addButton = screen.getByText(/add printer/i);
-    await userEvent.click(addButton);
+    const modal = await openAddPrinterModal();
 
     // Wait for the modal and discovery info to load
     await waitFor(() => {
       // Should show subnet dropdown with detected subnet
-      const subnetSelect = screen.getByDisplayValue('10.0.0.0/24');
+      const subnetSelect = within(modal).getByDisplayValue('10.0.0.0/24');
       expect(subnetSelect).toBeInTheDocument();
     });
   });
@@ -99,20 +97,13 @@ describe('AddPrinterModal Discovery', () => {
       })
     );
 
-    render(<PrintersPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
-    });
-
-    const addButton = screen.getByText(/add printer/i);
-    await userEvent.click(addButton);
+    const modal = await openAddPrinterModal();
 
     await waitFor(() => {
       // Should show a select element (dropdown) with both subnets and
       // the trailing "Custom subnet..." sentinel that lets a user enter
       // a CIDR for a printer on a different L3 segment (#1564).
-      const selectElement = screen.getByDisplayValue('192.168.1.0/24');
+      const selectElement = within(modal).getByDisplayValue('192.168.1.0/24');
       expect(selectElement.tagName).toBe('SELECT');
 
       const options = selectElement.querySelectorAll('option');
@@ -135,18 +126,11 @@ describe('AddPrinterModal Discovery', () => {
       })
     );
 
-    render(<PrintersPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
-    });
-
-    const addButton = screen.getByText(/add printer/i);
-    await userEvent.click(addButton);
+    const modal = await openAddPrinterModal();
 
     await waitFor(() => {
       // Should show a text input with placeholder
-      const textInput = screen.getByPlaceholderText('192.168.1.0/24');
+      const textInput = within(modal).getByPlaceholderText('192.168.1.0/24');
       expect(textInput).toBeInTheDocument();
       expect(textInput.tagName).toBe('INPUT');
     });
@@ -168,19 +152,12 @@ describe('AddPrinterModal Discovery', () => {
       })
     );
 
-    render(<PrintersPage />);
-
-    await waitFor(() => {
-      expect(screen.getByText('X1 Carbon')).toBeInTheDocument();
-    });
-
-    const addButton = screen.getByText(/add printer/i);
-    await userEvent.click(addButton);
+    const modal = await openAddPrinterModal();
 
     // Detected subnet is the default value; "Custom subnet..." sits
     // alongside it so the user can pick a foreign CIDR.
     await waitFor(() => {
-      const selectElement = screen.getByDisplayValue('192.168.1.0/24');
+      const selectElement = within(modal).getByDisplayValue('192.168.1.0/24');
       expect(selectElement.tagName).toBe('SELECT');
       const options = selectElement.querySelectorAll('option');
       expect(options).toHaveLength(2);

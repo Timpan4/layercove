@@ -7,6 +7,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
+from sqlalchemy import event
+from starlette.responses import Response
+
+
+def _track_checked_out_connections(engine):
+    state = {"count": 0}
+
+    def checkout(*_args):
+        state["count"] += 1
+
+    def checkin(*_args):
+        state["count"] -= 1
+
+    event.listen(engine.sync_engine, "checkout", checkout)
+    event.listen(engine.sync_engine, "checkin", checkin)
+    return state
 
 
 class TestCameraAPI:
@@ -287,6 +303,31 @@ class TestCameraAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_camera_snapshot_releases_db_before_external_io(
+        self, async_client: AsyncClient, printer_factory, db_session, test_engine
+    ):
+        connections = _track_checked_out_connections(test_engine)
+        printer = await printer_factory(
+            external_camera_enabled=True,
+            external_camera_url="http://192.168.1.50/mjpeg",
+            external_camera_type="mjpeg",
+        )
+        printer_id = printer.id
+        await db_session.rollback()
+        fake_jpeg = b"\xff\xd8\xff\xd9"
+
+        async def capture_frame(*_args, **_kwargs):
+            assert connections["count"] == 0
+            return fake_jpeg
+
+        with patch("backend.app.services.external_camera.capture_frame", side_effect=capture_frame):
+            response = await async_client.get(f"/api/v1/printers/{printer_id}/camera/snapshot")
+
+        assert response.status_code == 200
+        assert response.content == fake_jpeg
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_camera_snapshot_success(self, async_client: AsyncClient, printer_factory):
         """Verify snapshot returns JPEG image when successful."""
         printer = await printer_factory()
@@ -394,6 +435,98 @@ class TestCameraAPI:
         assert response.status_code == 503
         assert "external camera" in response.json()["detail"].lower()
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_selected_camera_media_uses_stream_token_when_auth_enabled(
+        self, async_client: AsyncClient, db_session, printer_factory
+    ):
+        """Selected Moonraker media bypasses only gateway bearer auth, not its token gate."""
+        from backend.app.models.printer_camera import PrinterCamera
+
+        printer = await printer_factory(provider="moonraker")
+        camera = PrinterCamera(
+            printer_id=printer.id,
+            source="moonraker",
+            source_uid="selected-camera",
+            name="Selected camera",
+            camera_type="mjpeg",
+            stream_url="http://printer.lan/webcam/stream",
+            snapshot_url="http://printer.lan/webcam/snapshot",
+        )
+        db_session.add(camera)
+        await db_session.commit()
+
+        setup = await async_client.post(
+            "/api/v1/auth/setup",
+            json={"auth_enabled": True, "admin_username": "camera_admin", "admin_password": "CameraPass1!"},
+        )
+        assert setup.status_code in (200, 201)
+        login = await async_client.post(
+            "/api/v1/auth/login",
+            json={"username": "camera_admin", "password": "CameraPass1!"},
+        )
+        token_response = await async_client.post(
+            "/api/v1/printers/camera/stream-token",
+            headers={"Authorization": f"Bearer {login.json()['access_token']}"},
+        )
+        assert token_response.status_code == 200
+        stream_token = token_response.json()["token"]
+
+        for suffix, handler in (
+            ("snapshot", "_camera_snapshot_response"),
+            ("stream", "_camera_stream_response"),
+        ):
+            with patch(
+                f"backend.app.api.routes.camera.{handler}",
+                new=AsyncMock(return_value=Response(status_code=204)),
+            ) as mocked_handler:
+                path = f"/api/v1/printers/{printer.id}/cameras/{camera.id}/{suffix}"
+                allowed = await async_client.get(path, params={"token": stream_token})
+                assert allowed.status_code == 204
+                mocked_handler.assert_awaited_once()
+
+                rejected = await async_client.get(path)
+                assert rejected.status_code == 401
+                mocked_handler.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_camera_management_routes_require_gateway_auth_when_enabled(
+        self, async_client: AsyncClient, db_session, printer_factory
+    ):
+        """Only selected-camera media may bypass bearer auth with its stream token."""
+        from backend.app.models.printer_camera import PrinterCamera
+
+        printer = await printer_factory(provider="moonraker")
+        camera = PrinterCamera(
+            printer_id=printer.id,
+            source="moonraker",
+            source_uid="managed-camera",
+            name="Managed camera",
+            camera_type="mjpeg",
+            stream_url="http://printer.lan/webcam/stream",
+        )
+        db_session.add(camera)
+        await db_session.commit()
+
+        setup = await async_client.post(
+            "/api/v1/auth/setup",
+            json={"auth_enabled": True, "admin_username": "camera_admin", "admin_password": "CameraPass1!"},
+        )
+        assert setup.status_code in (200, 201)
+
+        base = f"/api/v1/printers/{printer.id}/cameras"
+        for request, path in (
+            (async_client.get, base),
+            (async_client.post, f"{base}/sync"),
+            (async_client.patch, f"{base}/{camera.id}"),
+            (async_client.delete, f"{base}/{camera.id}"),
+            (async_client.post, f"{base}/{camera.id}/restore-as-manual"),
+        ):
+            response = await request(path)
+            assert response.status_code == 401
+            assert response.json()["detail"] == "Authentication required"
+
     # ========================================================================
     # Camera Stream Endpoint
     # ========================================================================
@@ -405,6 +538,33 @@ class TestCameraAPI:
         response = await async_client.get("/api/v1/printers/99999/camera/stream")
 
         assert response.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_camera_stream_releases_db_before_starting_upstream(
+        self, async_client: AsyncClient, printer_factory, db_session, test_engine
+    ):
+        connections = _track_checked_out_connections(test_engine)
+        printer = await printer_factory(model="P1S")
+        printer_id = printer.id
+        await db_session.rollback()
+        broadcaster = MagicMock(subscriber_count=1)
+        broadcaster.subscribe = AsyncMock(return_value=object())
+
+        async def get_broadcaster(*_args, **_kwargs):
+            assert connections["count"] == 0
+            return broadcaster
+
+        async def one_frame(*_args, **_kwargs):
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8\xff\xd9\r\n"
+
+        with (
+            patch("backend.app.api.routes.camera.get_or_create_broadcaster", side_effect=get_broadcaster),
+            patch("backend.app.api.routes.camera.iter_subscriber", side_effect=one_frame),
+        ):
+            response = await async_client.get(f"/api/v1/printers/{printer_id}/camera/stream")
+
+        assert response.status_code == 200
 
     @pytest.mark.asyncio
     @pytest.mark.integration

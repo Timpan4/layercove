@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "Das übergeordnete Druckerprofil fehlt oder ist für diese Revision nicht verfügbar.",
+      ambiguous_parent: "Das übergeordnete Druckerprofil ist für diese Revision nicht eindeutig.",
+      inheritance_cycle: "Die Vererbungskette des Druckers enthält einen Zyklus.",
+    },
+    selectPrinter: "Wähle einen Drucker und ein genaues Profil, um das Druckbett anzuzeigen.",
+    loading: "Ausgewähltes Druckbett wird geladen…",
+    loadFailed: "Das Druckbett für {{profile}} konnte nicht geladen werden.",
+    unavailable: "Für {{profile}} ist keine Druckbettgeometrie verfügbar.",
+    missingArea: "Die ausgewählte Revision enthält weder printable_area noch bed_shape.",
+    invalidArea: "Die ausgewählte Revision enthält ungültige printable_area- oder bed_shape-Koordinaten.",
+    missingHeight: "Die ausgewählte Revision enthält weder printable_height noch max_print_height.",
+    invalidHeight: "Die ausgewählte Revision enthält einen ungültigen Wert für printable_height oder max_print_height.",
+    revision: "Profilrevision {{revision}}",
+    retry: "Druckbett erneut laden",
+    bounds: "Druckbettmaße: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "Die ausgewählte Profilrevision ist nicht verfügbar. Lade den Profilkatalog neu.",
+  },
+
   // Navigation
   nav: {
     printers: 'Drucker',
@@ -1047,6 +1067,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "Datei für die Übertragung vorbereiten…",
+    uploadingBytes: "Hochladen: {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Hochladen: {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Druckjob',
     startingPrints: 'Drucke starten',
     progressSummary: '{{complete}}/{{total}} fertig • Verarbeitung: {{processing}}',
@@ -1116,6 +1139,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "Druckübertragung",
+    dispatch: {
+      progressLabel: "Fortschritt der Druckübertragung",
+      preparing: "Übertragung vorbereiten",
+      uploading: "Hochladen zum Drucker",
+      awaitingPrinter: "Warten auf Druckerbestätigung",
+      uploadProgress: "Upload-Fortschritt",
+      elapsed: "{{seconds}} Sek.",
+      uploadSummary: "{{transferred}} von {{total}} ({{percent}} %)",
+      waitingForUpload: "Datei gesendet; warte auf die Upload-Antwort.",
+      waitingForStart: "Upload akzeptiert. Der Druckstart wurde noch nicht bestätigt.",
+    },
     filamentShort: {
       rowBadge: 'Filament fuer die zugewiesene Spule reicht nicht',
       rowTooltip: 'Der Dispatcher hat diese Position markiert. Klicke auf Play, um den Pro-Slot-Fehlbestand zu sehen und zu entscheiden, ob trotzdem gedruckt werden soll.',
@@ -1620,6 +1655,40 @@ export default {
   },
 
   // Settings page
+  networkSites: {
+    title: 'Netzwerkstandorte',
+    description: 'Benenne jedes Tailscale-4via6-Subnetz einmal und weise Drucker diesem Standort zu.',
+    copyFailed: 'Kopieren in die Zwischenablage fehlgeschlagen',
+    setupGuide: 'Tailscale-Einrichtung für Raspberry Pi',
+    printWarning: 'Ändere das Netzwerk nicht, während dieser Raspberry Pi druckt.',
+    prerequisites: 'Für Raspberry Pi OS oder ein anderes Debian-basiertes ARM64-System. Nach dem aktuellen Druck auf dem Pi ausführen.',
+    install: '1. Neueste stabile Tailscale-Version installieren',
+    join: '2. Dem dedizierten Druck-Tailnet beitreten',
+    forwarding: '3. Weiterleitung aktivieren',
+    advertise: '4. Diese 4via6-Route ankündigen',
+    approve: '5. Die angekündigte Route als Tailnet-Eigentümer genehmigen.',
+    openAdmin: 'Tailscale-Geräte öffnen',
+    printerIp: 'LAN-IPv4-Adresse des Druckers',
+    invalidPrinterIp: 'Gib eine nutzbare IPv4-Adresse in diesem /24 ein.',
+    magicDns: 'MagicDNS-Hostname des Druckers',
+    discoveryNote: 'Broadcast-Erkennung funktioniert nicht über geroutete Standorte. Füge den Drucker manuell mit diesem MagicDNS-Hostnamen hinzu.',
+    created: 'Netzwerkstandort erstellt',
+    name: 'Standortname',
+    namePlaceholder: 'Timpa Zuhause',
+    siteNumber: 'Standort-ID',
+    subnet: 'Privates /24',
+    empty: 'Keine Netzwerkstandorte konfiguriert.',
+    siteSummary: 'Standort {{number}} · {{subnet}} · {{count}} Drucker',
+    rename: 'Standort umbenennen',
+    renamePrompt: 'Neuer Standortname',
+    deleteConfirm: '{{name}} löschen?',
+    connection: 'Verbindung',
+    localDirect: 'Lokal / direkt',
+    createHere: 'Netzwerkstandort hier erstellen',
+    targetPreview: 'Verbindungsziel: {{host}}',
+    moonrakerPort: 'Moonraker-Port',
+  },
+
   settings: {
     title: 'Einstellungen',
     general: 'Allgemein',
@@ -3069,6 +3138,24 @@ export default {
     stopRecording: 'Aufnahme stoppen',
     chamberLight: 'Kammerbeleuchtung umschalten',
     unavailable: 'Kamera nicht verfügbar',
+    moonraker: {
+      title: 'Moonraker-Kameras',
+      refresh: 'Kameras aktualisieren',
+      primary: 'Primär',
+      unsupported: 'Nicht unterstützt',
+      disabledInMoonraker: 'In Moonraker deaktiviert',
+      editManual: 'Manuelle Kamera bearbeiten',
+      streamUrl: 'Stream-URL',
+      newStreamOrSnapshotUrl: 'Neue Stream- oder Snapshot-URL',
+      snapshotUrl: 'Snapshot-URL',
+      newSnapshotUrl: 'Neue Snapshot-URL (optional)',
+      noCameras: 'Keine Kameras gefunden.',
+      history: 'Kameraverlauf ({{count}})',
+      lastSeen: 'Zuletzt gesehen: {{date}}',
+      restoreAsManual: 'Als manuelle Kamera wiederherstellen',
+      removeHistory: 'Aus Verlauf entfernen',
+      moreCameras: 'Weitere Kameras',
+    },
     diagnose: {
       button: 'Diagnose',
       modalTitle: 'Kamera-Diagnose',
@@ -6336,8 +6423,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Kamera-Stream nicht erreichbar',
-        cause: 'Die Live-Kamera war auf Port RTSPS 322 nicht erreichbar. Der Port ist blockiert, oder die Kamera bzw. die LAN-Liveansicht ist am Drucker deaktiviert.',
-        fix: 'Aktiviere Kamera und LAN-Liveansicht am Drucker und stelle sicher, dass Port 322 nicht blockiert ist. Das Drucken ist davon nicht betroffen.',
+        cause: 'Die Live-Kamera war auf Port {{cameraEndpoint}} nicht erreichbar. Der Port ist blockiert, oder die Kamera bzw. die LAN-Liveansicht ist am Drucker deaktiviert.',
+        fix: 'Aktiviere Kamera und LAN-Liveansicht am Drucker und stelle sicher, dass Port {{cameraPort}} nicht blockiert ist. Das Drucken ist davon nicht betroffen.',
       },
       'database-locked': {
         name: 'Datenbank-Schreibkonflikte',

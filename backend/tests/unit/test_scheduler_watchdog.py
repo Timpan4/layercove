@@ -1,16 +1,7 @@
-"""Regression tests for ``_watchdog_print_start``.
+"""Regression tests for finite, acknowledgement-aware Bambu start watchdogs.
 
-The watchdog reverts queue items to ``pending`` when a dispatched print never
-lands on the printer (half-broken MQTT session — #887/#936/#967). H2D firmware
-can sit at ``FINISH`` for 50+ seconds after accepting a ``project_file``
-command before flipping ``gcode_state`` to ``PREPARE``, which used to trip the
-state-only watchdog and cause the scheduler to revert the item; the subsequent
-successful dispatch then looked like a reprint of the just-finished job (#1078).
-
-The fix: treat ``subtask_id`` advancing past the pre-dispatch value as an
-equivalent "command landed" signal, and raise the timeout from 45 s to 90 s as
-belt-and-braces for slow transitions that also don't emit an early subtask_id
-tick.
+Unconfirmed commands fail for manual review instead of being replayed. Preserve
+slow H2D two-phase parsing and avoid forced reconnect once the file has landed.
 """
 
 from types import SimpleNamespace
@@ -146,7 +137,7 @@ class TestWatchdogRevertsWhenStuck:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "pending"
+            assert item.status == "failed"
             assert item.started_at is None
 
         client.force_reconnect_stale_session.assert_called_once()
@@ -190,10 +181,10 @@ class TestWatchdogRevertsWhenStuck:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "pending", (
+            assert item.status == "failed", (
                 "FINISH -> IDLE is the user dismissing a screen prompt, not "
                 "the printer accepting project_file — item must be reverted "
-                "to 'pending' so the scheduler can retry (#1370)"
+                "to 'failed' for manual review (#1370)"
             )
             assert item.started_at is None
 
@@ -264,7 +255,7 @@ class TestWatchdogRevertsWhenStuck:
         watchdog returned SUCCESS as soon as subtask_id advanced and the
         queue item stayed in 'printing' until container restart. Phase B now
         keeps watching; if the active-state transition never arrives, the
-        item reverts to 'pending' so the user can retry without restarting.
+        item fails for manual review so the user can retry without restarting.
         """
         get_status = MagicMock(
             return_value=_status("IDLE", "NEW_SUBTASK_12345", gcode_file="/new.3mf"),
@@ -291,10 +282,10 @@ class TestWatchdogRevertsWhenStuck:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "pending", (
+            assert item.status == "failed", (
                 "subtask_id advanced (Phase A → B) but state never reached an "
                 "active value — printer-side wedge; the queue item must be "
-                "reverted to 'pending' (#1678)"
+                "failed without automatically resending (#1678)"
             )
             assert item.started_at is None
 
@@ -332,7 +323,7 @@ class TestWatchdogFallbackBehaviour:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "pending"
+            assert item.status == "failed"
 
     @pytest.mark.asyncio
     async def test_current_subtask_id_none_does_not_trigger_early_exit(self, db_session):
@@ -360,12 +351,11 @@ class TestWatchdogFallbackBehaviour:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "pending"
+            assert item.status == "failed"
 
     @pytest.mark.asyncio
-    async def test_printer_disconnected_returns_without_reverting(self, db_session):
-        """If the printer drops during the watchdog window, don't touch the DB —
-        the reconnect path will sort the queue state out."""
+    async def test_printer_disconnected_fails_at_deadline(self, db_session):
+        """A disconnect must not leave an uncertain command stuck forever."""
         get_status = MagicMock(return_value=None)
 
         with (
@@ -383,7 +373,8 @@ class TestWatchdogFallbackBehaviour:
 
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "printing"
+            assert item.status == "failed"
+            assert "confirm" in item.error_message.lower()
 
     @pytest.mark.asyncio
     async def test_no_revert_if_item_already_completed(self, db_session):
@@ -461,7 +452,7 @@ class TestGcodeFileDiscriminator:
         # MQTT session is left intact so the slow printer can finish parsing.
         async with db_session() as db:
             item = await db.get(PrintQueueItem, 1)
-            assert item.status == "pending"
+            assert item.status == "failed"
         client.force_reconnect_stale_session.assert_not_called()
 
     @pytest.mark.asyncio

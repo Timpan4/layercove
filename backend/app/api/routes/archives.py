@@ -27,7 +27,7 @@ from backend.app.models.spool_usage_history import SpoolUsageHistory
 from backend.app.models.user import User
 from backend.app.schemas.archive import ArchiveResponse, ArchiveSlim, ArchiveStats, ArchiveUpdate
 from backend.app.schemas.print_log import PrintLogResponse
-from backend.app.schemas.slicer import SliceRequest
+from backend.app.schemas.slicer import ArchivePlatesResponse, SliceRequest
 from backend.app.services.archive import ArchiveService
 from backend.app.utils.http import build_content_disposition
 from backend.app.utils.safe_path import safe_join_under
@@ -3410,7 +3410,7 @@ async def upload_archives_bulk(
     }
 
 
-@router.get("/{archive_id}/plates")
+@router.get("/{archive_id}/plates", response_model=ArchivePlatesResponse)
 async def get_archive_plates(
     archive_id: int,
     db: AsyncSession = Depends(get_db),
@@ -3695,6 +3695,7 @@ async def get_archive_plates(
                         "index": idx,
                         "name": plate_name,
                         "objects": objects,
+                        "object_ids": plate_object_ids.get(idx, []),
                         "object_count": len(objects),
                         "has_thumbnail": has_thumbnail,
                         "thumbnail_url": f"/api/v1/archives/{archive_id}/plate-thumbnail/{idx}"
@@ -3967,6 +3968,12 @@ async def slice_archive(
     request: SliceRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_UPLOAD),
+    auth_result: tuple[User | None, bool] = Depends(
+        require_ownership_permission(
+            Permission.ARCHIVES_READ_ALL,
+            Permission.ARCHIVES_READ_OWN,
+        )
+    ),
 ):
     """Enqueue a slice job for an archive's source. Returns 202 + job_id;
     the slice runs in the background, the caller polls `GET /slice-jobs/{id}`.
@@ -3981,10 +3988,10 @@ async def slice_archive(
         http_exception_to_job_error,
         slice_dispatch,
     )
+    from backend.app.services.slicer_catalog_selection import CatalogSelectionError, persist_catalog_selection
 
-    archive = await db.get(PrintArchive, archive_id)
-    if archive is None:
-        raise HTTPException(status_code=404, detail="Archive not found")
+    visibility_user, can_read_all = auth_result
+    archive = _ensure_archive_visible(await db.get(PrintArchive, archive_id), visibility_user, can_read_all)
 
     src_relative = archive.source_3mf_path or archive.file_path
     if not src_relative:
@@ -4051,12 +4058,25 @@ async def slice_archive(
                 raise http_exception_to_job_error(exc) from exc
         return response.model_dump()
 
-    job = await slice_dispatch.enqueue(
-        kind="archive",
-        source_id=archive.id,
-        source_name=archive.print_name or archive.filename or f"archive {archive.id}",
-        run=_run,
-    )
+    async def _before_commit(job_db: AsyncSession, job_record) -> None:
+        await persist_catalog_selection(job_db, job_record, request, source_path=src_path)
+
+    try:
+        job = await slice_dispatch.enqueue(
+            kind="archive",
+            source_id=archive.id,
+            source_name=archive.print_name or archive.filename or f"archive {archive.id}",
+            owner_id=user_id,
+            request_snapshot=request.model_dump(mode="json", exclude_none=True, exclude_defaults=True),
+            schema_hash=request.schema_hash,
+            run=_run,
+            before_commit=_before_commit,
+        )
+    except CatalogSelectionError as error:
+        raise HTTPException(
+            status_code=error.status_code,
+            detail={"code": error.code, "reason_codes": error.reason_codes},
+        ) from error
     return {
         "job_id": job.id,
         "status": job.status,

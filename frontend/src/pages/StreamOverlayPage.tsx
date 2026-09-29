@@ -1,3 +1,4 @@
+import { queryKeys } from '../api/queryKeys';
 import { useEffect, useMemo, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -126,7 +127,7 @@ export function StreamOverlayPage() {
 
   // Fetch printer status with polling
   const { data: status } = useQuery({
-    queryKey: ['printerStatus', id],
+    queryKey: queryKeys.printerStatus(id),
     queryFn: () => api.getPrinterStatus(id),
     enabled: id > 0,
     refetchInterval: 2000,
@@ -179,7 +180,7 @@ export function StreamOverlayPage() {
       try {
         const data = JSON.parse(event.data);
         if (data.type === 'printer_status' && data.printer_id === id) {
-          queryClient.setQueryData(['printerStatus', id], data.status);
+          queryClient.setQueryData(queryKeys.printerStatus(id), data.status);
         }
       } catch {
         // Ignore parse errors
@@ -254,7 +255,7 @@ export function StreamOverlayPage() {
         className="absolute top-4 right-4 z-10"
       >
         <img
-          src="/img/bambuddy_logo_dark_transparent.png"
+          src="/img/layercove-wordmark-light.svg"
           alt="LayerCove"
           className={`${sizes.logoHeight} object-contain drop-shadow-lg hover:scale-105 transition-transform`}
         />

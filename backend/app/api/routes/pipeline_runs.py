@@ -732,6 +732,12 @@ async def run_pipeline(
         kind="library_file" if src_kind == "library_file" else "archive",
         source_id=src_id,
         source_name=src_filename,
+        owner_id=current_user.id if current_user else None,
+        request_snapshot={
+            "pipeline_id": pipeline.id,
+            "pipeline_run_id": run.id,
+            "copies": body.copies,
+        },
         run=orchestrate,
     )
 

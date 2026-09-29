@@ -1,0 +1,238 @@
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { act, renderHook, waitFor } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  api,
+  type Printer,
+  type SlicerCatalogBinding,
+  type SlicerCatalogClassification,
+  type SlicerCatalogProfile,
+  type SlicerCatalogGroups,
+} from '../../api/client';
+import { useCatalogSliceSelection } from '../../hooks/useCatalogSliceSelection';
+
+const classification = (
+  profileId: number,
+  profileType: 'process' | 'filament',
+): SlicerCatalogClassification => ({
+  profile_id: profileId,
+  revision_id: profileId,
+  profile_type: profileType,
+  display_name: `${profileType} ${profileId}`,
+  source: 'local',
+  account_id: 1,
+  account_name: null,
+  stale: false,
+  classification: {
+    group: 'selected_printer',
+    compatibility: 'match',
+    readiness: 'ready',
+    reason_codes: [],
+    reason_details: [],
+    selectable: true,
+    auto_selectable: true,
+    acknowledgement_required: false,
+  },
+});
+
+const profile = (
+  profileId: number,
+  profileType: 'printer' | 'process' | 'filament',
+): SlicerCatalogProfile => ({
+  profile_id: profileId,
+  revision_id: profileId,
+  source: 'local',
+  account_id: 1,
+  account_name: null,
+  remote_profile_id: String(profileId),
+  profile_type: profileType,
+  display_name: `${profileType} ${profileId}`,
+  content_hash: String(profileId),
+  compatibility_metadata: profileType === 'filament' ? { filament_type: 'PLA' } : {},
+  tombstoned: false,
+  stale: false,
+  sharing_state: 'shared',
+});
+
+const binding: SlicerCatalogBinding = {
+  id: 5,
+  printer_id: 1,
+  printer_name: 'P1S',
+  profile_id: 4,
+  profile_name: 'P1S 0.4',
+  expected_nozzle_diameter: 0.4,
+  tool_index: 0,
+  default_process_profile_id: 12,
+  default_filament_profile_id: 22,
+  enforcement_state: 'enforced',
+  is_active: true,
+  confirmed_at: null,
+  readiness: { state: 'ready', reason_codes: [] },
+  nozzle: { status: 'confirmed', diameter: 0.4, tool_index: 0 },
+};
+
+const filamentSlots = [{ type: 'PLA', color: '' }];
+
+const groups: SlicerCatalogGroups = {
+  selected_printer: [classification(12, 'process'), classification(22, 'filament')],
+  other_installed_printers: [],
+  unclassified: [],
+  incompatible: [],
+};
+
+describe('useCatalogSliceSelection', () => {
+  it('requires confirmation when material metadata belongs to an older profile revision', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useCatalogSliceSelection({ filamentSlots }), { wrapper });
+    await waitFor(() => expect(result.current.activePrinters).toHaveLength(1));
+    act(() => result.current.setPrinterId(1));
+    await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
+    act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.selectionReadiness.state).toBe('ready'));
+
+    act(() => client.setQueryData(['slicerCatalogGroups', 1, 5], {
+      ...groups,
+      selected_printer: groups.selected_printer.map((item) =>
+        item.profile_id === 22 ? { ...item, revision_id: item.revision_id + 1 } : item),
+    }));
+
+    await waitFor(() => expect(result.current.selectionReadiness.reason_codes).toContain('material_unverified'));
+    expect(result.current.resolvedSelection).toBeNull();
+  });
+
+  it('invalidates material confirmation when the project slot material changes', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const slots: Record<string, Array<{ type: string; color: string }>> = {
+      TPU: [{ type: 'TPU', color: '' }],
+      PETG: [{ type: 'PETG', color: '' }],
+    };
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result, rerender } = renderHook(
+      ({ type }: { type: string }) => useCatalogSliceSelection({ filamentSlots: slots[type] }),
+      { wrapper, initialProps: { type: 'TPU' } },
+    );
+    await waitFor(() => expect(result.current.activePrinters).toHaveLength(1));
+    act(() => result.current.setPrinterId(1));
+    await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
+    act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.selectionReadiness.reason_codes).toContain('material_mismatch'));
+    act(() => result.current.setAcknowledged(true));
+    expect(result.current.selectionReadiness.state).toBe('ready');
+
+    rerender({ type: 'PETG' });
+    await waitFor(() => expect(result.current.acknowledged).toBe(false));
+    expect(result.current.selectionReadiness.reason_codes).toContain('material_mismatch');
+    expect(result.current.resolvedSelection).toBeNull();
+  });
+
+  it('invalidates acknowledged evidence when the active revision changes', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(() => useCatalogSliceSelection({ filamentSlots }), { wrapper });
+    await waitFor(() => expect(result.current.activePrinters).toHaveLength(1));
+    act(() => result.current.setPrinterId(1));
+    await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
+    act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.selectionReadiness.state).toBe('ready'));
+    act(() => client.setQueryData(['slicerCatalogBindings'], [{
+      ...binding,
+      readiness: { state: 'acknowledgement_required', reason_codes: ['telemetry_stale'] },
+      nozzle: { ...binding.nozzle, status: 'stale' },
+    }]));
+    await waitFor(() => expect(result.current.selectionReadiness.state).toBe('acknowledgement_required'));
+    act(() => result.current.setAcknowledged(true));
+    await waitFor(() => expect(result.current.resolvedSelection).not.toBeNull());
+    act(() => client.setQueryData(['slicerCatalogGroups', 1, 5], {
+      ...groups,
+      selected_printer: groups.selected_printer.map((item) => ({ ...item, revision_id: item.revision_id + 100 })),
+    }));
+    await waitFor(() => expect(result.current.acknowledged).toBe(false));
+    expect(result.current.resolvedSelection).toBeNull();
+  });
+
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    vi.spyOn(api, 'getPrinters').mockResolvedValue([{ id: 1, name: 'P1S', provider: 'bambu', is_active: true } as Printer]);
+    vi.spyOn(api, 'listSlicerCatalogProfiles').mockResolvedValue([
+      profile(4, 'printer'),
+      profile(12, 'process'),
+      profile(22, 'filament'),
+      profile(99, 'process'),
+    ]);
+    vi.spyOn(api, 'listSlicerFilamentRules').mockResolvedValue([]);
+    vi.spyOn(api, 'listSlicerCatalogBindings').mockResolvedValue([binding]);
+    vi.spyOn(api, 'getSlicerCatalogGroups').mockResolvedValue(groups);
+    vi.spyOn(api, 'listSlicerCatalogPreferences').mockResolvedValue([]);
+    vi.spyOn(api, 'getAssignments').mockResolvedValue([]);
+    vi.spyOn(api, 'getSpoolmanSlotAssignments').mockResolvedValue([]);
+    vi.spyOn(api, 'saveSlicerCatalogPreference').mockResolvedValue({
+      id: 1,
+      key: 'process_profile',
+      value: { profile_id: 99 },
+    });
+  });
+
+  it('resolves explicit profiles when binding defaults are unset', async () => {
+    vi.mocked(api.listSlicerCatalogBindings).mockResolvedValue([{
+      ...binding,
+      default_process_profile_id: null,
+      default_filament_profile_id: null,
+      readiness: { state: 'blocked', reason_codes: ['default_unavailable'] },
+    }]);
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => useCatalogSliceSelection({ filamentSlots }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.activePrinters).toHaveLength(1));
+    act(() => result.current.setPrinterId(1));
+    await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
+    act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.groups).toEqual(groups));
+
+    act(() => {
+      result.current.chooseProcess(classification(12, 'process'));
+      result.current.chooseFilament(0, classification(22, 'filament'));
+    });
+
+    await waitFor(() => expect(result.current.resolvedSelection).toMatchObject({
+      bindingId: 5,
+      processProfileId: 12,
+      filamentProfileIds: [22],
+    }));
+    expect(result.current.selectionReadiness).toEqual({ state: 'ready', reason_codes: [] });
+  });
+
+  it('blocks resolution when a selected profile has no current classification', async () => {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={client}>{children}</QueryClientProvider>
+    );
+    const { result } = renderHook(
+      () => useCatalogSliceSelection({ filamentSlots }),
+      { wrapper },
+    );
+
+    await waitFor(() => expect(result.current.activePrinters).toHaveLength(1));
+    act(() => result.current.setPrinterId(1));
+    await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
+    act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.resolvedSelection).not.toBeNull());
+
+    act(() => result.current.chooseProcess(classification(99, 'process')));
+
+    expect(result.current.resolvedSelection).toBeNull();
+  });
+});

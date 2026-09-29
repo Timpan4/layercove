@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "Bu revizyon için üst yazıcı profili eksik veya kullanılamıyor.",
+      ambiguous_parent: "Bu revizyon için üst yazıcı profili belirsiz.",
+      inheritance_cycle: "Yazıcının devralma zincirinde bir döngü var.",
+    },
+    selectPrinter: "Tabla görünümü için bir yazıcı ve kesin bir profil seçin.",
+    loading: "Seçili tabla yükleniyor…",
+    loadFailed: "{{profile}} için tabla yüklenemedi.",
+    unavailable: "{{profile}} için tabla geometrisi kullanılamıyor.",
+    missingArea: "Seçili revizyonda printable_area veya bed_shape yok.",
+    invalidArea: "Seçili revizyondaki printable_area veya bed_shape koordinatları geçersiz.",
+    missingHeight: "Seçili revizyonda printable_height veya max_print_height yok.",
+    invalidHeight: "Seçili revizyondaki printable_height veya max_print_height değeri geçersiz.",
+    revision: "Profil revizyonu {{revision}}",
+    retry: "Tablayı yeniden yükle",
+    bounds: "Tabla boyutları: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "Seçili profil revizyonu kullanılamıyor. Profil kataloğunu yeniden yükleyin.",
+  },
+
   // Navigasyon
   nav: {
     printers: 'Yazıcılar',
@@ -1047,6 +1067,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "Dosya aktarıma hazırlanıyor…",
+    uploadingBytes: "Yükleniyor: {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Yükleniyor: {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Yazdırma işi',
     startingPrints: 'Yazdırmalar başlatılıyor',
     progressSummary: '{{complete}}/{{total}} tamamlandı • İşleniyor: {{processing}}',
@@ -1116,6 +1139,18 @@ export default {
   },
 
   queue: {
+    printDispatch: "Yazdırma aktarımı",
+    dispatch: {
+      progressLabel: "Yazdırma aktarımının ilerlemesi",
+      preparing: "Aktarım hazırlanıyor",
+      uploading: "Yazıcıya yükleniyor",
+      awaitingPrinter: "Yazıcı onayı bekleniyor",
+      uploadProgress: "Yükleme ilerlemesi",
+      elapsed: "{{seconds}}sn",
+      uploadSummary: "{{transferred}} / {{total}} (%{{percent}})",
+      waitingForUpload: "Dosya gönderildi; yükleme yanıtı bekleniyor.",
+      waitingForStart: "Yükleme kabul edildi. Yazdırmanın başlaması henüz onaylanmadı.",
+    },
     title: 'Baskı Kuyruğu',
     subtitle: 'Baskı işlerinizi zamanlayın ve yönetin',
     filamentShort: {
@@ -1622,6 +1657,40 @@ export default {
   },
 
   // Ayarlar sayfası
+  networkSites: {
+    title: 'Ağ Siteleri',
+    description: 'Her Tailscale 4via6 alt ağına bir ad verin ve yazıcıları bu siteye atayın.',
+    copyFailed: 'Panoya kopyalanamadı',
+    setupGuide: 'Raspberry Pi Tailscale kurulumu',
+    printWarning: 'Bu Raspberry Pi yazdırırken ağ ayarlarını değiştirmeyin.',
+    prerequisites: 'Raspberry Pi OS veya Debian tabanlı ARM64 sistem içindir. Geçerli baskı bitince Pi üzerinde çalıştırın.',
+    install: '1. En son kararlı Tailscale sürümünü kur',
+    join: '2. Özel baskı tailnet ağına katıl',
+    forwarding: '3. Yönlendirmeyi etkinleştir',
+    advertise: '4. Bu 4via6 rotasını duyur',
+    approve: '5. Tailnet sahibi olarak duyurulan rotayı onaylayın.',
+    openAdmin: 'Tailscale makinelerini aç',
+    printerIp: 'Yazıcı LAN IPv4 adresi',
+    invalidPrinterIp: 'Bu /24 içinde kullanılabilir bir IPv4 adresi girin.',
+    magicDns: 'Yazıcı MagicDNS ana bilgisayar adı',
+    discoveryNote: 'Yayın keşfi yönlendirilmiş siteleri geçmez. Yazıcıyı bu MagicDNS adıyla elle ekleyin.',
+    created: 'Ağ sitesi oluşturuldu',
+    name: 'Site adı',
+    namePlaceholder: 'Timpa Ev',
+    siteNumber: 'Site kimliği',
+    subnet: 'Özel /24',
+    empty: 'Yapılandırılmış ağ sitesi yok.',
+    siteSummary: 'Site {{number}} · {{subnet}} · {{count}} yazıcı',
+    rename: 'Siteyi yeniden adlandır',
+    renamePrompt: 'Yeni site adı',
+    deleteConfirm: '{{name}} silinsin mi?',
+    connection: 'Bağlantı',
+    localDirect: 'Yerel / doğrudan',
+    createHere: 'Burada ağ sitesi oluştur',
+    targetPreview: 'Bağlantı hedefi: {{host}}',
+    moonrakerPort: 'Moonraker bağlantı noktası',
+  },
+
   settings: {
     title: 'Ayarlar',
     general: 'Genel',
@@ -3073,6 +3142,24 @@ export default {
     stopRecording: 'Kaydı Durdur',
     chamberLight: 'Hazne ışığını aç/kapat',
     unavailable: 'Kamera kullanılamıyor',
+    moonraker: {
+      title: 'Moonraker kameraları',
+      refresh: 'Kameraları yenile',
+      primary: 'Birincil',
+      unsupported: 'Desteklenmiyor',
+      disabledInMoonraker: 'Moonraker’da devre dışı',
+      editManual: 'Manuel kamerayı düzenle',
+      streamUrl: 'Akış URL’si',
+      newStreamOrSnapshotUrl: 'Yeni akış veya anlık görüntü URL’si',
+      snapshotUrl: 'Anlık görüntü URL’si',
+      newSnapshotUrl: 'Yeni anlık görüntü URL’si (isteğe bağlı)',
+      noCameras: 'Kamera bulunamadı.',
+      history: 'Kamera geçmişi ({{count}})',
+      lastSeen: 'Son görülme: {{date}}',
+      restoreAsManual: 'Manuel olarak geri yükle',
+      removeHistory: 'Geçmişten kaldır',
+      moreCameras: 'Daha fazla kamera',
+    },
     diagnose: {
       button: 'Tanıla',
       modalTitle: 'Kamera tanılaması',
@@ -6276,8 +6363,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Kamera akışına erişilemez',
-        cause: 'Canlı kameraya RTSPS 322 portunda erişilemedi. Port engellendi veya yazıcıda kamera veya LAN canlı görünümü kapalı.',
-        fix: 'Yazıcıda kamerayı ve LAN canlı görünümünü etkinleştirin ve port 322\'nin engellenmediğinden emin olun. Bu, baskıyı etkilemez.',
+        cause: 'Canlı kameraya {{cameraEndpoint}} uç noktası üzerinden erişilemedi. Port engellendi veya yazıcıda kamera veya LAN canlı görünümü kapalı.',
+        fix: 'Yazıcıda kamerayı ve LAN canlı görünümünü etkinleştirin ve port {{cameraPort}}\'nin engellenmediğinden emin olun. Bu, baskıyı etkilemez.',
       },
       'database-locked': {
         name: 'Veritabanı yazma çekişmesi',

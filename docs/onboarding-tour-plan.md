@@ -249,7 +249,7 @@ Each Phase 3 step starts with an "Interested?" gate — if the user clicks `Skip
 - "Requires the orca-slicer-api sidecar container (separate docker-compose, link below). Bambuddy talks to it over HTTP."
 - One-line note: "Status: still maturing upstream (segfault on multi-filament 3MF being patched). Solid for single-filament / single-plate jobs today."
 **Buttons:** `Configure sidecar` → opens slicer URL field / `Skip`
-**Links:** github.com/maziggy/orca-slicer-api, wiki/features/slicer-api
+**Links:** https://github.com/Timpan4/orca-slicer-api, wiki/features/slicer-api
 
 ### Step 3.3 - External library folders
 **Anchor:** Settings → Library / external roots

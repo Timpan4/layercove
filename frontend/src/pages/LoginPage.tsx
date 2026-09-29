@@ -115,7 +115,7 @@ export function LoginPage() {
   const { t } = useTranslation();
   const { login, loginWithToken } = useAuth();
   const { showToast } = useToast();
-  const { mode } = useTheme();
+  const { resolvedMode } = useTheme();
 
   // Resolve the post-login destination, preferring router state (set by
   // ProtectedRoute when it redirects an unauthed visit) over the sessionStorage
@@ -690,7 +690,7 @@ export function LoginPage() {
         <div className="text-center">
           <div className="flex items-center justify-center mb-6">
             <img
-              src={mode === 'dark' ? '/img/bambuddy_logo_dark_transparent.png' : '/img/bambuddy_logo_light.png'}
+              src={resolvedMode === 'dark' ? '/img/layercove-wordmark-light.svg' : '/img/layercove-wordmark-dark.svg'}
               alt="LayerCove"
               className="h-16"
             />

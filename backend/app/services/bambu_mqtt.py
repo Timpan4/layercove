@@ -540,6 +540,7 @@ class BambuMQTTClient:
         # printer hasn't reported it yet, letting queue/scheduled archives
         # persist a restart-stable id from the moment they dispatch (#1485).
         self.last_dispatch_subtask_id: str | None = None
+        self.last_dispatch_publish_uncertain = False
         self._is_dual_nozzle: bool = False  # Set when device.extruder.info has >= 2 entries
         self._message_log: deque[MQTTLogEntry] = deque(maxlen=100)
         self._logging_enabled: bool = False
@@ -3637,6 +3638,7 @@ class BambuMQTTClient:
                 back to "last matching nozzle" auto-pick. Silently ignored
                 on single-nozzle printers.
         """
+        self.last_dispatch_publish_uncertain = False
         if self._client and self.state.connected:
             # Bambu print command format — matches Bambu Studio's format.
             # The calibration/leveling fields (timelapse, bed_leveling,
@@ -3815,7 +3817,13 @@ class BambuMQTTClient:
                     )
 
             logger.info("[%s] Sending print command: %s", self.serial_number, json.dumps(command))
-            self._client.publish(self.topic_publish, json.dumps(command), qos=1)
+            published = self._client.publish(self.topic_publish, json.dumps(command), qos=1)
+            if published.rc != mqtt.MQTT_ERR_SUCCESS:
+                # Paho retains QoS 1 messages on NO_CONN and may send them on
+                # reconnect. This is uncertain, not proof that nothing was sent.
+                self.last_dispatch_publish_uncertain = published.rc == mqtt.MQTT_ERR_NO_CONN
+                logger.error("[%s] MQTT print publish did not succeed (rc=%s)", self.serial_number, published.rc)
+                return False
             # Record what we dispatched so /cover can pick the right plate
             # thumbnail even when the printer's gcode_file echo is just the
             # 3MF filename without a plate path (#1166). Match the same

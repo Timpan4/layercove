@@ -68,9 +68,7 @@ read only as process references. LayerCove work stays in this repository.
 - `backend/app/services/slice_dispatch.py` manages in-memory slice jobs and is
   destination-agnostic, but generated output naming and surrounding route/UI
   assumptions are Bambu-oriented.
-- The sidecar is deployed separately from this repository (`slicer-api/` holds
-  Compose/docs only). Its exact output-format contract must be verified before
-  coding Klipper slicing.
+- The sidecar is deployed separately from this repository in the [public Orca Slicer API repository](https://github.com/Timpan4/orca-slicer-api). Its exact output-format contract must be verified before coding Klipper slicing.
 - Frontend slicing and print modals already provide mobile workflows, profile
   selection, printer selection, plate selection, AMS mapping, and Bambu print
   options. Capability gating should reshape these screens instead of cloning

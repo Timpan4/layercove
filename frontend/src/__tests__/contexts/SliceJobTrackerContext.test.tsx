@@ -481,4 +481,31 @@ describe('SliceJobTrackerProvider — persistent progress toast', () => {
     // No progress percent is shown when null.
     expect(screen.queryByText(/%/)).toBeNull();
   });
+
+  it('stops polling when the tracked job no longer exists', async () => {
+    mockApi.getSliceJob.mockRejectedValue(
+      Object.assign(new Error('Slice job not found or expired'), { status: 404 }),
+    );
+
+    render(
+      <Wrapper>
+        <TrackTrigger id={4} name="Expired.3mf" />
+      </Wrapper>,
+    );
+
+    act(() => {
+      screen.getByText('track-4').click();
+    });
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+    expect(mockApi.getSliceJob).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(6000);
+    });
+    expect(mockApi.getSliceJob).toHaveBeenCalledTimes(1);
+    expect(screen.queryByText(/Expired\.3mf/)).toBeNull();
+  });
 });

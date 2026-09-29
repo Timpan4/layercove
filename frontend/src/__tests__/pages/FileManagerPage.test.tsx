@@ -102,6 +102,11 @@ const mockStats = {
 };
 
 describe('FileManagerPage', () => {
+  it('names file and folder action menus', async () => {
+    render(<FileManagerPage />);
+    expect(await screen.findByRole('button', { name: 'Actions: Benchy' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Actions: Functional Parts' })).toBeInTheDocument();
+  });
   beforeEach(() => {
     // Clear localStorage to ensure consistent view mode
     localStorage.clear();

@@ -516,6 +516,34 @@ async def test_moonraker_client_total_deadline_bounds_dns_resolution(monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_moonraker_client_exposes_webcam_list_and_test_endpoints():
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    requests: list[tuple[str, str, str]] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append((request.method, request.url.path, request.url.query.decode()))
+        return httpx.Response(200, json={"result": {"webcams": []}})
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+
+    await client.list_webcams()
+    await client.test_webcam("camera uid")
+
+    assert requests == [
+        ("GET", "/server/webcams/list", ""),
+        ("POST", "/server/webcams/test", "uid=camera+uid"),
+    ]
+
+
+@pytest.mark.asyncio
 async def test_moonraker_client_total_deadline_bounds_slow_response_body(monkeypatch):
     from backend.app.services import moonraker_http
     from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
@@ -824,3 +852,121 @@ async def test_public_pinned_transport_wires_http_https_sni_and_peer(
     assert f"Host: {expected_host}:7125".encode() in b"".join(connector.stream.writes)
     assert connector.stream.sni == expected_sni
     assert connector.stream.verify_mode == expected_verify_mode
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("body", [b"{}", b'{"result": false}', b"<html>proxy login</html>"])
+async def test_start_requires_a_valid_moonraker_acknowledgement(body):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(_host, _port):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx.Response(200, content=body)
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.start_print("queue/cube.gcode")
+    assert error.value.code == "invalid_response"
+    assert len(requests) == 1
+
+
+@pytest.mark.asyncio
+async def test_start_accepts_moonraker_ok_response():
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    async def resolver(_host, _port):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(lambda _request: httpx.Response(200, json={"result": "ok"})),
+    )
+    await client.start_print("queue/cube.gcode")
+
+
+@pytest.mark.asyncio
+async def test_dispatch_directory_is_separate_from_export_basename():
+    from email.parser import BytesParser
+    from email.policy import default
+
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    captured = []
+
+    async def resolver(_host, _port):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    def handler(request):
+        message = BytesParser(policy=default).parsebytes(
+            f"Content-Type: {request.headers['content-type']}\r\n\r\n".encode() + request.content
+        )
+        fields = {part.get_param("name", header="content-disposition"): part for part in message.iter_parts()}
+        filename = fields["file"].get_filename()
+        directory = fields["path"].get_payload(decode=True).decode()
+        assert filename == "3dbenchy_PLA_9m42s.gcode"
+        assert fields["file"].get_payload(decode=True) == b"G28\n"
+        assert fields["root"].get_payload(decode=True) == b"gcodes"
+        assert "print" not in fields
+        path = f"{directory}/{filename}"
+        captured.append(path)
+        return httpx.Response(201, json={"item": {"root": "gcodes", "path": path}})
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+    for attempt in ("a" * 32, "b" * 32):
+        directory = f"layercove/{attempt}"
+        path = await client.upload_gcode(
+            io.BytesIO(b"G28\n"),
+            filename="3dbenchy_PLA_9m42s.gcode",
+            size=4,
+            directory=directory,
+        )
+        assert path == captured[-1]
+    assert captured[0] != captured[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("directory", ["", "/absolute", "..", "a/../b", "a//b", "a/./b", "a\\b", "a\x00b"])
+async def test_unsafe_upload_directory_fails_before_network(directory):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(_host, _port):
+        pytest.fail("invalid directory reached network resolution")
+
+    client = MoonrakerHTTPClient(base_url="http://printer.lan:7125", resolver=resolver)
+    with pytest.raises(MoonrakerHTTPError) as caught:
+        await client.upload_gcode(io.BytesIO(b"G28\n"), filename="cube.gcode", directory=directory)
+    assert caught.value.code == "invalid_directory"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("root,path", [("gcodes", "elsewhere/cube.gcode"), ("config", "layercove/job/cube.gcode")])
+async def test_upload_cannot_silently_lose_attempt_isolation(root, path):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(_host, _port):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(
+            lambda _: httpx.Response(201, json={"item": {"root": root, "path": path}})
+        ),
+    )
+    with pytest.raises(MoonrakerHTTPError) as caught:
+        await client.upload_gcode(io.BytesIO(b"G28\n"), filename="cube.gcode", directory="layercove/job")
+    assert caught.value.code == "invalid_response"

@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app.core.database import async_session, get_db
+from backend.app.core.identity import CallerIdentity
 from backend.app.core.permissions import Permission
 from backend.app.models.api_key import APIKey
 from backend.app.models.auth_ephemeral import AuthEphemeralToken, TokenType
@@ -1294,56 +1295,90 @@ async def caller_is_api_key(
     return credentials is not None and credentials.credentials.startswith("bb_")
 
 
-def check_permission(api_key: APIKey, permission: str) -> None:
-    """Check if API key has the required permission.
+async def get_caller_identity_if_auth_enabled(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> CallerIdentity:
+    """Resolve authenticated caller without assigning API keys user ownership."""
+    async with async_session() as db:
+        if not await is_auth_enabled(db):
+            return CallerIdentity.auth_disabled()
 
-    Args:
-        api_key: The API key object
-        permission: One of 'queue', 'control_printer', 'read_status'
+        if x_api_key:
+            api_key = await _validate_api_key(db, x_api_key)
+            if api_key:
+                return CallerIdentity.authenticated_api_key(api_key)
 
-    Raises:
-        HTTPException: If permission is not granted
-    """
-    permission_map = {
-        "queue": "can_queue",
-        "control_printer": "can_control_printer",
-        "read_status": "can_read_status",
-    }
-
-    if permission not in permission_map:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Unknown permission: {permission}",
+        credentials_exception = HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Could not validate credentials",
+            headers={"WWW-Authenticate": "Bearer"},
         )
+        if credentials is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
 
-    attr_name = permission_map[permission]
-    if not getattr(api_key, attr_name, False):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"API key does not have '{permission}' permission",
-        )
+        token = credentials.credentials
+        if token.startswith("bb_"):
+            api_key = await _validate_api_key(db, token)
+            if api_key:
+                return CallerIdentity.authenticated_api_key(api_key)
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid API key",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        try:
+            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+            username: str = payload.get("sub")
+            if username is None:
+                raise credentials_exception
+            jti: str | None = payload.get("jti")
+            if not jti or await is_jti_revoked(jti):
+                raise credentials_exception
+            iat: int | float | None = payload.get("iat")
+        except JWTError:
+            raise credentials_exception
+
+        user = await get_user_by_username(db, username)
+        if user is None or not user.is_active or not _is_token_fresh(iat, user):
+            raise credentials_exception
+        return CallerIdentity.authenticated_user(user)
 
 
-def check_printer_access(api_key: APIKey, printer_id: int) -> None:
-    """Check if API key has access to the specified printer.
+def require_caller_identity_if_auth_enabled(*permissions: Permission):
+    """Require permissions, returning tagged caller for route decisions."""
 
-    Args:
-        api_key: The API key object
-        printer_id: The printer ID to check access for
+    async def checker(
+        caller: Annotated[CallerIdentity, Depends(get_caller_identity_if_auth_enabled)],
+    ) -> CallerIdentity:
+        caller.require_permissions(*permissions)
+        return caller
 
-    Raises:
-        HTTPException: If access is denied
-    """
-    # None = global key, access to all printers
-    if api_key.printer_ids is None:
-        return
+    return checker
 
-    # Empty list or printer not in allowed list = no access
-    if printer_id not in api_key.printer_ids:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"API key does not have access to printer {printer_id}",
-        )
+
+def require_ownership_caller_identity(
+    all_permission: Permission,
+    own_permission: Permission,
+):
+    """Require ownership permission, returning caller plus filter input."""
+
+    async def checker(
+        caller: Annotated[CallerIdentity, Depends(get_caller_identity_if_auth_enabled)],
+    ) -> tuple[CallerIdentity, bool]:
+        return caller, caller.require_ownership(all_permission, own_permission).can_access_all
+
+    return checker
+
+
+async def get_api_key_identity(api_key: Annotated[APIKey, Depends(get_api_key)]) -> CallerIdentity:
+    """Adapt existing API-key validation to tagged identity for webhooks."""
+    return CallerIdentity.authenticated_api_key(api_key)
 
 
 # Convenience dependencies - these are functions that return Depends objects

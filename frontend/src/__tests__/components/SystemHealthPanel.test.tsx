@@ -30,6 +30,15 @@ const BASE: SystemHealthResult = {
 };
 
 describe('SystemHealthPanel', () => {
+  it('uses the chamber-image camera port in recovery advice', () => {
+    renderPanel({ ...BASE, findings: [{
+      signature_id: 'camera-connection-refused', severity: 'warning', category: 'environment',
+      wiki_anchor: 'camera', count: 1, first_seen: '', last_seen: '',
+      sample: 'Chamber image connection timed out on port 6000',
+    }] });
+    expect(screen.getByText(/make sure port 6000 is not blocked/)).toBeInTheDocument();
+    expect(screen.queryByText(/port RTSPS 322/)).not.toBeInTheDocument();
+  });
   it('shows a healthy message when there are no findings', () => {
     renderPanel(BASE);
     expect(screen.getByText(/No known issues found/i)).toBeInTheDocument();

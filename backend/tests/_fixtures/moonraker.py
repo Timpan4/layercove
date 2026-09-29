@@ -23,6 +23,7 @@ class FakeMoonraker:
     requests: list[tuple[str, str]] = field(default_factory=list)
     commands: list[tuple[str, str | None]] = field(default_factory=list)
     uploads: list[tuple[str, bytes]] = field(default_factory=list)
+    upload_paths: list[str] = field(default_factory=list)
     malformed_server_info: bool = False
     malformed_jsonrpc_method: str | None = None
     malformed_websocket_message: bool = False
@@ -155,10 +156,13 @@ class FakeMoonraker:
         reader = await request.multipart()
         root: str | None = None
         filename: str | None = None
+        directory = "queue"
         content = bytearray()
         while part := await reader.next():
             if part.name == "root":
                 root = await part.text()
+            elif part.name == "path":
+                directory = await part.text()
             elif part.name == "file":
                 filename = part.filename
                 while chunk := await part.read_chunk():
@@ -166,7 +170,8 @@ class FakeMoonraker:
         if root != "gcodes" or not filename:
             raise web.HTTPBadRequest(text="invalid upload")
         self.uploads.append((filename, bytes(content)))
-        remote_path = f"queue/{filename}"
+        remote_path = f"{directory}/{filename}"
+        self.upload_paths.append(remote_path)
         return web.json_response({"item": {"root": "gcodes", "path": remote_path}}, status=201)
 
     async def _start_print(self, request: web.Request) -> web.StreamResponse:

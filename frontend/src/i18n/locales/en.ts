@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "The printer inheritance parent is missing or unavailable for this revision.",
+      ambiguous_parent: "The printer inheritance parent is ambiguous for this revision.",
+      inheritance_cycle: "The printer inheritance chain contains a cycle.",
+    },
+    selectPrinter: "Select a printer and an exact profile to view the bed.",
+    loading: "Loading selected bed…",
+    loadFailed: "Could not load the bed for {{profile}}.",
+    unavailable: "Bed geometry is unavailable for {{profile}}.",
+    missingArea: "The selected revision has no printable_area or bed_shape.",
+    invalidArea: "The selected revision has invalid printable_area or bed_shape coordinates.",
+    missingHeight: "The selected revision has no printable_height or max_print_height.",
+    invalidHeight: "The selected revision has an invalid printable_height or max_print_height.",
+    revision: "Profile revision {{revision}}",
+    retry: "Retry loading bed",
+    bounds: "Bed bounds: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "The selected profile revision is unavailable. Reload the profile catalog.",
+  },
+
   // Navigation
   nav: {
     printers: 'Printers',
@@ -1053,6 +1073,9 @@ export default {
   // legacy bg-dispatch toast UI for the scheduler-driven dispatch path).
   // Strings mirror 0b43ac0d's backgroundDispatch namespace.
   dispatchToast: {
+    preparingFile: "Preparing file for transfer…",
+    uploadingBytes: "Uploading {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Uploading {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Print job',
     startingPrints: 'Starting prints',
     progressSummary: '{{complete}}/{{total}} complete • Processing: {{processing}}',
@@ -1125,6 +1148,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "Print dispatch",
+    dispatch: {
+      progressLabel: "Print dispatch progress",
+      preparing: "Preparing transfer",
+      uploading: "Uploading to printer",
+      awaitingPrinter: "Waiting for printer confirmation",
+      uploadProgress: "Upload progress",
+      elapsed: "{{seconds}}s",
+      uploadSummary: "{{transferred}} / {{total}} ({{percent}}%)",
+      waitingForUpload: "File sent; waiting for the upload response.",
+      waitingForStart: "Upload accepted. The print start has not yet been confirmed.",
+    },
     title: 'Print Queue',
     subtitle: 'Schedule and manage your print jobs',
     filamentShort: {
@@ -1637,6 +1672,40 @@ export default {
   },
 
   // Settings page
+  networkSites: {
+    title: 'Network Sites',
+    description: 'Name each Tailscale 4via6 subnet once, then assign printers to that site.',
+    copyFailed: 'Could not copy to clipboard',
+    setupGuide: 'Raspberry Pi Tailscale setup',
+    printWarning: 'Do not change networking while this Raspberry Pi is printing.',
+    prerequisites: 'For Raspberry Pi OS or another Debian-based ARM64 system. Run these commands on the Pi after the current print finishes.',
+    install: '1. Install latest stable Tailscale',
+    join: '2. Join the dedicated print tailnet',
+    forwarding: '3. Enable forwarding',
+    advertise: '4. Advertise this 4via6 route',
+    approve: '5. Approve the advertised route as tailnet owner.',
+    openAdmin: 'Open Tailscale machines',
+    printerIp: 'Printer LAN IPv4 address',
+    invalidPrinterIp: 'Enter a usable IPv4 address in this /24.',
+    magicDns: 'MagicDNS printer hostname',
+    discoveryNote: 'Broadcast discovery does not cross routed sites. Add the printer manually with this MagicDNS hostname.',
+    created: 'Network site created',
+    name: 'Site name',
+    namePlaceholder: 'Timpa Home',
+    siteNumber: 'Site ID',
+    subnet: 'Private /24',
+    empty: 'No network sites configured.',
+    siteSummary: 'Site {{number}} · {{subnet}} · {{count}} printer(s)',
+    rename: 'Rename site',
+    renamePrompt: 'New site name',
+    deleteConfirm: 'Delete {{name}}?',
+    connection: 'Connection',
+    localDirect: 'Local / direct',
+    createHere: 'Create a network site here',
+    targetPreview: 'Connection target: {{host}}',
+    moonrakerPort: 'Moonraker port',
+  },
+
   settings: {
     title: 'Settings',
     general: 'General',
@@ -3098,6 +3167,24 @@ export default {
     stopRecording: 'Stop Recording',
     chamberLight: 'Toggle chamber light',
     unavailable: 'Camera unavailable',
+    moonraker: {
+      title: 'Moonraker cameras',
+      refresh: 'Refresh cameras',
+      primary: 'Primary',
+      unsupported: 'Unsupported',
+      disabledInMoonraker: 'Disabled in Moonraker',
+      editManual: 'Edit manual camera',
+      streamUrl: 'Stream URL',
+      newStreamOrSnapshotUrl: 'New stream or snapshot URL',
+      snapshotUrl: 'Snapshot URL',
+      newSnapshotUrl: 'New snapshot URL (optional)',
+      noCameras: 'No cameras discovered.',
+      history: 'Camera history ({{count}})',
+      lastSeen: 'Last seen {{date}}',
+      restoreAsManual: 'Restore as manual',
+      removeHistory: 'Remove history',
+      moreCameras: 'More cameras',
+    },
     diagnose: {
       button: 'Diagnose',
       modalTitle: 'Camera diagnostic',
@@ -6380,8 +6467,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Camera stream unreachable',
-        cause: 'The live camera could not be reached on port RTSPS 322. The port is blocked, or the camera or LAN liveview is off on the printer.',
-        fix: 'Enable the camera and LAN liveview on the printer, and make sure port 322 is not blocked. This does not affect printing.',
+        cause: 'The live camera could not be reached on port {{cameraEndpoint}}. The port is blocked, or the camera or LAN liveview is off on the printer.',
+        fix: 'Enable the camera and LAN liveview on the printer, and make sure port {{cameraPort}} is not blocked. This does not affect printing.',
       },
       'database-locked': {
         name: 'Database write contention',

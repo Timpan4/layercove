@@ -1,3 +1,4 @@
+import { queryKeys } from '../../api/queryKeys';
 import { useState, useEffect, useMemo } from 'react';
 import { useQuery, useQueries } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -23,7 +24,7 @@ export function SpoolBuddyTopBar({ selectedPrinterId, onPrinterChange, deviceOnl
   // Fetch status for each printer to determine which are online
   const statusQueries = useQueries({
     queries: printers.map((printer: Printer) => ({
-      queryKey: ['printerStatus', printer.id],
+      queryKey: queryKeys.printerStatus(printer.id),
       queryFn: () => api.getPrinterStatus(printer.id),
       refetchInterval: 10000,
     })),

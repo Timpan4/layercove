@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "このリビジョンの継承元プリンタープロファイルが見つからないか、利用できません。",
+      ambiguous_parent: "このリビジョンの継承元プリンタープロファイルを一意に特定できません。",
+      inheritance_cycle: "プリンターの継承チェーンに循環があります。",
+    },
+    selectPrinter: "プリンターと正確なプロファイルを選択してベッドを表示してください。",
+    loading: "選択したベッドを読み込み中…",
+    loadFailed: "{{profile}} のベッドを読み込めませんでした。",
+    unavailable: "{{profile}} のベッド形状を取得できません。",
+    missingArea: "選択したリビジョンに printable_area または bed_shape がありません。",
+    invalidArea: "選択したリビジョンの printable_area または bed_shape の座標が無効です。",
+    missingHeight: "選択したリビジョンに printable_height または max_print_height がありません。",
+    invalidHeight: "選択したリビジョンの printable_height または max_print_height が無効です。",
+    revision: "プロファイルのリビジョン {{revision}}",
+    retry: "ベッドを再読み込み",
+    bounds: "ベッド寸法: {{x}} × {{y}} × {{z}} mm。",
+    missingRevision: "選択したプロファイルのリビジョンを取得できません。プロファイルカタログを再読み込みしてください。",
+  },
+
   // Navigation
   nav: {
     printers: 'プリンター',
@@ -1046,6 +1066,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "転送するファイルを準備中…",
+    uploadingBytes: "アップロード中 {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "アップロード中 {{transferred}} / {{total}} ({{percent}}%)",
     untitled: '印刷ジョブ',
     startingPrints: '印刷を開始しています',
     progressSummary: '{{complete}}/{{total}} 完了 • 処理中: {{processing}}',
@@ -1115,6 +1138,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "印刷ジョブの転送",
+    dispatch: {
+      progressLabel: "印刷ジョブの転送状況",
+      preparing: "転送を準備中",
+      uploading: "プリンターにアップロード中",
+      awaitingPrinter: "プリンターの確認を待機中",
+      uploadProgress: "アップロードの進行状況",
+      elapsed: "{{seconds}}秒",
+      uploadSummary: "{{total}} 中 {{transferred}} ({{percent}}%)",
+      waitingForUpload: "ファイル送信済み。アップロードの応答を待機しています。",
+      waitingForStart: "アップロードが受け付けられました。印刷開始はまだ確認されていません。",
+    },
     filamentShort: {
       rowBadge: '割り当てられたスプールのフィラメントが不足しています',
       rowTooltip: 'スケジューラーがこのアイテムをフラグしました。再生ボタンをクリックしてスロットごとの不足量を確認し、それでも印刷するか判断してください。',
@@ -1619,6 +1654,40 @@ export default {
   },
 
   // Settings page
+  networkSites: {
+    title: 'ネットワークサイト',
+    description: 'Tailscale 4via6 サブネットに名前を付け、プリンターをそのサイトに割り当てます。',
+    copyFailed: 'クリップボードにコピーできませんでした',
+    setupGuide: 'Raspberry Pi の Tailscale セットアップ',
+    printWarning: 'この Raspberry Pi が印刷中はネットワークを変更しないでください。',
+    prerequisites: 'Raspberry Pi OS または Debian ベースの ARM64 用です。現在の印刷完了後に Pi で実行してください。',
+    install: '1. 最新の安定版 Tailscale をインストール',
+    join: '2. 専用の印刷 tailnet に参加',
+    forwarding: '3. 転送を有効化',
+    advertise: '4. この 4via6 ルートを公開',
+    approve: '5. tailnet 所有者として公開ルートを承認します。',
+    openAdmin: 'Tailscale マシンを開く',
+    printerIp: 'プリンターの LAN IPv4 アドレス',
+    invalidPrinterIp: 'この /24 内の使用可能な IPv4 アドレスを入力してください。',
+    magicDns: 'プリンターの MagicDNS ホスト名',
+    discoveryNote: 'ブロードキャスト検出はルーティングされたサイトを越えません。この MagicDNS 名で手動追加してください。',
+    created: 'ネットワークサイトを作成しました',
+    name: 'サイト名',
+    namePlaceholder: 'Timpa の家',
+    siteNumber: 'サイト ID',
+    subnet: 'プライベート /24',
+    empty: 'ネットワークサイトがありません。',
+    siteSummary: 'サイト {{number}} · {{subnet}} · {{count}} 台',
+    rename: 'サイト名を変更',
+    renamePrompt: '新しいサイト名',
+    deleteConfirm: '{{name}} を削除しますか？',
+    connection: '接続',
+    localDirect: 'ローカル / 直接',
+    createHere: 'ここでネットワークサイトを作成',
+    targetPreview: '接続先: {{host}}',
+    moonrakerPort: 'Moonraker ポート',
+  },
+
   settings: {
     title: '設定',
     general: '一般',
@@ -3069,6 +3138,24 @@ export default {
     stopRecording: '録画停止',
     chamberLight: 'チャンバーライト切替',
     unavailable: 'カメラは利用できません',
+    moonraker: {
+      title: 'Moonrakerカメラ',
+      refresh: 'カメラを更新',
+      primary: 'プライマリ',
+      unsupported: '未対応',
+      disabledInMoonraker: 'Moonrakerで無効',
+      editManual: '手動カメラを編集',
+      streamUrl: 'ストリームURL',
+      newStreamOrSnapshotUrl: '新しいストリームまたはスナップショットURL',
+      snapshotUrl: 'スナップショットURL',
+      newSnapshotUrl: '新しいスナップショットURL（任意）',
+      noCameras: 'カメラが見つかりません。',
+      history: 'カメラ履歴（{{count}}）',
+      lastSeen: '最終確認: {{date}}',
+      restoreAsManual: '手動カメラとして復元',
+      removeHistory: '履歴から削除',
+      moreCameras: 'その他のカメラ',
+    },
     diagnose: {
       button: '診断',
       modalTitle: 'カメラ診断',
@@ -6337,8 +6424,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'カメラ映像に接続できません',
-        cause: 'ポート RTSPS 322 でライブカメラに到達できませんでした。ポートがブロックされているか、プリンターのカメラまたは LAN ライブビューが無効になっています。',
-        fix: 'プリンターのカメラと LAN ライブビューを有効にし、ポート 322 がブロックされていないか確認してください。これは印刷には影響しません。',
+        cause: 'ポート {{cameraEndpoint}} でライブカメラに到達できませんでした。ポートがブロックされているか、プリンターのカメラまたは LAN ライブビューが無効になっています。',
+        fix: 'プリンターのカメラと LAN ライブビューを有効にし、ポート {{cameraPort}} がブロックされていないか確認してください。これは印刷には影響しません。',
       },
       'database-locked': {
         name: 'データベースの書き込み競合',

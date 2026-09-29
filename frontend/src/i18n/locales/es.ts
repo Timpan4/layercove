@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "El perfil principal de la impresora no existe o no está disponible para esta revisión.",
+      ambiguous_parent: "El perfil principal de la impresora es ambiguo para esta revisión.",
+      inheritance_cycle: "La cadena de herencia de la impresora contiene un ciclo.",
+    },
+    selectPrinter: "Selecciona una impresora y un perfil exacto para ver la cama.",
+    loading: "Cargando la cama seleccionada…",
+    loadFailed: "No se pudo cargar la cama de {{profile}}.",
+    unavailable: "La geometría de la cama no está disponible para {{profile}}.",
+    missingArea: "La revisión seleccionada no contiene printable_area ni bed_shape.",
+    invalidArea: "La revisión seleccionada contiene coordenadas printable_area o bed_shape no válidas.",
+    missingHeight: "La revisión seleccionada no contiene printable_height ni max_print_height.",
+    invalidHeight: "La revisión seleccionada contiene un valor printable_height o max_print_height no válido.",
+    revision: "Revisión del perfil {{revision}}",
+    retry: "Volver a cargar la cama",
+    bounds: "Dimensiones de la cama: {{x}} × {{y}} × {{z}} mm.",
+    missingRevision: "La revisión del perfil seleccionada no está disponible. Recarga el catálogo de perfiles.",
+  },
+
   // Navigation
   nav: {
     printers: 'Impresoras',
@@ -1047,6 +1067,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "Preparando archivo para transferir…",
+    uploadingBytes: "Subiendo {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "Subiendo {{transferred}} / {{total}} ({{percent}}%)",
     untitled: 'Trabajo de impresión',
     startingPrints: 'Iniciando impresiones',
     progressSummary: '{{complete}}/{{total}} listas • Procesando: {{processing}}',
@@ -1116,6 +1139,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "Envío de impresión",
+    dispatch: {
+      progressLabel: "Progreso del envío de impresión",
+      preparing: "Preparando transferencia",
+      uploading: "Subiendo a la impresora",
+      awaitingPrinter: "Esperando confirmación de la impresora",
+      uploadProgress: "Progreso de subida",
+      elapsed: "{{seconds}} s",
+      uploadSummary: "{{transferred}} de {{total}} ({{percent}} %)",
+      waitingForUpload: "Archivo enviado; esperando la respuesta de la subida.",
+      waitingForStart: "Subida aceptada. El inicio de la impresión aún no se ha confirmado.",
+    },
     filamentShort: {
       rowBadge: 'Filamento insuficiente para la bobina asignada',
       rowTooltip: 'El planificador marco este elemento. Pulsa Reproducir para ver el deficit por slot y decidir si imprimir de todos modos.',
@@ -1621,6 +1656,40 @@ export default {
   },
 
   // Settings page
+  networkSites: {
+    title: 'Sitios de red',
+    description: 'Asigna un nombre a cada subred Tailscale 4via6 y luego vincula impresoras al sitio.',
+    copyFailed: 'No se pudo copiar al portapapeles',
+    setupGuide: 'Configuración de Tailscale en Raspberry Pi',
+    printWarning: 'No cambies la red mientras este Raspberry Pi esté imprimiendo.',
+    prerequisites: 'Para Raspberry Pi OS u otro sistema ARM64 basado en Debian. Ejecuta estos comandos cuando termine la impresión actual.',
+    install: '1. Instalar la última versión estable de Tailscale',
+    join: '2. Unirse a la red de impresión dedicada',
+    forwarding: '3. Activar el reenvío',
+    advertise: '4. Anunciar esta ruta 4via6',
+    approve: '5. Aprueba la ruta anunciada como propietario de la tailnet.',
+    openAdmin: 'Abrir máquinas de Tailscale',
+    printerIp: 'Dirección IPv4 LAN de la impresora',
+    invalidPrinterIp: 'Introduce una dirección IPv4 utilizable dentro de este /24.',
+    magicDns: 'Nombre MagicDNS de la impresora',
+    discoveryNote: 'El descubrimiento por difusión no cruza sitios enrutados. Añade la impresora manualmente con este nombre MagicDNS.',
+    created: 'Sitio de red creado',
+    name: 'Nombre del sitio',
+    namePlaceholder: 'Casa de Timpa',
+    siteNumber: 'ID del sitio',
+    subnet: '/24 privada',
+    empty: 'No hay sitios de red configurados.',
+    siteSummary: 'Sitio {{number}} · {{subnet}} · {{count}} impresora(s)',
+    rename: 'Renombrar sitio',
+    renamePrompt: 'Nuevo nombre del sitio',
+    deleteConfirm: '¿Eliminar {{name}}?',
+    connection: 'Conexión',
+    localDirect: 'Local / directa',
+    createHere: 'Crear un sitio de red aquí',
+    targetPreview: 'Destino de conexión: {{host}}',
+    moonrakerPort: 'Puerto de Moonraker',
+  },
+
   settings: {
     title: 'Ajustes',
     general: 'General',
@@ -3072,6 +3141,24 @@ export default {
     stopRecording: 'Detener grabación',
     chamberLight: 'Conmutar la luz de la cámara',
     unavailable: 'Cámara no disponible',
+    moonraker: {
+      title: 'Cámaras de Moonraker',
+      refresh: 'Actualizar cámaras',
+      primary: 'Principal',
+      unsupported: 'No compatible',
+      disabledInMoonraker: 'Desactivada en Moonraker',
+      editManual: 'Editar cámara manual',
+      streamUrl: 'URL del stream',
+      newStreamOrSnapshotUrl: 'Nueva URL de stream o captura',
+      snapshotUrl: 'URL de captura',
+      newSnapshotUrl: 'Nueva URL de captura (opcional)',
+      noCameras: 'No se encontraron cámaras.',
+      history: 'Historial de cámaras ({{count}})',
+      lastSeen: 'Vista por última vez: {{date}}',
+      restoreAsManual: 'Restaurar como manual',
+      removeHistory: 'Eliminar del historial',
+      moreCameras: 'Más cámaras',
+    },
     diagnose: {
       button: 'Diagnosticar',
       modalTitle: 'Diagnóstico de la cámara',
@@ -6345,8 +6432,8 @@ export default {
       },
       'camera-connection-refused': {
         name: 'Transmisión de cámara inaccesible',
-        cause: 'No se pudo acceder a la cámara en vivo en el puerto RTSPS 322. El puerto está bloqueado, o la cámara o la vista en vivo por LAN están desactivadas en la impresora.',
-        fix: 'Activa la cámara y la vista en vivo por LAN en la impresora y asegúrate de que el puerto 322 no esté bloqueado. Esto no afecta a la impresión.',
+        cause: 'No se pudo acceder a la cámara en vivo en el puerto {{cameraEndpoint}}. El puerto está bloqueado, o la cámara o la vista en vivo por LAN están desactivadas en la impresora.',
+        fix: 'Activa la cámara y la vista en vivo por LAN en la impresora y asegúrate de que el puerto {{cameraPort}} no esté bloqueado. Esto no afecta a la impresión.',
       },
       'database-locked': {
         name: 'Conflictos de escritura en la base de datos',

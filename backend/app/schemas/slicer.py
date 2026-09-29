@@ -1,7 +1,10 @@
 """Pydantic schemas for slice requests."""
 
+import json
+import math
+import re
 from enum import Enum
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -30,6 +33,73 @@ class DestinationArtifactKind(str, Enum):
 
     BAMBU_3MF = "bambu_3mf"
     KLIPPER_GCODE = "klipper_gcode"
+
+
+SettingValue = str | int | float | bool | None | list[str | int | float | bool]
+_SETTING_KEY = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]{0,127}$")
+
+
+def _validate_overrides(overrides: dict[str, SettingValue], *, field_name: str, max_bytes: int) -> None:
+    invalid_key = next((key for key in overrides if not _SETTING_KEY.fullmatch(key)), None)
+    if invalid_key is not None:
+        raise ValueError(f"{field_name} contains invalid setting key: {invalid_key!r}")
+    for value in overrides.values():
+        values = value if isinstance(value, list) else [value]
+        if any(isinstance(item, float) and not math.isfinite(item) for item in values):
+            raise ValueError(f"{field_name} values must be finite")
+    if len(json.dumps(overrides, separators=(",", ":")).encode()) > max_bytes:
+        raise ValueError(f"{field_name} exceeds {max_bytes} bytes")
+
+
+class ModelTransform(BaseModel):
+    position: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    rotation: tuple[float, float, float] = (0.0, 0.0, 0.0)
+    scale: tuple[float, float, float] = (1.0, 1.0, 1.0)
+
+    @model_validator(mode="after")
+    def validate_transform(self) -> "ModelTransform":
+        values = (*self.position, *self.rotation, *self.scale)
+        if not all(math.isfinite(value) for value in values):
+            raise ValueError("transform values must be finite")
+        if any(value <= 0 for value in self.scale):
+            raise ValueError("scale values must be greater than zero")
+        return self
+
+
+class ModelObjectState(BaseModel):
+    id: str = Field(min_length=1, max_length=128, pattern=r"^[A-Za-z0-9_.:-]+$")
+    transform: ModelTransform | None = None
+    overrides: dict[str, SettingValue] = Field(default_factory=dict, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_object_overrides(self) -> "ModelObjectState":
+        _validate_overrides(self.overrides, field_name="object overrides", max_bytes=32 * 1024)
+        return self
+
+
+class ModelState(BaseModel):
+    objects: list[ModelObjectState] = Field(default_factory=list, max_length=256)
+    hidden_object_ids: list[str] = Field(default_factory=list, max_length=256)
+    lay_flat_object_ids: list[str] = Field(default_factory=list, max_length=256)
+    arrange: bool = False
+
+    @model_validator(mode="after")
+    def validate_object_ids(self) -> "ModelState":
+        object_ids = [obj.id for obj in self.objects]
+        if len(object_ids) != len(set(object_ids)):
+            raise ValueError("model_state object IDs must be unique")
+        known_ids = set(object_ids)
+        for field_name, ids in (
+            ("hidden_object_ids", self.hidden_object_ids),
+            ("lay_flat_object_ids", self.lay_flat_object_ids),
+        ):
+            if len(ids) != len(set(ids)):
+                raise ValueError(f"{field_name} must contain unique IDs")
+            if unknown := set(ids) - known_ids:
+                raise ValueError(f"{field_name} contains unknown object ID: {sorted(unknown)[0]!r}")
+        if len(json.dumps(self.model_dump(mode="json"), separators=(",", ":")).encode()) > 256 * 1024:
+            raise ValueError("model_state exceeds 262144 bytes")
+        return self
 
 
 class SliceRequest(BaseModel):
@@ -94,6 +164,10 @@ class SliceRequest(BaseModel):
         default=DestinationArtifactKind.BAMBU_3MF,
         description="Explicit destination artifact; defaults to legacy Bambu 3MF output.",
     )
+    arrange: bool = Field(
+        default=False,
+        description="Arrange objects on the selected printer bed before slicing; false preserves source placement.",
+    )
     bed_type: str | None = Field(
         default=None,
         max_length=64,
@@ -105,6 +179,60 @@ class SliceRequest(BaseModel):
             "process preset unchanged (#1337)."
         ),
     )
+    schema_hash: str | None = Field(
+        default=None,
+        min_length=64,
+        max_length=64,
+        pattern=r"^[0-9a-f]{64}$",
+        description="Authoritative process schema hash used to validate workbench overrides.",
+    )
+    process_overrides: dict[str, SettingValue] = Field(default_factory=dict, max_length=256)
+    model_state: ModelState | None = None
+    catalog_printer_id: int | None = Field(default=None, gt=0)
+    catalog_binding_id: int | None = Field(default=None, gt=0)
+    catalog_process_profile_id: int | None = Field(default=None, gt=0)
+    catalog_filament_profile_ids: list[int] = Field(default_factory=list, max_length=64)
+    catalog_acknowledgement: dict[str, Any] | None = None
+    catalog_selection_evidence: dict[str, Any] = Field(default_factory=dict)
+    catalog_history_job_id: int | None = Field(default=None, gt=0)
+    catalog_history_mode: Literal["exact", "upgrade"] | None = None
+    catalog_tombstone_acknowledgement: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_catalog_history(self) -> "SliceRequest":
+        if (self.catalog_history_job_id is None) != (self.catalog_history_mode is None):
+            raise ValueError("catalog_history_job_id and catalog_history_mode are required together")
+        if self.catalog_tombstone_acknowledgement is not None and self.catalog_history_mode != "exact":
+            raise ValueError("catalog_tombstone_acknowledgement is valid only for exact historical re-slicing")
+        return self
+
+    @model_validator(mode="after")
+    def validate_catalog_selection(self) -> "SliceRequest":
+        supplied = (
+            self.catalog_printer_id is not None
+            or self.catalog_binding_id is not None
+            or self.catalog_process_profile_id is not None
+            or bool(self.catalog_filament_profile_ids)
+        )
+        if supplied and (
+            self.catalog_printer_id is None
+            or self.catalog_binding_id is None
+            or self.catalog_process_profile_id is None
+        ):
+            raise ValueError(
+                "catalog_printer_id, catalog_binding_id, catalog_process_profile_id, "
+                "and catalog_filament_profile_ids are required together"
+            )
+        if len(json.dumps(self.catalog_selection_evidence, separators=(",", ":")).encode()) > 64 * 1024:
+            raise ValueError("catalog_selection_evidence exceeds 65536 bytes")
+        return self
+
+    @model_validator(mode="after")
+    def validate_workbench_state(self) -> "SliceRequest":
+        _validate_overrides(self.process_overrides, field_name="process_overrides", max_bytes=64 * 1024)
+        if (self.process_overrides or self.model_state is not None) and self.schema_hash is None:
+            raise ValueError("schema_hash is required when process_overrides or model_state is provided")
+        return self
 
     @model_validator(mode="after")
     def normalise_preset_refs(self) -> "SliceRequest":
@@ -149,7 +277,86 @@ class SliceRequest(BaseModel):
             # Multi-color caller: backfill the singular from the first slot
             # so callers that still read the legacy field see a stable value.
             self.filament_preset = self.filament_presets[0]
+        if (
+            self.catalog_printer_id is not None
+            or self.catalog_binding_id is not None
+            or self.catalog_process_profile_id is not None
+            or self.catalog_filament_profile_ids
+        ) and len(self.catalog_filament_profile_ids) != len(self.filament_presets):
+            raise ValueError("catalog_filament_profile_ids must match filament_presets")
         return self
+
+
+class HistoricalReslicePrepareRequest(BaseModel):
+    mode: Literal["exact", "upgrade"]
+    catalog_acknowledgement: dict[str, Any] | None = None
+    catalog_tombstone_acknowledgement: dict[str, Any] | None = None
+
+    @model_validator(mode="after")
+    def validate_tombstone_acknowledgement(self) -> "HistoricalReslicePrepareRequest":
+        if self.catalog_tombstone_acknowledgement is not None and self.mode != "exact":
+            raise ValueError("catalog_tombstone_acknowledgement is valid only for exact historical re-slicing")
+        return self
+
+
+class HistoricalRevisionIds(BaseModel):
+    printer: int
+    process: int
+    filaments: list[int]
+
+
+class HistoricalReslicePrepareResponse(BaseModel):
+    source_kind: Literal["library_file", "archive"]
+    source_id: int
+    request: SliceRequest
+    tombstoned: bool
+    revision_ids: HistoricalRevisionIds
+
+
+class PlateFilament(BaseModel):
+    """Filament consumed by one source 3MF plate."""
+
+    slot_id: int
+    type: str
+    color: str
+    used_grams: float
+    used_meters: float
+    used_in_plate: bool | None = None
+
+
+class PlateMetadata(BaseModel):
+    """Metadata returned for a selectable source 3MF plate."""
+
+    index: int
+    name: str | None
+    objects: list[str]
+    object_ids: list[str] = Field(default_factory=list)
+    object_count: int
+    has_thumbnail: bool
+    thumbnail_url: str | None
+    print_time_seconds: int | None
+    filament_used_grams: float | None
+    filaments: list[PlateFilament]
+    bed_type: str | None = None
+
+
+class LibraryFilePlatesResponse(BaseModel):
+    file_id: int
+    filename: str
+    plates: list[PlateMetadata]
+    is_multi_plate: bool
+    embedded_printer: str | None = None
+    embedded_process: str | None = None
+
+
+class ArchivePlatesResponse(BaseModel):
+    archive_id: int
+    filename: str
+    plates: list[PlateMetadata]
+    is_multi_plate: bool
+    has_gcode: bool | None = None
+    embedded_printer: str | None = None
+    embedded_process: str | None = None
 
 
 class SliceResponse(BaseModel):

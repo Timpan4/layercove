@@ -51,7 +51,7 @@ describe('Dispatch toast (inside ToastContext)', () => {
     expect(screen.getByTestId('dispatch-toast-status-42')).toHaveTextContent(/processing/i);
   });
 
-  it('shows "Awaiting printer" once pct >= 99.9 while status STAYS processing', () => {
+  it('keeps 100% bytes uploading until the provider explicitly reports awaiting printer', () => {
     render(<div />);
     emit({
       type: 'queue_item_uploading',
@@ -64,6 +64,10 @@ describe('Dispatch toast (inside ToastContext)', () => {
     emit({ type: 'queue_item_upload_progress', queue_item_id: 42, bytes_transferred: 100, total_bytes: 100, pct: 100 });
 
     expect(screen.getByTestId('dispatch-toast-status-42')).toHaveTextContent(/processing/i);
+    expect(screen.queryByText(/awaiting/i)).not.toBeInTheDocument();
+    emit({ type: 'queue_item_dispatch_stage', queue_item_id: 42, printer_id: 1, printer_name: 'H2D-1', file_name: 'cube.3mf', stage: 'awaiting_printer' });
+    expect(screen.getByText(/awaiting/i)).toBeInTheDocument();
+    emit({ type: 'queue_item_upload_progress', queue_item_id: 42, bytes_transferred: 10, total_bytes: 100, pct: 10 });
     expect(screen.getByText(/awaiting/i)).toBeInTheDocument();
   });
 

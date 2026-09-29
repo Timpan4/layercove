@@ -29,10 +29,18 @@ class TestPrintStartLogic:
             patch("backend.app.main.notification_service") as mock_notif,
             patch("backend.app.main.smart_plug_manager") as mock_plug,
             patch("backend.app.main.ws_manager") as mock_ws,
+            patch("backend.app.main.printer_manager") as mock_pm,
         ):
             mock_notif.on_print_start = AsyncMock()
             mock_plug.on_print_start = AsyncMock()
             mock_ws.send_print_start = AsyncMock()
+            mock_client = MagicMock()
+            mock_client.state.printable_objects = {99: "stale"}
+            mock_client.state.printable_objects_bbox_all = [0, 0, 1, 1]
+            mock_client.state.skipped_objects = [99]
+            mock_pm.get_backend.return_value = None
+            mock_pm.get_client.return_value = mock_client
+            mock_pm.get_printer.return_value = None
 
             # Mock the database session
             mock_session = AsyncMock()
@@ -53,6 +61,9 @@ class TestPrintStartLogic:
 
             # Verify WebSocket notification was sent
             mock_ws.send_print_start.assert_called_once()
+            assert mock_client.state.printable_objects == {}
+            assert mock_client.state.printable_objects_bbox_all is None
+            assert mock_client.state.skipped_objects == []
 
         # Verify no import shadowing errors
         errors = [r for r in capture_logs.get_errors() if "cannot access local variable" in str(r.message)]

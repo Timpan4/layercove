@@ -95,6 +95,7 @@ export function useStreamTokenSync() {
       if (refreshingRef.current) return;
       refreshingRef.current = true;
 
+      setStreamToken(null);
       queryClient.invalidateQueries({ queryKey: ['camera-stream-token'] });
 
       // Reset after a delay so future errors can trigger another refresh

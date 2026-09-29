@@ -44,6 +44,7 @@ from backend.app.api.routes import (
     makerworld,
     metrics,
     mfa,
+    network_sites,
     notification_templates,
     notifications,
     obico,
@@ -57,6 +58,9 @@ from backend.app.api.routes import (
     projects,
     settings as settings_routes,
     slice_jobs,
+    slicer,
+    slicer_catalog,
+    slicer_catalog_bindings,
     slicer_pipelines,
     slicer_presets,
     smart_plugs,
@@ -93,6 +97,7 @@ from backend.app.services.bambu_ftp import (
     with_ftp_retry,
 )
 from backend.app.services.bambu_mqtt import PrinterState
+from backend.app.services.filament_accounting import weight_used_from_ams_percentage
 from backend.app.services.github_backup import github_backup_service
 from backend.app.services.homeassistant import homeassistant_service
 from backend.app.services.library_trash import library_trash_service
@@ -937,7 +942,12 @@ def _extract_filament_data_from_mqtt(data: dict, ams_mapping: list[int] | None =
     return result
 
 
-def _maybe_start_layer_timelapse(printer, printer_id: int, archive_id: int) -> bool:
+def _maybe_start_layer_timelapse(
+    printer,
+    printer_id: int,
+    archive_id: int,
+    camera_settings: tuple[bool, str | None, str | None, str | None, int] | None = None,
+) -> bool:
     """Start a layer-timelapse session for *archive_id* when the printer has
     an external camera configured. Returns True if a session was started.
 
@@ -947,16 +957,23 @@ def _maybe_start_layer_timelapse(printer, printer_id: int, archive_id: int) -> b
     on the first pass). Centralising the conditional + call here makes the
     contract testable in isolation and keeps the three sites locked in step.
     """
-    if not (printer.external_camera_enabled and printer.external_camera_url):
+    enabled, stream_url, camera_type, snapshot_url, _rotation = camera_settings or (
+        printer.external_camera_enabled,
+        printer.external_camera_url,
+        printer.external_camera_type,
+        printer.external_camera_snapshot_url,
+        getattr(printer, "camera_rotation", 0),
+    )
+    if not (enabled and stream_url):
         return False
     from backend.app.services.layer_timelapse import start_session
 
     start_session(
         printer_id,
         archive_id,
-        printer.external_camera_url,
-        printer.external_camera_type or "mjpeg",
-        snapshot_url=printer.external_camera_snapshot_url,
+        stream_url,
+        camera_type or "mjpeg",
+        snapshot_url=snapshot_url,
     )
     logging.getLogger(__name__).info("Started layer timelapse for printer %s, archive %s", printer_id, archive_id)
     return True
@@ -1055,6 +1072,7 @@ async def _maybe_notify_printer_offline(printer_id: int) -> None:
                     printer_id,
                 )
                 return
+
             logger.info(
                 "[#1752] Dispatching on_printer_offline for printer %s (%s)",
                 printer_id,
@@ -1675,39 +1693,29 @@ async def on_ams_change(printer_id: int, ams_data: list):
                         )
                         existing_assignment = existing.scalar_one_or_none()
                         if existing_assignment:
-                            # Sync spool weight_used from AMS remain — only INCREASE, never decrease.
-                            # The AMS remain% is low-resolution (integer %, i.e. 10g steps for 1kg spool)
-                            # and must not overwrite precise values from the usage tracker (3MF/G-code).
-                            # Skip during active prints: the usage tracker handles deduction
-                            # precisely via 3MF data on print completion. Without this guard the
-                            # AMS remain% SET and the usage tracker ADD both fire from the same
-                            # MQTT message, doubling the deduction (#880).
+                            # Skip during active prints: the usage tracker owns deduction
+                            # and this guard also preserves the no-K-profile-write behavior (#880).
                             if _print_active:
                                 continue
-                            remain_raw = tray.get("remain")
-                            if (
-                                remain_raw is not None
-                                and existing_assignment.spool
-                                and not existing_assignment.spool.weight_locked
-                            ):
-                                try:
-                                    remain_val = int(remain_raw)
-                                except (TypeError, ValueError):
-                                    remain_val = -1
-                                if 1 <= remain_val <= 100:
-                                    lw = existing_assignment.spool.label_weight or 1000
-                                    new_used = round(lw * (100 - remain_val) / 100.0, 1)
-                                    current_used = existing_assignment.spool.weight_used or 0
-                                    if new_used > current_used + 1:
-                                        logger.info(
-                                            "Weight sync: spool %d weight_used %s -> %s (remain=%d)",
-                                            existing_assignment.spool_id,
-                                            current_used,
-                                            new_used,
-                                            remain_val,
-                                        )
-                                        existing_assignment.spool.weight_used = new_used
-                                        await db.commit()
+                            spool = existing_assignment.spool
+                            if spool:
+                                new_used = weight_used_from_ams_percentage(
+                                    print_active=_print_active,
+                                    weight_locked=spool.weight_locked,
+                                    remain=tray.get("remain"),
+                                    label_weight=spool.label_weight,
+                                    weight_used=spool.weight_used,
+                                )
+                                if new_used is not None:
+                                    logger.info(
+                                        "Weight sync: spool %d weight_used %s -> %s (remain=%s)",
+                                        existing_assignment.spool_id,
+                                        spool.weight_used or 0,
+                                        new_used,
+                                        tray.get("remain"),
+                                    )
+                                    spool.weight_used = new_used
+                                    await db.commit()
 
                             # Re-apply stored K-profile when the live tray's
                             # cali_idx drifted from the spool's stored profile.
@@ -2114,23 +2122,27 @@ async def _capture_snapshot_for_notification(printer_id: int, printer, logger) -
 
         async with async_session() as db:
             capture_enabled = await get_setting(db, "capture_finish_photo")
+            from backend.app.services.moonraker_cameras import get_effective_capture_settings
+
+            camera_settings = await get_effective_capture_settings(db, printer)
 
         if capture_enabled is not None and capture_enabled.lower() != "true":
             return None
 
         # Try external camera first
-        if printer.external_camera_enabled and printer.external_camera_url:
+        external_enabled, external_url, external_type, external_snapshot_url, camera_rotation = camera_settings
+        if external_enabled and external_url:
             logger.info("[SNAPSHOT] Capturing from external camera for printer %s", printer_id)
             from backend.app.services.external_camera import capture_frame
 
             frame_data = await capture_frame(
-                printer.external_camera_url,
-                printer.external_camera_type or "mjpeg",
-                snapshot_url=printer.external_camera_snapshot_url,
+                external_url,
+                external_type or "mjpeg",
+                snapshot_url=external_snapshot_url,
             )
             if frame_data and len(frame_data) <= 2_500_000:
                 logger.info("[SNAPSHOT] External camera frame: %s bytes", len(frame_data))
-                return _apply_camera_rotation(frame_data, printer, logger)
+                return _apply_camera_rotation(frame_data, printer, logger, rotation=camera_rotation)
 
         # Try buffered frame from active stream
         from backend.app.api.routes.camera import _active_chamber_streams, _active_streams, get_buffered_frame
@@ -2161,9 +2173,10 @@ async def _capture_snapshot_for_notification(printer_id: int, printer, logger) -
     return None
 
 
-def _apply_camera_rotation(image_data: bytes, printer, logger) -> bytes:
+def _apply_camera_rotation(image_data: bytes, printer, logger, *, rotation: int | None = None) -> bytes:
     """Apply camera rotation to snapshot image if configured."""
-    rotation = getattr(printer, "camera_rotation", 0)
+    if rotation is None:
+        rotation = getattr(printer, "camera_rotation", 0)
     if not rotation or rotation == 0:
         return image_data
 
@@ -2315,6 +2328,12 @@ async def on_print_start(printer_id: int, data: dict):
 
     clear_cover_cache(printer_id)
 
+    client = printer_manager.get_client(printer_id)
+    if client:
+        client.state.printable_objects = {}
+        client.state.printable_objects_bbox_all = None
+        client.state.skipped_objects = []
+
     await ws_manager.send_print_start(printer_id, data)
 
     # Notify when the print-start AMS mapping references tray slots without spool assignments.
@@ -2402,17 +2421,26 @@ async def on_print_start(printer_id: int, data: dict):
                         await asyncio.sleep(2.5)
 
                 logger.info("[PLATE CHECK] Running plate detection for printer %s", printer_id)
+                from backend.app.services.moonraker_cameras import get_effective_capture_settings
+
+                (
+                    external_enabled,
+                    external_url,
+                    external_type,
+                    external_snapshot_url,
+                    _rotation,
+                ) = await get_effective_capture_settings(db, printer)
                 plate_result = await check_plate_empty(
                     printer_id=printer_id,
                     ip_address=printer.ip_address,
                     access_code=printer.access_code,
                     model=printer.model,
                     include_debug_image=False,
-                    external_camera_url=printer.external_camera_url,
-                    external_camera_type=printer.external_camera_type,
-                    use_external=printer.external_camera_enabled,
+                    external_camera_url=external_url,
+                    external_camera_type=external_type,
+                    use_external=external_enabled,
                     roi=roi,
-                    external_camera_snapshot_url=printer.external_camera_snapshot_url,
+                    external_camera_snapshot_url=external_snapshot_url,
                 )
 
                 # Restore chamber light to original state
@@ -2647,7 +2675,10 @@ async def on_print_start(printer_id: int, data: dict):
                 # Queue / VP-dispatched prints land here in the expected-archive
                 # branch and used to skip start_session entirely — frames were
                 # never captured and the post-print stitch silently returned None.
-                _maybe_start_layer_timelapse(printer, printer_id, archive.id)
+                from backend.app.services.moonraker_cameras import get_effective_capture_settings
+
+                camera_settings = await get_effective_capture_settings(db, printer)
+                _maybe_start_layer_timelapse(printer, printer_id, archive.id, camera_settings)
 
                 # Inject ams_mapping into usage tracker session — the session was created
                 # before expected-print promotion, so it may have ams_mapping=None when
@@ -3203,7 +3234,10 @@ async def on_print_start(printer_id: int, data: dict):
 
                 logger.info("Created fallback archive %s for %s (no 3MF available)", fallback_archive.id, print_name)
 
-                _maybe_start_layer_timelapse(printer, printer_id, fallback_archive.id)
+                from backend.app.services.moonraker_cameras import get_effective_capture_settings
+
+                camera_settings = await get_effective_capture_settings(db, printer)
+                _maybe_start_layer_timelapse(printer, printer_id, fallback_archive.id, camera_settings)
 
                 # Track as active print
                 _active_prints[(printer_id, fallback_archive.filename)] = fallback_archive.id
@@ -3283,7 +3317,10 @@ async def on_print_start(printer_id: int, data: dict):
 
                 logger.info("Created archive %s for %s", archive.id, downloaded_filename)
 
-                _maybe_start_layer_timelapse(printer, printer_id, archive.id)
+                from backend.app.services.moonraker_cameras import get_effective_capture_settings
+
+                camera_settings = await get_effective_capture_settings(db, printer)
+                _maybe_start_layer_timelapse(printer, printer_id, archive.id, camera_settings)
 
                 # Record starting energy from smart plug if available (#941: persisted column)
                 await _record_energy_start(archive, printer_id, db, context="auto-archive")
@@ -3958,15 +3995,25 @@ async def on_finish_photo_moment(printer_id: int, data: dict):
                 )
                 return
 
+            from backend.app.services.moonraker_cameras import get_effective_capture_settings
+
+            (
+                external_enabled,
+                external_url,
+                external_type,
+                external_snapshot_url,
+                _rotation,
+            ) = await get_effective_capture_settings(db, printer)
+
         frame_bytes: bytes | None = None
 
-        if printer.external_camera_enabled and printer.external_camera_url:
+        if external_enabled and external_url:
             from backend.app.services.external_camera import capture_frame
 
             frame_bytes = await capture_frame(
-                printer.external_camera_url,
-                printer.external_camera_type or "mjpeg",
-                snapshot_url=printer.external_camera_snapshot_url,
+                external_url,
+                external_type or "mjpeg",
+                snapshot_url=external_snapshot_url,
             )
             if frame_bytes:
                 logger.info(
@@ -4975,6 +5022,15 @@ async def on_print_complete(printer_id: int, data: dict):
 
                     if printer and archive_id:
                         from backend.app.models.archive import PrintArchive
+                        from backend.app.services.moonraker_cameras import get_effective_capture_settings
+
+                        (
+                            external_enabled,
+                            external_url,
+                            external_type,
+                            external_snapshot_url,
+                            _rotation,
+                        ) = await get_effective_capture_settings(db, printer)
 
                         result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
                         archive = result.scalar_one_or_none()
@@ -5001,7 +5057,7 @@ async def on_print_complete(printer_id: int, data: dict):
                             # because it caused per-layer nozzle parking on Smooth-mode
                             # slicer profiles.
                             prefer_timelapse_source = bool(data.get("timelapse_was_active")) and not (
-                                printer.external_camera_enabled and printer.external_camera_url
+                                external_enabled and external_url
                             )
 
                             if prefer_timelapse_source:
@@ -5051,14 +5107,14 @@ async def on_print_complete(printer_id: int, data: dict):
                             # fresh RTSP capture. Only runs if the timelapse path above
                             # didn't already produce a photo.
                             if not photo_filename:
-                                if printer.external_camera_enabled and printer.external_camera_url:
+                                if external_enabled and external_url:
                                     logger.info("[PHOTO-BG] Using external camera")
                                     from backend.app.services.external_camera import capture_frame
 
                                     frame_data = await capture_frame(
-                                        printer.external_camera_url,
-                                        printer.external_camera_type or "mjpeg",
-                                        snapshot_url=printer.external_camera_snapshot_url,
+                                        external_url,
+                                        external_type or "mjpeg",
+                                        snapshot_url=external_snapshot_url,
                                     )
                                     if frame_data:
                                         photos_dir = archive_dir / "photos"
@@ -6167,6 +6223,12 @@ async def lifespan(app: FastAPI):
 
     await init_db()
 
+    from backend.app.services.slice_dispatch import slice_dispatch
+
+    interrupted_jobs = await slice_dispatch.mark_interrupted_jobs_failed()
+    if interrupted_jobs:
+        logging.getLogger(__name__).warning("Marked %d interrupted slice job(s) as failed", interrupted_jobs)
+
     # Register an app-scoped httpx client for Bambu Cloud services so
     # per-request BambuCloudService instances reuse the same connection pool
     # (important for routes like /cloud/filament-info that chain many
@@ -6185,22 +6247,6 @@ async def lifespan(app: FastAPI):
     # Reuse the same connection pool for MakerWorld — different host, same
     # keep-alive pool saves a TLS handshake per request.
     set_shared_makerworld_http_client(_shared_cloud_http_client)
-
-    # Fix queue items stuck with invalid "aborted" status (should be "cancelled").
-    # This can happen when a print was cancelled mid-print on versions before this fix.
-    try:
-        async with async_session() as db:
-            from backend.app.models.print_queue import PrintQueueItem
-
-            result = await db.execute(select(PrintQueueItem).where(PrintQueueItem.status == "aborted"))
-            aborted_items = result.scalars().all()
-            if aborted_items:
-                for item in aborted_items:
-                    item.status = "cancelled"
-                await db.commit()
-                logging.info("Fixed %d queue item(s) with invalid 'aborted' status → 'cancelled'", len(aborted_items))
-    except Exception as e:
-        logging.warning("Failed to fix aborted queue items: %s", e)
 
     # Restore debug logging state from previous session
     await init_debug_logging()
@@ -6769,6 +6815,20 @@ async def auth_middleware(request, call_next):
         if pattern in path:
             return await call_next(request)
 
+    # Browser camera-wall requests cannot send bearer headers. Keep this
+    # exception to the two selected-camera media routes; their route-level
+    # dependency validates the required stream token.
+    path_parts = path.split("/")
+    if (
+        len(path_parts) == 8
+        and path_parts[:4] == ["", "api", "v1", "printers"]
+        and path_parts[4].isdigit()
+        and path_parts[5] == "cameras"
+        and path_parts[6].isdigit()
+        and path_parts[7] in {"stream", "snapshot"}
+    ):
+        return await call_next(request)
+
     # Check if auth is enabled. Fail CLOSED on any exception during the
     # probe — GHSA-6mf4-q26m-47pv: the previous fail-open path here let
     # an attacker who could force a DB exception (e.g. file-descriptor
@@ -6925,6 +6985,7 @@ app.include_router(bug_report.router, prefix=app_settings.api_prefix)
 app.include_router(users.router, prefix=app_settings.api_prefix)
 app.include_router(groups.router, prefix=app_settings.api_prefix)
 app.include_router(printers.router, prefix=app_settings.api_prefix)
+app.include_router(network_sites.router, prefix=app_settings.api_prefix)
 app.include_router(archives.router, prefix=app_settings.api_prefix)
 app.include_router(filaments.router, prefix=app_settings.api_prefix)
 app.include_router(inventory.router, prefix=app_settings.api_prefix)
@@ -6952,6 +7013,9 @@ app.include_router(library.router, prefix=app_settings.api_prefix)
 app.include_router(library_tags.router, prefix=app_settings.api_prefix)
 app.include_router(library_trash.router, prefix=app_settings.api_prefix)
 app.include_router(slice_jobs.router, prefix=app_settings.api_prefix)
+app.include_router(slicer.router, prefix=app_settings.api_prefix)
+app.include_router(slicer_catalog.router, prefix=app_settings.api_prefix)
+app.include_router(slicer_catalog_bindings.router, prefix=app_settings.api_prefix)
 app.include_router(slicer_pipelines.router, prefix=app_settings.api_prefix)
 app.include_router(pipeline_runs.pipeline_run_create_router, prefix=app_settings.api_prefix)
 app.include_router(pipeline_runs.pipeline_run_router, prefix=app_settings.api_prefix)

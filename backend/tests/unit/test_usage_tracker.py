@@ -53,6 +53,7 @@ def _make_archive(archive_id=1, file_path="archives/1/test.3mf", extra_data=None
     archive.id = archive_id
     archive.file_path = file_path
     archive.extra_data = extra_data
+    archive.filament_used_grams = 0
     return archive
 
 
@@ -82,7 +83,9 @@ def _mock_db_sequential(responses):
     db = AsyncMock()
     call_count = [0]
 
-    async def mock_execute(*args, **kwargs):
+    async def mock_execute(statement, *args, **kwargs):
+        if statement.is_update:
+            return MagicMock()
         idx = call_count[0]
         call_count[0] += 1
         result = MagicMock()
@@ -94,7 +97,7 @@ def _mock_db_sequential(responses):
         result.scalar.return_value = None
         return result
 
-    db.execute = mock_execute
+    db.execute = AsyncMock(side_effect=mock_execute)
     return db
 
 

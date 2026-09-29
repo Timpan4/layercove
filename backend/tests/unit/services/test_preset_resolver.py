@@ -364,14 +364,14 @@ async def test_orca_cloud_unwraps_content():
             db, user, PresetRef(source="orca_cloud", id="abc"), slot="printer"
         )
     payload = json.loads(out)
-    # Resolver rewrites `type` to the CLI-expected value AND pins
-    # `from: "system"` (#1712 follow-up). Orca natively uses "machine" but
-    # Bambu-sourced syncs can carry "printer" and either empty/missing `from`.
+    # Resolver rewrites `type` to the CLI-expected value, pins
+    # `from: "system"`, and preserves sidecar-required profile identity.
     assert payload == {
         "name": "X1C Custom",
         "nozzle_diameter": [0.4],
         "type": "machine",
         "from": "system",
+        "setting_id": "abc",
     }
     svc_mock.close.assert_awaited_once()
 

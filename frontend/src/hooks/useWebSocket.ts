@@ -2,7 +2,9 @@ import { useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useToast } from '../contexts/ToastContext';
 import { useTranslation } from 'react-i18next';
-import { api, ApiError } from '../api/client';
+import { api, ApiError, type PrintQueueItem } from '../api/client';
+import { reducePrinterStatus } from '../api/printerData';
+import { queryKeys } from '../api/queryKeys';
 import { inventoryLocationsQueryKey } from '../utils/inventoryQueries';
 
 // The only auth-failure close code /api/v1/ws emits (websocket.py
@@ -14,6 +16,9 @@ const WS_CLOSE_UNAUTHORIZED = 4401;
 
 interface WebSocketMessage {
   type: string;
+  queue_item_id?: number;
+  bytes_transferred?: number;
+  total_bytes?: number;
   printer_id?: number;
   data?: Record<string, unknown>;
   printer_name?: string;
@@ -191,9 +196,10 @@ export function useWebSocket() {
 
   // Throttled printer status update - coalesces rapid updates per printer
   const throttledPrinterStatusUpdate = useCallback((printerId: number, data: Record<string, unknown>) => {
-    // Merge with any pending data for this printer
-    const existing = pendingPrinterStatus.current.get(printerId) || {};
-    pendingPrinterStatus.current.set(printerId, { ...existing, ...data });
+    // Merge with pending data first, then the current HTTP-backed cache.
+    const cached = queryClient.getQueryData<Record<string, unknown>>(queryKeys.printerStatus(printerId));
+    const existing = pendingPrinterStatus.current.get(printerId) || cached;
+    pendingPrinterStatus.current.set(printerId, reducePrinterStatus(existing, data));
 
     // Schedule update if not already scheduled
     if (!printerStatusTimeoutRef.current) {
@@ -206,14 +212,8 @@ export function useWebSocket() {
         requestAnimationFrame(() => {
           updates.forEach((statusData, id) => {
             queryClient.setQueryData(
-              ['printerStatus', id],
-              (old: Record<string, unknown> | undefined) => {
-                const merged = { ...old, ...statusData };
-                if (merged.wifi_signal == null && old?.wifi_signal != null) {
-                  merged.wifi_signal = old.wifi_signal;
-                }
-                return merged;
-              }
+              queryKeys.printerStatus(id),
+              (old: Record<string, unknown> | undefined) => reducePrinterStatus(old, statusData),
             );
           });
         });
@@ -260,7 +260,7 @@ export function useWebSocket() {
       case 'print_start':
         // Refetch printer status immediately when print starts to get printable_objects_count
         if (message.printer_id !== undefined) {
-          queryClient.invalidateQueries({ queryKey: ['printerStatus', message.printer_id] });
+          queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(message.printer_id) });
         }
         break;
 
@@ -297,12 +297,12 @@ export function useWebSocket() {
         // Don't invalidate printerStatus here - it causes re-render cascade and browser freeze
         // The printer_status websocket messages will naturally update the status
         debouncedInvalidate('archives');
-        debouncedInvalidate('archiveStats');
+        debouncedInvalidate(queryKeys.archiveStats()[0]);
         break;
 
       case 'archive_created':
         debouncedInvalidate('archives');
-        debouncedInvalidate('archiveStats');
+        debouncedInvalidate(queryKeys.archiveStats()[0]);
         break;
 
       case 'archive_updated':
@@ -432,11 +432,27 @@ export function useWebSocket() {
       // start until printer ack — the "Awaiting printer…" subtitle is
       // derived from upload_progress_pct >= 99.9, not from a separate
       // event).
+      case 'queue_item_dispatch_stage':
       case 'queue_item_uploading':
       case 'queue_item_upload_progress':
       case 'queue_item_acked':
       case 'queue_item_failed':
         window.dispatchEvent(new CustomEvent('bambuddy:dispatch-toast', { detail: message }));
+        if (message.type === 'queue_item_upload_progress'
+          && typeof message.bytes_transferred === 'number' && Number.isFinite(message.bytes_transferred)
+          && typeof message.total_bytes === 'number' && Number.isFinite(message.total_bytes) && message.total_bytes > 0) {
+          const total = message.total_bytes;
+          const transferred = Math.max(0, Math.min(message.bytes_transferred, total));
+          queryClient.setQueriesData<PrintQueueItem[]>({ queryKey: ['queue'] }, (items) =>
+            Array.isArray(items) ? items.map((item) => item.id === message.queue_item_id
+              && (item.status === 'pending' || item.status === 'printing') && item.dispatch_progress?.stage === 'uploading'
+              ? { ...item, dispatch_progress: { ...item.dispatch_progress, bytes_transferred: transferred, total_bytes: total } }
+              : item) : items,
+          );
+        }
+        if (message.type !== 'queue_item_upload_progress') {
+          queryClient.invalidateQueries({ queryKey: ['queue'] });
+        }
         break;
       // Slicer Pipeline runs (#1425 PR C). State transitions on the run
       // refresh both the dashboard list AND the per-pipeline "Last run"

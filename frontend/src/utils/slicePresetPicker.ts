@@ -12,12 +12,9 @@
 //   for this install; standard (bundled) is the final fallback.
 // - The backend does NOT dedup tiers, so each helper walks all four
 //   and the caller relies on the order, not a single merged list.
-// - `pickProcessDefault` honours a 3MF's embedded process preset when
-//   it exists and isn't printer-incompatible; otherwise prefers a
-//   match-on-printer pick, then unknown-compat, then plain priority.
-// - `pickFilamentForSlot` partitions candidates into compatible/unknown
-//   vs mismatch buckets and only consults the mismatch bucket when
-//   the compatible bucket is empty (#1851).
+// - `pickProcessDefault` honours a 3MF's embedded process preset only when
+//   it matches the selected printer; otherwise it picks another match.
+// - `pickFilamentForSlot` scores only profiles matching the selected printer.
 
 import type {
   PresetRef,
@@ -79,12 +76,9 @@ export function findPresetByName(
   return null;
 }
 
-// Process default: honour the process preset the 3MF was prepared with
-// (preferredName) when it's available and not incompatible with the selected
-// printer; otherwise the first preset compatible with the printer in tier
-// order, then the first whose compatibility is merely unknown, then plain
-// priority. Keeps the pre-pick honest with both the embedded config and the
-// printer filter instead of blindly taking list[0] (#1325).
+// Process default: honour the process preset the 3MF was prepared with only
+// when it matches the selected printer; otherwise choose another explicit
+// match. Unknown and mismatched profiles require manual selection.
 export function pickProcessDefault(
   by: UnifiedPresetsResponse,
   printerName: string | null,
@@ -94,20 +88,18 @@ export function pickProcessDefault(
   const preferred = findPresetByName(by, 'process', preferredName);
   if (preferred) {
     const p = findPreset(by, preferred, 'process');
-    if (p && presetCompatibility(p, 'process', printerName, compatIndex) !== 'mismatch') {
+    if (p && presetCompatibility(p, 'process', printerName, compatIndex) === 'match') {
       return preferred;
     }
   }
-  for (const wanted of ['match', 'unknown'] as const) {
-    for (const tier of SLICE_MODAL_TIER_ORDER) {
-      for (const p of by[tier].process) {
-        if (presetCompatibility(p, 'process', printerName, compatIndex) === wanted) {
-          return { source: p.source, id: p.id };
-        }
+  for (const tier of SLICE_MODAL_TIER_ORDER) {
+    for (const p of by[tier].process) {
+      if (presetCompatibility(p, 'process', printerName, compatIndex) === 'match') {
+        return { source: p.source, id: p.id };
       }
     }
   }
-  return pickDefault(by, 'process');
+  return null;
 }
 
 export function pickFilamentForSlot(
@@ -116,33 +108,19 @@ export function pickFilamentForSlot(
   printerName: string | null,
   compatIndex: PrinterCompatibilityIndex,
 ): PresetRef | null {
-  // Score every filament preset against the plate slot's required (type,
-  // colour) and pick the highest. Mirrors the AMS slot-mapping match in the
-  // print/schedule modal: type match dominates, exact-colour-match bumps over
-  // similar-colour-match, and a small per-tier bonus breaks ties so cloud
-  // user customisations win over standard bundled fallbacks of equal merit.
-  //
-  // Compatibility is a hard partition, not a soft penalty (#1851). The legacy
-  // -100 demote let a printer-mismatched preset still win when the plate's
-  // (type, colour) happened to match it better than the colour-default
-  // standard preset on the right printer — e.g. an unused slot whose embedded
-  // colour matched `Generic PLA @BBL H2C` but not the off-the-shelf
-  // `Bambu PLA Basic @BBL A1`. The propagated slot-1 then poisoned every
-  // unused slot via `substitute_unused_plate_filaments`, and the CLI rejected
-  // the slice with "filament preset Generic PLA @BBL H2C (slot 1) is not
-  // compatible with printer Bambu Lab A1 0.4 nozzle". Hard-skipping mismatches
-  // while we still have any compatible/unknown candidate eliminates that
-  // poisoning at the source; the mismatch tier is only consulted when no
-  // printer-correct alternative exists, which preserves the graceful-degrade
-  // behaviour for presets registries that genuinely have nothing for the
-  // selected printer.
+  // Score profiles that explicitly match selected printer. Type dominates,
+  // exact colour outranks similar colour, and source tier breaks equal scores.
+  // Unknown or mismatched profiles require manual confirmation and cannot be
+  // automatic fallbacks.
   const reqType = required.type.trim().toUpperCase();
   const reqColor = normalizeColorForCompare(required.color);
 
-  let bestCompatible: { ref: PresetRef; score: number } | null = null;
-  let bestMismatch: { ref: PresetRef; score: number } | null = null;
+  let best: { ref: PresetRef; score: number } | null = null;
   for (const tier of SLICE_MODAL_TIER_ORDER) {
     for (const p of by[tier].filament) {
+      if (presetCompatibility(p, 'filament', printerName, compatIndex) !== 'match') {
+        continue;
+      }
       let score = 0;
       const presetType = (p.filament_type ?? '').trim().toUpperCase();
       const presetColor = normalizeColorForCompare(p.filament_colour ?? '');
@@ -153,19 +131,10 @@ export function pickFilamentForSlot(
       }
       score += TIER_BONUS[tier];
       const ref = { source: p.source, id: p.id };
-      if (presetCompatibility(p, 'filament', printerName, compatIndex) === 'mismatch') {
-        if (bestMismatch == null || score > bestMismatch.score) {
-          bestMismatch = { ref, score };
-        }
-      } else if (bestCompatible == null || score > bestCompatible.score) {
-        bestCompatible = { ref, score };
+      if (best == null || score > best.score) {
+        best = { ref, score };
       }
     }
   }
-  if (bestCompatible != null) return bestCompatible.ref;
-  if (bestMismatch != null) return bestMismatch.ref;
-  // Final fallback when there are no filament presets at all (empty
-  // registry) — pickDefault returns null in that case too, but keeping the
-  // call mirrors the rest of the picker logic for shape consistency.
-  return pickDefault(by, 'filament');
+  return best?.ref ?? null;
 }

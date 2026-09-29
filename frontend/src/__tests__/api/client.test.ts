@@ -5,7 +5,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { setAuthToken, getAuthToken, api, setStreamToken } from '../../api/client';
+import { setAuthToken, getAuthToken, api, ApiError, setStreamToken } from '../../api/client';
 
 // Mock sessionStorage (H-5: tokens are stored in sessionStorage, not localStorage)
 const sessionStorageMock = {
@@ -247,6 +247,24 @@ describe('API Client Auth Header', () => {
   });
 });
 
+describe('Slicer catalog review actions', () => {
+  it('posts selected revision IDs when approving a batch', async () => {
+    let body: unknown;
+    server.use(http.post('/api/v1/slicer/catalog/reviews/9', async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({ id: 9, status: 'approved' });
+    }));
+
+    await api.reviewSlicerCatalogBatch(9, true, [4, 5]);
+    expect(body).toEqual({ approved: true, revision_ids: [4, 5] });
+  });
+
+  it('resumes a frozen account', async () => {
+    server.use(http.post('/api/v1/slicer/catalog/accounts/1/resume', () => HttpResponse.json({ id: 1, stale: false })));
+    await expect(api.resumeSlicerCatalogAccount(1)).resolves.toEqual({ id: 1, stale: false });
+  });
+});
+
 describe('archive slicer URLs', () => {
   it('uses the raw artifact extension for direct and token downloads', () => {
     expect(api.getArchiveForSlicer(7, 'name', 'stored.gcode')).toBe(
@@ -414,6 +432,28 @@ describe('Project cover image URL (#1155)', () => {
     expect(params.get('token')).toBe('a&b=c');
   });
 });
+
+describe('Historical slice errors', () => {
+  it('renders structured catalog codes and reasons as readable text', async () => {
+    server.use(http.post('/api/v1/slice-jobs/42/reslice-request', () =>
+      HttpResponse.json({
+        detail: {
+          code: 'slicer_acknowledgement_required',
+          reason_codes: ['nozzle_offline'],
+        },
+      }, { status: 409 }),
+    ));
+
+    const error = await api.prepareResliceRequest(42, { mode: 'exact' }).catch((caught) => caught);
+
+    expect(error).toBeInstanceOf(ApiError);
+    expect(error).toMatchObject({
+      code: 'slicer_acknowledgement_required',
+      message: 'slicer acknowledgement required: nozzle offline',
+    });
+  });
+});
+
 
 describe('Moonraker control API', () => {
   it('sends confirmed emergency stop to exact endpoint', async () => {

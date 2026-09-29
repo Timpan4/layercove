@@ -565,9 +565,6 @@ export const handlers = [
   http.get('/api/v1/updates/check', () =>
     HttpResponse.json({ update_available: false, latest_version: null })
   ),
-  http.get('/api/v1/updates/status', () =>
-    HttpResponse.json({ update_available: false, latest_version: null })
-  ),
   http.get('/api/v1/updates/version', () =>
     HttpResponse.json({ version: '0.1.5', commit: 'test' })
   ),

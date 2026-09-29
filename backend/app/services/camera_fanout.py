@@ -223,6 +223,15 @@ async def shutdown_broadcaster(key: str) -> bool:
     return True
 
 
+async def shutdown_broadcasters_with_prefix(prefix: str) -> int:
+    """Force-shutdown every broadcaster whose key starts with ``prefix``."""
+    async with _registry_lock:
+        keys = [key for key in _broadcasters if key.startswith(prefix)]
+        bcs = [_broadcasters.pop(key) for key in keys]
+    await asyncio.gather(*(bc.force_shutdown() for bc in bcs), return_exceptions=True)
+    return len(bcs)
+
+
 async def shutdown_all_broadcasters() -> None:
     """Tear down every broadcaster (for app shutdown)."""
     async with _registry_lock:
@@ -248,6 +257,11 @@ def get_subscriber_count(key: str) -> int:
     if bc is None or bc.stopped:
         return 0
     return bc.subscriber_count
+
+
+def get_subscriber_count_with_prefix(prefix: str) -> int:
+    """Return subscribers across every live broadcaster matching ``prefix``."""
+    return sum(bc.subscriber_count for key, bc in _broadcasters.items() if key.startswith(prefix) and not bc.stopped)
 
 
 # ---------------------------------------------------------------------------

@@ -1339,7 +1339,7 @@ class TestEncryptLegacyMigration:
 
         # init_db() uses the module-level `engine`, which was bound at import
         # time to settings.database_url — that resolves to the real shared
-        # bambuddy.db at the project root (or, when DATABASE_URL is set, the
+        # layercove.db at the project root (or, when DATABASE_URL is set, the
         # configured Postgres). The autouse DATA_DIR fixture runs too late to
         # influence either. Letting this test write to that real DB makes it
         # (a) non-hermetic and (b) flake under `-n 30` with "database is
@@ -1913,6 +1913,19 @@ class TestEncryptionRoundtrip:
 
 
 class TestBackupKeyFiles:
+    @staticmethod
+    def _use_file_database(monkeypatch, tmp_path):
+        from sqlalchemy.ext.asyncio import create_async_engine
+
+        import backend.app.core.database as db_mod
+        from backend.app.core.config import settings as app_settings
+
+        database_url = f"sqlite+aiosqlite:///{tmp_path / 'layercove.db'}"
+        engine = create_async_engine(database_url, echo=False)
+        monkeypatch.setattr(app_settings, "database_url", database_url)
+        monkeypatch.setattr(db_mod, "engine", engine)
+        return engine
+
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_backup_includes_mfa_encryption_key_when_present(self, async_client, monkeypatch, tmp_path):
@@ -1925,18 +1938,22 @@ class TestBackupKeyFiles:
         # Ensure `app_settings.base_dir` follows DATA_DIR for this test by
         # patching the module attribute (config caches it at import time).
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        test_engine = self._use_file_database(monkeypatch, tmp_path)
 
         key_path = tmp_path / ".mfa_encryption_key"
         key_path.write_text("test-key-content")
 
-        zip_path, _filename = await create_backup_zip(output_path=tmp_path)
         try:
-            with zipfile.ZipFile(zip_path) as zf:
-                names = zf.namelist()
-                assert ".mfa_encryption_key" in names
-                assert zf.read(".mfa_encryption_key").decode() == "test-key-content"
+            zip_path, _filename = await create_backup_zip(output_path=tmp_path)
+            try:
+                with zipfile.ZipFile(zip_path) as zf:
+                    names = zf.namelist()
+                    assert ".mfa_encryption_key" in names
+                    assert zf.read(".mfa_encryption_key").decode() == "test-key-content"
+            finally:
+                zip_path.unlink(missing_ok=True)
         finally:
-            zip_path.unlink(missing_ok=True)
+            await test_engine.dispose()
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -1948,15 +1965,19 @@ class TestBackupKeyFiles:
 
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        test_engine = self._use_file_database(monkeypatch, tmp_path)
         # No .mfa_encryption_key written — must not crash.
 
-        zip_path, _filename = await create_backup_zip(output_path=tmp_path)
         try:
-            with zipfile.ZipFile(zip_path) as zf:
-                names = zf.namelist()
-                assert ".mfa_encryption_key" not in names
+            zip_path, _filename = await create_backup_zip(output_path=tmp_path)
+            try:
+                with zipfile.ZipFile(zip_path) as zf:
+                    names = zf.namelist()
+                    assert ".mfa_encryption_key" not in names
+            finally:
+                zip_path.unlink(missing_ok=True)
         finally:
-            zip_path.unlink(missing_ok=True)
+            await test_engine.dispose()
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -1980,7 +2001,7 @@ class TestBackupKeyFiles:
         # Build a minimal ZIP with a stub DB and the key file.
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("bambuddy.db", b"SQLite format 3")
+            zf.writestr("layercove.db", b"SQLite format 3")
             zf.writestr(".mfa_encryption_key", "test-restored-key")
         buf.seek(0)
 
@@ -2020,7 +2041,7 @@ class TestBackupKeyFiles:
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("bambuddy.db", b"SQLite format 3")
+            zf.writestr("layercove.db", b"SQLite format 3")
             # Intentionally no .mfa_encryption_key entry.
         buf.seek(0)
 
@@ -2061,7 +2082,7 @@ class TestBackupKeyFiles:
         # Build ZIP with a key file that we will fail to write to DATA_DIR.
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("bambuddy.db", b"SQLite format 3 backup data")
+            zf.writestr("layercove.db", b"SQLite format 3 backup data")
             zf.writestr(".mfa_encryption_key", "backup-key-content")
         buf.seek(0)
 
@@ -2141,7 +2162,7 @@ class TestBackupKeyFiles:
         assert new_key != old_key
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("bambuddy.db", b"SQLite format 3 backup data")
+            zf.writestr("layercove.db", b"SQLite format 3 backup data")
             zf.writestr(".mfa_encryption_key", new_key)
         buf.seek(0)
 
@@ -2188,7 +2209,7 @@ class TestBackupKeyFiles:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr("../etc/passwd", "root:x:0:0")
-            zf.writestr("bambuddy.db", b"SQLite format 3")
+            zf.writestr("layercove.db", b"SQLite format 3")
         buf.seek(0)
 
         resp = await async_client.post(
@@ -2229,7 +2250,7 @@ class TestBackupKeyFiles:
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
             zf.writestr(evil_name, "pwned")
-            zf.writestr("bambuddy.db", b"SQLite format 3\x00")
+            zf.writestr("layercove.db", b"SQLite format 3\x00")
         buf.seek(0)
 
         resp = await async_client.post(
@@ -2256,7 +2277,7 @@ class TestBackupKeyFiles:
             # Absolute path in the archive — extracts outside temp_path on
             # systems where (temp_path / "/etc/passwd") resolves to /etc/passwd.
             zf.writestr("/etc/passwd", "root:x:0:0")
-            zf.writestr("bambuddy.db", b"SQLite format 3")
+            zf.writestr("layercove.db", b"SQLite format 3")
         buf.seek(0)
 
         resp = await async_client.post(
@@ -2277,6 +2298,7 @@ class TestBackupKeyFiles:
 
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        test_engine = self._use_file_database(monkeypatch, tmp_path)
         (tmp_path / ".mfa_encryption_key").write_text("key")
 
         original_copy2 = shutil.copy2
@@ -2290,8 +2312,11 @@ class TestBackupKeyFiles:
 
         import pytest as _pytest
 
-        with _pytest.raises(OSError, match="simulated unreadable"):
-            await create_backup_zip(output_path=tmp_path)
+        try:
+            with _pytest.raises(OSError, match="simulated unreadable"):
+                await create_backup_zip(output_path=tmp_path)
+        finally:
+            await test_engine.dispose()
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -2323,6 +2348,7 @@ class TestBackupKeyFiles:
         monkeypatch.setenv("MFA_ENCRYPTION_KEY", key)
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        test_engine = self._use_file_database(monkeypatch, tmp_path)
         # Persist the key file too, so create_backup_zip picks it up.
         (tmp_path / ".mfa_encryption_key").write_text(key)
         enc_mod._fernet_instance = None
@@ -2393,6 +2419,7 @@ class TestBackupKeyFiles:
             assert restored_provider.client_secret == "my-original-secret"
         finally:
             zip_path.unlink(missing_ok=True)
+            await test_engine.dispose()
 
 
 # ============================================================================

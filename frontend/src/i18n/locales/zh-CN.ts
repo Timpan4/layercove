@@ -1,4 +1,24 @@
 export default {
+  slicerBed: {
+    parentIssues: {
+      missing_parent: "此修订版本的父打印机配置不存在或不可用。",
+      ambiguous_parent: "此修订版本的父打印机配置不明确。",
+      inheritance_cycle: "打印机继承链中存在循环。",
+    },
+    selectPrinter: "请选择打印机及其确切配置以查看打印平台。",
+    loading: "正在加载所选打印平台…",
+    loadFailed: "无法加载 {{profile}} 的打印平台。",
+    unavailable: "{{profile}} 的打印平台几何信息不可用。",
+    missingArea: "所选修订版本缺少 printable_area 或 bed_shape。",
+    invalidArea: "所选修订版本的 printable_area 或 bed_shape 坐标无效。",
+    missingHeight: "所选修订版本缺少 printable_height 或 max_print_height。",
+    invalidHeight: "所选修订版本的 printable_height 或 max_print_height 无效。",
+    revision: "配置修订版本 {{revision}}",
+    retry: "重新加载打印平台",
+    bounds: "打印平台尺寸：{{x}} × {{y}} × {{z}} mm。",
+    missingRevision: "所选配置修订版本不可用。请重新加载配置目录。",
+  },
+
   // Navigation
   nav: {
     printers: '打印机',
@@ -1047,6 +1067,9 @@ export default {
 
   // Sticky upload-progress toast (#1625 follow-up)
   dispatchToast: {
+    preparingFile: "正在准备传输文件…",
+    uploadingBytes: "正在上传 {{transferred}} / {{total}}",
+    uploadingBytesWithProgress: "正在上传 {{transferred}} / {{total}} ({{percent}}%)",
     untitled: '打印任务',
     startingPrints: '正在开始打印',
     progressSummary: '{{complete}}/{{total}} 已完成 • 处理中: {{processing}}',
@@ -1116,6 +1139,18 @@ export default {
 
   // Queue page
   queue: {
+    printDispatch: "打印任务传输",
+    dispatch: {
+      progressLabel: "打印任务传输进度",
+      preparing: "正在准备传输",
+      uploading: "正在上传到打印机",
+      awaitingPrinter: "等待打印机确认",
+      uploadProgress: "上传进度",
+      elapsed: "{{seconds}}秒",
+      uploadSummary: "已发送 {{transferred}} / {{total}} ({{percent}}%)",
+      waitingForUpload: "文件已发送，正在等待上传响应。",
+      waitingForStart: "上传已接受，但打印开始尚未确认。",
+    },
     filamentShort: {
       rowBadge: '所分配料盘的耀丝不足',
       rowTooltip: '调度程序已标记该项。点击播放查看各插槽的赤字并决定是否仍要打印。',
@@ -1620,6 +1655,40 @@ export default {
   },
 
   // Settings page
+  networkSites: {
+    title: '网络站点',
+    description: '为每个 Tailscale 4via6 子网命名，然后将打印机分配到该站点。',
+    copyFailed: '无法复制到剪贴板',
+    setupGuide: 'Raspberry Pi Tailscale 设置',
+    printWarning: '此 Raspberry Pi 正在打印时请勿更改网络。',
+    prerequisites: '适用于 Raspberry Pi OS 或其他基于 Debian 的 ARM64 系统。请在当前打印完成后执行。',
+    install: '1. 安装最新稳定版 Tailscale',
+    join: '2. 加入专用打印 tailnet',
+    forwarding: '3. 启用转发',
+    advertise: '4. 发布此 4via6 路由',
+    approve: '5. 以 tailnet 所有者身份批准已发布的路由。',
+    openAdmin: '打开 Tailscale 设备',
+    printerIp: '打印机 LAN IPv4 地址',
+    invalidPrinterIp: '请输入此 /24 中可用的 IPv4 地址。',
+    magicDns: '打印机 MagicDNS 主机名',
+    discoveryNote: '广播发现无法跨越路由站点。请使用此 MagicDNS 主机名手动添加打印机。',
+    created: '网络站点已创建',
+    name: '站点名称',
+    namePlaceholder: 'Timpa 家',
+    siteNumber: '站点 ID',
+    subnet: '私有 /24',
+    empty: '尚未配置网络站点。',
+    siteSummary: '站点 {{number}} · {{subnet}} · {{count}} 台打印机',
+    rename: '重命名站点',
+    renamePrompt: '新站点名称',
+    deleteConfirm: '删除 {{name}}？',
+    connection: '连接',
+    localDirect: '本地 / 直接',
+    createHere: '在此创建网络站点',
+    targetPreview: '连接目标：{{host}}',
+    moonrakerPort: 'Moonraker 端口',
+  },
+
   settings: {
     title: '设置',
     general: '通用',
@@ -3057,6 +3126,24 @@ export default {
     stopRecording: '停止录制',
     chamberLight: '切换腔室灯',
     unavailable: '摄像头不可用',
+    moonraker: {
+      title: 'Moonraker 摄像头',
+      refresh: '刷新摄像头',
+      primary: '主摄像头',
+      unsupported: '不支持',
+      disabledInMoonraker: '已在 Moonraker 中禁用',
+      editManual: '编辑手动摄像头',
+      streamUrl: '视频流 URL',
+      newStreamOrSnapshotUrl: '新的视频流或快照 URL',
+      snapshotUrl: '快照 URL',
+      newSnapshotUrl: '新的快照 URL（可选）',
+      noCameras: '未发现摄像头。',
+      history: '摄像头历史（{{count}}）',
+      lastSeen: '最后发现：{{date}}',
+      restoreAsManual: '恢复为手动摄像头',
+      removeHistory: '从历史中删除',
+      moreCameras: '更多摄像头',
+    },
     diagnose: {
       button: '诊断',
       modalTitle: '摄像头诊断',
@@ -6324,8 +6411,8 @@ export default {
       },
       'camera-connection-refused': {
         name: '无法访问摄像头视频流',
-        cause: '无法在 RTSPS 322 端口连接实时摄像头。该端口被阻止，或打印机上的摄像头或局域网实时画面已关闭。',
-        fix: '请在打印机上启用摄像头和局域网实时画面，并确保 322 端口未被阻止。这不会影响打印。',
+        cause: '无法在 {{cameraEndpoint}} 端口连接实时摄像头。该端口被阻止，或打印机上的摄像头或局域网实时画面已关闭。',
+        fix: '请在打印机上启用摄像头和局域网实时画面，并确保 {{cameraPort}} 端口未被阻止。这不会影响打印。',
       },
       'database-locked': {
         name: '数据库写入冲突',

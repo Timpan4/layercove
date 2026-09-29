@@ -28,6 +28,7 @@ interface TrackedJob {
 interface SliceJobTrackerContextValue {
   trackJob: (id: number, kind: 'libraryFile' | 'archive', sourceName: string) => void;
   activeJobs: TrackedJob[];
+  jobStates: Readonly<Record<number, SliceJobState>>;
 }
 
 const SliceJobTrackerContext = createContext<SliceJobTrackerContextValue | null>(null);
@@ -68,6 +69,7 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
   const { showToast, showPersistentToast, dismissToast } = useToast();
   const queryClient = useQueryClient();
   const [activeJobs, setActiveJobs] = useState<TrackedJob[]>([]);
+  const [jobStates, setJobStates] = useState<Record<number, SliceJobState>>({});
   // A failed slice surfaces as an acknowledge-only modal, not a toast: the
   // slicer's reason (e.g. "objects over the bed boundary") is actionable and
   // a 3s toast hides it before it can be read.
@@ -196,6 +198,23 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
     [dismissToast, queryClient, showToast, t],
   );
 
+  const forgetMissingJob = useCallback(
+    (job: TrackedJob) => {
+      setActiveJobs((previous) => previous.filter((tracked) => tracked.id !== job.id));
+      setJobStates((previous) => {
+        if (!(job.id in previous)) return previous;
+        const next = { ...previous };
+        delete next[job.id];
+        return next;
+      });
+      startedAtRef.current.delete(job.id);
+      phaseRef.current.delete(job.id);
+      progressRef.current.delete(job.id);
+      dismissToast(toastIdFor(job.id));
+    },
+    [dismissToast],
+  );
+
   // Status polling. Updates phase on each successful poll and triggers
   // completeJob on terminal states.
   useEffect(() => {
@@ -207,17 +226,25 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
       for (const job of snapshot) {
         try {
           const state = await api.getSliceJob(job.id);
+          setJobStates((previous) => ({ ...previous, [job.id]: state }));
           phaseRef.current.set(job.id, state.status);
           // Capture the latest progress snapshot if the sidecar fed
           // one through. The 1s tick re-renders the toast off this ref.
           if (state.progress) {
             progressRef.current.set(job.id, state.progress);
           }
-          if (state.status === 'completed' || state.status === 'failed') {
+          if (state.status === 'completed' || state.status === 'failed' || state.status === 'cancelled') {
             completeJob(job, state);
           }
-        } catch {
-          // Transient poll failure — stay tracked, retry next tick.
+        } catch (error) {
+          if (
+            typeof error === 'object'
+            && error !== null
+            && 'status' in error
+            && error.status === 404
+          ) {
+            forgetMissingJob(job);
+          }
         }
       }
     }, POLL_INTERVAL_MS);
@@ -225,7 +252,7 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
       cancelled = true;
       clearInterval(interval);
     };
-  }, [activeJobs.length, completeJob]);
+  }, [activeJobs.length, completeJob, forgetMissingJob]);
 
   // 1Hz tick that re-renders each persistent progress toast with the
   // current elapsed time. Independent of the status poll so the counter
@@ -241,7 +268,7 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
   }, [activeJobs.length, renderProgressToast]);
 
   return (
-    <SliceJobTrackerContext.Provider value={{ trackJob, activeJobs }}>
+    <SliceJobTrackerContext.Provider value={{ trackJob, activeJobs, jobStates }}>
       {children}
       {sliceError && (
         <AlertModal

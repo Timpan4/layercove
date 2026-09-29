@@ -52,9 +52,10 @@ import { useAuth } from '../contexts/AuthContext';
 import { KProfilesView } from '../components/KProfilesView';
 import { LocalProfilesView } from '../components/LocalProfilesView';
 import { OrcaCloudView } from '../components/OrcaCloudView';
+import { SlicerCatalogAdmin } from '../components/SlicerCatalogAdmin';
 
 type TFunction = (key: string, options?: Record<string, unknown>) => string;
-type ProfileTab = 'cloud' | 'orca_cloud' | 'local' | 'kprofiles';
+type ProfileTab = 'cloud' | 'orca_cloud' | 'local' | 'kprofiles' | 'catalog';
 type LoginStep = 'email' | 'code' | 'token';
 type PresetType = 'all' | 'filament' | 'printer' | 'process';
 
@@ -2819,13 +2820,15 @@ export function ProfilesPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission } = useAuth();
+  const { hasPermission, loading: authLoading } = useAuth();
+  const canUseBambuCloud = hasPermission('cloud:auth');
   const [activeTab, setActiveTab] = useState<ProfileTab>('cloud');
   const [lastSyncTime, setLastSyncTime] = useState<Date>();
 
   const { data: status, isLoading: statusLoading } = useQuery({
     queryKey: ['cloudStatus'],
     queryFn: api.getCloudStatus,
+    enabled: !authLoading && canUseBambuCloud,
   });
 
   const { data: printers = [] } = useQuery({
@@ -2860,7 +2863,7 @@ export function ProfilesPage() {
     queryClient.invalidateQueries({ queryKey: ['cloudStatus'] });
   };
 
-  if (statusLoading) {
+  if (authLoading || statusLoading) {
     return (
       <div className="p-4 md:p-8 flex items-center justify-center min-h-[400px]">
         <Loader2 className="w-8 h-8 text-bambu-green animate-spin" />
@@ -2925,10 +2928,25 @@ export function ProfilesPage() {
           <Gauge className="w-4 h-4" />
           {t('profiles.tabs.kprofiles')}
         </button>
+        <button
+          onClick={() => setActiveTab('catalog')}
+          className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px ${
+            activeTab === 'catalog' ? 'text-bambu-green border-bambu-green' : 'text-bambu-gray hover:text-white border-transparent'
+          }`}
+        >
+          <Layers className="w-4 h-4" />
+          Shared catalog
+        </button>
       </div>
 
       {/* Cloud Profiles Tab */}
-      {activeTab === 'cloud' && (
+      {activeTab === 'cloud' && !canUseBambuCloud && (
+        <div className="text-center py-16">
+          <AlertTriangle className="w-10 h-10 text-bambu-gray-dark mx-auto mb-3" />
+          <p className="text-bambu-gray">{t('groups.noPermission')}</p>
+        </div>
+      )}
+      {activeTab === 'cloud' && canUseBambuCloud && (
         <>
           {/* Connection Status Bar */}
           {status?.is_authenticated && (
@@ -2992,6 +3010,9 @@ export function ProfilesPage() {
 
       {/* K-Profiles Tab */}
       {activeTab === 'kprofiles' && <KProfilesView />}
+
+      {/* Shared catalog administration */}
+      {activeTab === 'catalog' && <SlicerCatalogAdmin />}
 
       {/* Scroll to Top Button */}
       <ScrollToTop />

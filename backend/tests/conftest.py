@@ -17,6 +17,7 @@ import pytest
 # This must happen before settings/config are loaded
 os.environ["LOG_TO_FILE"] = "false"
 os.environ["DEBUG"] = "false"
+os.environ["DATABASE_URL"] = "sqlite+aiosqlite:///:memory:"
 
 from httpx import ASGITransport, AsyncClient  # noqa: E402
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine  # noqa: E402
@@ -41,9 +42,6 @@ atexit.register(_cleanup_test_plate_cal_dir)
 
 from backend.app.core.database import Base  # noqa: E402
 from backend.tests._fixtures.moonraker import FakeMoonraker  # noqa: E402
-
-# Use in-memory SQLite for tests
-TEST_DATABASE_URL = "sqlite+aiosqlite:///:memory:"
 
 
 @pytest.fixture
@@ -120,9 +118,13 @@ def event_loop():
 
 
 @pytest.fixture
-async def test_engine():
+async def test_engine(tmp_path):
     """Create a test database engine."""
-    engine = create_async_engine(TEST_DATABASE_URL, echo=False)
+    # Background jobs and request polling need independent connections. A
+    # single in-memory SQLite connection lets one session's rollback erase
+    # another session's commit.
+    database_url = f"sqlite+aiosqlite:///{tmp_path / 'test.db'}"
+    engine = create_async_engine(database_url, echo=False)
 
     # Import all models to register them
     from backend.app.models import (
@@ -143,9 +145,11 @@ async def test_engine():
         print_log,
         print_queue,
         printer,
+        printer_camera,
         project,
         project_bom,
         settings,
+        slice_job,
         slot_preset,
         smart_plug,
         smart_plug_energy_snapshot,  # noqa: F401

@@ -18,21 +18,18 @@ from backend.app.core.permissions import Permission
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
 from backend.app.schemas.settings import AppSettings, AppSettingsUpdate
+from backend.app.services.settings_service import (
+    DEFAULT_SETTINGS,
+    get_app_settings,
+    get_homeassistant_settings as _get_homeassistant_settings,
+    get_setting,
+    save_settings,
+    set_setting,
+)
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/settings", tags=["settings"])
-
-DEFAULT_SETTINGS = AppSettings()
-
-# Sensitive credential fields blanked for API-key callers
-_SENSITIVE_FIELDS_FOR_API_KEY = (
-    "mqtt_password",
-    "ha_token",
-    "prometheus_token",
-    "virtual_printer_access_code",
-    "ldap_bind_password",
-)
 
 
 def _sqlalchemy_type_to_sqlite_type(type_repr: str) -> str:
@@ -61,13 +58,6 @@ def _sqlalchemy_type_to_sqlite_type(type_repr: str) -> str:
     return "TEXT"
 
 
-async def get_setting(db: AsyncSession, key: str) -> str | None:
-    """Get a single setting value by key."""
-    result = await db.execute(select(Settings).where(Settings.key == key))
-    setting = result.scalar_one_or_none()
-    return setting.value if setting else None
-
-
 async def get_external_login_url(db: AsyncSession) -> str:
     """Get the external URL for the login page.
 
@@ -89,109 +79,14 @@ async def get_external_login_url(db: AsyncSession) -> str:
     return external_url + "/login"
 
 
-async def set_setting(db: AsyncSession, key: str, value: str) -> None:
-    """Set a single setting value."""
-    from backend.app.core.db_dialect import upsert_setting
-
-    await upsert_setting(db, Settings, key, value)
-
-
 async def _build_settings_response(db: AsyncSession, is_api_key: bool = False) -> AppSettings:
-    """Build the full settings response, scrubbing secrets for API-key callers."""
-    settings_dict = DEFAULT_SETTINGS.model_dump()
+    """Build the typed settings response, scrubbing API-key secrets."""
+    return await get_app_settings(db, is_api_key=is_api_key)
 
-    result = await db.execute(select(Settings))
-    for setting in result.scalars().all():
-        if setting.key not in settings_dict:
-            continue
-        if setting.key in [
-            "auto_archive",
-            "save_thumbnails",
-            "capture_finish_photo",
-            "spoolman_enabled",
-            "spoolman_disable_weight_sync",
-            "spoolman_report_partial_usage",
-            "auto_add_unknown_rfid",
-            "disable_filament_warnings",
-            "prefer_lowest_filament",
-            "check_updates",
-            "check_printer_firmware",
-            "include_beta_updates",
-            "virtual_printer_enabled",
-            "ftp_retry_enabled",
-            "mqtt_enabled",
-            "mqtt_use_tls",
-            "ha_enabled",
-            "per_printer_mapping_expanded",
-            "prometheus_enabled",
-            "user_notifications_enabled",
-            "queue_drying_enabled",
-            "queue_drying_block",
-            "ambient_drying_enabled",
-            "print_drying_enabled",
-            "require_plate_clear",
-            "queue_shortest_first",
-            "default_bed_levelling",
-            "default_flow_cali",
-            "default_vibration_cali",
-            "default_layer_inspect",
-            "default_timelapse",
-            "default_nozzle_offset_cali",
-            "ldap_enabled",
-            "ldap_auto_provision",
-            "local_login_enabled",
-            "preheat_enabled",
-        ]:
-            settings_dict[setting.key] = setting.value.lower() == "true"
-        elif setting.key in [
-            "default_filament_cost",
-            "energy_cost_per_kwh",
-            "ams_temp_good",
-            "ams_temp_fair",
-            "library_disk_warning_gb",
-            "low_stock_threshold",
-        ]:
-            settings_dict[setting.key] = float(setting.value)
-        elif setting.key in [
-            "ams_humidity_good",
-            "ams_humidity_fair",
-            "ams_history_retention_days",
-            "printer_sensor_history_retention_days",
-            "ftp_retry_count",
-            "ftp_retry_delay",
-            "ftp_timeout",
-            "mqtt_port",
-            "stagger_group_size",
-            "stagger_interval_minutes",
-            "forecast_global_lead_time_days",
-            "session_max_hours",
-            "pipeline_max_copies",
-            "preheat_max_wait_seconds",
-            "preheat_soak_seconds",
-        ]:
-            settings_dict[setting.key] = int(setting.value)
-        elif setting.key == "default_printer_id":
-            settings_dict[setting.key] = int(setting.value) if setting.value and setting.value != "None" else None
-        elif setting.key == "open_in_slicer":
-            # None means "inherit from preferred_slicer" (#1329). The PUT path
-            # serializes None as the literal string "None"; strip it back so
-            # the frontend sees a true null and falls back as intended.
-            settings_dict[setting.key] = setting.value if setting.value and setting.value != "None" else None
-        else:
-            settings_dict[setting.key] = setting.value
 
-    ha_settings = await get_homeassistant_settings(db)
-    settings_dict.update(ha_settings)
-
-    # ldap_bind_password is never returned to any caller
-    settings_dict["ldap_bind_password"] = ""
-
-    if is_api_key:
-        for field in _SENSITIVE_FIELDS_FOR_API_KEY:
-            if field in settings_dict:
-                settings_dict[field] = ""
-
-    return AppSettings(**settings_dict)
+async def get_homeassistant_settings(db: AsyncSession) -> dict[str, str | bool]:
+    """Get Home Assistant settings for legacy callers."""
+    return await _get_homeassistant_settings(db, get_setting)
 
 
 @router.get("", response_model=AppSettings)
@@ -252,17 +147,9 @@ async def update_settings(
         "mqtt_topic_prefix",
         "mqtt_use_tls",
     }
-    mqtt_updated = bool(mqtt_keys & set(update_data.keys()))
+    mqtt_updated = bool(mqtt_keys & set(update_data))
 
-    for key, value in update_data.items():
-        # Convert value to string for storage
-        if isinstance(value, bool):
-            str_value = "true" if value else "false"
-        elif value is None:
-            str_value = "None"
-        else:
-            str_value = str(value)
-        await set_setting(db, key, str_value)
+    await save_settings(db, settings_update)
 
     await db.commit()
     # Expire all objects to ensure fresh reads after commit
@@ -508,43 +395,6 @@ async def update_spoolman_settings(
     return await get_spoolman_settings(db)
 
 
-async def get_homeassistant_settings(db: AsyncSession) -> dict:
-    """
-    Get Home Assistant integration settings.
-    Environment variables (HA_URL, HA_TOKEN) take precedence over database settings.
-    """
-    import os
-
-    # Check environment variables first
-    ha_url_env = os.environ.get("HA_URL")
-    ha_token_env = os.environ.get("HA_TOKEN")
-
-    # Fall back to database values
-    ha_url = ha_url_env or await get_setting(db, "ha_url") or ""
-    ha_token = ha_token_env or await get_setting(db, "ha_token") or ""
-    ha_enabled_db = await get_setting(db, "ha_enabled") or "false"
-
-    # Track which settings come from environment
-    ha_url_from_env = bool(ha_url_env)
-    ha_token_from_env = bool(ha_token_env)
-    ha_env_managed = ha_url_from_env and ha_token_from_env
-
-    # Auto-enable when both env vars are set, otherwise use database value
-    if ha_url_env and ha_token_env:
-        ha_enabled = True
-    else:
-        ha_enabled = ha_enabled_db.lower() == "true"
-
-    return {
-        "ha_enabled": ha_enabled,
-        "ha_url": ha_url,
-        "ha_token": ha_token,
-        "ha_url_from_env": ha_url_from_env,
-        "ha_token_from_env": ha_token_from_env,
-        "ha_env_managed": ha_env_managed,
-    }
-
-
 async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]:
     """Create a complete backup ZIP (database + all data directories).
 
@@ -558,7 +408,7 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
     from backend.app.core.db_dialect import is_sqlite
 
     base_dir = app_settings.base_dir
-    filename = f"bambuddy-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
+    filename = f"layercove-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
@@ -575,7 +425,7 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
                 await conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
 
             # Copy database file
-            shutil.copy2(db_path, temp_path / "bambuddy.db")
+            shutil.copy2(db_path, temp_path / "layercove.db")
         else:
             # PostgreSQL: export to a portable SQLite file via SQLAlchemy.
             # This makes backups restorable on both SQLite and Postgres installs.
@@ -584,7 +434,7 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
 
             from backend.app.core.database import Base, engine
 
-            backup_db_path = temp_path / "bambuddy.db"
+            backup_db_path = temp_path / "layercove.db"
             dst = sqlite3.connect(str(backup_db_path))
             metadata = Base.metadata
 
@@ -644,7 +494,7 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
                     logger.warning("Permission denied copying %s: %s", name, e)
 
         # Include the MFA encryption key as a ZIP top-level entry alongside
-        # bambuddy.db. Without it, encrypted client_secret / TOTP secret rows
+        # layercove.db. Without it, encrypted client_secret / TOTP secret rows
         # would be unrecoverable after restore on a host without MFA_ENCRYPTION_KEY set.
         from backend.app.core.paths import resolve_data_dir
 
@@ -665,7 +515,7 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
         if output_path is not None:
             zip_file = (
                 output_path / filename
-            )  # SEC-PATH-OK: filename = f"bambuddy-backup-{datetime.now()...}.zip" generated in create_backup_zip itself
+            )  # SEC-PATH-OK: filename = f"layercove-backup-{datetime.now()...}.zip" generated in create_backup_zip itself
         else:
             fd, tmp = tempfile.mkstemp(suffix=".zip")
             os.close(fd)
@@ -940,7 +790,16 @@ async def restore_backup(
 
         try:
             with zipfile.ZipFile(io.BytesIO(content), "r") as zf:
-                for name in zf.namelist():
+                names = set(zf.namelist())
+                legacy_members = names & {"bambutrack.db", "bambuddy.db"}
+                if legacy_members:
+                    raise HTTPException(
+                        400,
+                        "Unsupported legacy backup database: "
+                        + ", ".join(sorted(legacy_members))
+                        + ". Export legacy data and create a new LayerCove backup.",
+                    )
+                for name in names:
                     # Reject path-traversal payloads: any entry whose resolved
                     # path escapes temp_path would allow writing arbitrary files
                     # on the host (ZipSlip / CVE-2006-5456).
@@ -959,9 +818,9 @@ async def restore_backup(
             raise HTTPException(400, "Invalid backup file: not a valid ZIP")
 
         # 2. Validate backup
-        backup_db = temp_path / "bambuddy.db"
+        backup_db = temp_path / "layercove.db"
         if not backup_db.exists():
-            raise HTTPException(400, "Invalid backup: missing bambuddy.db")
+            raise HTTPException(400, "Invalid backup: missing layercove.db")
 
         try:
             import asyncio
@@ -1064,7 +923,7 @@ async def restore_backup(
                 # to the live DB before this call that hasn't been
                 # checkpointed yet (seed_default_groups + init_db on first
                 # start, plus whatever background heartbeats wrote during
-                # the request window) sits in bambuddy.db-wal with valid
+                # the request window) sits in layercove.db-wal with valid
                 # checksums. The route handler's own `db: Depends(get_db)`
                 # session also keeps a connection checked out across
                 # engine.dispose(), holding fds to the WAL inode. With

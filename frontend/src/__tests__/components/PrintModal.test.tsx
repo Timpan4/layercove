@@ -82,6 +82,66 @@ describe('PrintModal', () => {
   });
 
   describe('create mode', () => {
+    it('shows compatible printers when an incompatible preselected printer is removed', async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get('/api/v1/printers/', () => HttpResponse.json([
+          { id: 1, name: "DOGGE'S PRINTER", model: 'P1S', provider: 'bambu', is_active: true },
+          { id: 2, name: 'Tim Voron', model: 'Voron 2.4', provider: 'moonraker', is_active: true },
+        ])),
+        http.get('/api/v1/library/files/:id', () => HttpResponse.json({
+          id: 10, filename: 'Voron_Design_Cube_v8.gcode',
+          metadata: { destination_artifact_kind: 'klipper_gcode' },
+        })),
+      );
+
+      render(<PrintModal
+        mode="create"
+        libraryFileId={10}
+        archiveName="Voron_Design_Cube_v8.gcode"
+        initialSelectedPrinterIds={[1]}
+        onClose={mockOnClose}
+      />);
+
+      expect(await screen.findByRole('button', { name: /Tim Voron/i })).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /DOGGE'S PRINTER/i })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /Tim Voron/i }));
+      expect(screen.getByRole('button', { name: /^print$/i })).toBeEnabled();
+    });
+
+    it.each(['library', 'workbench'] as const)(
+      'only offers a Moonraker printer for generated Klipper G-code from the %s flow',
+      async (source) => {
+        const user = userEvent.setup();
+        server.use(
+          http.get('/api/v1/printers/', () => HttpResponse.json([
+            { id: 1, name: "DOGGE'S PRINTER", model: 'P1S', provider: 'bambu', is_active: true },
+            { id: 2, name: 'Tim Voron', model: 'Voron 2.4', provider: 'moonraker', is_active: true },
+          ])),
+          http.get('/api/v1/library/files/:id', () => HttpResponse.json({
+            id: 10, filename: 'Voron_Design_Cube_v8.gcode', sliced_for_model: null,
+            metadata: { destination_artifact_kind: 'klipper_gcode' },
+          })),
+          http.get('/api/v1/archives/:id', () => HttpResponse.json({
+            id: 10, filename: 'Voron_Design_Cube_v8.gcode', sliced_for_model: null,
+            extra_data: { destination_artifact_kind: 'klipper_gcode' },
+          })),
+        );
+
+        render(<PrintModal
+          mode="create"
+          {...(source === 'library' ? { libraryFileId: 10 } : { archiveId: 10 })}
+          archiveName="Voron_Design_Cube_v8.gcode"
+          onClose={mockOnClose}
+        />);
+
+        expect(await screen.findByRole('button', { name: /Tim Voron/i })).toBeInTheDocument();
+        expect(screen.queryByRole('button', { name: /DOGGE'S PRINTER/i })).not.toBeInTheDocument();
+        await user.click(screen.getByRole('button', { name: /Tim Voron/i }));
+        expect(screen.getByRole('button', { name: /^print$/i })).toBeEnabled();
+      },
+    );
+
     it('renders the modal title', () => {
       render(
         <PrintModal
