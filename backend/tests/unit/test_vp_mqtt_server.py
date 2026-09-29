@@ -2,8 +2,10 @@
 
 import ast
 import asyncio
+import contextlib
 import inspect
 import json
+import socket
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock
 
@@ -700,17 +702,35 @@ class TestHandleClientTCPKeepaliveTuning:
     in `self._clients` until then. Tighten to detect within ~2 min.
     """
 
-    def test_handle_client_source_names_the_tuning_constants(self):
-        """The tuning code needs the three TCP_KEEP* constants to be
-        referenced by name so a socket-module regression / a stripped-down
-        platform can be diagnosed from a support bundle. Inspecting the
-        source keeps this pinned without spinning up a real socket in
-        the unit test (that's covered separately by integration)."""
-        source = inspect.getsource(SimpleMQTTServer._handle_client)
-        for name in ("TCP_KEEPIDLE", "TCP_KEEPINTVL", "TCP_KEEPCNT"):
-            assert name in source, (
-                f"_handle_client must reference {name} so the Linux "
-                "keepalive schedule is tightened (#1872). Without this "
-                "a macOS sleep leaves the pre-sleep socket in _clients "
-                "for ~2 h until the default SO_KEEPALIVE probes fire."
-            )
+    @pytest.mark.skipif(not hasattr(socket, "TCP_KEEPIDLE"), reason="Linux TCP keepalive knobs")
+    @pytest.mark.asyncio
+    async def test_authenticated_client_socket_gets_tightened_keepalive(self):
+        """After CONNECT, the client's real TCP socket carries the tightened
+        schedule (idle=60 s, interval=15 s, count=4)."""
+        server = _make_server()
+        server._running = True
+        server._send_status_report = AsyncMock()
+
+        with socket.create_server(("127.0.0.1", 0)) as listener, socket.create_connection(listener.getsockname()):
+            accepted, peer = listener.accept()
+            with accepted:
+                connect_payload = _build_connect_payload(keep_alive=60)
+                reader = asyncio.StreamReader()
+                reader.feed_data(bytes([0x10, len(connect_payload)]) + connect_payload)
+                writer = MagicMock()
+                writer.drain = AsyncMock()
+                writer.wait_closed = AsyncMock()
+                writer.get_extra_info = MagicMock(
+                    side_effect=lambda name: {"peername": peer, "socket": accepted}.get(name)
+                )
+
+                task = asyncio.create_task(server._handle_client(reader, writer))
+                await asyncio.sleep(0.1)
+                task.cancel()
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+                assert accepted.getsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE) == 1
+                assert accepted.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE) == 60
+                assert accepted.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL) == 15
+                assert accepted.getsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT) == 4

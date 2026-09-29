@@ -1,6 +1,7 @@
 """Tests for the camera TLS proxy and RTSP URL rewriting."""
 
 import asyncio
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -172,32 +173,66 @@ class TestForwardersCatchRuntimeError:
         RuntimeError: unable to perform operation on
                       <TCPTransport closed=True ...>; the handler is closed
 
-    Regression guard for that path. Source-level check rather than a runtime
-    test because the forwarders are nested closures inside ``_handle`` and
-    extracting them just for testability would require a pure-cosmetic
-    refactor of the proxy.
+    The test simulates uvloop's closed-handle ``RuntimeError`` on each
+    forwarder's ``dst.write`` and asserts nothing reaches the loop's
+    exception handler.
     """
 
-    def test_fwd_to_server_catches_runtime_error(self):
-        import inspect
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("direction", ["to_server", "to_client"])
+    async def test_closed_handle_runtime_error_is_absorbed(self, direction, monkeypatch):
+        closed = RuntimeError("unable to perform operation on <TCPTransport closed=True>; the handler is closed")
+        printer_frame = b"frame-from-printer"
 
-        src = inspect.getsource(create_tls_proxy)
-        fwd_section = src.split("async def _fwd_to_server")[1].split("async def _fwd_to_client")[0]
-        assert "RuntimeError" in fwd_section, (
-            "_fwd_to_server must catch RuntimeError to absorb uvloop's "
-            "write-to-closed-handle error; otherwise it leaks to "
-            "asyncio.client_connected_cb's unhandled-exception logger."
-        )
+        tls_reader = asyncio.StreamReader()
+        if direction == "to_client":
+            tls_reader.feed_data(printer_frame)
+            tls_reader.feed_eof()
+        tls_writer = MagicMock()
+        tls_writer.write = MagicMock(side_effect=closed if direction == "to_server" else None)
+        tls_writer.drain = AsyncMock()
+        tls_writer.is_closing = MagicMock(return_value=False)
+        # Closing the upstream transport ends its read side, as a real socket would.
+        tls_writer.close = MagicMock(side_effect=lambda: tls_reader.feed_eof())
 
-    def test_fwd_to_client_catches_runtime_error(self):
-        import inspect
+        real_open_connection = asyncio.open_connection
 
-        src = inspect.getsource(create_tls_proxy)
-        # Slice from `_fwd_to_client` to `await asyncio.gather` so we only
-        # inspect that closure's body.
-        fwd_section = src.split("async def _fwd_to_client")[1].split("await asyncio.gather")[0]
-        assert "RuntimeError" in fwd_section, (
-            "_fwd_to_client must catch RuntimeError — that's the actual frame "
-            "in the original bug report (camera.py:191 dst.write(data) under "
-            "uvloop)."
-        )
+        async def fake_open_connection(host, port, **kwargs):
+            if "ssl" in kwargs:
+                return tls_reader, tls_writer
+            return await real_open_connection(host, port, **kwargs)
+
+        real_write = asyncio.StreamWriter.write
+
+        def write(self, data):
+            if data == printer_frame:
+                raise closed
+            return real_write(self, data)
+
+        monkeypatch.setattr(asyncio, "open_connection", fake_open_connection)
+        monkeypatch.setattr(asyncio.StreamWriter, "write", write)
+
+        loop = asyncio.get_running_loop()
+        leaked = []
+        loop.set_exception_handler(lambda _loop, context: leaked.append(context))
+        port, server = await create_tls_proxy("192.0.2.1", 322)
+        try:
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"DESCRIBE rtsp://127.0.0.1/streaming/live/1 RTSP/1.0\r\n\r\n")
+            await writer.drain()
+            try:
+                await asyncio.wait_for(reader.read(), timeout=2.0)
+            except ConnectionResetError:
+                # Closing with unread client bytes may reset TCP instead of EOF.
+                pass
+            writer.close()
+            try:
+                await writer.wait_closed()
+            except ConnectionResetError:
+                pass
+        finally:
+            loop.set_exception_handler(None)
+            server.close()
+            await server.wait_closed()
+
+        assert leaked == []

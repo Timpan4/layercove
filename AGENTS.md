@@ -9,6 +9,13 @@
   - Ruff: `uv run --with-requirements requirements-dev.txt ruff ...`
 - Treat native-Windows-only test failures as environment evidence, not product defects. Reproduce them in WSL before changing code.
 
+## Testing
+
+- Prefer E2E tests. Browser E2E lives in `frontend/e2e/` (Playwright) and runs against a live server: `LAYERCOVE_URL=http://localhost:8001 bun run test:e2e` from `frontend/`. Each run leaves `frontend/playwright-report/` (plus a trace on failure); CI uploads it as the `playwright-report` artifact.
+- To run E2E in [Obscura](https://github.com/h4ckf0r0day/obscura) instead of bundled Chromium, start `obscura serve --port 9222 --allow-private-network` and set `E2E_CDP_URL=http://127.0.0.1:9222`. As of Obscura 0.2.3, `selectOption` fails because `HTMLOptionElement.label` is unimplemented, so Chromium stays the CI default.
+- Do not write unit tests after the code. Tests that restate the implementation (asserting mock calls, internal call order, or source/config text) always pass and break on refactor.
+- If a component must be tested in isolation, first write down the ways it can fail, then write the code and tests against those failure modes.
+
 ## Bug fixes
 
 - Every bug fix must include an automated regression test that reproduces the specific reported failure.
