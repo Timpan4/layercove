@@ -34,6 +34,38 @@ function shell(program) {
   return spawnSync("bash", ["-e", "-o", "pipefail", "-c", program], { encoding: "utf8", timeout: 2000 });
 }
 
+const rustPublish = readFileSync(new URL("../.github/workflows/publish-rust.yml", import.meta.url), "utf8").replace(/\r\n/g, "\n");
+const promotion = rustPublish.split("        run: |\n").at(-1).trimEnd().split("\n").map((line) => line.slice(10)).join("\n");
+for (const [error, absent] of [
+  ["ERROR: ghcr.io/timpan4/layercove-rs:sha-tested-tip: not found", true],
+  ["ERROR: unexpected status from HEAD request: 401 Unauthorized", false],
+  ["ERROR: unexpected status from HEAD request: 500 Internal Server Error", false],
+]) {
+  test(`Rust promotion handles registry error: ${error}`, () => {
+    const result = shell(`
+      export GITHUB_REPOSITORY=Timpan4/layercove IMAGE_NAME=ghcr.io/timpan4/layercove-rs
+      gh() { echo tested-tip; }
+      docker() {
+        if [[ "$3" == inspect ]]; then echo '${error}' >&2; return 1; fi
+        echo promoted
+      }
+      ${promotion}
+    `);
+    assert.equal(result.status === 0, absent, result.stderr);
+    assert.doesNotMatch(result.stdout, /promoted/);
+  });
+}
+test("Rust promotion retags an available registry image", () => {
+  const result = shell(`
+    export GITHUB_REPOSITORY=Timpan4/layercove IMAGE_NAME=ghcr.io/timpan4/layercove-rs
+    gh() { echo tested-tip; }
+    docker() { if [[ "$3" == create ]]; then echo "$*"; fi; }
+    ${promotion}
+  `);
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /create --tag ghcr.io\/timpan4\/layercove-rs:main ghcr.io\/timpan4\/layercove-rs:sha-tested-tip/);
+});
+
 test("frontend checks share one frozen install without dropping commands", () => {
   assert.equal((workflow.match(/run: bun install --frozen-lockfile/g) ?? []).length, 1);
   assert.equal((workflow.match(/uses: oven-sh\/setup-bun/g) ?? []).length, 1);

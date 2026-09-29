@@ -93,9 +93,14 @@ jobs:
         run: |
           tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           # Only this workflow pushes sha- tags, after CI passed for that commit.
-          if ! docker buildx imagetools inspect "$IMAGE_NAME:sha-$tip" > /dev/null; then
+          if inspection=$(docker buildx imagetools inspect "$IMAGE_NAME:sha-$tip" 2>&1); then
+            :
+          elif [[ "$inspection" == "ERROR: $IMAGE_NAME:sha-$tip: not found" ]]; then
             echo "::notice::No image for tip $tip yet; its own run will promote it."
             exit 0
+          else
+            printf '%s\n' "$inspection" >&2
+            exit 1
           fi
           # A single index source is copied unchanged, so the digest and its
           # attestations are kept.
