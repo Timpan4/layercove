@@ -35,9 +35,9 @@ function shell(program) {
 }
 
 test("frontend checks share one frozen install without dropping commands", () => {
-  assert.equal((workflow.match(/run: bun install --frozen-lockfile/g) ?? []).length, 1);
-  assert.equal((workflow.match(/uses: oven-sh\/setup-bun/g) ?? []).length, 1);
   const frontend = job("frontend-tests");
+  assert.equal((frontend.match(/run: bun install --frozen-lockfile/g) ?? []).length, 1);
+  assert.equal((frontend.match(/uses: oven-sh\/setup-bun/g) ?? []).length, 1);
   for (const value of ["bun run lint", "bun x tsc --noEmit", "bun run build", "bun run test:run"]) {
     assert.ok(frontend.includes(`run: ${value}\n`), `Missing ${value}`);
   }

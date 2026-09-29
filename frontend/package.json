@@ -15,6 +15,7 @@
     "test:brand": "python3 scripts/test_brand_assets.py",
     "test:coverage": "vitest run --coverage",
     "test:ui": "vitest --ui",
+    "test:e2e": "playwright test",
     "check:i18n": "node scripts/check-i18n-parity.mjs",
     "generate:api": "uv run --with-requirements ../requirements.txt --with-requirements ../requirements-dev.txt python ../scripts/export_openapi.py | (cd .. && bunx --package typescript@5.9.3 --package openapi-typescript@7.13.0 openapi-typescript -o frontend/src/api/generated.ts)",
     "check:api": "bun run generate:api && git diff --exit-code -- src/api/generated.ts"
@@ -56,6 +57,7 @@
     "minimatch": "^10.2.1"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "@tailwindcss/postcss": "^4.1.17",
     "@testing-library/jest-dom": "^6.6.0",
     "@testing-library/react": "^16.0.0",
