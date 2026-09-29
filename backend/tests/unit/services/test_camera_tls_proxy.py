@@ -220,9 +220,16 @@ class TestForwardersCatchRuntimeError:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
             writer.write(b"DESCRIBE rtsp://127.0.0.1/streaming/live/1 RTSP/1.0\r\n\r\n")
             await writer.drain()
-            await asyncio.wait_for(reader.read(), timeout=2.0)  # proxy closes the client
+            try:
+                await asyncio.wait_for(reader.read(), timeout=2.0)
+            except ConnectionResetError:
+                # Closing with unread client bytes may reset TCP instead of EOF.
+                pass
             writer.close()
-            await asyncio.sleep(0.05)
+            try:
+                await writer.wait_closed()
+            except ConnectionResetError:
+                pass
         finally:
             loop.set_exception_handler(None)
             server.close()
