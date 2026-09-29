@@ -16,7 +16,7 @@ def test_restore_supports_the_pinned_spoolman_python(tmp_path: Path, monkeypatch
     original_extractall = tarfile.TarFile.extractall
 
     def legacy_extractall(self, path=".", members=None, *, numeric_owner=False):
-        return original_extractall(self, path, members, numeric_owner=numeric_owner)
+        return original_extractall(self, path, members, numeric_owner=numeric_owner, filter="data")
 
     monkeypatch.setattr(tarfile.TarFile, "extractall", legacy_extractall)
     data = tmp_path / "spoolman"
