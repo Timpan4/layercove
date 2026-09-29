@@ -4,7 +4,8 @@ import { useParams, useSearchParams } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Layers, Clock, Timer, Printer } from 'lucide-react';
-import { api, ApiError, withStreamToken } from '../api/client';
+import { api, ApiError } from '../api/client';
+import { useCameraStreamToken } from '../hooks/useCameraStreamToken';
 import type { PrinterStatus } from '../api/client';
 import { formatDuration, formatETA, type TimeFormat } from '../utils/date';
 
@@ -114,6 +115,7 @@ export function StreamOverlayPage() {
   const queryClient = useQueryClient();
   const id = parseInt(printerId || '0', 10);
   const [imageKey, setImageKey] = useState(Date.now());
+  const { waitingForToken, withToken } = useCameraStreamToken();
 
   const config = useMemo(() => parseConfig(searchParams), [searchParams]);
   const sizes = getSizeClasses(config.size);
@@ -231,7 +233,7 @@ export function StreamOverlayPage() {
 
   const isPrinting = status.state === 'RUNNING' || status.state === 'PAUSE';
   const progress = status.progress || 0;
-  const streamUrl = withStreamToken(`/api/v1/printers/${id}/camera/stream?fps=${config.fps}&t=${imageKey}`);
+  const streamUrl = waitingForToken ? undefined : withToken(`/api/v1/printers/${id}/camera/stream?fps=${config.fps}&t=${imageKey}`);
 
   return (
     <div className="min-h-screen bg-black relative overflow-hidden">

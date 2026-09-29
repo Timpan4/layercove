@@ -9,7 +9,7 @@ function refreshThumbnailTokens(token: string) {
   const tokenParam = `token=${encodeURIComponent(token)}`;
   document.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img[src*="/api/v1/"], video[src*="/api/v1/"]').forEach((el) => {
     const src = el.getAttribute('src') || '';
-    if (/\/api\/v1\/printers\/\d+\/(?:camera|cameras\/\d+)\//.test(src) || src.includes(tokenParam)) return;
+    if (/\/api\/v1\/printers\/\d+\/(?:camera|cameras\/\d+)\/(?:stream|snapshot)(?:[?]|$)/.test(src) || src.includes(tokenParam)) return;
     const withoutToken = src.replace(/([?&])token=[^&]*(&|$)/, (_match, separator, next) => next === '&' ? separator : '');
     el.src = `${withoutToken}${withoutToken.includes('?') ? '&' : '?'}${tokenParam}`;
   });
