@@ -188,4 +188,5 @@ services:
 volumes:
   layercove_data:
   layercove_logs:
+  spoolman_data:
   #layercove_pgdata:

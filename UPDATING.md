@@ -57,7 +57,7 @@ curl -fsSL https://raw.githubusercontent.com/Timpan4/layercove/main/scripts/spoo
   -o scripts/spoolman_volume.py
 ```
 
-Back up while the service is stopped so the SQLite database is consistent. Backup runs as the invoking host UID with Spoolman's service GID, which lets it write the host archive and publish it group-readable as `0640`; restore runs as Spoolman's default service UID/GID so it can read that archive and keep restored files writable when the normal entrypoint starts the server. The archive contains only Spoolman data; it does not touch `bambuddy_data`, `bambuddy_logs`, or an external Spoolman instance.
+Back up while the service is stopped so the SQLite database is consistent. Backup runs as the invoking host UID with Spoolman's service GID, which lets it write the host archive and publish it group-readable as `0640`; restore runs as Spoolman's default service UID/GID so it can read that archive and keep restored files writable when the normal entrypoint starts the server. The archive contains only Spoolman data; it does not touch `layercove_data`, `layercove_logs`, or an external Spoolman instance.
 
 ```bash
 # Backup
@@ -81,18 +81,7 @@ If restore fails, leave Spoolman stopped and read the error before retrying. A m
 
 Before an upgrade, make that backup and record the current image with `docker compose --profile spoolman images spoolman`. Change only the pinned `spoolman` image tag after reviewing the [Spoolman release notes](https://github.com/Donkie/Spoolman/releases), then run `docker compose --profile spoolman pull spoolman && docker compose --profile spoolman up -d spoolman`. If a schema migration makes the previous image incompatible, restore the pre-upgrade archive first, set the recorded image tag, and recreate the `spoolman` service. Never use `docker compose down -v`; it deletes named volumes.
 
-### Docker rollback
-
-Set the `image:` line to the previously recorded tag or digest, then recreate the application container:
-
-```bash
-docker compose pull
-docker compose up -d
-```
-
-Do not run `docker compose down -v`: `-v` deletes the named data volumes. If a migration makes the prior image incompatible, restore the backup before starting it and record the failure as an issue.
-
-## Fresh Docker deployment
+## Fresh deployment
 
 ```bash
 mkdir layercove && cd layercove
