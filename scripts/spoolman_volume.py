@@ -108,7 +108,11 @@ def restore(data_dir: Path, archive: Path) -> None:
     try:
         with tarfile.open(archive, "r:gz") as source:
             _validate_archive(source)
-            source.extractall(staging, filter="data")
+            # Validation permits only relative files/directories and rejects
+            # links. Skip archive ownership and permissions, including special
+            # mode bits, on the older Python shipped by the pinned image.
+            for member in source.getmembers():
+                source.extract(member, staging, set_attrs=False)
 
         rollback.mkdir()
         _copy_contents(data_dir, rollback, skip={STAGING_NAME, ROLLBACK_NAME})

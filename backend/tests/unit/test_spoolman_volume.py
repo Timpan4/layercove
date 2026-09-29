@@ -11,6 +11,28 @@ from scripts.spoolman_volume import ROLLBACK_MARKER, ROLLBACK_NAME, STAGING_NAME
 
 
 @pytest.mark.unit
+def test_restore_supports_the_pinned_spoolman_python(tmp_path: Path, monkeypatch):
+    # Spoolman 0.21.0 ships Python 3.11.2, before extractall gained filter=.
+    original_extractall = tarfile.TarFile.extractall
+
+    def legacy_extractall(self, path=".", members=None, *, numeric_owner=False):
+        return original_extractall(self, path, members, numeric_owner=numeric_owner)
+
+    monkeypatch.setattr(tarfile.TarFile, "extractall", legacy_extractall)
+    data = tmp_path / "spoolman"
+    (data / "nested").mkdir(parents=True)
+    database = data / "nested" / "spoolman.db"
+    database.write_text("before", encoding="utf-8")
+    archive = tmp_path / "backup.tgz"
+    backup(data, archive)
+    database.write_text("after", encoding="utf-8")
+
+    restore(data, archive)
+
+    assert database.read_text(encoding="utf-8") == "before"
+
+
+@pytest.mark.unit
 def test_backup_and_restore_replace_only_spoolman_data(tmp_path: Path):
     data = tmp_path / "spoolman"
     data.mkdir()
