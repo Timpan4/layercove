@@ -17,6 +17,7 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use axum::{Json, Router};
+use futures_util::SinkExt;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio::net::TcpListener;
@@ -216,7 +217,11 @@ async fn run_session(mut socket: WebSocket, mut state: InternalState, _slot: Ses
         _ = state.stop.wait_for(|stopped| *stopped) => Ending::Stopping,
     };
     let close = match ending {
-        Ending::PeerClosed => return,
+        Ending::PeerClosed => {
+            // Tungstenite queues the reply when it receives the peer's close.
+            let _ = socket.flush().await;
+            return;
+        }
         Ending::Violation(code) => {
             if send(&mut socket, &ServerMessage::Error { code })
                 .await

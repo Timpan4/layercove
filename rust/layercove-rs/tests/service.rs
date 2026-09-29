@@ -248,6 +248,23 @@ async fn shutdown_closes_the_open_session_and_stops_both_listeners() {
     assert!(TcpStream::connect(service.internal).await.is_err());
 }
 
+#[tokio::test]
+async fn peer_close_receives_a_close_reply() {
+    let service = start().await;
+    let mut client = authorized(service.internal).await;
+    handshake(&mut client).await;
+
+    client.close(None).await.unwrap();
+    let reply = timeout(WAIT, client.next()).await.unwrap();
+    assert!(
+        matches!(reply, Some(Ok(Message::Close(_)))),
+        "got {reply:?}"
+    );
+
+    service.stop.send(()).unwrap();
+    timeout(WAIT, service.task).await.unwrap().unwrap().unwrap();
+}
+
 fn config(vars: &[(&str, &str)]) -> Result<Config, ConfigError> {
     let vars: HashMap<String, String> = vars
         .iter()
