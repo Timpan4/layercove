@@ -1,19 +1,15 @@
-/**
- * Unit tests for rewriteMediaSrcWithToken — the DOM walker that retrofits a
- * camera stream token onto <img>/<video> src URLs that rendered before the
- * token arrived (regression guard for the post-login blank-thumbnails bug).
- */
+/** Regression tests for camera and thumbnail token refresh. */
 
 import { createElement } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { api, setAuthToken, setStreamToken } from '../../api/client';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
+import { api, ApiError, getStreamToken, setAuthToken, setStreamToken } from '../../api/client';
+import { queryKeys } from '../../api/queryKeys';
 import { CameraTile } from '../../components/CameraTile';
-import {
-  rewriteMediaSrcWithToken,
-  useStreamTokenSync,
-} from '../../hooks/useCameraStreamToken';
+import { StreamOverlayPage } from '../../pages/StreamOverlayPage';
+import { useStreamTokenSync } from '../../hooks/useCameraStreamToken';
 
 vi.mock('../../contexts/AuthContext', () => ({
   useAuth: () => ({ authEnabled: true, user: { id: 1 }, loading: false }),
@@ -24,89 +20,71 @@ function StreamTokenSync() {
   return null;
 }
 
-describe('rewriteMediaSrcWithToken', () => {
-  let root: HTMLDivElement;
-
-  beforeEach(() => {
-    root = document.createElement('div');
-    document.body.appendChild(root);
-  });
-
-  afterEach(() => {
-    root.remove();
-  });
-
-  const addImg = (src: string) => {
-    const img = document.createElement('img');
-    img.setAttribute('src', src);
-    root.appendChild(img);
-    return img;
-  };
-
-  const addVideo = (src: string) => {
-    const v = document.createElement('video');
-    v.setAttribute('src', src);
-    root.appendChild(v);
-    return v;
-  };
-
-  it('appends token to /api/v1/ images that have no query string', () => {
-    const img = addImg('/api/v1/library/files/42/thumbnail');
-    const count = rewriteMediaSrcWithToken(root, 'abc123');
-    expect(count).toBe(1);
-    expect(img.getAttribute('src')).toBe('/api/v1/library/files/42/thumbnail?token=abc123');
-  });
-
-  it('appends token to URLs that already have a query string using & separator', () => {
-    const img = addImg('/api/v1/archives/5/thumbnail?v=1700000000000');
-    rewriteMediaSrcWithToken(root, 'abc123');
-    expect(img.getAttribute('src')).toBe('/api/v1/archives/5/thumbnail?v=1700000000000&token=abc123');
-  });
-
-  it('leaves images alone that already carry the current token', () => {
-    const img = addImg('/api/v1/library/files/42/thumbnail?token=abc123');
-    const count = rewriteMediaSrcWithToken(root, 'abc123');
-    expect(count).toBe(0);
-    expect(img.getAttribute('src')).toBe('/api/v1/library/files/42/thumbnail?token=abc123');
-  });
-
-  it('replaces a stale token with the current one', () => {
-    const img = addImg('/api/v1/library/files/42/thumbnail?token=OLD');
-    rewriteMediaSrcWithToken(root, 'NEW');
-    expect(img.getAttribute('src')).toBe('/api/v1/library/files/42/thumbnail?token=NEW');
-  });
-
-  it('replaces a stale token that sits in the middle of the query string', () => {
-    const img = addImg('/api/v1/archives/5/thumbnail?token=OLD&v=1700000000000');
-    rewriteMediaSrcWithToken(root, 'NEW');
-    // Old token stripped, v preserved, new token appended.
-    expect(img.getAttribute('src')).toBe('/api/v1/archives/5/thumbnail?v=1700000000000&token=NEW');
-  });
-
-  it('ignores images that do not point at /api/v1/', () => {
-    const img = addImg('https://cdn.example.com/static/logo.png');
-    rewriteMediaSrcWithToken(root, 'abc123');
-    expect(img.getAttribute('src')).toBe('https://cdn.example.com/static/logo.png');
-  });
-
-  it('updates <video> elements as well', () => {
-    const v = addVideo('/api/v1/printers/7/camera/stream?fps=10');
-    rewriteMediaSrcWithToken(root, 'abc123');
-    expect(v.getAttribute('src')).toBe('/api/v1/printers/7/camera/stream?fps=10&token=abc123');
-  });
-
-  it('url-encodes tokens containing special characters', () => {
-    const img = addImg('/api/v1/library/files/42/thumbnail');
-    rewriteMediaSrcWithToken(root, 'a b/c=d');
-    expect(img.getAttribute('src')).toBe('/api/v1/library/files/42/thumbnail?token=a%20b%2Fc%3Dd');
-  });
-});
-
 describe('useStreamTokenSync', () => {
   afterEach(() => {
     setAuthToken(null);
     setStreamToken(null);
     vi.restoreAllMocks();
+  });
+
+  it('updates the stream overlay when a stale token is replaced', async () => {
+    let resolveFreshToken!: (value: { token: string }) => void;
+    const freshToken = new Promise<{ token: string }>((resolve) => {
+      resolveFreshToken = resolve;
+    });
+    vi.spyOn(api, 'getCameraStreamToken')
+      .mockResolvedValueOnce({ token: 'stale-token' })
+      .mockReturnValueOnce(freshToken);
+    vi.spyOn(api, 'getWebSocketToken').mockRejectedValue(new ApiError('Unauthorized', 401));
+    setAuthToken('auth-token');
+    setStreamToken('stale-token');
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+    });
+    queryClient.setQueryData(['printer', 42], { name: 'Overlay camera' });
+    queryClient.setQueryData(queryKeys.printerStatus(42), { state: 'IDLE', connected: true });
+    queryClient.setQueryData(['settings'], {});
+    render(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(StreamTokenSync),
+        createElement(
+          MemoryRouter,
+          { initialEntries: ['/overlay/42'] },
+          createElement(Routes, null,
+            createElement(Route, { path: '/overlay/:printerId', element: createElement(StreamOverlayPage) }),
+          ),
+        ),
+      ),
+    );
+    const image = screen.getByAltText('Camera stream') as HTMLImageElement;
+    await waitFor(() => expect(api.getCameraStreamToken).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(getStreamToken()).toBe('stale-token'));
+    expect(image.src).toContain('token=stale-token');
+    fireEvent.error(image);
+    await waitFor(() => expect(api.getCameraStreamToken).toHaveBeenCalledTimes(2));
+    await act(async () => resolveFreshToken({ token: 'fresh-token' }));
+    await waitFor(() => expect(image.src).toContain('token=fresh-token'));
+  });
+
+  it.each([
+    '/api/v1/archives/5/thumbnail',
+    '/api/v1/printers/42/camera/plate-detection/references/1/thumbnail',
+  ])('recovers a delayed token for thumbnail %s', async (src) => {
+    vi.spyOn(api, 'getCameraStreamToken').mockResolvedValue({ token: 'camera-token' });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(
+      createElement(
+        QueryClientProvider,
+        { client: queryClient },
+        createElement(StreamTokenSync),
+        createElement('img', { alt: 'archive', src }),
+      ),
+    );
+
+    await waitFor(() => expect(api.getCameraStreamToken).toHaveBeenCalled());
+    await waitFor(() => expect((screen.getByAltText('archive') as HTMLImageElement).src).toContain('token=camera-token'));
   });
 
   it('keeps failed media mounted while replacing a stale stream token', async () => {

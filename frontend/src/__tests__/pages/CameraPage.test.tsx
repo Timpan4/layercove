@@ -88,6 +88,7 @@ describe('CameraPage', () => {
   afterEach(() => {
     setAuthToken(null);
     document.title = originalTitle;
+    setAuthToken(null);
   });
 
   describe('rendering', () => {

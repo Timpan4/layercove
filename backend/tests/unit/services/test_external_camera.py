@@ -4,6 +4,7 @@ Tests for the external camera service.
 These tests cover pure functions and frame parsing logic.
 """
 
+from contextlib import asynccontextmanager
 from unittest.mock import patch
 
 import pytest
@@ -52,31 +53,14 @@ class _FakeMjpegResponse:
         return None
 
 
-class _FakeMjpegSession:
-    """Drop-in for aiohttp.ClientSession; `get(url)` returns a pre-baked
-    `_FakeMjpegResponse`."""
-
-    def __init__(self, response):
-        self._response = response
-
-    def get(self, _url):
-        return self._response
-
-    async def __aenter__(self):
-        return self
-
-    async def __aexit__(self, *_):
-        return None
-
-
 def _patch_mjpeg_session(response):
-    """Patch `aiohttp.ClientSession` inside the external_camera module so the
-    real `_capture_mjpeg_frame` runs against our fake stream."""
+    """Drive parsers through the trusted HTTP seam with a fake response."""
 
-    def _factory(*_args, **_kwargs):
-        return _FakeMjpegSession(response)
+    @asynccontextmanager
+    async def _factory(*_args, **_kwargs):
+        yield response
 
-    return patch("backend.app.services.external_camera.aiohttp.ClientSession", _factory)
+    return patch("backend.app.services.external_camera.trusted_http_response", _factory)
 
 
 class TestCaptureMjpegFrameWarmupSkip:
@@ -188,6 +172,18 @@ class TestCaptureMjpegFrameWarmupSkip:
             frame = await _capture_mjpeg_frame("http://camera.example/stream", timeout=15)
 
         assert frame is None
+
+    @pytest.mark.asyncio
+    async def test_stream_stops_when_incomplete_frame_exceeds_existing_frame_cap(self):
+        from backend.app.services.external_camera import _stream_mjpeg
+
+        oversized_partial = JPEG_START + b"x" * (5 * 1024 * 1024 + 1)
+        response = _FakeMjpegResponse(chunks=[oversized_partial, _make_jpeg(b"late")])
+
+        with _patch_mjpeg_session(response):
+            frames = [frame async for frame in _stream_mjpeg("http://camera.example/stream")]
+
+        assert frames == []
 
     @pytest.mark.asyncio
     async def test_non_200_status_returns_none(self):
@@ -605,16 +601,13 @@ def _encode_image(ext: str) -> bytes:
     return buf.tobytes()
 
 
-def _fake_snapshot_session(body: bytes, status: int = 200):
-    """Build an aiohttp.ClientSession stand-in whose GET yields `body`.
-
-    Matches the `async with ClientSession(...) as session, session.get(url) as
-    response` usage inside `_capture_snapshot`.
-    """
+def _fake_snapshot_response(body: bytes, status: int = 200):
+    """Build a trusted HTTP seam stand-in yielding `body`."""
 
     class _Resp:
         def __init__(self):
             self.status = status
+            self.content = self
 
         async def __aenter__(self):
             return self
@@ -622,23 +615,17 @@ def _fake_snapshot_session(body: bytes, status: int = 200):
         async def __aexit__(self, *a):
             return False
 
-        async def read(self):
-            return body
+        def iter_chunked(self, _size):
+            async def _chunks():
+                yield body
 
-    class _Session:
-        def __init__(self, *a, **k):
-            pass
+            return _chunks()
 
-        async def __aenter__(self):
-            return self
+    @asynccontextmanager
+    async def _response(*_args, **_kwargs):
+        yield _Resp()
 
-        async def __aexit__(self, *a):
-            return False
-
-        def get(self, _url):
-            return _Resp()
-
-    return _Session
+    return _response
 
 
 class TestSnapshotTranscode:
@@ -679,7 +666,7 @@ class TestSnapshotTranscode:
         from backend.app.services import external_camera as ec
 
         png = _encode_image(".png")
-        with patch.object(ec.aiohttp, "ClientSession", _fake_snapshot_session(png)):
+        with patch.object(ec, "trusted_http_response", _fake_snapshot_response(png)):
             out = await ec._capture_snapshot("http://192.168.50.50/snapshot.png", 10)
         assert out is not None and out.startswith(JPEG_START)
 
@@ -691,7 +678,7 @@ class TestSnapshotTranscode:
 
         jpeg = _encode_image(".jpg")
         assert jpeg.startswith(JPEG_START)
-        with patch.object(ec.aiohttp, "ClientSession", _fake_snapshot_session(jpeg)):
+        with patch.object(ec, "trusted_http_response", _fake_snapshot_response(jpeg)):
             out = await ec._capture_snapshot("http://192.168.50.50/snapshot.jpg", 10)
         assert out == jpeg  # identical object bytes — proves no transcode ran
 
@@ -702,6 +689,16 @@ class TestSnapshotTranscode:
         from backend.app.services import external_camera as ec
 
         html = b"<html><body>unauthorized</body></html>"
-        with patch.object(ec.aiohttp, "ClientSession", _fake_snapshot_session(html)):
+        with patch.object(ec, "trusted_http_response", _fake_snapshot_response(html)):
             out = await ec._capture_snapshot("http://192.168.50.50/snapshot", 10)
         assert out == html
+
+    @pytest.mark.asyncio
+    async def test_capture_snapshot_rejects_body_over_existing_frame_cap(self):
+        from backend.app.services import external_camera as ec
+
+        oversized = JPEG_START + b"x" * (5 * 1024 * 1024) + JPEG_END
+        with patch.object(ec, "trusted_http_response", _fake_snapshot_response(oversized)):
+            out = await ec._capture_snapshot("http://192.168.50.50/snapshot.jpg", 10)
+
+        assert out is None

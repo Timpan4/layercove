@@ -21,6 +21,7 @@ from backend.app.core.auth import (
 )
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
+from backend.app.models.api_key import APIKey
 from backend.app.models.printer import Printer
 from backend.app.models.printer_camera import PrinterCamera
 from backend.app.models.user import User
@@ -926,14 +927,18 @@ async def selected_camera_stream(
 
 @router.post("/camera/stream-token")
 async def create_stream_token(
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.CAMERA_VIEW),
+    issuer: User | APIKey | None = RequirePermissionIfAuthEnabled(
+        Permission.CAMERA_VIEW,
+        return_api_key=True,
+    ),
 ):
     """Create a reusable token for camera stream/snapshot access.
 
     Returns a token valid for 60 minutes that can be appended as ?token=xxx
     to camera stream/snapshot URLs loaded via <img> tags.
     """
-    return {"token": await create_camera_stream_token()}
+    api_key_id = issuer.id if isinstance(issuer, APIKey) else None
+    return {"token": await create_camera_stream_token(api_key_id=api_key_id)}
 
 
 @router.get("/{printer_id}/camera/stream")

@@ -117,7 +117,12 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
     monkeypatch.setattr(print_scheduler.ws_manager, "broadcast_to_user", record_message)
     scheduler = PrintScheduler()
     monkeypatch.setattr(scheduler, "_schedule_moonraker_start_reconciliation", MagicMock())
-    manager.set_print_start_callback(scheduler.bind_provider_observed)
+
+    async def on_lifecycle(event):
+        if event.kind == "started":
+            await scheduler.bind_provider_observed(event.printer_id, event.data)
+
+    manager.set_print_lifecycle_callback(on_lifecycle)
     monkeypatch.setattr(scheduler, "_propagate_owner_to_printer_manager", AsyncMock())
     await manager.connect_printer(printer)
     await _wait_for(lambda: manager.get_snapshot(printer_id).connected, timeout=5)

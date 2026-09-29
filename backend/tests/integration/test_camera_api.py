@@ -26,6 +26,49 @@ def _track_checked_out_connections(engine):
 
 
 class TestCameraAPI:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_legacy_camera_token_without_issuer_is_rejected(self, async_client, db_session, printer_factory):
+        from datetime import datetime, timedelta, timezone
+
+        from backend.app.models.auth_ephemeral import AuthEphemeralToken
+        from backend.app.models.settings import Settings
+
+        printer = await printer_factory()
+        db_session.add_all(
+            [
+                Settings(key="auth_enabled", value="true"),
+                AuthEphemeralToken(
+                    token="legacy-camera-token",
+                    token_type="camera_stream",
+                    username=None,
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=60),
+                ),
+            ]
+        )
+        await db_session.commit()
+        with patch("backend.app.api.routes.camera.capture_camera_frame", new=AsyncMock(return_value=b"jpeg")):
+            response = await async_client.get(
+                f"/api/v1/printers/{printer.id}/camera/snapshot", params={"token": "legacy-camera-token"}
+            )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("auth_enabled", [False, True])
+    async def test_library_thumbnail_token_gate_does_not_require_printer_id(
+        self, async_client, db_session, auth_enabled
+    ):
+        from backend.app.core.auth import create_camera_stream_token
+        from backend.app.models.settings import Settings
+
+        db_session.add(Settings(key="auth_enabled", value=str(auth_enabled).lower()))
+        await db_session.commit()
+        token = await create_camera_stream_token()
+        response = await async_client.get("/api/v1/library/files/999999/thumbnail", params={"token": token})
+        assert response.status_code == 404
+        assert response.json()["detail"] == "File not found"
+
     """Integration tests for /api/v1/printers/{id}/camera/ endpoints."""
 
     # ========================================================================
@@ -488,6 +531,78 @@ class TestCameraAPI:
                 rejected = await async_client.get(path)
                 assert rejected.status_code == 401
                 mocked_handler.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_api_key_stream_token_stays_within_printer_scope(
+        self, async_client: AsyncClient, db_session, printer_factory
+    ):
+        from backend.app.core.auth import generate_api_key
+        from backend.app.models.api_key import APIKey
+        from backend.app.models.printer_camera import PrinterCamera
+        from backend.app.models.settings import Settings
+
+        allowed_printer = await printer_factory(provider="moonraker")
+        blocked_printer = await printer_factory(provider="moonraker")
+        allowed_camera = PrinterCamera(
+            printer_id=allowed_printer.id,
+            source="moonraker",
+            source_uid="allowed-camera",
+            name="Allowed camera",
+            camera_type="mjpeg",
+            stream_url="http://allowed.lan/stream",
+        )
+        blocked_camera = PrinterCamera(
+            printer_id=blocked_printer.id,
+            source="moonraker",
+            source_uid="blocked-camera",
+            name="Blocked camera",
+            camera_type="mjpeg",
+            stream_url="http://blocked.lan/stream",
+        )
+        full_key, key_hash, key_prefix = generate_api_key()
+        db_session.add_all([Settings(key="auth_enabled", value="true"), allowed_camera, blocked_camera])
+        api_key = APIKey(
+            name="camera-scoped",
+            key_hash=key_hash,
+            key_prefix=key_prefix,
+            can_read_status=True,
+            printer_ids=[allowed_printer.id],
+            enabled=True,
+        )
+        db_session.add(api_key)
+        await db_session.commit()
+
+        token_response = await async_client.post(
+            "/api/v1/printers/camera/stream-token",
+            headers={"X-API-Key": full_key},
+        )
+        assert token_response.status_code == 200
+        stream_token = token_response.json()["token"]
+
+        with patch(
+            "backend.app.api.routes.camera._camera_stream_response",
+            new=AsyncMock(return_value=Response(status_code=204)),
+        ) as mocked_handler:
+            allowed = await async_client.get(
+                f"/api/v1/printers/{allowed_printer.id}/cameras/{allowed_camera.id}/stream",
+                params={"token": stream_token},
+            )
+            blocked = await async_client.get(
+                f"/api/v1/printers/{blocked_printer.id}/cameras/{blocked_camera.id}/stream",
+                params={"token": stream_token},
+            )
+            api_key.can_read_status = False
+            await db_session.commit()
+            revoked = await async_client.get(
+                f"/api/v1/printers/{allowed_printer.id}/cameras/{allowed_camera.id}/stream",
+                params={"token": stream_token},
+            )
+
+        assert allowed.status_code == 204
+        assert blocked.status_code == 401
+        assert revoked.status_code == 401
+        mocked_handler.assert_awaited_once()
 
     @pytest.mark.asyncio
     @pytest.mark.integration

@@ -108,6 +108,7 @@ from backend.app.services.notification_service import notification_service
 from backend.app.services.obico_detection import obico_detection_service
 from backend.app.services.print_scheduler import scheduler as print_scheduler
 from backend.app.services.printer_manager import (
+    PrintLifecycleEvent,
     init_printer_connections,
     parse_plate_id,
     printer_manager,
@@ -728,6 +729,115 @@ def register_expected_print(
     logging.getLogger(__name__).info(
         f"Registered expected print: printer={printer_id}, file={filename}, archive={archive_id}, ams_mapping={ams_mapping}, plate_id={plate_id}"
     )
+
+
+def _expected_print_keys(
+    printer_id: int,
+    filename: str,
+    subtask_name: str,
+) -> list[tuple[int, str]]:
+    """Return filename variants used to correlate a print-start event."""
+    keys: list[tuple[int, str]] = []
+    if subtask_name:
+        keys.extend(
+            [
+                (printer_id, subtask_name),
+                (printer_id, f"{subtask_name}.3mf"),
+                (printer_id, f"{subtask_name}.gcode.3mf"),
+            ]
+        )
+    if filename:
+        base_filename = filename.rsplit("/", 1)[-1]
+        keys.append((printer_id, base_filename))
+        stem = base_filename.replace(".gcode", "").replace(".3mf", "")
+        keys.extend([(printer_id, stem), (printer_id, f"{stem}.3mf")])
+    return keys
+
+
+def _claim_expected_print(keys: list[tuple[int, str]]) -> int | None:
+    """Remove filename variants for the first expected archive match."""
+    for key in keys:
+        archive_id = _expected_prints.pop(key, None)
+        _expected_print_registered_at.pop(key, None)
+        if archive_id is None:
+            continue
+        for other_key in keys:
+            _expected_prints.pop(other_key, None)
+            _expected_print_registered_at.pop(other_key, None)
+        return archive_id
+    return None
+
+
+def _track_active_print(
+    printer_id: int,
+    archive_id: int,
+    archive_filename: str,
+    subtask_name: str,
+) -> None:
+    """Register completion lookup keys for one active archive."""
+    _active_prints[(printer_id, archive_filename)] = archive_id
+    if subtask_name:
+        _active_prints[(printer_id, f"{subtask_name}.3mf")] = archive_id
+
+
+def _active_print_keys(printer_id: int, filename: str, subtask_name: str) -> list[tuple[int, str]]:
+    """Return completion lookup keys in reliability order."""
+    keys: list[tuple[int, str]] = []
+
+    if subtask_name:
+        keys.extend(
+            [
+                (printer_id, f"{subtask_name}.3mf"),
+                (printer_id, f"{subtask_name}.gcode.3mf"),
+                (printer_id, subtask_name),
+            ]
+        )
+
+    if not filename:
+        return keys
+
+    fname = filename.rsplit("/", 1)[-1]
+    if fname.endswith(".3mf"):
+        keys.append((printer_id, fname))
+    elif fname.endswith(".gcode"):
+        base_name = fname.rsplit(".", 1)[0]
+        keys.extend(
+            [
+                (printer_id, f"{base_name}.gcode.3mf"),
+                (printer_id, f"{base_name}.3mf"),
+                (printer_id, fname),
+            ]
+        )
+    else:
+        keys.extend(
+            [
+                (printer_id, f"{fname}.gcode.3mf"),
+                (printer_id, f"{fname}.3mf"),
+                (printer_id, fname),
+            ]
+        )
+
+    if filename.endswith(".3mf"):
+        keys.append((printer_id, filename))
+    elif filename.endswith(".gcode"):
+        base_name = filename.rsplit(".", 1)[0]
+        keys.extend([(printer_id, f"{base_name}.3mf"), (printer_id, filename)])
+    else:
+        keys.extend([(printer_id, f"{filename}.3mf"), (printer_id, filename)])
+
+    return keys
+
+
+def _claim_active_print(keys: list[tuple[int, str]]) -> tuple[int | None, tuple[int, str] | None]:
+    """Claim one active archive and remove its remaining lookup aliases."""
+    for key in keys:
+        archive_id = _active_prints.pop(key, None)
+        if not archive_id:
+            continue
+        for alias in [alias for alias, value in _active_prints.items() if value == archive_id]:
+            _active_prints.pop(alias, None)
+        return archive_id, key
+    return None, None
 
 
 def _compute_run_filament_grams(
@@ -2295,6 +2405,18 @@ def _load_objects_from_archive(archive, printer_id: int, logger) -> None:
         logger.debug("Failed to extract printable objects from archive: %s", e)
 
 
+async def on_print_lifecycle(event: PrintLifecycleEvent) -> None:
+    """Dispatch provider-neutral lifecycle events to application policy."""
+    if event.kind == "started":
+        await on_print_start(event.printer_id, event.data)
+    elif event.kind in {"completed", "failed", "cancelled"}:
+        await on_print_complete(event.printer_id, event.data)
+    elif event.kind == "print_running_observed":
+        await on_print_running_observed(event.printer_id, event.data)
+    else:
+        await on_finish_photo_moment(event.printer_id, event.data)
+
+
 async def on_print_start(printer_id: int, data: dict):
     """Handle print start - archive the 3MF file immediately."""
     backend = printer_manager.get_backend(printer_id)
@@ -2494,23 +2616,11 @@ async def on_print_start(printer_id: int, data: dict):
             # by BamBuddy via queue/reprint) that already has an archive to promote.
             # If so, fall through to the expected-print handling below so the archive
             # is tracked in _active_prints and usage tracking works at completion.
-            _fn = data.get("filename", "")
-            _sn = data.get("subtask_name", "")
-            _check_keys: list[tuple[int, str]] = []
-            if _sn:
-                _check_keys += [
-                    (printer_id, _sn),
-                    (printer_id, f"{_sn}.3mf"),
-                    (printer_id, f"{_sn}.gcode.3mf"),
-                ]
-            if _fn:
-                _base_fn = _fn.split("/")[-1] if "/" in _fn else _fn
-                _check_keys.append((printer_id, _base_fn))
-                _no_archive_base = _base_fn.replace(".gcode", "").replace(".3mf", "")
-                _check_keys += [
-                    (printer_id, _no_archive_base),
-                    (printer_id, f"{_no_archive_base}.3mf"),
-                ]
+            _check_keys = _expected_print_keys(
+                printer_id,
+                data.get("filename", ""),
+                data.get("subtask_name", ""),
+            )
 
             _has_expected = any(k in _expected_prints for k in _check_keys)
 
@@ -2566,29 +2676,9 @@ async def on_print_start(printer_id: int, data: dict):
 
         # Check if this is an expected print from reprint/scheduled
         # Build list of possible keys to check
-        expected_keys = []
-        if subtask_name:
-            expected_keys.append((printer_id, subtask_name))
-            expected_keys.append((printer_id, f"{subtask_name}.3mf"))
-            expected_keys.append((printer_id, f"{subtask_name}.gcode.3mf"))
-        if filename:
-            fname = filename.split("/")[-1] if "/" in filename else filename
-            expected_keys.append((printer_id, fname))
-            # Strip extensions to match
-            base = fname.replace(".gcode", "").replace(".3mf", "")
-            expected_keys.append((printer_id, base))
-            expected_keys.append((printer_id, f"{base}.3mf"))
+        expected_keys = _expected_print_keys(printer_id, filename, subtask_name)
 
-        expected_archive_id = None
-        for key in expected_keys:
-            expected_archive_id = _expected_prints.pop(key, None)
-            _expected_print_registered_at.pop(key, None)
-            if expected_archive_id:
-                # Clean up other possible keys for this print
-                for other_key in expected_keys:
-                    _expected_prints.pop(other_key, None)
-                    _expected_print_registered_at.pop(other_key, None)
-                break
+        expected_archive_id = _claim_expected_print(expected_keys)
 
         if expected_archive_id:
             # This is a reprint/scheduled print - use existing archive, don't create new one
@@ -2667,9 +2757,7 @@ async def on_print_start(printer_id: int, data: dict):
                 await db.commit()
 
                 # Track as active print
-                _active_prints[(printer_id, archive.filename)] = archive.id
-                if subtask_name:
-                    _active_prints[(printer_id, f"{subtask_name}.3mf")] = archive.id
+                _track_active_print(printer_id, archive.id, archive.filename, subtask_name)
 
                 # Start timelapse session if external camera is enabled (#1353).
                 # Queue / VP-dispatched prints land here in the expected-archive
@@ -4300,56 +4388,14 @@ async def on_print_complete(printer_id: int, data: dict):
 
     logger.info("Print complete - filename: %s, subtask: %s, status: %s", filename, subtask_name, data.get("status"))
 
-    # Build list of possible keys to try (matching how they were registered in on_print_start)
-    possible_keys = []
-
-    # Try subtask_name variations first (most reliable for matching)
-    if subtask_name:
-        possible_keys.append((printer_id, f"{subtask_name}.3mf"))
-        possible_keys.append((printer_id, f"{subtask_name}.gcode.3mf"))
-        possible_keys.append((printer_id, subtask_name))
-
-    # Try filename variations
-    if filename:
-        # Extract just the filename if it's a path
-        fname = filename.split("/")[-1] if "/" in filename else filename
-
-        if fname.endswith(".3mf"):
-            possible_keys.append((printer_id, fname))
-        elif fname.endswith(".gcode"):
-            base_name = fname.rsplit(".", 1)[0]
-            possible_keys.append((printer_id, f"{base_name}.gcode.3mf"))
-            possible_keys.append((printer_id, f"{base_name}.3mf"))
-            possible_keys.append((printer_id, fname))
-        else:
-            possible_keys.append((printer_id, f"{fname}.gcode.3mf"))
-            possible_keys.append((printer_id, f"{fname}.3mf"))
-            possible_keys.append((printer_id, fname))
-
-        # Also try full path versions
-        if filename.endswith(".3mf"):
-            possible_keys.append((printer_id, filename))
-        elif filename.endswith(".gcode"):
-            base_name = filename.rsplit(".", 1)[0]
-            possible_keys.append((printer_id, f"{base_name}.3mf"))
-            possible_keys.append((printer_id, filename))
-        else:
-            possible_keys.append((printer_id, f"{filename}.3mf"))
-            possible_keys.append((printer_id, filename))
+    possible_keys = _active_print_keys(printer_id, filename, subtask_name)
 
     # Find the archive for this print
     logger.info("Looking for archive in _active_prints, keys to try: %s...", possible_keys[:5])
     logger.info("Current _active_prints: %s", list(_active_prints.keys()))
-    archive_id = None
-    for key in possible_keys:
-        archive_id = _active_prints.pop(key, None)
-        if archive_id:
-            logger.info("Found archive %s with key %s", archive_id, key)
-            # Also clean up any other keys pointing to this archive
-            keys_to_remove = [k for k, v in _active_prints.items() if v == archive_id]
-            for k in keys_to_remove:
-                _active_prints.pop(k, None)
-            break
+    archive_id, matched_key = _claim_active_print(possible_keys)
+    if archive_id:
+        logger.info("Found archive %s with key %s", archive_id, matched_key)
 
     if not archive_id:
         # Try to find by filename or subtask_name if not tracked (for prints started before app)
@@ -6255,10 +6301,7 @@ async def lifespan(app: FastAPI):
     loop = asyncio.get_event_loop()
     printer_manager.set_event_loop(loop)
     printer_manager.set_status_change_callback(on_printer_status_change)
-    printer_manager.set_print_start_callback(on_print_start)
-    printer_manager.set_print_complete_callback(on_print_complete)
-    printer_manager.set_print_running_observed_callback(on_print_running_observed)
-    printer_manager.set_finish_photo_moment_callback(on_finish_photo_moment)
+    printer_manager.set_print_lifecycle_callback(on_print_lifecycle)
     printer_manager.set_ams_change_callback(on_ams_change)
     print_scheduler.set_moonraker_terminal_effects(_run_moonraker_terminal_effects)
 

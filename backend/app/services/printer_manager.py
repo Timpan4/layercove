@@ -4,7 +4,8 @@ import logging
 import re
 import traceback
 from collections.abc import Awaitable, Callable
-from dataclasses import replace
+from dataclasses import dataclass, replace
+from typing import Literal, cast
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -26,6 +27,23 @@ from backend.app.services.printer_backend_registry import PrinterBackendRegistry
 from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class PrintLifecycleEvent:
+    """Provider-neutral lifecycle event exposed by PrinterManager."""
+
+    printer_id: int
+    kind: Literal[
+        "started",
+        "completed",
+        "failed",
+        "cancelled",
+        "print_running_observed",
+        "finish_photo_moment",
+    ]
+    data: dict
+
 
 # Models that have a real chamber temperature sensor
 # Based on Home Assistant Bambu Lab integration
@@ -327,10 +345,7 @@ class PrinterManager:
             )
         self._models: dict[int, str | None] = {}  # Cache printer models for feature detection
         self._printer_info: dict[int, PrinterInfo] = {}  # Cache printer name/serial for callbacks
-        self._on_print_start: Callable[[int, dict], Awaitable[None] | None] | None = None
-        self._on_print_complete: Callable[[int, dict], Awaitable[None] | None] | None = None
-        self._on_print_running_observed: Callable[[int, dict], Awaitable[None] | None] | None = None
-        self._on_finish_photo_moment: Callable[[int, dict], Awaitable[None] | None] | None = None
+        self._on_print_lifecycle: Callable[[PrintLifecycleEvent], Awaitable[None] | None] | None = None
         self._on_status_change: Callable[[int, object], Awaitable[None] | None] | None = None
         self._on_ams_change: Callable[[int, list], Awaitable[None] | None] | None = None
         self._on_layer_change: Callable[[int, int], Awaitable[None] | None] | None = None
@@ -475,35 +490,12 @@ class PrinterManager:
         """Set the event loop for async callbacks."""
         self._loop = loop
 
-    def set_print_start_callback(self, callback: Callable[[int, dict], None]):
-        """Set callback for print start events."""
-        self._on_print_start = callback
-
-    def set_print_complete_callback(self, callback: Callable[[int, dict], None]):
-        """Set callback for print completion events."""
-        self._on_print_complete = callback
-
-    def set_print_running_observed_callback(self, callback: Callable[[int, dict], None]):
-        """Set callback for restart-recovery RUNNING-state observations (#1485
-        follow-up). Fires the first time we see ``state == RUNNING`` for a
-        printer that started its print before Bambuddy came up — the #1304
-        guard suppresses ``on_print_start`` for these, so anything that
-        normally hangs off it (e.g. timelapse baseline capture) needs this
-        hook to recover."""
-        self._on_print_running_observed = callback
-
-    def set_finish_photo_moment_callback(self, callback: Callable[[int, dict], None]):
-        """Set callback for the #1721 finish-photo moment.
-
-        Fires on the stage-22 (\"Filament unloading\") edge at end-of-print
-        — the framing window where the toolhead is parked but the bed
-        hasn't dropped yet. Falls back to firing at the FINISH-state
-        transition for prints that skip stage 22 (cancel, external-spool-
-        only, HMS halt, firmware variants). Payload includes the
-        ``trigger`` key (``\"stage_22\"`` or ``\"finish_state\"``) and
-        ``timelapse_was_active`` so the photo path can choose between
-        live-camera capture and timelapse last-frame extraction."""
-        self._on_finish_photo_moment = callback
+    def set_print_lifecycle_callback(
+        self,
+        callback: Callable[[PrintLifecycleEvent], Awaitable[None] | None],
+    ):
+        """Set the provider-neutral print lifecycle event callback."""
+        self._on_print_lifecycle = callback
 
     def set_status_change_callback(self, callback: Callable[[int, PrinterState], None]):
         """Set callback for status change events."""
@@ -672,36 +664,41 @@ class PrinterManager:
             backend = self._backends.get(printer_id)
             if backend is None:
                 return
+            data = event.data
             if backend.provider is PrinterProvider.MOONRAKER:
-                callback = self._on_print_start if event.kind == "started" else self._on_print_complete
-                await self._call_backend_callback(
-                    callback,
-                    printer_id,
-                    {
-                        **event.data,
-                        "status": event.kind,
-                        "filename": event.filename,
-                        "reason": event.reason,
-                        "occurred_at": event.occurred_at,
-                        "correlation_id": event.correlation_id,
-                        "provider_job_id": event.provider_job_id,
-                    },
-                )
-                return
-            callback = self._on_print_start if event.kind == "started" else self._on_print_complete
-            await self._call_backend_callback(callback, printer_id, event.data)
+                data = {
+                    **event.data,
+                    "status": event.kind,
+                    "filename": event.filename,
+                    "reason": event.reason,
+                    "occurred_at": event.occurred_at,
+                    "correlation_id": event.correlation_id,
+                    "provider_job_id": event.provider_job_id,
+                }
+            await self._call_backend_callback(
+                self._on_print_lifecycle,
+                PrintLifecycleEvent(printer_id=printer_id, kind=event.kind, data=data),
+            )
         elif isinstance(event, ProviderEvent):
             if event.kind == "print_running_observed":
                 backend = self._backends.get(printer_id)
                 if backend is None or backend.provider not in (PrinterProvider.BAMBU, PrinterProvider.MOONRAKER):
                     return
+            if event.kind in {"print_running_observed", "finish_photo_moment"}:
+                await self._call_backend_callback(
+                    self._on_print_lifecycle,
+                    PrintLifecycleEvent(
+                        printer_id=printer_id,
+                        kind=event.kind,
+                        data=cast(dict, event.data),
+                    ),
+                )
+                return
             callbacks = {
                 "ams_changed": self._on_ams_change,
                 "layer_changed": self._on_layer_change,
                 "bed_temperature_changed": self._on_bed_temp_update,
                 "drying_completed": self._on_drying_complete,
-                "print_running_observed": self._on_print_running_observed,
-                "finish_photo_moment": self._on_finish_photo_moment,
             }
             await self._call_backend_callback(callbacks[event.kind], printer_id, event.data)
 

@@ -11,6 +11,7 @@ import pytest
 
 from backend.app.services.printer_manager import (
     PrinterManager,
+    PrintLifecycleEvent,
     get_derived_status_name,
     has_stg_cur_idle_bug,
     init_printer_connections,
@@ -67,8 +68,7 @@ class TestPrinterManager:
 
     def test_init_callbacks_are_none(self, manager):
         """Verify all callbacks are initially None."""
-        assert manager._on_print_start is None
-        assert manager._on_print_complete is None
+        assert manager._on_print_lifecycle is None
         assert manager._on_status_change is None
         assert manager._on_ams_change is None
 
@@ -86,17 +86,12 @@ class TestPrinterManager:
         manager.set_event_loop(mock_loop)
         assert manager._loop == mock_loop
 
-    def test_set_print_start_callback(self, manager):
-        """Verify print start callback can be set."""
+    def test_set_print_lifecycle_callback(self, manager):
         callback = MagicMock()
-        manager.set_print_start_callback(callback)
-        assert manager._on_print_start == callback
 
-    def test_set_print_complete_callback(self, manager):
-        """Verify print complete callback can be set."""
-        callback = MagicMock()
-        manager.set_print_complete_callback(callback)
-        assert manager._on_print_complete == callback
+        manager.set_print_lifecycle_callback(callback)
+
+        assert manager._on_print_lifecycle == callback
 
     def test_set_status_change_callback(self, manager):
         """Verify status change callback can be set."""
@@ -207,14 +202,12 @@ class TestPrinterManager:
         """Freeze the manager-to-Bambu callback boundary before adapters land."""
         callbacks = {
             "on_state_change": AsyncMock(),
-            "on_print_start": AsyncMock(),
-            "on_print_complete": AsyncMock(),
+            "on_print_lifecycle": AsyncMock(),
             "on_ams_change": AsyncMock(),
         }
         manager.set_event_loop(asyncio.get_running_loop())
         manager.set_status_change_callback(callbacks["on_state_change"])
-        manager.set_print_start_callback(callbacks["on_print_start"])
-        manager.set_print_complete_callback(callbacks["on_print_complete"])
+        manager.set_print_lifecycle_callback(callbacks["on_print_lifecycle"])
         manager.set_ams_change_callback(callbacks["on_ams_change"])
 
         with (
@@ -238,8 +231,11 @@ class TestPrinterManager:
         await manager._event_queues[mock_printer.id].join()
 
         callbacks["on_state_change"].assert_awaited_once_with(mock_printer.id, state)
-        callbacks["on_print_start"].assert_awaited_once_with(mock_printer.id, start)
-        callbacks["on_print_complete"].assert_awaited_once_with(mock_printer.id, complete)
+        lifecycle_events = [call.args[0] for call in callbacks["on_print_lifecycle"].await_args_list]
+        assert lifecycle_events == [
+            PrintLifecycleEvent(mock_printer.id, "started", start),
+            PrintLifecycleEvent(mock_printer.id, "completed", complete),
+        ]
         callbacks["on_ams_change"].assert_awaited_once_with(mock_printer.id, ams)
 
     # ========================================================================

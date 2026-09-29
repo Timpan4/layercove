@@ -5,9 +5,8 @@ from __future__ import annotations
 import asyncio
 import ipaddress
 import json
-import socket
 import ssl
-from collections.abc import Awaitable, Callable, Iterable
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import PurePosixPath
 from typing import Any, BinaryIO
@@ -17,7 +16,14 @@ import anyio
 import httpcore
 import httpx
 
-from backend.app.api.routes._url_safety import CLOUD_METADATA_IPS, unwrap_ipv4_mapped
+from backend.app.api.routes._url_safety import unwrap_ipv4_mapped
+from backend.app.services.printer_network import (
+    IPAddress,
+    PrinterNetworkError,
+    Resolver,
+    approved_peers,
+    resolve_printer_host,
+)
 from backend.app.utils.filename import InvalidFilenameError, validate_moonraker_gcode_basename
 
 _MAX_RESPONSE_BYTES = 64 * 1024
@@ -27,8 +33,6 @@ _TOTAL_TIMEOUT_SECONDS = 10.0
 _UPLOAD_TOTAL_TIMEOUT_SECONDS = 4 * 60 * 60
 _TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
 
-Resolver = Callable[[str, int], Awaitable[Iterable[str | ipaddress.IPv4Address | ipaddress.IPv6Address]]]
-IPAddress = ipaddress.IPv4Address | ipaddress.IPv6Address
 TransportFactory = Callable[[str, int, frozenset[IPAddress], bool], httpx.AsyncBaseTransport]
 
 
@@ -81,28 +85,17 @@ class _BoundedUpload:
         return chunk
 
 
-def _is_safe_peer(address: IPAddress) -> bool:
-    address = unwrap_ipv4_mapped(address)
-    return not (
-        address in CLOUD_METADATA_IPS
-        or address.is_loopback
-        or address.is_link_local
-        or address.is_multicast
-        or address.is_unspecified
-    )
-
-
 async def resolve_moonraker_host(host: str, port: int) -> frozenset[IPAddress]:
-    """Resolve host once per request; reject every blocked result, not only chosen one."""
+    """Translate shared printer-network failures to Moonraker's error interface."""
     try:
-        records = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
-    except OSError as exc:
-        raise MoonrakerHTTPError("unavailable", "Moonraker host could not be resolved.") from exc
-
-    peers = frozenset(unwrap_ipv4_mapped(ipaddress.ip_address(record[4][0])) for record in records)
-    if not peers or any(not _is_safe_peer(peer) for peer in peers):
-        raise MoonrakerHTTPError("unsafe_target", "Moonraker host resolved to a blocked address.")
-    return peers
+        return await resolve_printer_host(host, port)
+    except PrinterNetworkError as exc:
+        message = (
+            "Moonraker host resolved to a blocked address."
+            if exc.code == "unsafe_target"
+            else "Moonraker host could not be resolved."
+        )
+        raise MoonrakerHTTPError(exc.code, message) from exc
 
 
 class _TLSVerificationError(Exception):
@@ -480,11 +473,10 @@ class MoonrakerHTTPClient:
             raise MoonrakerHTTPError("unavailable", "Could not connect to Moonraker.") from exc
 
     async def _request_within_deadline(self, method: str, path: str, **request_options: Any) -> MoonrakerHTTPResponse:
-        peers = frozenset(
-            unwrap_ipv4_mapped(ipaddress.ip_address(peer)) for peer in await self._resolver(self._host, self._port)
-        )
-        if not peers or any(not _is_safe_peer(peer) for peer in peers):
-            raise MoonrakerHTTPError("unsafe_target", "Moonraker host resolved to a blocked address.")
+        try:
+            peers = approved_peers(await self._resolver(self._host, self._port))
+        except PrinterNetworkError as exc:
+            raise MoonrakerHTTPError("unsafe_target", "Moonraker host resolved to a blocked address.") from exc
 
         headers: dict[str, str] = {}
         if self._api_key is not None:

@@ -2,9 +2,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
 import { AlertTriangle, VideoOff, WifiOff } from 'lucide-react';
-import { api, getAuthToken, getStreamToken, withStreamToken } from '../api/client';
+import { api, getAuthToken } from '../api/client';
+import { useCameraSession } from '../hooks/useCameraSession';
 import { formatDuration } from '../utils/date';
-import { resolveMoonrakerCameraId } from '../utils/moonrakerCameras';
 
 export type CameraTileMode = 'live' | 'snapshot' | 'paused';
 export type CameraTileStatusMode = 'off' | 'compact' | 'full';
@@ -81,7 +81,6 @@ export function CameraTile({
   const { t } = useTranslation();
   const [bust, setBust] = useState(0);
   const [errored, setErrored] = useState(false);
-  const [selectedCameraId, setSelectedCameraId] = useState<number | null>(null);
   const lastModeRef = useRef<CameraTileMode>(mode);
   const tokenGraceTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const { data: cameras = [] } = useQuery({
@@ -90,12 +89,8 @@ export function CameraTile({
     enabled: provider === 'moonraker' && connected,
     staleTime: 30_000,
   });
-
-  useEffect(() => {
-    if (provider !== 'moonraker' || cameras.length === 0) return;
-    const nextCameraId = resolveMoonrakerCameraId(cameras, selectedCameraId);
-    if (nextCameraId !== selectedCameraId) setSelectedCameraId(nextCameraId);
-  }, [cameras, provider, selectedCameraId]);
+  const cameraSession = useCameraSession({ printerId, provider, cameras });
+  const { selectedCameraId, setSelectedCameraId, selectedCamera } = cameraSession;
 
   // Tell the backend to release its MJPEG transcoder when this tile stops
   // being live — either by unmounting or by transitioning to snapshot/paused.
@@ -146,20 +141,15 @@ export function CameraTile({
     return () => clearInterval(interval);
   }, [mode, snapshotIntervalMs]);
 
-  const selectedCamera = cameras.find((camera) => camera.id === selectedCameraId);
-  const liveUrl = withStreamToken(selectedCamera
-    ? `/api/v1/printers/${printerId}/cameras/${selectedCamera.id}/stream?fps=${LIVE_FPS}&t=${bust}`
-    : `/api/v1/printers/${printerId}/camera/stream?fps=${LIVE_FPS}&t=${bust}`);
-  const snapshotUrl = withStreamToken(selectedCamera
-    ? `/api/v1/printers/${printerId}/cameras/${selectedCamera.id}/snapshot?t=${bust}`
-    : `/api/v1/printers/${printerId}/camera/snapshot?t=${bust}`);
+  const liveUrl = cameraSession.streamUrl(LIVE_FPS, bust);
+  const snapshotUrl = cameraSession.snapshotUrl(bust);
 
   const handleClick = () => {
     if (onClick) onClick();
   };
 
   const handleMediaError = () => {
-    if (getAuthToken() && !getStreamToken()) {
+    if (getAuthToken() && cameraSession.waitingForToken) {
       if (tokenGraceTimerRef.current === null) {
         tokenGraceTimerRef.current = setTimeout(() => {
           tokenGraceTimerRef.current = null;
@@ -221,7 +211,7 @@ export function CameraTile({
       ) : (
         <img
           key={`${mode}-${bust}`}
-          src={mode === 'live' ? liveUrl : snapshotUrl}
+          src={(mode === 'live' ? liveUrl : snapshotUrl) || undefined}
           alt={printerName}
           draggable={false}
           loading="lazy"
@@ -317,7 +307,7 @@ export function CameraTile({
             >
               {camera.snapshot_available ? (
                 <img
-                  src={withStreamToken(`/api/v1/printers/${printerId}/cameras/${camera.id}/snapshot?t=${bust}`)}
+                  src={cameraSession.snapshotUrl(bust, camera.id) || undefined}
                   alt=""
                   loading="lazy"
                   className="h-full w-full object-cover"

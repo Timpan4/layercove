@@ -17,7 +17,12 @@ from urllib.parse import urlparse
 
 import aiohttp
 
+from backend.app.services.printer_network import PrinterNetworkError, trusted_http_response
+
 logger = logging.getLogger(__name__)
+
+# Existing single-frame parser ceiling, shared by capture and live streaming.
+_MAX_CAMERA_FRAME_BYTES = 5 * 1024 * 1024
 
 
 def _sanitize_camera_url(url: str, allowed_schemes: tuple[str, ...] = ("http", "https", "rtsp")) -> str | None:
@@ -320,10 +325,7 @@ async def _capture_mjpeg_frame(url: str, timeout: int) -> bytes | None:
     buffer = b""
 
     try:
-        async with (
-            aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session,
-            session.get(safe_url) as response,
-        ):
+        async with trusted_http_response(safe_url, timeout=timeout) as response:
             if response.status != 200:
                 logger.error("MJPEG stream returned status %s", response.status)
                 return None
@@ -353,13 +355,13 @@ async def _capture_mjpeg_frame(url: str, timeout: int) -> bytes | None:
                         continue
                     return frame  # representative second frame
 
-                if len(buffer) > 5 * 1024 * 1024:  # 5MB limit
+                if len(buffer) > _MAX_CAMERA_FRAME_BYTES:
                     logger.warning("MJPEG buffer exceeded 5MB without finding frame")
                     break  # exit chunk loop, fall through to first_frame fallback
 
     except TimeoutError:
         logger.warning("MJPEG frame capture timed out after %ss", timeout)
-    except (aiohttp.ClientError, OSError) as e:
+    except (PrinterNetworkError, aiohttp.ClientError, OSError) as e:
         logger.error("MJPEG frame capture failed: %s", e)
 
     # Stream ended / timed out / buffer cap before a second frame arrived.
@@ -508,19 +510,22 @@ async def _capture_snapshot(url: str, timeout: int) -> bytes | None:
         return None
 
     try:
-        async with (
-            aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=timeout)) as session,
-            session.get(safe_url) as response,
-        ):
+        async with trusted_http_response(safe_url, timeout=timeout) as response:
             if response.status != 200:
                 logger.error("Snapshot URL returned status %s", response.status)
                 return None
 
-            data = await response.read()
+            body = bytearray()
+            async for chunk in response.content.iter_chunked(8192):
+                body.extend(chunk)
+                if len(body) > _MAX_CAMERA_FRAME_BYTES:
+                    logger.warning("Snapshot response exceeded 5MB frame limit")
+                    return None
+            data = bytes(body)
     except TimeoutError:
         logger.warning("Snapshot capture timed out after %ss", timeout)
         return None
-    except (aiohttp.ClientError, OSError) as e:
+    except (PrinterNetworkError, aiohttp.ClientError, OSError) as e:
         logger.error("Snapshot capture failed: %s", e)
         return None
 
@@ -688,7 +693,7 @@ async def _stream_mjpeg(url: str) -> AsyncGenerator[bytes, None]:
 
     try:
         timeout = aiohttp.ClientTimeout(total=None, sock_read=30)
-        async with aiohttp.ClientSession(timeout=timeout) as session, session.get(safe_url) as response:
+        async with trusted_http_response(safe_url, timeout=timeout) as response:
             if response.status != 200:
                 logger.error("MJPEG stream returned status %s", response.status)
                 return
@@ -718,9 +723,13 @@ async def _stream_mjpeg(url: str) -> AsyncGenerator[bytes, None]:
                     buffer = buffer[end_idx + 2 :]
                     yield frame
 
+                if len(buffer) > _MAX_CAMERA_FRAME_BYTES:
+                    logger.warning("MJPEG buffer exceeded 5MB without finding frame")
+                    return
+
     except asyncio.CancelledError:
         logger.info("MJPEG stream cancelled")
-    except (aiohttp.ClientError, OSError) as e:
+    except (PrinterNetworkError, aiohttp.ClientError, OSError) as e:
         logger.error("MJPEG stream error: %s", e)
 
 

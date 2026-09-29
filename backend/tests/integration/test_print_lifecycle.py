@@ -491,12 +491,12 @@ class TestCallbackErrorHandling:
         # Create a callback that raises an error
         error_raised = False
 
-        async def failing_callback(printer_id, data):
+        async def failing_callback(_event):
             nonlocal error_raised
             error_raised = True
             raise ValueError("Test error in callback")
 
-        manager.set_print_complete_callback(failing_callback)
+        manager.set_print_lifecycle_callback(failing_callback)
 
         # The _schedule_async should log the error
         # This is tested indirectly - if exception handling is broken,

@@ -27,7 +27,7 @@ from backend.app.services.printer_backend import (
     UploadJob,
     UploadResult,
 )
-from backend.app.services.printer_manager import PrinterManager
+from backend.app.services.printer_manager import PrinterManager, PrintLifecycleEvent
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
     PrinterCapabilities,
@@ -602,7 +602,7 @@ async def test_printer_manager_forwards_one_correlated_moonraker_terminal():
     backend = _backend()
     manager._backends[7] = backend
     callback = AsyncMock()
-    manager.set_print_complete_callback(callback)
+    manager.set_print_lifecycle_callback(callback)
     occurred_at = datetime.now(timezone.utc)
     event = JobLifecycle(
         "cancelled",
@@ -618,15 +618,18 @@ async def test_printer_manager_forwards_one_correlated_moonraker_terminal():
     await manager._forward_backend_event(7, event)
 
     callback.assert_awaited_once_with(
-        7,
-        {
-            "provider_job_id": "42",
-            "status": "cancelled",
-            "filename": "cube.gcode",
-            "reason": "cancelled by user",
-            "occurred_at": occurred_at,
-            "correlation_id": "moonraker:42",
-        },
+        PrintLifecycleEvent(
+            7,
+            "cancelled",
+            {
+                "provider_job_id": "42",
+                "status": "cancelled",
+                "filename": "cube.gcode",
+                "reason": "cancelled by user",
+                "occurred_at": occurred_at,
+                "correlation_id": "moonraker:42",
+            },
+        )
     )
 
 

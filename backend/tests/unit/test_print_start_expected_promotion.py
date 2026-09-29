@@ -14,13 +14,18 @@ import time
 import pytest
 
 from backend.app.main import (
+    _active_print_keys,
     _active_prints,
+    _claim_active_print,
+    _claim_expected_print,
     _expected_print_creators,
+    _expected_print_keys,
     _expected_print_registered_at,
     _expected_prints,
     _get_start_plate_id,
     _print_ams_mappings,
     _print_plate_ids,
+    _track_active_print,
     register_expected_print,
 )
 
@@ -93,73 +98,48 @@ class TestRegisterExpectedPrint:
 
 
 class TestExpectedPrintDetection:
-    """Verify the expected-print detection logic used in on_print_start.
-
-    Reproduces the key-building and lookup logic from the auto_archive=False
-    block in on_print_start to verify that expected prints are correctly
-    detected across all filename variations.
-    """
-
-    @staticmethod
-    def _build_check_keys(printer_id: int, filename: str, subtask_name: str):
-        """Reproduce the key-building logic from on_print_start."""
-        check_keys = []
-        if subtask_name:
-            check_keys += [
-                (printer_id, subtask_name),
-                (printer_id, f"{subtask_name}.3mf"),
-                (printer_id, f"{subtask_name}.gcode.3mf"),
-            ]
-        if filename:
-            base_fn = filename.split("/")[-1] if "/" in filename else filename
-            check_keys.append((printer_id, base_fn))
-            no_archive_base = base_fn.replace(".gcode", "").replace(".3mf", "")
-            check_keys += [
-                (printer_id, no_archive_base),
-                (printer_id, f"{no_archive_base}.3mf"),
-            ]
-        return check_keys
+    """Verify production expected-print key matching."""
 
     def test_detects_expected_print_by_subtask(self):
         """Expected print is found when subtask_name matches."""
         register_expected_print(1, "Box.3mf", archive_id=54, ams_mapping=[1])
-        keys = self._build_check_keys(1, filename="", subtask_name="Box")
+        keys = _expected_print_keys(1, filename="", subtask_name="Box")
         assert any(k in _expected_prints for k in keys)
 
     def test_detects_expected_print_by_filename(self):
         """Expected print is found when filename matches."""
         register_expected_print(1, "Box.3mf", archive_id=54, ams_mapping=[1])
-        keys = self._build_check_keys(1, filename="Box.3mf", subtask_name="")
+        keys = _expected_print_keys(1, filename="Box.3mf", subtask_name="")
         assert any(k in _expected_prints for k in keys)
 
     def test_detects_expected_print_by_gcode_filename(self):
         """Expected print is found when MQTT reports .gcode filename."""
         register_expected_print(1, "Box.3mf", archive_id=54, ams_mapping=[1])
         # MQTT sometimes reports gcode filename
-        keys = self._build_check_keys(1, filename="Box.gcode", subtask_name="Box")
+        keys = _expected_print_keys(1, filename="Box.gcode", subtask_name="Box")
         assert any(k in _expected_prints for k in keys)
 
     def test_no_false_positive_for_different_file(self):
         """Expected print NOT found for a different filename."""
         register_expected_print(1, "Box.3mf", archive_id=54, ams_mapping=[1])
-        keys = self._build_check_keys(1, filename="Benchy.3mf", subtask_name="Benchy")
+        keys = _expected_print_keys(1, filename="Benchy.3mf", subtask_name="Benchy")
         assert not any(k in _expected_prints for k in keys)
 
     def test_no_false_positive_for_different_printer(self):
         """Expected print NOT found when printer_id doesn't match."""
         register_expected_print(1, "Box.3mf", archive_id=54, ams_mapping=[1])
-        keys = self._build_check_keys(2, filename="Box.3mf", subtask_name="Box")
+        keys = _expected_print_keys(2, filename="Box.3mf", subtask_name="Box")
         assert not any(k in _expected_prints for k in keys)
 
     def test_empty_expected_prints_returns_false(self):
         """No detection when _expected_prints is empty."""
-        keys = self._build_check_keys(1, filename="test.3mf", subtask_name="test")
+        keys = _expected_print_keys(1, filename="test.3mf", subtask_name="test")
         assert not any(k in _expected_prints for k in keys)
 
     def test_filename_with_spaces_and_parens(self):
         """Handles filenames with spaces and parentheses (e.g. 'Box3.0_(2)_plate_5.3mf')."""
         register_expected_print(1, "Box3.0_(2)_plate_5.3mf", archive_id=54, ams_mapping=[1])
-        keys = self._build_check_keys(
+        keys = _expected_print_keys(
             1,
             filename="Box3.0_(2)_plate_5.gcode",
             subtask_name="Box3.0_(2)_plate_5",
@@ -168,43 +148,14 @@ class TestExpectedPrintDetection:
 
 
 class TestExpectedPrintPromotion:
-    """Verify that expected prints are correctly promoted to _active_prints.
-
-    Reproduces the expected-print pop + promotion logic from on_print_start
-    (lines 1468-1496) to verify that _active_prints is populated and
-    _expected_prints is cleaned up.
-    """
+    """Verify production expected-to-active correlation transitions."""
 
     @staticmethod
     def _simulate_expected_print_promotion(printer_id: int, subtask_name: str, filename: str, archive_filename: str):
-        """Simulate the expected-print lookup and promotion from on_print_start."""
-        expected_keys = []
-        if subtask_name:
-            expected_keys.append((printer_id, subtask_name))
-            expected_keys.append((printer_id, f"{subtask_name}.3mf"))
-            expected_keys.append((printer_id, f"{subtask_name}.gcode.3mf"))
-        if filename:
-            fname = filename.split("/")[-1] if "/" in filename else filename
-            expected_keys.append((printer_id, fname))
-            base = fname.replace(".gcode", "").replace(".3mf", "")
-            expected_keys.append((printer_id, base))
-            expected_keys.append((printer_id, f"{base}.3mf"))
-
-        expected_archive_id = None
-        for key in expected_keys:
-            expected_archive_id = _expected_prints.pop(key, None)
-            _expected_print_registered_at.pop(key, None)
-            if expected_archive_id:
-                for other_key in expected_keys:
-                    _expected_prints.pop(other_key, None)
-                    _expected_print_registered_at.pop(other_key, None)
-                break
-
+        keys = _expected_print_keys(printer_id, filename, subtask_name)
+        expected_archive_id = _claim_expected_print(keys)
         if expected_archive_id:
-            _active_prints[(printer_id, archive_filename)] = expected_archive_id
-            if subtask_name:
-                _active_prints[(printer_id, f"{subtask_name}.3mf")] = expected_archive_id
-
+            _track_active_print(printer_id, expected_archive_id, archive_filename, subtask_name)
         return expected_archive_id
 
     def test_promotion_populates_active_prints(self):
@@ -252,7 +203,7 @@ class TestExpectedPrintPromotion:
         assert _print_ams_mappings[54] == [1]
 
     def test_completion_lookup_finds_promoted_archive(self):
-        """Simulate on_print_complete finding the archive in _active_prints."""
+        """Production completion lookup finds and claims the promoted archive."""
         register_expected_print(1, "Box.3mf", archive_id=54, ams_mapping=[1])
 
         self._simulate_expected_print_promotion(
@@ -262,19 +213,12 @@ class TestExpectedPrintPromotion:
             archive_filename="Box.3mf",
         )
 
-        # Simulate on_print_complete key building
-        completion_keys = [
-            (1, "Box.3mf"),
-            (1, "Box.gcode.3mf"),
-            (1, "Box"),
-        ]
-        found_id = None
-        for key in completion_keys:
-            found_id = _active_prints.pop(key, None)
-            if found_id:
-                break
+        completion_keys = _active_print_keys(1, "Box.gcode", "Box")
+        found_id, found_key = _claim_active_print(completion_keys)
 
         assert found_id == 54
+        assert found_key == (1, "Box.3mf")
+        assert not _active_prints
         # And ams_mapping is retrievable
         assert _print_ams_mappings.pop(54, None) == [1]
 

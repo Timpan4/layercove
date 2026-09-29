@@ -7,7 +7,7 @@ import pytest
 
 from backend.app.services.printer_backend import JobLifecycle, ProviderEvent, StatusChanged
 from backend.app.services.printer_backend_registry import PrinterBackendRegistry
-from backend.app.services.printer_manager import PrinterManager, printer_status_to_dict
+from backend.app.services.printer_manager import PrinterManager, PrintLifecycleEvent, printer_status_to_dict
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
     PrinterCapabilities,
@@ -121,15 +121,11 @@ async def test_manager_forwards_events_fifo_and_drops_events_after_disconnect():
     async def on_status(printer_id, state):
         observed.append((printer_id, state.state.value))
 
-    async def on_start(printer_id, data):
-        observed.append((printer_id, data["name"]))
-
-    async def on_complete(printer_id, data):
-        observed.append((printer_id, data["name"]))
+    async def on_lifecycle(event: PrintLifecycleEvent):
+        observed.append((event.printer_id, event.data["name"]))
 
     manager.set_status_change_callback(on_status)
-    manager.set_print_start_callback(on_start)
-    manager.set_print_complete_callback(on_complete)
+    manager.set_print_lifecycle_callback(on_lifecycle)
     printer = SimpleNamespace(id=7, provider="bambu", name="Test", serial_number="S", model="X1C")
     await manager.connect_printer(printer)
 
@@ -244,14 +240,10 @@ async def test_manager_routes_bambu_lifecycle_and_moonraker_terminal_callbacks()
     manager = PrinterManager(registry=PrinterBackendRegistry())
     observed = []
 
-    async def on_start(printer_id, data):
-        observed.append((printer_id, "started", data["name"]))
+    async def on_lifecycle(event: PrintLifecycleEvent):
+        observed.append((event.printer_id, event.kind, event.data["name"]))
 
-    async def on_complete(printer_id, data):
-        observed.append((printer_id, "completed", data["name"]))
-
-    manager.set_print_start_callback(on_start)
-    manager.set_print_complete_callback(on_complete)
+    manager.set_print_lifecycle_callback(on_lifecycle)
     manager._backends = {
         1: SimpleNamespace(provider=PrinterProvider.MOONRAKER),
         2: SimpleNamespace(provider=PrinterProvider.BAMBU),
@@ -280,10 +272,10 @@ async def test_manager_routes_running_observed_callback_for_lifecycle_backends()
     manager = PrinterManager(registry=PrinterBackendRegistry())
     observed = []
 
-    async def on_running(printer_id, data):
-        observed.append((printer_id, data["filename"]))
+    async def on_running(event: PrintLifecycleEvent):
+        observed.append((event.printer_id, event.data["filename"]))
 
-    manager.set_print_running_observed_callback(on_running)
+    manager.set_print_lifecycle_callback(on_running)
     manager._backends = {
         1: SimpleNamespace(provider=PrinterProvider.MOONRAKER),
         2: SimpleNamespace(provider=PrinterProvider.BAMBU),
@@ -365,7 +357,7 @@ async def test_connect_failure_stops_started_backend_before_dropping_events():
     registry.register(PrinterProvider.BAMBU, make_backend)
     manager = PrinterManager(registry=registry)
     completed = []
-    manager.set_print_complete_callback(lambda printer_id, data: completed.append((printer_id, data["name"])))
+    manager.set_print_lifecycle_callback(lambda event: completed.append((event.printer_id, event.data["name"])))
     printer = SimpleNamespace(id=9, provider="bambu", name="Test", serial_number="S", model="X1C")
 
     with pytest.raises(RuntimeError, match="connect failed"):
