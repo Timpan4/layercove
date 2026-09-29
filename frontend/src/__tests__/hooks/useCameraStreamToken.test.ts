@@ -24,7 +24,7 @@ describe('useStreamTokenSync', () => {
     vi.restoreAllMocks();
   });
 
-  it('does not rewrite unrelated media when a camera token arrives', async () => {
+  it('recovers non-camera thumbnails when a delayed token arrives', async () => {
     vi.spyOn(api, 'getCameraStreamToken').mockResolvedValue({ token: 'camera-token' });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -37,7 +37,7 @@ describe('useStreamTokenSync', () => {
     );
 
     await waitFor(() => expect(api.getCameraStreamToken).toHaveBeenCalled());
-    expect((screen.getByAltText('archive') as HTMLImageElement).src).not.toContain('token=');
+    await waitFor(() => expect((screen.getByAltText('archive') as HTMLImageElement).src).toContain('token=camera-token'));
   });
 
   it('keeps failed media mounted while replacing a stale stream token', async () => {

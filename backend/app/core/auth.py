@@ -607,7 +607,7 @@ async def create_camera_stream_token(*, api_key_id: int | None = None) -> str:
             AuthEphemeralToken(
                 token=token,
                 token_type="camera_stream",
-                username=f"api_key:{api_key_id}" if api_key_id is not None else None,
+                username=f"api_key:{api_key_id}" if api_key_id is not None else "user",
                 expires_at=expires_at,
             )
         )
@@ -699,9 +699,10 @@ async def verify_camera_stream_token(token: str, printer_id: int | None = None) 
         )
         row = result.scalar_one_or_none()
         if row is not None:
-            if not row.username:
+            if row.username == "user":
                 return True
-            if printer_id is None or not row.username.startswith("api_key:"):
+            # Old tokens did not record their issuer and cannot prove API-key scope.
+            if not row.username or not row.username.startswith("api_key:"):
                 return False
             try:
                 api_key_id = int(row.username.removeprefix("api_key:"))
@@ -718,7 +719,8 @@ async def verify_camera_stream_token(token: str, printer_id: int | None = None) 
                     return False
             try:
                 _check_apikey_permissions(api_key, [Permission.CAMERA_VIEW.value])
-                check_printer_access(api_key, printer_id)
+                if printer_id is not None:
+                    CallerIdentity.authenticated_api_key(api_key).require_printer_access(printer_id)
             except HTTPException:
                 return False
             return True
@@ -1722,7 +1724,7 @@ def require_camera_stream_token_if_auth_enabled():
     POST /printers/camera/stream-token and appends it as ?token=xxx.
     """
 
-    async def checker(printer_id: int, token: str | None = None) -> None:
+    async def checker(token: str | None = None, printer_id: int | None = None) -> None:
         async with async_session() as db:
             if not await is_auth_enabled(db):
                 return  # Auth disabled, allow access

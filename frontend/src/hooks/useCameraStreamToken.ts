@@ -3,6 +3,18 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, setStreamToken, getAuthToken, getStreamToken } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
+// Camera components subscribe to the token. Legacy thumbnail consumers still
+// need their existing media refreshed when the shared token arrives.
+function refreshThumbnailTokens(token: string) {
+  const tokenParam = `token=${encodeURIComponent(token)}`;
+  document.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img[src*="/api/v1/"], video[src*="/api/v1/"]').forEach((el) => {
+    const src = el.getAttribute('src') || '';
+    if (/\/api\/v1\/printers\/\d+\/(?:camera|cameras\/\d+)\//.test(src) || src.includes(tokenParam)) return;
+    const withoutToken = src.replace(/([?&])token=[^&]*(&|$)/, (_match, separator, next) => next === '&' ? separator : '');
+    el.src = `${withoutToken}${withoutToken.includes('?') ? '&' : '?'}${tokenParam}`;
+  });
+}
+
 /**
  * Fetches and caches a stream token for <img>/<video> src URLs.
  * Stores the token globally via setStreamToken() so URL generators
@@ -41,6 +53,7 @@ export function useStreamTokenSync() {
   useEffect(() => {
     const newToken = data?.token ?? null;
     setStreamToken(newToken);
+    if (newToken) refreshThumbnailTokens(newToken);
 
     return () => setStreamToken(null);
   }, [data?.token]);
@@ -108,7 +121,7 @@ export function useCameraStreamToken() {
 
   return {
     token,
-    waitingForToken: (authEnabled || getAuthToken() !== null) && !token,
+    waitingForToken: authLoading || ((authEnabled || getAuthToken() !== null) && !token),
     withToken,
   };
 }

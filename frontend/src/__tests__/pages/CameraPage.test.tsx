@@ -15,7 +15,6 @@ import { AuthProvider } from '../../contexts/AuthContext';
 import { setAuthToken } from '../../api/client';
 import { I18nextProvider } from 'react-i18next';
 import i18n from '../../i18n';
-import { setAuthToken } from '../../api/client';
 
 // Mock navigator.sendBeacon which isn't available in jsdom
 vi.stubGlobal('navigator', {

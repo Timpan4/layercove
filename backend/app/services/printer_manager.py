@@ -44,6 +44,7 @@ class PrintLifecycleEvent:
     ]
     data: dict
 
+
 # Models that have a real chamber temperature sensor
 # Based on Home Assistant Bambu Lab integration
 # P1P/P1S and A1/A1Mini do NOT have chamber temp sensors

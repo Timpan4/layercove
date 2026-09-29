@@ -26,6 +26,49 @@ def _track_checked_out_connections(engine):
 
 
 class TestCameraAPI:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_legacy_camera_token_without_issuer_is_rejected(self, async_client, db_session, printer_factory):
+        from datetime import datetime, timedelta, timezone
+
+        from backend.app.models.auth_ephemeral import AuthEphemeralToken
+        from backend.app.models.settings import Settings
+
+        printer = await printer_factory()
+        db_session.add_all(
+            [
+                Settings(key="auth_enabled", value="true"),
+                AuthEphemeralToken(
+                    token="legacy-camera-token",
+                    token_type="camera_stream",
+                    username=None,
+                    expires_at=datetime.now(timezone.utc) + timedelta(minutes=60),
+                ),
+            ]
+        )
+        await db_session.commit()
+        with patch("backend.app.api.routes.camera.capture_camera_frame", new=AsyncMock(return_value=b"jpeg")):
+            response = await async_client.get(
+                f"/api/v1/printers/{printer.id}/camera/snapshot", params={"token": "legacy-camera-token"}
+            )
+        assert response.status_code == 401
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("auth_enabled", [False, True])
+    async def test_library_thumbnail_token_gate_does_not_require_printer_id(
+        self, async_client, db_session, auth_enabled
+    ):
+        from backend.app.core.auth import create_camera_stream_token
+        from backend.app.models.settings import Settings
+
+        db_session.add(Settings(key="auth_enabled", value=str(auth_enabled).lower()))
+        await db_session.commit()
+        token = await create_camera_stream_token()
+        response = await async_client.get("/api/v1/library/files/999999/thumbnail", params={"token": token})
+        assert response.status_code == 404
+        assert response.json()["detail"] == "File not found"
+
     """Integration tests for /api/v1/printers/{id}/camera/ endpoints."""
 
     # ========================================================================

@@ -148,7 +148,9 @@ async def test_websocket_transport_accepts_production_sized_moonraker_snapshot(m
         assert (host, resolved_port) == ("printer.test", port)
         return ["127.0.0.1"]
 
-    monkeypatch.setattr(moonraker_websocket, "_is_safe_peer", lambda _: True)
+    from backend.app.services import printer_network
+
+    monkeypatch.setattr(printer_network, "is_safe_peer", lambda _: True)
     transport = moonraker_websocket.MoonrakerWebSocketTransport(
         base_url=f"http://printer.test:{port}", resolver=resolver
     )

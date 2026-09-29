@@ -357,9 +357,7 @@ async def test_connect_failure_stops_started_backend_before_dropping_events():
     registry.register(PrinterProvider.BAMBU, make_backend)
     manager = PrinterManager(registry=registry)
     completed = []
-    manager.set_print_lifecycle_callback(
-        lambda event: completed.append((event.printer_id, event.data["name"]))
-    )
+    manager.set_print_lifecycle_callback(lambda event: completed.append((event.printer_id, event.data["name"])))
     printer = SimpleNamespace(id=9, provider="bambu", name="Test", serial_number="S", model="X1C")
 
     with pytest.raises(RuntimeError, match="connect failed"):

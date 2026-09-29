@@ -622,12 +622,12 @@ async def test_printer_manager_forwards_one_correlated_moonraker_terminal():
             7,
             "cancelled",
             {
-            "provider_job_id": "42",
-            "status": "cancelled",
-            "filename": "cube.gcode",
-            "reason": "cancelled by user",
-            "occurred_at": occurred_at,
-            "correlation_id": "moonraker:42",
+                "provider_job_id": "42",
+                "status": "cancelled",
+                "filename": "cube.gcode",
+                "reason": "cancelled by user",
+                "occurred_at": occurred_at,
+                "correlation_id": "moonraker:42",
             },
         )
     )

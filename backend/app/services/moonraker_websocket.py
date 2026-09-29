@@ -74,9 +74,7 @@ def _approved_peers(values: Iterable[str | IPAddress]) -> frozenset[IPAddress]:
     try:
         return approved_peers(values)
     except PrinterNetworkError as exc:
-        raise MoonrakerWebSocketError(
-            "unsafe_target", "Moonraker host resolved to a blocked address."
-        ) from exc
+        raise MoonrakerWebSocketError("unsafe_target", "Moonraker host resolved to a blocked address.") from exc
 
 
 def _connected_peer(websocket: aiohttp.ClientWebSocketResponse) -> IPAddress | None:
