@@ -221,9 +221,13 @@ async def create_session(body: SessionCreate, caller: WriteCaller, db: AsyncSess
     if any(key not in options for key in SETTINGS.values()):
         raise HTTPException(503, "The filament schema is missing calibration settings")
     revision = await db.get(SlicerProfileRevision, body.filament_revision_id)
-    limits = {step.value: {key: options[field].get(key) for key in ("min", "max", "item_type", "units", "default")}
-        for step, field in SETTINGS.items()}
-    material_max = revision.content.get("nozzle_temperature_range_high", options["nozzle_temperature_range_high"]["default"])
+    limits = {
+        step.value: {key: options[field].get(key) for key in ("min", "max", "item_type", "units", "default")}
+        for step, field in SETTINGS.items()
+    }
+    material_max = revision.content.get(
+        "nozzle_temperature_range_high", options["nozzle_temperature_range_high"]["default"]
+    )
     try:
         material_max = float(material_max[0] if isinstance(material_max, list) else material_max)
         if not 0 < material_max <= options["nozzle_temperature"]["max"]:
@@ -237,8 +241,9 @@ async def create_session(body: SessionCreate, caller: WriteCaller, db: AsyncSess
     nozzle = next((item for item in snapshot.nozzles if item.tool_index == body.tool_index), None) if snapshot else None
     if nozzle and nozzle.max_temperature is not None:
         limits[Step.TEMPERATURE.value]["max"] = min(material_max, nozzle.max_temperature)
-    session = CalibrationSession(owner_id=caller.owner_id, **body.model_dump(), parameters={}, results={},
-        setting_limits=limits)
+    session = CalibrationSession(
+        owner_id=caller.owner_id, **body.model_dump(), parameters={}, results={}, setting_limits=limits
+    )
     db.add(session)
     await commit(db)
     await db.refresh(session)
@@ -325,7 +330,11 @@ def validate_setting(session: CalibrationSession, step: Step, value: float) -> N
 def require_temperature_capacity(session: CalibrationSession, step: Step, nozzle) -> None:
     if nozzle is None or nozzle.max_temperature is None:
         return
-    temperatures = (session.parameters[step.value]["highest"], session.parameters[step.value]["baseline"]) if step is Step.TEMPERATURE else (session.results[Step.TEMPERATURE.value],)
+    temperatures = (
+        (session.parameters[step.value]["highest"], session.parameters[step.value]["baseline"])
+        if step is Step.TEMPERATURE
+        else (session.results[Step.TEMPERATURE.value],)
+    )
     if max(temperatures) > nozzle.max_temperature:
         raise HTTPException(409, "Calibration exceeds the printer's reported nozzle temperature limit")
 
@@ -380,7 +389,9 @@ async def generate_test(
     from backend.app.services.printer_manager import printer_manager
 
     snapshot = printer_manager.get_snapshot(session.printer_id)
-    nozzle = next((item for item in snapshot.nozzles if item.tool_index == session.tool_index), None) if snapshot else None
+    nozzle = (
+        next((item for item in snapshot.nozzles if item.tool_index == session.tool_index), None) if snapshot else None
+    )
     require_temperature_capacity(session, step, nozzle)
     binding = await db.get(PrinterSlicerBinding, body.binding_id)
     if (
@@ -402,14 +413,20 @@ async def generate_test(
                 raise HTTPException(503, "The configured Orca sidecar does not have the calibration engine")
     except SlicerApiError as exc:
         raise HTTPException(503, str(exc)) from exc
-    rows = (await db.execute(select(SlicerProfile.profile_type, SlicerProfile.remote_profile_id, SlicerProfileAccount.source)
-        .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-        .where(SlicerProfile.id.in_((binding.profile_id, body.process_profile_id, session.filament_profile_id))))).all()
+    rows = (
+        await db.execute(
+            select(SlicerProfile.profile_type, SlicerProfile.remote_profile_id, SlicerProfileAccount.source)
+            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+            .where(SlicerProfile.id.in_((binding.profile_id, body.process_profile_id, session.filament_profile_id)))
+        )
+    ).all()
     refs = {kind: {"source": source, "id": remote_id} for kind, remote_id, source in rows}
     if set(refs) != {"printer", "process", "filament"}:
         raise HTTPException(409, "Choose an available printer, process, and filament profile")
     request = SliceRequest(
-        printer_preset=refs["printer"], process_preset=refs["process"], filament_preset=refs["filament"],
+        printer_preset=refs["printer"],
+        process_preset=refs["process"],
+        filament_preset=refs["filament"],
         catalog_printer_id=session.printer_id,
         catalog_binding_id=binding.id,
         catalog_process_profile_id=body.process_profile_id,
@@ -541,7 +558,11 @@ async def print_test(
                     continue
                 if slot_id == body.ams_mapping[0] and not empty:
                     matching_tray = tray
-        if not material or matching_tray is None or str(matching_tray.get("tray_type", "")).casefold() != str(material).casefold():
+        if (
+            not material
+            or matching_tray is None
+            or str(matching_tray.get("tray_type", "")).casefold() != str(material).casefold()
+        ):
             raise HTTPException(409, "Load the calibrated filament type in the selected AMS slot")
     elif body.ams_mapping is not None:
         raise HTTPException(422, "AMS mapping requires AMS printing")

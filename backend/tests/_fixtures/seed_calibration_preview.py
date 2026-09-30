@@ -1,4 +1,5 @@
 """Seed the disconnected calibration preview, never an installed printer database."""
+
 import asyncio
 import os
 
@@ -18,13 +19,19 @@ from backend.app.services.slicer_catalog import (
 
 
 async def main():
-    if os.environ.get("CALIBRATION_PREVIEW_SEED") != "1" or not str(settings.base_dir).startswith("/tmp/layercove-calibration-preview"):
+    if os.environ.get("CALIBRATION_PREVIEW_SEED") != "1" or not str(settings.base_dir).startswith(
+        "/tmp/layercove-calibration-preview"
+    ):
         raise RuntimeError("Use an isolated /tmp/layercove-calibration-preview data directory")
     async with httpx.AsyncClient() as client:
         response = await client.get(settings.slicer_api_url + "/profiles/bundled")
         response.raise_for_status()
         bundled = response.json()
-    names = {"printer": "Voron 2.4 250 0.4 nozzle", "process": "0.20mm Standard @Voron", "filament": "Generic PLA @System"}
+    names = {
+        "printer": "Voron 2.4 250 0.4 nozzle",
+        "process": "0.20mm Standard @Voron",
+        "filament": "Generic PLA @System",
+    }
     profiles = []
     for kind, name in names.items():
         content = dict(next(row["content"] for row in bundled[kind] if row["name"] == name))
@@ -38,11 +45,14 @@ async def main():
         if await db.scalar(select(Printer.id)) is not None:
             raise RuntimeError("Preview database already has printers")
         db.add(Printer(name="Preview printer", provider="moonraker", is_active=False))
-        catalog = await ingest_catalog(db, CatalogInput(source="local", remote_account_id="calibration-preview", profiles=profiles))
+        catalog = await ingest_catalog(
+            db, CatalogInput(source="local", remote_account_id="calibration-preview", profiles=profiles)
+        )
         await approve_review_batch(db, catalog.review_batch_id)
         for revision in catalog.revision_ids:
             await activate_revision(db, revision)
         from backend.app.api.routes.auth import set_auth_enabled, set_setup_completed
+
         await set_auth_enabled(db, False)
         await set_setup_completed(db, True)
         await db.commit()

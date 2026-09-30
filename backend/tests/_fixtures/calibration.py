@@ -1,4 +1,5 @@
 """Filament schema exported from pinned Orca 2.4.2 source, for offline workflow tests."""
+
 import json
 from pathlib import Path
 from unittest.mock import AsyncMock

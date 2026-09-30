@@ -60,26 +60,40 @@ async def create_session(client, db):
     return response.json()
 
 
-@pytest.mark.parametrize("step,value", [("temperature", 100000), ("temperature", 210.5), ("flow_rate", 3), ("pressure_advance", 3)])
+@pytest.mark.parametrize(
+    "step,value", [("temperature", 100000), ("temperature", 210.5), ("flow_rate", 3), ("pressure_advance", 3)]
+)
 async def test_results_reject_values_outside_pinned_setting_limits(async_client, db_session, step, value):
     session = await create_session(async_client, db_session)
-    response = await async_client.put(f"/api/v1/calibration/sessions/{session['id']}/results/{step}",
-        json={"version": session["version"], "value": value})
+    response = await async_client.put(
+        f"/api/v1/calibration/sessions/{session['id']}/results/{step}",
+        json={"version": session["version"], "value": value},
+    )
     assert response.status_code == 422, response.text
 
 
 async def test_temperature_range_cannot_exceed_material_maximum(async_client, db_session):
     session = await create_session(async_client, db_session)
-    response = await async_client.put(f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
-        json={"version": session["version"], "lowest": 200, "highest": 500, "increment": 5, "baseline": 210})
+    response = await async_client.put(
+        f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
+        json={"version": session["version"], "lowest": 200, "highest": 500, "increment": 5, "baseline": 210},
+    )
     assert response.status_code == 422, response.text
 
 
-@pytest.mark.parametrize("highest,increment", [(1.05, .1), (1e308, 1e-308)])
+@pytest.mark.parametrize("highest,increment", [(1.05, 0.1), (1e308, 1e-308)])
 async def test_range_requires_a_representable_highest_sample(async_client, db_session, highest, increment):
     session = await create_session(async_client, db_session)
-    response = await async_client.put(f"/api/v1/calibration/sessions/{session['id']}/parameters/retraction",
-        json={"version": session["version"], "lowest": .1, "highest": highest, "increment": increment, "baseline": .4})
+    response = await async_client.put(
+        f"/api/v1/calibration/sessions/{session['id']}/parameters/retraction",
+        json={
+            "version": session["version"],
+            "lowest": 0.1,
+            "highest": highest,
+            "increment": increment,
+            "baseline": 0.4,
+        },
+    )
     assert response.status_code == 422, response.text
 
 
@@ -286,9 +300,16 @@ async def test_api_key_cannot_read_an_anonymous_calibration_job(async_client, db
     from backend.app.models.slice_job import SliceJobRecord
 
     now = datetime.now(timezone.utc).replace(tzinfo=None)
-    job = SliceJobRecord(owner_id=None, source_kind="calibration_session", source_id=1,
-        source_name="Private calibration", status="completed", created_at=now,
-        expires_at=now + timedelta(hours=1), result={})
+    job = SliceJobRecord(
+        owner_id=None,
+        source_kind="calibration_session",
+        source_id=1,
+        source_name="Private calibration",
+        status="completed",
+        created_at=now,
+        expires_at=now + timedelta(hours=1),
+        result={},
+    )
     db_session.add(job)
     await db_session.commit()
     key = APIKey(name="Status reader", key_hash="unused", key_prefix="unused", can_read_status=True, enabled=True)

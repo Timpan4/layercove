@@ -602,10 +602,12 @@ class TestPinnedContract:
         contract = self.contract(payload=payload)
         reply = {**contract, **payload}
         if tamper == "content":
-            reply["samples"] = {"layer_height": .9}
+            reply["samples"] = {"layer_height": 0.9}
         elif tamper == "identity":
             reply["image_identity"] = {"digest": "sha256:" + "c" * 64}
-        client = _mock_client(lambda request: httpx.Response(200, json=contract if request.url.path == "/capabilities" else reply))
+        client = _mock_client(
+            lambda request: httpx.Response(200, json=contract if request.url.path == "/capabilities" else reply)
+        )
         service = SlicerApiService(f"http://profile-{kind}-{tamper}", client=client)
         if tamper:
             with pytest.raises(SlicerSchemaMismatchError):

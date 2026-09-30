@@ -1,4 +1,5 @@
 """Calibration transport, durable artifact, and printer dispatch through public HTTP."""
+
 import json
 from email.parser import BytesParser
 from email.policy import default
@@ -34,18 +35,46 @@ from backend.tests.unit.services.test_slicer_api import TestPinnedContract as Pi
 
 
 async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_selected_printer(
-    async_client, db_session, test_engine, fake_moonraker, monkeypatch, tmp_path,
+    async_client,
+    db_session,
+    test_engine,
+    fake_moonraker,
+    monkeypatch,
+    tmp_path,
 ):
     monkeypatch.setattr(settings, "base_dir", tmp_path)
     monkeypatch.setattr(settings, "archive_dir", tmp_path / "archive")
     monkeypatch.setattr(settings, "slicer_api_url", "http://calibration-orca.test:3000")
-    printer = Printer(name="Calibration printer", provider="moonraker", moonraker_config=MoonrakerPrinterConfig(base_url=fake_moonraker.base_url))
+    printer = Printer(
+        name="Calibration printer",
+        provider="moonraker",
+        moonraker_config=MoonrakerPrinterConfig(base_url=fake_moonraker.base_url),
+    )
     db_session.add(printer)
-    catalog = await ingest_catalog(db_session, CatalogInput(source="local", remote_account_id="calibration-pipeline", profiles=[
-        CatalogProfile(kind, kind, f"Calibration {kind}", {"name": f"Calibration {kind}", "type": kind,
-            **({"gcode_flavor": "klipper", "nozzle_diameter": ["0.4"]} if kind == "printer" else {"compatible_printers": ["Calibration printer"]}),
-        }) for kind in ("printer", "process", "filament")
-    ]))
+    catalog = await ingest_catalog(
+        db_session,
+        CatalogInput(
+            source="local",
+            remote_account_id="calibration-pipeline",
+            profiles=[
+                CatalogProfile(
+                    kind,
+                    kind,
+                    f"Calibration {kind}",
+                    {
+                        "name": f"Calibration {kind}",
+                        "type": kind,
+                        **(
+                            {"gcode_flavor": "klipper", "nozzle_diameter": ["0.4"]}
+                            if kind == "printer"
+                            else {"compatible_printers": ["Calibration printer"]}
+                        ),
+                    },
+                )
+                for kind in ("printer", "process", "filament")
+            ],
+        ),
+    )
     await approve_review_batch(db_session, catalog.review_batch_id)
     for revision in catalog.revision_ids:
         await activate_revision(db_session, revision)
@@ -53,7 +82,10 @@ async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_sel
     profiles = {row.profile_type: row.id for row in (await db_session.scalars(select(SlicerProfile))).all()}
     fake_moonraker.status["configfile"] = {"settings": {"extruder": {"nozzle_diameter": 0.4}}}
     registry = PrinterBackendRegistry()
-    registry.register(PrinterProvider.MOONRAKER, lambda _printer, *, emit: _backend(fake_moonraker, monkeypatch, emit, bootstrap_timeout=5))
+    registry.register(
+        PrinterProvider.MOONRAKER,
+        lambda _printer, *, emit: _backend(fake_moonraker, monkeypatch, emit, bootstrap_timeout=5),
+    )
     manager = PrinterManager(registry)
     monkeypatch.setattr(manager, "_sync_moonraker_cameras_once", AsyncMock())
     for module in (printer_manager, slicer_catalog_selection, slicer_catalog_bindings, print_scheduler):
@@ -75,29 +107,60 @@ async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_sel
         if request.url.path == "/schema/process":
             return httpx.Response(200, json={**identity, **schema})
         if request.method == "POST" and request.url.path == "/slice":
-            message = BytesParser(policy=default).parsebytes(f"Content-Type: {request.headers['content-type']}\r\n\r\n".encode() + request.read())
-            fields.append({part.get_param("name", header="content-disposition"): part.get_payload(decode=True) for part in message.iter_parts()})
+            message = BytesParser(policy=default).parsebytes(
+                f"Content-Type: {request.headers['content-type']}\r\n\r\n".encode() + request.read()
+            )
+            fields.append(
+                {
+                    part.get_param("name", header="content-disposition"): part.get_payload(decode=True)
+                    for part in message.iter_parts()
+                }
+            )
             return httpx.Response(200, content=raw_gcode, headers={"X-Print-Time-Seconds": "60"})
         return httpx.Response(404)
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(sidecar))
     slicer_api.set_shared_http_client(client)
     try:
-        binding = await async_client.post("/api/v1/slicer/catalog/bindings", json={"printer_id": printer.id,
-            "profile_id": profiles["printer"], "expected_nozzle_diameter": 0.4,
-            "default_process_profile_id": profiles["process"], "default_filament_profile_id": profiles["filament"]})
+        binding = await async_client.post(
+            "/api/v1/slicer/catalog/bindings",
+            json={
+                "printer_id": printer.id,
+                "profile_id": profiles["printer"],
+                "expected_nozzle_diameter": 0.4,
+                "default_process_profile_id": profiles["process"],
+                "default_filament_profile_id": profiles["filament"],
+            },
+        )
         assert binding.status_code == 201, binding.text
-        activation = await db_session.scalar(select(SlicerProfileActivation).where(SlicerProfileActivation.profile_id == profiles["filament"]))
-        started = await async_client.post("/api/v1/calibration/sessions", json={"printer_id": printer.id,
-            "filament_profile_id": profiles["filament"], "filament_revision_id": activation.revision_id, "nozzle_diameter": 0.4})
+        activation = await db_session.scalar(
+            select(SlicerProfileActivation).where(SlicerProfileActivation.profile_id == profiles["filament"])
+        )
+        started = await async_client.post(
+            "/api/v1/calibration/sessions",
+            json={
+                "printer_id": printer.id,
+                "filament_profile_id": profiles["filament"],
+                "filament_revision_id": activation.revision_id,
+                "nozzle_diameter": 0.4,
+            },
+        )
         assert started.status_code == 201, started.text
         session = started.json()
         base = f"/api/v1/calibration/sessions/{session['id']}"
-        updated = await async_client.put(base + "/parameters/temperature", json={"version": session["version"],
-            "lowest": 200, "highest": 220, "increment": 5, "baseline": 210})
+        updated = await async_client.put(
+            base + "/parameters/temperature",
+            json={"version": session["version"], "lowest": 200, "highest": 220, "increment": 5, "baseline": 210},
+        )
         session = updated.json()
-        generated = await async_client.post(base + "/generate/temperature", json={"version": session["version"],
-            "binding_id": binding.json()["id"], "process_profile_id": profiles["process"]})
+        generated = await async_client.post(
+            base + "/generate/temperature",
+            json={
+                "version": session["version"],
+                "binding_id": binding.json()["id"],
+                "process_profile_id": profiles["process"],
+            },
+        )
         assert generated.status_code == 200, generated.text
         session = generated.json()
         job = await _wait_for_job(async_client, session["runs"]["temperature"])
@@ -108,39 +171,66 @@ async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_sel
         artifact = await db_session.get(LibraryFile, job["result"]["library_file_id"])
         assert (tmp_path / artifact.file_path).read_bytes() == raw_gcode
         # Changing the displayed range must retire the old printable test.
-        changed = await async_client.put(base + "/parameters/temperature", json={"version": session["version"],
-            "lowest": 205, "highest": 220, "increment": 5, "baseline": 210})
+        changed = await async_client.put(
+            base + "/parameters/temperature",
+            json={"version": session["version"], "lowest": 205, "highest": 220, "increment": 5, "baseline": 210},
+        )
         session = changed.json()
         assert "temperature" not in session["runs"]
-        stale = await async_client.post(base + "/print/temperature", json={"version": session["version"], "plate_clear": True})
+        stale = await async_client.post(
+            base + "/print/temperature", json={"version": session["version"], "plate_clear": True}
+        )
         assert stale.status_code == 409
-        regenerated = await async_client.post(base + "/generate/temperature", json={"version": session["version"],
-            "binding_id": binding.json()["id"], "process_profile_id": profiles["process"]})
+        regenerated = await async_client.post(
+            base + "/generate/temperature",
+            json={
+                "version": session["version"],
+                "binding_id": binding.json()["id"],
+                "process_profile_id": profiles["process"],
+            },
+        )
         session = regenerated.json()
         assert (await _wait_for_job(async_client, session["runs"]["temperature"]))["status"] == "completed"
-        wrong_provider = await async_client.post(base + "/print/temperature", json={"version": session["version"],
-            "plate_clear": True, "use_ams": True, "ams_mapping": [0]})
+        wrong_provider = await async_client.post(
+            base + "/print/temperature",
+            json={"version": session["version"], "plate_clear": True, "use_ams": True, "ams_mapping": [0]},
+        )
         assert wrong_provider.status_code == 422, wrong_provider.text
-        stale_mapping = await async_client.post(base + "/print/temperature", json={"version": session["version"],
-            "plate_clear": True, "use_ams": False, "ams_mapping": [0]})
+        stale_mapping = await async_client.post(
+            base + "/print/temperature",
+            json={"version": session["version"], "plate_clear": True, "use_ams": False, "ams_mapping": [0]},
+        )
         assert stale_mapping.status_code == 422, stale_mapping.text
         # Firmware may nest the AMS unit list under an "ams" object.
         from dataclasses import replace
         from types import SimpleNamespace
+
         original_snapshot = manager.get_snapshot(printer.id)
         with monkeypatch.context() as context:
-            context.setattr(manager, "get_snapshot", lambda _id: replace(original_snapshot, provider=PrinterProvider.BAMBU))
-            context.setattr(manager, "get_bambu_state", lambda _id: SimpleNamespace(raw_data={"ams": {"ams": [
-                {"id": "0", "tray": [{"id": "0", "tray_type": "PETG"}]}
-            ]}}))
-            wrong_material = await async_client.post(base + "/print/temperature", json={"version": session["version"],
-                "plate_clear": True, "use_ams": True, "ams_mapping": [0]})
+            context.setattr(
+                manager, "get_snapshot", lambda _id: replace(original_snapshot, provider=PrinterProvider.BAMBU)
+            )
+            context.setattr(
+                manager,
+                "get_bambu_state",
+                lambda _id: SimpleNamespace(
+                    raw_data={"ams": {"ams": [{"id": "0", "tray": [{"id": "0", "tray_type": "PETG"}]}]}}
+                ),
+            )
+            wrong_material = await async_client.post(
+                base + "/print/temperature",
+                json={"version": session["version"], "plate_clear": True, "use_ams": True, "ams_mapping": [0]},
+            )
             assert wrong_material.status_code == 409, wrong_material.text
-        printed = await async_client.post(base + "/print/temperature", json={"version": session["version"], "plate_clear": True})
+        printed = await async_client.post(
+            base + "/print/temperature", json={"version": session["version"], "plate_clear": True}
+        )
         assert printed.status_code == 200, printed.text
         session = printed.json()
         queue_id = session["prints"]["temperature"]
-        blocked = await async_client.put(base + "/results/temperature", json={"version": session["version"], "value": 210})
+        blocked = await async_client.put(
+            base + "/results/temperature", json={"version": session["version"], "value": 210}
+        )
         assert blocked.status_code == 409
         await scheduler.check_queue()
         assert fake_moonraker.uploads[0][1] == raw_gcode

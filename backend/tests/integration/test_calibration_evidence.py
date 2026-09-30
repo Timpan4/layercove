@@ -1,4 +1,5 @@
 """Photo normalization and ingress limits through the public evidence route."""
+
 import io
 
 import httpx
@@ -10,6 +11,7 @@ from backend.tests.integration.test_calibration_sessions import create_session
 
 async def test_photo_pixels_are_saved_without_metadata(async_client, db_session, monkeypatch, tmp_path):
     from backend.app.core.config import settings
+
     monkeypatch.setattr(settings, "base_dir", tmp_path)
     session = await create_session(async_client, db_session)
     image = Image.new("RGB", (2, 2), "red")
@@ -18,7 +20,9 @@ async def test_photo_pixels_are_saved_without_metadata(async_client, db_session,
     source = io.BytesIO()
     image.save(source, format="JPEG", exif=metadata)
     base = f"/api/v1/calibration/sessions/{session['id']}/evidence"
-    uploaded = await async_client.post(base + "/temperature", files={"file": ("photo.jpg", source.getvalue(), "image/jpeg")})
+    uploaded = await async_client.post(
+        base + "/temperature", files={"file": ("photo.jpg", source.getvalue(), "image/jpeg")}
+    )
     assert uploaded.status_code == 201, uploaded.text
     downloaded = await async_client.get(base + f"/{uploaded.json()['id']}/image")
     assert downloaded.headers["cache-control"] == "private, no-store"
@@ -32,6 +36,7 @@ async def test_photo_pixels_are_saved_without_metadata(async_client, db_session,
 
 async def test_photo_ingress_rejects_declared_and_streamed_oversize_before_spooling(monkeypatch):
     from backend.app.core import moonraker_upload_limit as limits
+
     monkeypatch.setattr(limits, "MAX_IMAGE_UPLOAD_BYTES", 4)
     monkeypatch.setattr(limits, "_MULTIPART_OVERHEAD_BYTES", 1)
     reached = []
@@ -47,8 +52,13 @@ async def test_photo_ingress_rejects_declared_and_streamed_oversize_before_spool
         yield b"123"
         yield b"456"
 
-    async with httpx.AsyncClient(transport=httpx.ASGITransport(app=limits.MoonrakerUploadBodyLimitMiddleware(application)), base_url="http://test") as client:
-        declared = await client.post("/api/v1/calibration/sessions/1/evidence/temperature", content=b"", headers={"content-length": "6"})
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=limits.MoonrakerUploadBodyLimitMiddleware(application)),
+        base_url="http://test",
+    ) as client:
+        declared = await client.post(
+            "/api/v1/calibration/sessions/1/evidence/temperature", content=b"", headers={"content-length": "6"}
+        )
         assert declared.status_code == 413 and not reached
         streamed = await client.post("/api/v1/calibration/sessions/1/evidence/temperature", content=chunks())
         assert streamed.status_code == 413 and reached

@@ -70,8 +70,10 @@ class MoonrakerUploadBodyLimitMiddleware:
             scope["type"] == "http"
             and scope.get("method") == "POST"
             and scope.get("path", "").startswith("/api/")
-            and (scope.get("path", "").endswith("/moonraker/upload-gcode")
-                or ("/calibration/sessions/" in scope.get("path", "") and "/evidence/" in scope.get("path", "")))
+            and (
+                scope.get("path", "").endswith("/moonraker/upload-gcode")
+                or ("/calibration/sessions/" in scope.get("path", "") and "/evidence/" in scope.get("path", ""))
+            )
         )
 
     @staticmethod
