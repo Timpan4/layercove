@@ -594,6 +594,26 @@ class TestSliceWithProfilesProgress:
 class TestPinnedContract:
     UNICODE_SCHEMA_HASH = "0d3ae4e6fc4e51c2fec63fec5467509d28134456fdc5cd8eb30b3eec4e7dea8d"
 
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind", ["printer", "filament"])
+    @pytest.mark.parametrize("tamper", [None, "content", "identity"])
+    async def test_profile_schema_validates_its_content_and_runtime_identity(self, kind, tamper):
+        payload = self.schema_payload()
+        contract = self.contract(payload=payload)
+        reply = {**contract, **payload}
+        if tamper == "content":
+            reply["samples"] = {"layer_height": .9}
+        elif tamper == "identity":
+            reply["image_identity"] = {"digest": "sha256:" + "c" * 64}
+        client = _mock_client(lambda request: httpx.Response(200, json=contract if request.url.path == "/capabilities" else reply))
+        service = SlicerApiService(f"http://profile-{kind}-{tamper}", client=client)
+        if tamper:
+            with pytest.raises(SlicerSchemaMismatchError):
+                await service.profile_schema(kind)
+        else:
+            schema = await service.profile_schema(kind)
+            assert schema.samples == payload["samples"]
+
     @staticmethod
     def schema_payload() -> dict:
         return {

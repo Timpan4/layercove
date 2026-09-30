@@ -45,7 +45,7 @@ class SliceDispatchService:
     async def enqueue(
         self,
         *,
-        kind: Literal["library_file", "archive"],
+        kind: Literal["library_file", "archive", "calibration_session"],
         source_id: int,
         source_name: str,
         run: Callable[[int], Awaitable[dict[str, Any]]],

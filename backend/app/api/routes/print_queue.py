@@ -395,6 +395,10 @@ async def add_to_queue(
     db: AsyncSession = Depends(get_db),
     caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.QUEUE_CREATE)),
 ):
+    return await enqueue_print(data, db, caller)
+
+
+async def enqueue_print(data, db, caller, *, before_commit=None):
     """Add an item to the print queue."""
     current_user = caller.user
     # Normalize target_model (e.g., "Bambu Lab X1E" / "C13" -> "X1E")
@@ -707,6 +711,9 @@ async def add_to_queue(
         db.add(item)
         items.append(item)
 
+    if before_commit is not None:
+        await db.flush()
+        await before_commit(items)
     await db.commit()
     from backend.app.services.print_scheduler import scheduler
 

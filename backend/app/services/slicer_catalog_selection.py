@@ -490,6 +490,7 @@ async def persist_catalog_selection(
     request: SliceRequest,
     *,
     source_path: Path | None = None,
+    force_validation: bool = False,
 ) -> None:
     """Validate and pin one request inside the slice-job transaction."""
     if request.catalog_history_job_id is not None:
@@ -566,6 +567,7 @@ async def persist_catalog_selection(
         process_row,
         filament_rows,
         source_path=source_path,
+        force_validation=force_validation,
     )
 
 

@@ -9,6 +9,13 @@
   - Ruff: `uv run --with-requirements requirements-dev.txt ruff ...`
 - Treat native-Windows-only test failures as environment evidence, not product defects. Reproduce them in WSL before changing code.
 
+## Orca slicing integration
+
+- The Rust shim in `Timpan4/orca-slicer-api` exists to avoid building OrcaSlicer from source. Use the existing checksum-pinned prebuilt Orca binary for slicing.
+- Extend the Rust shim for settings discovery, profile preparation, calibration orchestration, and CLI integration. Reading pinned Orca source to extract settings metadata does not require compiling Orca.
+- Do not compile Orca locally, add native Orca build recipes, or patch its native engine to expose functionality unless the user explicitly requests that approach.
+- If the prebuilt engine cannot support a required feature, report the specific limitation and get a user decision. Do not silently switch to a source build or change host resources to make one possible.
+
 ## Testing
 
 - Prefer E2E tests. Browser E2E lives in `frontend/e2e/` (Playwright) and runs against a live server: `LAYERCOVE_URL=http://localhost:8001 bun run test:e2e` from `frontend/`. Each run leaves `frontend/playwright-report/` (plus a trace on failure); CI uploads it as the `playwright-report` artifact.

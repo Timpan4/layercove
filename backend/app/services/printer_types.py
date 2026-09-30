@@ -91,6 +91,7 @@ class NozzleSnapshot:
     tool_index: int
     diameter: float | None
     status: str
+    max_temperature: float | None = None
 
 
 @dataclass(frozen=True)

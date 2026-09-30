@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react';
+import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
@@ -7,6 +8,7 @@ import {
   LogOut,
   Loader2,
   Settings2,
+  SlidersHorizontal,
   Printer as PrinterIcon,
   Droplet,
   X,
@@ -53,6 +55,7 @@ import { KProfilesView } from '../components/KProfilesView';
 import { LocalProfilesView } from '../components/LocalProfilesView';
 import { OrcaCloudView } from '../components/OrcaCloudView';
 import { SlicerCatalogAdmin } from '../components/SlicerCatalogAdmin';
+import { GuidedCalibration } from './GuidedCalibration';
 
 type TFunction = (key: string, options?: Record<string, unknown>) => string;
 type ProfileTab = 'cloud' | 'orca_cloud' | 'local' | 'kprofiles' | 'catalog';
@@ -2822,7 +2825,19 @@ export function ProfilesPage() {
   const { showToast } = useToast();
   const { hasPermission, loading: authLoading } = useAuth();
   const canUseBambuCloud = hasPermission('cloud:auth');
-  const [activeTab, setActiveTab] = useState<ProfileTab>('cloud');
+  const [selectedTab, setSelectedTab] = useState<ProfileTab>('cloud');
+  const [searchParams, setSearchParams] = useSearchParams();
+  const activeTab = searchParams.get('calibration') === 'guided'
+    ? 'calibration' : selectedTab;
+  const setActiveTab = (tab: ProfileTab) => {
+    setSelectedTab(tab);
+    if (searchParams.has('calibration')) {
+      const next = new URLSearchParams(searchParams);
+      next.delete('calibration');
+      next.delete('variant');
+      setSearchParams(next, { replace: true });
+    }
+  };
   const [lastSyncTime, setLastSyncTime] = useState<Date>();
 
   const { data: status, isLoading: statusLoading } = useQuery({
@@ -2883,7 +2898,7 @@ export function ProfilesPage() {
       </div>
 
       {/* Tab Navigation */}
-      <div className="flex border-b border-bambu-dark-tertiary mb-6">
+      <div className="flex flex-wrap border-b border-bambu-dark-tertiary mb-6">
         <button
           onClick={() => setActiveTab('cloud')}
           className={`flex items-center gap-2 px-4 py-3 text-sm font-medium transition-colors border-b-2 -mb-px ${
@@ -2937,7 +2952,21 @@ export function ProfilesPage() {
           <Layers className="w-4 h-4" />
           Shared catalog
         </button>
+        {hasPermission('settings:update') && (
+          <button
+            onClick={() => {
+              const next = new URLSearchParams(searchParams);
+              next.set('calibration', 'guided');
+              setSearchParams(next);
+            }}
+            className={`flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px ${activeTab === 'calibration' ? 'text-bambu-green border-bambu-green' : 'text-bambu-gray hover:text-white border-transparent'}`}
+          >
+            <SlidersHorizontal className="w-4 h-4" /> Calibration
+          </button>
+        )}
       </div>
+
+      {activeTab === 'calibration' && <GuidedCalibration printers={printers} />}
 
       {/* Cloud Profiles Tab */}
       {activeTab === 'cloud' && !canUseBambuCloud && (

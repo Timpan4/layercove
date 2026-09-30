@@ -59,6 +59,7 @@ class SlicerCapabilitiesResponse(BaseModel):
     schema_hash: str = Field(min_length=64, max_length=64, pattern=r"^[0-9a-f]{64}$")
     capabilities: SlicerCapabilities
     supported_scopes: list[Literal["global", "object"]] = Field(max_length=2)
+    calibration: dict[str, Any] | None = None
 
 
 class SlicerSchemaGroup(BaseModel):
@@ -105,7 +106,7 @@ class SliceJobProvenanceResponse(BaseModel):
 class SliceJobStateResponse(BaseModel):
     job_id: int
     status: Literal["pending", "running", "completed", "failed", "cancel-requested", "cancelled"]
-    kind: Literal["library_file", "archive"]
+    kind: Literal["library_file", "archive", "calibration_session"]
     source_id: int
     source_name: str
     schema_hash: str | None = None

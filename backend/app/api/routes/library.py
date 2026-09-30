@@ -3448,6 +3448,7 @@ async def _run_slicer_with_fallback(
     request: SliceRequest,
     current_user_id: int | None = None,
     job_id: int | None = None,
+    calibration: dict | None = None,
 ):
     """Validate presets, dispatch to the right sidecar, run the slicer with
     the auto-fallback for 3MF inputs whose `--load-settings` path crashes the
@@ -3783,6 +3784,7 @@ async def _run_slicer_with_fallback(
                     model_state=request.model_state.model_dump(mode="json") if request.model_state else None,
                     request_id=progress_request_id,
                     on_progress=progress_callback,
+                    calibration=calibration,
                 )
         except SlicerApiServerError as exc:
             rejection = _slicer_rejection_message(str(exc))
@@ -3913,6 +3915,7 @@ async def slice_and_persist(
     request: SliceRequest,
     current_user_id: int | None,
     job_id: int | None = None,
+    calibration: dict | None = None,
 ) -> SliceResponse:
     """Slice a model and save the result as a new ``LibraryFile`` in
     ``folder_id`` (same folder as the source by convention).
@@ -3932,6 +3935,7 @@ async def slice_and_persist(
         request=library_request,
         current_user_id=current_user_id,
         job_id=job_id,
+        calibration=calibration,
     )
 
     if is_klipper_gcode:

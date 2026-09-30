@@ -25,6 +25,11 @@ router = APIRouter(prefix="/slice-jobs", tags=["slice-jobs"])
 def _require_job_access(job: SliceJobRecord | None, caller: CallerIdentity) -> SliceJobRecord:
     if job is None:
         raise HTTPException(status_code=404, detail="Slice job not found or expired")
+    if job.source_kind == "calibration_session":
+        caller.require_permissions(Permission.PRINTERS_READ)
+        if job.owner_id != caller.owner_id:
+            raise HTTPException(status_code=404, detail="Slice job not found or expired")
+        return job
     permissions = {
         "archive": (Permission.ARCHIVES_READ_ALL, Permission.ARCHIVES_READ_OWN),
         "library_file": (Permission.LIBRARY_READ_ALL, Permission.LIBRARY_READ_OWN),
@@ -87,6 +92,8 @@ async def prepare_reslice_request(
     caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled()),
 ):
     source_job = _require_job_access(await slice_dispatch.get(job_id), caller)
+    if source_job.source_kind == "calibration_session":
+        raise HTTPException(409, "Generate calibration tests from their session")
     try:
         preview = await prepare_historical_reslice(db, source_job, body)
     except CatalogSelectionError as error:
