@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 import httpx
+
 from backend.app.core.image_limits import MAX_IMAGE_UPLOAD_BYTES
 
 logger = logging.getLogger(__name__)
