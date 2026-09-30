@@ -2,6 +2,7 @@
 
 from starlette.responses import JSONResponse
 
+from backend.app.core.image_limits import MAX_IMAGE_UPLOAD_BYTES
 from backend.app.services.moonraker_http import MOONRAKER_MAX_UPLOAD_BYTES
 
 _MULTIPART_OVERHEAD_BYTES = 1024 * 1024
@@ -25,8 +26,11 @@ class MoonrakerUploadBodyLimitMiddleware:
             return
 
         content_length = self._content_length(scope)
-        if content_length is not None and content_length > self.max_body_bytes:
-            await self._reject(scope, receive, send)
+        is_photo = "/calibration/sessions/" in scope.get("path", "")
+        max_body_bytes = MAX_IMAGE_UPLOAD_BYTES + _MULTIPART_OVERHEAD_BYTES if is_photo else self.max_body_bytes
+        message = "Calibration photo exceeds size limit." if is_photo else "G-code upload exceeds size limit."
+        if content_length is not None and content_length > max_body_bytes:
+            await self._reject(scope, receive, send, message)
             return
 
         received = 0
@@ -40,7 +44,7 @@ class MoonrakerUploadBodyLimitMiddleware:
             message = await receive()
             if message["type"] == "http.request":
                 received += len(message.get("body", b""))
-                if received > self.max_body_bytes:
+                if received > max_body_bytes:
                     limit_exceeded = True
                     raise _UploadBodyTooLarge
             return message
@@ -54,7 +58,7 @@ class MoonrakerUploadBodyLimitMiddleware:
             limit_exceeded = True
 
         if limit_exceeded:
-            await self._reject(scope, receive, send)
+            await self._reject(scope, receive, send, message)
             return
 
         for message in response_messages:
@@ -66,7 +70,10 @@ class MoonrakerUploadBodyLimitMiddleware:
             scope["type"] == "http"
             and scope.get("method") == "POST"
             and scope.get("path", "").startswith("/api/")
-            and scope.get("path", "").endswith("/moonraker/upload-gcode")
+            and (
+                scope.get("path", "").endswith("/moonraker/upload-gcode")
+                or ("/calibration/sessions/" in scope.get("path", "") and "/evidence/" in scope.get("path", ""))
+            )
         )
 
     @staticmethod
@@ -80,13 +87,13 @@ class MoonrakerUploadBodyLimitMiddleware:
         return None
 
     @staticmethod
-    async def _reject(scope, receive, send) -> None:
+    async def _reject(scope, receive, send, message="G-code upload exceeds size limit.") -> None:
         response = JSONResponse(
             status_code=413,
             content={
                 "detail": {
                     "code": "upload_too_large",
-                    "message": "G-code upload exceeds size limit.",
+                    "message": message,
                 }
             },
         )

@@ -25,6 +25,8 @@ from urllib.parse import urlparse
 
 import httpx
 
+from backend.app.core.image_limits import MAX_IMAGE_UPLOAD_BYTES
+
 logger = logging.getLogger(__name__)
 
 
@@ -61,7 +63,7 @@ _CLIENT_HEADERS = {
 _MODEL_ID_RE = re.compile(r"/models/(\d+)")
 _PROFILE_ID_RE = re.compile(r"#profileId[-=](\d+)")
 _MAX_3MF_BYTES = 200 * 1024 * 1024  # 200 MB hard cap
-_MAX_THUMBNAIL_BYTES = 10 * 1024 * 1024  # 10 MB hard cap — MakerWorld's "thumbnails" can be 2–3 MB source images
+_MAX_THUMBNAIL_BYTES = MAX_IMAGE_UPLOAD_BYTES
 _IMAGE_EXT_TO_MIME = {
     ".png": "image/png",
     ".jpg": "image/jpeg",

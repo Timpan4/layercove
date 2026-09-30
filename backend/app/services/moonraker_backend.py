@@ -128,10 +128,11 @@ def _configured_nozzles(configfile: object) -> tuple[NozzleSnapshot, ...]:
         else:
             continue
         diameter = _finite_number(values.get("nozzle_diameter")) if isinstance(values, dict) else None
+        maximum = _finite_number(values.get("max_temp")) if isinstance(values, dict) else None
         nozzle = (
             NozzleSnapshot(tool_index, None, "unknown")
             if diameter is None or diameter <= 0
-            else NozzleSnapshot(tool_index, diameter, "confirmed")
+            else NozzleSnapshot(tool_index, diameter, "confirmed", maximum if maximum and maximum > 0 else None)
         )
         if tool_index not in nozzles or name == "extruder":
             nozzles[tool_index] = nozzle

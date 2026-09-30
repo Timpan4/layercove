@@ -1,6 +1,7 @@
 """Versioned production Orca schema and profile discovery routes."""
 
 import json
+from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -103,3 +104,18 @@ async def get_resolved_profile(
         id=ref.id,
         values=values,
     )
+
+
+@router.get("/schema/{kind}", response_model=SlicerProcessSchemaResponse)
+async def get_profile_schema(
+    kind: Literal["printer", "filament"],
+    db: AsyncSession = Depends(get_db),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.LIBRARY_UPLOAD),
+) -> SlicerProcessSchemaResponse:
+    service = await _orca_service(db)
+    try:
+        return await service.profile_schema(kind)
+    except SlicerApiError as exc:
+        raise _contract_error(exc) from exc
+    finally:
+        await service.close()

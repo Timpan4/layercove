@@ -3,6 +3,7 @@ from backend.app.models.ams_label import AmsLabel
 from backend.app.models.api_key import APIKey
 from backend.app.models.archive import PrintArchive
 from backend.app.models.auth_ephemeral import AuthEphemeralToken, AuthRateLimitEvent
+from backend.app.models.calibration import CalibrationEvidence, CalibrationSession
 from backend.app.models.color_catalog import ColorCatalogEntry
 from backend.app.models.filament import Filament
 from backend.app.models.github_backup import GitHubBackupConfig, GitHubBackupLog
@@ -57,6 +58,7 @@ from backend.app.models.user_otp_code import UserOTPCode
 from backend.app.models.user_totp import UserTOTP
 
 __all__ = [
+    "CalibrationSession",
     "Printer",
     "PrinterCamera",
     "MoonrakerPrinterConfig",

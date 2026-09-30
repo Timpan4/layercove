@@ -1722,6 +1722,41 @@ export interface FilamentProfileCopy {
   local_preset_id: number;
 }
 
+export type CalibrationStep = 'temperature' | 'flow_rate' | 'pressure_advance' | 'retraction' | 'volumetric_flow';
+export interface CalibrationParameters {
+  lowest: number;
+  highest: number;
+  increment: number;
+  baseline: number;
+}
+export interface CalibrationSession {
+  id: number;
+  printer_id: number;
+  filament_profile_id: number;
+  filament_revision_id: number;
+  nozzle_diameter: number;
+  tool_index: number;
+  parameters: Partial<Record<CalibrationStep, CalibrationParameters>>;
+  setting_limits: Partial<Record<CalibrationStep, { min: number | null; max: number | null; item_type: string; units: string | null; default: unknown[] }>>;
+  results: Partial<Record<CalibrationStep, number>>;
+  runs: Partial<Record<CalibrationStep, number>>;
+  prints: Partial<Record<CalibrationStep, number>>;
+  saved_profile_id: number | null;
+  version: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface CalibrationEvidence {
+  id: number;
+  session_id: number;
+  step: CalibrationStep;
+  source: 'camera' | 'upload';
+  run_id: number | null;
+  print_id: number | null;
+  created_at: string;
+}
+
 export interface SlicerCatalogProfile {
   profile_id: number;
   revision_id: number;
@@ -2036,7 +2071,7 @@ export interface SliceJobProgress {
 export interface SliceJobState {
   job_id: number;
   status: SliceJobStatus;
-  kind: 'library_file' | 'archive';
+  kind: 'library_file' | 'archive' | 'calibration_session';
   source_id: number;
   source_name: string;
   schema_hash: string | null;
@@ -6765,7 +6800,48 @@ export const api = {
     ),
 
   // Persistent installed-printer slicer catalog.
+  listCalibrationSessions: () => request<CalibrationSession[]>('/calibration/sessions'),
+  getCalibrationSession: (id: number) => request<CalibrationSession>(`/calibration/sessions/${id}`),
+  createCalibrationSession: (body: {
+    printer_id: number; filament_profile_id: number; filament_revision_id: number; nozzle_diameter: number; tool_index?: number;
+  }) => request<CalibrationSession>('/calibration/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  updateCalibrationParameters: (id: number, step: CalibrationStep, body: CalibrationParameters & { version: number }) =>
+    request<CalibrationSession>(`/calibration/sessions/${id}/parameters/${step}`, { method: 'PUT', body: JSON.stringify(body) }),
+  recordCalibrationResult: (id: number, step: CalibrationStep, body: { version: number; value: number }) =>
+    request<CalibrationSession>(`/calibration/sessions/${id}/results/${step}`, { method: 'PUT', body: JSON.stringify(body) }),
+  saveCalibrationProfile: (id: number, body: { version: number; name: string; share_local_copy: boolean }) =>
+    request<CalibrationSession>(`/calibration/sessions/${id}/save`, { method: 'POST', body: JSON.stringify(body) }),
   getSlicerCatalogRevision: (revisionId: number) => request<SlicerCatalogRevisionContent>(`/slicer/catalog/revisions/${revisionId}`),
+  generateCalibrationTest: (id: number, step: CalibrationStep, body: {
+    version: number; binding_id: number; process_profile_id: number; acknowledge_compatibility: boolean;
+  }) => request<CalibrationSession>(`/calibration/sessions/${id}/generate/${step}`, { method: 'POST', body: JSON.stringify(body) }),
+  printCalibrationTest: (id: number, step: CalibrationStep, body: {
+    version: number; plate_clear: true; use_ams: boolean; ams_mapping: number[] | null;
+  }) => request<CalibrationSession>(`/calibration/sessions/${id}/print/${step}`, { method: 'POST', body: JSON.stringify(body) }),
+  listCalibrationEvidence: (id: number) => request<CalibrationEvidence[]>(`/calibration/sessions/${id}/evidence`),
+  uploadCalibrationEvidence: async (id: number, step: CalibrationStep, file: Blob, source: 'upload' | 'camera') => {
+    const form = new FormData();
+    form.append('file', file, file instanceof File ? file.name : 'camera.jpg');
+    form.append('source', source);
+    const response = await fetch(`${API_BASE}/calibration/sessions/${id}/evidence/${step}`, {
+      method: 'POST', body: form, credentials: 'include', headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+    if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.detail || 'Could not save calibration photo'); }
+    return response.json() as Promise<CalibrationEvidence>;
+  },
+  getCalibrationPhoto: async (id: number, evidenceId: number) => {
+    const response = await fetch(`${API_BASE}/calibration/sessions/${id}/evidence/${evidenceId}/image`, {
+      credentials: 'include', headers: authToken ? { Authorization: `Bearer ${authToken}` } : {},
+    });
+    if (!response.ok) throw new Error('Could not load calibration photo');
+    return response.blob();
+  },
+  captureCalibrationPhoto: async (printerId: number) => {
+    const { token } = await api.getCameraStreamToken();
+    const response = await fetch(`${API_BASE}/printers/${printerId}/camera/snapshot?token=${encodeURIComponent(token)}`);
+    if (!response.ok) { const error = await response.json().catch(() => ({})); throw new Error(error.detail || 'Could not capture printer camera'); }
+    return response.blob();
+  },
   copySlicerFilament: (profileId: number, body: {
     base_revision_id: number; name: string; overrides: Record<string, unknown>; share_local_copy: boolean;
   }) => request<FilamentProfileCopy>(`/slicer/catalog/profiles/${profileId}/filament-copy`, {

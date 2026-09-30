@@ -217,6 +217,22 @@ class SlicerApiService:
         _schema_cache[key] = schema
         return schema
 
+    async def profile_schema(self, kind: str) -> SlicerProcessSchemaResponse:
+        if kind not in {"printer", "filament"}:
+            raise SlicerApiError("Profile schema must be printer or filament")
+        capabilities = await self.capabilities()
+        payload = await self._get_contract_json(f"/schema/{kind}")
+        try:
+            schema = SlicerProcessSchemaResponse.model_validate(payload)
+        except ValidationError as exc:
+            raise SlicerSchemaMismatchError(f"Invalid {kind} schema: {exc}") from exc
+        _validate_contract_identity(schema)
+        if schema.engine != capabilities.engine or schema.image_identity != capabilities.image_identity:
+            raise SlicerSchemaMismatchError(f"{kind} schema identity changed during discovery")
+        if _process_schema_hash(schema) != schema.schema_hash:
+            raise SlicerSchemaMismatchError(f"{kind} schema content hash mismatch")
+        return schema
+
     async def validate_workbench_request(
         self,
         *,
@@ -402,6 +418,7 @@ class SlicerApiService:
         model_state: dict | None = None,
         request_id: str | None = None,
         on_progress: Callable[[dict], None] | None = None,
+        calibration: dict | None = None,
     ) -> SliceResult:
         """POST /slice with model + printer/process/filament profiles.
 
@@ -434,7 +451,6 @@ class SlicerApiService:
         # tuples — using the dict form would silently overwrite duplicate
         # keys and ship only the last filament profile.
         files: list[tuple[str, tuple[str, bytes, str]]] = [
-            ("file", (model_filename, model_bytes, _guess_model_content_type(model_filename))),
             ("printerProfile", ("printer.json", printer_profile_json.encode("utf-8"), "application/json")),
             ("presetProfile", ("preset.json", process_profile_json.encode("utf-8"), "application/json")),
         ]
@@ -447,6 +463,10 @@ class SlicerApiService:
             )
 
         data: dict[str, str] = {}
+        if calibration is None:
+            files.insert(0, ("file", (model_filename, model_bytes, _guess_model_content_type(model_filename))))
+        else:
+            data["calibration"] = json.dumps(calibration, separators=(",", ":"))
         if process_overrides:
             data["processOverrides"] = json.dumps(process_overrides, separators=(",", ":"))
         if plate is not None:
