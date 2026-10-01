@@ -51,7 +51,7 @@ export function setAuthToken(token: string | null, persistence: TokenPersistence
     console.warn('setAuthToken: sessionStorage unavailable, token kept in-memory only', err);
   }
   try {
-    if (!token) {
+    if (!token || persistence === 'session') {
       localStorage.removeItem('auth_token');
     } else if (persistence === 'persistent') {
       localStorage.setItem('auth_token', token);

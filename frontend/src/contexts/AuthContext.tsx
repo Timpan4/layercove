@@ -8,6 +8,7 @@ interface AuthContextType {
   authEnabled: boolean;
   requiresSetup: boolean;
   loading: boolean;
+  authUnavailable: boolean;
   isAdmin: boolean;
   /** Login with username/password. Returns LoginResponse (may include requires_2fa). */
   login: (username: string, password: string, persistence?: TokenPersistence) => Promise<LoginResponse>;
@@ -32,10 +33,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [authEnabled, setAuthEnabled] = useState(false);
   const [requiresSetup, setRequiresSetup] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [authUnavailable, setAuthUnavailable] = useState(false);
   const hasRedirectedRef = useRef(false);
   const mountedRef = useRef(true);
 
   const checkAuthStatus = async () => {
+    setLoading(true);
+    setAuthUnavailable(false);
     try {
       // Bootstrap: if URL has ?token= param, store it session-only first and
       // strip it from the URL. Allows SpoolBuddy kiosk to pass an API key via
@@ -106,8 +110,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // rather than forcing a re-login.
             if (definitiveAuthFailure) {
               setAuthToken(null);
+              setUser(null);
+            } else {
+              setAuthUnavailable(true);
             }
-            setUser(null);
           }
         } else {
           setUser(null);
@@ -118,8 +124,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
     } catch {
       if (!mountedRef.current) return;
-      setAuthEnabled(false);
-      setUser(null);
+      setAuthUnavailable(true);
     } finally {
       if (mountedRef.current) {
         setLoading(false);
@@ -139,6 +144,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const handleAuthExpired = () => {
       if (!mountedRef.current) return;
       setUser(null);
+      setAuthUnavailable(false);
     };
     window.addEventListener('auth:expired', handleAuthExpired);
 
@@ -196,10 +202,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (mountedRef.current) {
           setUser(currentUser);
         }
-      } catch {
-        setAuthToken(null);
-        if (mountedRef.current) {
+      } catch (err) {
+        if (!mountedRef.current) return;
+        if (err instanceof ApiError && err.status === 401) {
+          setAuthToken(null);
           setUser(null);
+        } else {
+          setAuthUnavailable(true);
         }
       }
     }
@@ -229,6 +238,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         authEnabled,
         requiresSetup,
         loading,
+        authUnavailable,
         isAdmin,
         authorization,
         login,
