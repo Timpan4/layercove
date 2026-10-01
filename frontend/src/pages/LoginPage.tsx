@@ -16,6 +16,7 @@ type LoginStep = 'credentials' | '2fa' | 'reset-password';
 // Read + remove in one try so all branches in the OIDC useEffect see the same
 // value and a subsequent page load does not replay the flag.
 const REMEMBER_ME_KEY = 'auth_remember_me';
+const REMEMBER_ME_PREFERENCE_KEY = 'auth_remember_me_preference';
 const POST_LOGIN_REDIRECT_KEY = 'auth_post_login_redirect';
 
 function toPersistence(remember: boolean): TokenPersistence {
@@ -146,7 +147,13 @@ export function LoginPage() {
   const [emailOTPSent, setEmailOTPSent] = useState(false);
   const twoFAInputRef = useRef<HTMLInputElement>(null);
 
-  const [rememberMe, setRememberMe] = useState(false);
+  const [rememberMe, setRememberMe] = useState(() => {
+    try {
+      return localStorage.getItem(REMEMBER_ME_PREFERENCE_KEY) === '1';
+    } catch {
+      return false;
+    }
+  });
 
   // H-6: Password reset step state
   const [resetToken, setResetToken] = useState('');
@@ -179,10 +186,13 @@ export function LoginPage() {
     if (autologinAttemptedRef.current) return;
     const fallbackQuery = searchParams.get('fallback');
     if (fallbackQuery === 'local') return;
-    if (!advancedAuthStatus || !advancedAuthStatus.autologin_provider_id) return;
     // Don't redirect mid-OIDC-exchange (we're already coming back from the IdP).
     const hash = window.location.hash;
-    if (hash.startsWith('#oidc_token=') || searchParams.get('oidc_error')) return;
+    if (hash.startsWith('#oidc_token=') || searchParams.get('oidc_error')) {
+      autologinAttemptedRef.current = true;
+      return;
+    }
+    if (!advancedAuthStatus || !advancedAuthStatus.autologin_provider_id) return;
     autologinAttemptedRef.current = true;
 
     const providerId = advancedAuthStatus.autologin_provider_id;
@@ -191,12 +201,17 @@ export function LoginPage() {
     );
     Promise.race([api.getOIDCAuthorizeUrl(providerId), timeoutPromise])
       .then((result) => {
+        try {
+          sessionStorage.setItem(REMEMBER_ME_KEY, rememberMe ? '1' : '0');
+        } catch (err) {
+          console.warn('Automatic SSO: Remember Me preference unavailable', err);
+        }
         window.location.href = (result as { auth_url: string }).auth_url;
       })
       .catch(() => {
         setAutologinFailed(true);
       });
-  }, [advancedAuthStatus, searchParams]);
+  }, [advancedAuthStatus, searchParams, rememberMe]);
 
   const localLoginEnabled = advancedAuthStatus?.local_login_enabled !== false;
   const showAutologinBanner = autologinFailed && advancedAuthStatus?.autologin_provider_id != null;
@@ -375,12 +390,10 @@ export function LoginPage() {
   const oidcLoginMutation = useMutation({
     mutationFn: (providerId: number) => api.getOIDCAuthorizeUrl(providerId),
     onSuccess: (data) => {
-      if (rememberMe) {
-        try {
-          sessionStorage.setItem(REMEMBER_ME_KEY, '1');
-        } catch (err) {
-          console.warn('setItem auth_remember_me failed, Remember Me will not carry through OIDC redirect', err);
-        }
+      try {
+        sessionStorage.setItem(REMEMBER_ME_KEY, rememberMe ? '1' : '0');
+      } catch (err) {
+        console.warn('setItem auth_remember_me failed, Remember Me will not carry through OIDC redirect', err);
       }
       // Stash the post-login destination from router state so it survives the
       // provider round-trip (window.location.href kills React state). If the
@@ -760,7 +773,14 @@ export function LoginPage() {
               id="remember-me"
               type="checkbox"
               checked={rememberMe}
-              onChange={(e) => setRememberMe(e.target.checked)}
+              onChange={(e) => {
+                setRememberMe(e.target.checked);
+                try {
+                  localStorage.setItem(REMEMBER_ME_PREFERENCE_KEY, e.target.checked ? '1' : '0');
+                } catch {
+                  // The choice still applies to this login when storage is unavailable.
+                }
+              }}
               className="h-4 w-4 rounded border-bambu-dark-tertiary bg-bambu-dark-secondary text-bambu-green focus:ring-bambu-green/50 cursor-pointer"
             />
             <label htmlFor="remember-me" className="text-sm text-bambu-gray cursor-pointer">

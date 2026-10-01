@@ -1,5 +1,5 @@
 import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
-import { ApiError, api, getAuthToken, setAuthToken } from '../api/client';
+import { api, getAuthToken, isInvalidTokenError, setAuthToken } from '../api/client';
 import type { LoginResponse, Permission, TokenPersistence, UserResponse } from '../api/client';
 import { createAuthorization, type ArchiveAction, type AuthorizationDecision, type AuthorizationPolicy, type LibraryFileAction, type Resource, type ResourceAction } from '../domain/authorization';
 
@@ -8,6 +8,7 @@ interface AuthContextType {
   authEnabled: boolean;
   requiresSetup: boolean;
   loading: boolean;
+  authUnavailable: boolean;
   isAdmin: boolean;
   /** Login with username/password. Returns LoginResponse (may include requires_2fa). */
   login: (username: string, password: string, persistence?: TokenPersistence) => Promise<LoginResponse>;
@@ -26,26 +27,48 @@ interface AuthContextType {
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
+const PENDING_KIOSK_TOKEN_KEY = 'auth_pending_kiosk_token';
 
 export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<UserResponse | null>(null);
   const [authEnabled, setAuthEnabled] = useState(false);
   const [requiresSetup, setRequiresSetup] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [authUnavailable, setAuthUnavailable] = useState(false);
   const hasRedirectedRef = useRef(false);
   const mountedRef = useRef(true);
+  const authCheckIdRef = useRef(0);
+  const pendingKioskTokenRef = useRef<string | null>(null);
+
+  const savePendingKioskToken = (token: string | null) => {
+    pendingKioskTokenRef.current = token;
+    try {
+      if (token) sessionStorage.setItem(PENDING_KIOSK_TOKEN_KEY, token);
+      else sessionStorage.removeItem(PENDING_KIOSK_TOKEN_KEY);
+    } catch {
+      // Keep the candidate in memory when browser storage is unavailable.
+    }
+  };
 
   const checkAuthStatus = async () => {
+    const checkId = ++authCheckIdRef.current;
+    const isCurrentCheck = () => mountedRef.current && checkId === authCheckIdRef.current;
+    setLoading(true);
+    setAuthUnavailable(false);
     try {
-      // Bootstrap: if URL has ?token= param, store it session-only first and
-      // strip it from the URL. Allows SpoolBuddy kiosk to pass an API key via
-      // URL on first load. Persistence to localStorage is deferred until the
-      // token has been verified by the server (L-4: prevents session fixation
-      // where an attacker-crafted URL immediately persists a forged/stolen token).
+      // SpoolBuddy kiosk links can pass an API key on first load. Strip it
+      // from the URL and validate it without replacing stored credentials.
+      // Persist only after the server accepts it, preventing session fixation
+      // and preserving a remembered login when the link is invalid or unavailable.
       const urlParams = new URLSearchParams(window.location.search);
-      const urlToken = urlParams.get('token');
+      let urlToken = urlParams.get('token') ?? pendingKioskTokenRef.current;
+      try {
+        urlToken ??= sessionStorage.getItem(PENDING_KIOSK_TOKEN_KEY);
+      } catch {
+        // In-memory recovery still works when browser storage is unavailable.
+      }
       if (urlToken) {
-        setAuthToken(urlToken, 'session'); // session-only until server confirms it's valid
+        savePendingKioskToken(urlToken);
         urlParams.delete('token');
         const cleanSearch = urlParams.toString();
         const cleanUrl = window.location.pathname
@@ -55,12 +78,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       }
 
       const status = await api.getAuthStatus();
-      if (!mountedRef.current) return;
+      if (!isCurrentCheck()) return;
       setAuthEnabled(status.auth_enabled);
       setRequiresSetup(status.requires_setup);
 
       if (status.auth_enabled) {
-        const token = getAuthToken();
+        const token = urlToken ?? getAuthToken();
         if (token) {
           // Validate the stored token. A transient failure here (backend not
           // yet ready after a container/proxy restart, a brief network blip)
@@ -75,13 +98,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
           const maxAttempts = 3;
           for (let attempt = 1; attempt <= maxAttempts; attempt++) {
             try {
-              currentUser = await api.getCurrentUser();
+              currentUser = await api.getCurrentUser(token);
               break;
             } catch (err) {
-              if (!mountedRef.current) return;
+              if (!isCurrentCheck()) return;
               // 401 invalid-token → genuinely logged out. `request()` has
               // already cleared the token; stop retrying.
-              if (err instanceof ApiError && err.status === 401) {
+              if (isInvalidTokenError(err)) {
                 definitiveAuthFailure = true;
                 break;
               }
@@ -92,12 +115,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
               }
             }
           }
-          if (!mountedRef.current) return;
+          if (!isCurrentCheck()) return;
           if (currentUser) {
             setUser(currentUser);
             // Persist kiosk token only after the server confirms it is valid.
             if (urlToken && token === urlToken) {
               setAuthToken(urlToken, 'persistent');
+              savePendingKioskToken(null);
             }
           } else {
             // No user: either a definitive 401 (token already cleared by
@@ -105,9 +129,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
             // transient case we deliberately keep the token so a reload retries
             // rather than forcing a re-login.
             if (definitiveAuthFailure) {
-              setAuthToken(null);
+              if (urlToken) savePendingKioskToken(null);
+              if (token === getAuthToken()) setAuthToken(null);
+              setUser(null);
+            } else {
+              setAuthUnavailable(true);
             }
-            setUser(null);
           }
         } else {
           setUser(null);
@@ -117,11 +144,10 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(null);
       }
     } catch {
-      if (!mountedRef.current) return;
-      setAuthEnabled(false);
-      setUser(null);
+      if (!isCurrentCheck()) return;
+      setAuthUnavailable(true);
     } finally {
-      if (mountedRef.current) {
+      if (isCurrentCheck()) {
         setLoading(false);
       }
     }
@@ -139,6 +165,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const handleAuthExpired = () => {
       if (!mountedRef.current) return;
       setUser(null);
+      setAuthUnavailable(false);
     };
     window.addEventListener('auth:expired', handleAuthExpired);
 
@@ -168,6 +195,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const login = async (username: string, password: string, persistence: TokenPersistence = 'session'): Promise<LoginResponse> => {
     const response = await api.login({ username, password });
     if (!response.requires_2fa && response.access_token) {
+      savePendingKioskToken(null);
       setAuthToken(response.access_token, persistence);
       await checkAuthStatus();
     }
@@ -175,12 +203,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   const loginWithToken = (token: string, userObj: UserResponse, persistence: TokenPersistence = 'session') => {
+    authCheckIdRef.current++;
+    savePendingKioskToken(null);
     setAuthToken(token, persistence);
     setUser(userObj);
     setAuthEnabled(true);
+    setAuthUnavailable(false);
+    setLoading(false);
   };
 
   const logout = () => {
+    savePendingKioskToken(null);
     setAuthToken(null);
     setUser(null);
     api.logout().catch(() => {
@@ -196,10 +229,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         if (mountedRef.current) {
           setUser(currentUser);
         }
-      } catch {
-        setAuthToken(null);
-        if (mountedRef.current) {
+      } catch (err) {
+        if (!mountedRef.current) return;
+        if (isInvalidTokenError(err)) {
+          setAuthToken(null);
           setUser(null);
+        } else {
+          setAuthUnavailable(true);
         }
       }
     }
@@ -229,6 +265,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         authEnabled,
         requiresSetup,
         loading,
+        authUnavailable,
         isAdmin,
         authorization,
         login,

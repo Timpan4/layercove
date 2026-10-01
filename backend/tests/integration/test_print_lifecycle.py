@@ -21,6 +21,14 @@ import pytest
 class TestPrintStartLogic:
     """Test print start callback logic without database integration."""
 
+    @pytest.fixture(autouse=True)
+    def clear_usage_sessions(self):
+        from backend.app.services.usage_tracker import _active_sessions
+
+        _active_sessions.clear()
+        yield
+        _active_sessions.clear()
+
     @pytest.mark.asyncio
     async def test_print_start_calls_notification_service(self, capture_logs):
         """Verify on_print_start triggers notification service."""

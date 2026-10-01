@@ -1,4 +1,6 @@
 import { Component, type ReactNode, type ErrorInfo } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Button } from './components/Button';
 import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
@@ -94,13 +96,24 @@ function WebSocketProvider({ children }: { children: React.ReactNode }) {
   return <>{children}</>;
 }
 
+function AuthRecovery() {
+  const { refreshAuth } = useAuth();
+  const { t } = useTranslation();
+  return <div className="min-h-screen flex flex-col items-center justify-center gap-4 p-4" role="alert">
+    <p>{t('common.errorLoading')}</p>
+    <Button onClick={() => void refreshAuth()}>{t('common.retry')}</Button>
+  </div>;
+}
+
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { authEnabled, loading, user } = useAuth();
+  const { authEnabled, loading, authUnavailable, user } = useAuth();
   const location = useLocation();
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
+
+  if (authUnavailable) return <AuthRecovery />;
 
   if (authEnabled && !user) {
     return <Navigate to="/login" replace state={{ from: location }} />;
@@ -115,12 +128,14 @@ function PermissionRoute({ permission, children }: { permission: Permission; chi
   // per-action permission checks. Used for pages where delegation is supported
   // (e.g. settings:read grants read-only access to Settings; specific tabs
   // require their own permissions like users:read, groups:update, etc.).
-  const { authEnabled, loading, user, authorization } = useAuth();
+  const { authEnabled, loading, authUnavailable, user, authorization } = useAuth();
   const location = useLocation();
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
+
+  if (authUnavailable) return <AuthRecovery />;
 
   // Auth disabled → open access (backward compatibility)
   if (!authEnabled) {
@@ -139,11 +154,13 @@ function PermissionRoute({ permission, children }: { permission: Permission; chi
 }
 
 function SetupRoute({ children }: { children: React.ReactNode }) {
-  const { authEnabled, loading } = useAuth();
+  const { authEnabled, loading, authUnavailable } = useAuth();
 
   if (loading) {
     return <div className="min-h-screen flex items-center justify-center">Loading...</div>;
   }
+
+  if (authUnavailable) return <AuthRecovery />;
 
   // If auth is already enabled, redirect to login
   // Otherwise, allow access to setup page (even if setup was completed before)
