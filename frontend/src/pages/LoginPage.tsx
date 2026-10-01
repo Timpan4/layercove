@@ -186,10 +186,13 @@ export function LoginPage() {
     if (autologinAttemptedRef.current) return;
     const fallbackQuery = searchParams.get('fallback');
     if (fallbackQuery === 'local') return;
-    if (!advancedAuthStatus || !advancedAuthStatus.autologin_provider_id) return;
     // Don't redirect mid-OIDC-exchange (we're already coming back from the IdP).
     const hash = window.location.hash;
-    if (hash.startsWith('#oidc_token=') || searchParams.get('oidc_error')) return;
+    if (hash.startsWith('#oidc_token=') || searchParams.get('oidc_error')) {
+      autologinAttemptedRef.current = true;
+      return;
+    }
+    if (!advancedAuthStatus || !advancedAuthStatus.autologin_provider_id) return;
     autologinAttemptedRef.current = true;
 
     const providerId = advancedAuthStatus.autologin_provider_id;
@@ -198,12 +201,17 @@ export function LoginPage() {
     );
     Promise.race([api.getOIDCAuthorizeUrl(providerId), timeoutPromise])
       .then((result) => {
+        try {
+          sessionStorage.setItem(REMEMBER_ME_KEY, rememberMe ? '1' : '0');
+        } catch (err) {
+          console.warn('Automatic SSO: Remember Me preference unavailable', err);
+        }
         window.location.href = (result as { auth_url: string }).auth_url;
       })
       .catch(() => {
         setAutologinFailed(true);
       });
-  }, [advancedAuthStatus, searchParams]);
+  }, [advancedAuthStatus, searchParams, rememberMe]);
 
   const localLoginEnabled = advancedAuthStatus?.local_login_enabled !== false;
   const showAutologinBanner = autologinFailed && advancedAuthStatus?.autologin_provider_id != null;

@@ -27,6 +27,16 @@ export class ApiError extends Error {
   }
 }
 
+export function isInvalidTokenError(error: unknown): error is ApiError {
+  return error instanceof ApiError && error.status === 401 && [
+    'Could not validate credentials',
+    'Token has expired',
+    'User not found or inactive',
+    'Invalid API key',
+    'API key has expired',
+  ].some(message => error.message.includes(message));
+}
+
 // Auth token storage
 // By default tokens are stored in sessionStorage (tab-scoped, cleared on close).
 // When the token originates from the ?token= URL param (kiosk bootstrap), it is
@@ -103,7 +113,8 @@ function buildSlicerUrlFilename(filename: string): string {
 
 async function request<T>(
   endpoint: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  requestToken: string | null = authToken
 ): Promise<T> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
@@ -111,8 +122,8 @@ async function request<T>(
   };
 
   // Add auth token if available
-  if (authToken) {
-    headers['Authorization'] = `Bearer ${authToken}`;
+  if (requestToken) {
+    headers['Authorization'] = `Bearer ${requestToken}`;
   }
 
   const response = await fetch(`${API_BASE}${endpoint}`, {
@@ -162,18 +173,12 @@ async function request<T>(
     const structuredDetail = detail && typeof detail === 'object' && !Array.isArray(detail)
       ? (detail as Record<string, unknown>)
       : null;
+    const apiError = new ApiError(message, response.status, code, structuredDetail);
 
     // Handle 401 Unauthorized - only clear token if it's actually invalid
     // Don't clear on "Authentication required" which might be a timing issue
-    if (response.status === 401) {
-      const invalidTokenMessages = [
-        'Could not validate credentials',
-        'Token has expired',
-        'User not found or inactive',
-        'Invalid API key',
-        'API key has expired',
-      ];
-      if (invalidTokenMessages.some(m => message.includes(m))) {
+    if (isInvalidTokenError(apiError)) {
+      if (requestToken === authToken) {
         setAuthToken(null);
         // Notify AuthContext so the protected route guard re-evaluates and
         // redirects to /login on the same tab — without this, AuthContext.user
@@ -185,7 +190,7 @@ async function request<T>(
       }
     }
 
-    throw new ApiError(message, response.status, code, structuredDetail);
+    throw apiError;
   }
 
   // Handle empty responses (204 No Content, etc.)
@@ -3864,7 +3869,7 @@ export const api = {
     request<{ message: string }>('/auth/logout', {
       method: 'POST',
     }),
-  getCurrentUser: () => request<UserResponse>('/auth/me'),
+  getCurrentUser: (token: string | null = authToken) => request<UserResponse>('/auth/me', {}, token),
   disableAuth: () =>
     request<{ message: string; auth_enabled: boolean }>('/auth/disable', {
       method: 'POST',
