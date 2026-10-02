@@ -1470,6 +1470,8 @@ function InventoryPage() {
           <div className="flex bg-bambu-dark-primary border border-bambu-dark-tertiary rounded-lg overflow-hidden">
             <button
               onClick={() => setViewMode('table')}
+              aria-label={t('inventory.table')}
+              aria-pressed={viewMode === 'table'}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
                 viewMode === 'table'
                   ? 'bg-bambu-green text-white'
@@ -1481,6 +1483,8 @@ function InventoryPage() {
             </button>
             <button
               onClick={() => setViewMode('cards')}
+              aria-label={t('inventory.cards')}
+              aria-pressed={viewMode === 'cards'}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors ${
                 viewMode === 'cards'
                   ? 'bg-bambu-green text-white'
@@ -1492,6 +1496,8 @@ function InventoryPage() {
             </button>
             <button
               onClick={() => canViewForecast && setViewMode('forecast')}
+              aria-label={t('forecast.title')}
+              aria-pressed={viewMode === 'forecast'}
               disabled={!canViewForecast}
               title={canViewForecast ? undefined : t('forecast.noReadAccess')}
               className={`flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium transition-colors disabled:opacity-40 disabled:cursor-not-allowed ${
@@ -1621,6 +1627,7 @@ function InventoryPage() {
 
         {/* Material dropdown chip */}
         <select
+          aria-label={t('inventory.material')}
           value={materialFilter}
           onChange={(e) => { setMaterialFilter(e.target.value); resetPage(); }}
           className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus:outline-none ${
@@ -1637,6 +1644,7 @@ function InventoryPage() {
 
         {/* Brand dropdown chip */}
         <select
+          aria-label={t('inventory.brand')}
           value={brandFilter}
           onChange={(e) => { setBrandFilter(e.target.value); resetPage(); }}
           className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus:outline-none ${
@@ -1655,6 +1663,7 @@ function InventoryPage() {
             spool carries a category, otherwise it's noise. */}
         {(uniqueCategories.length > 0 || categoryFilter) && (
           <select
+            aria-label={t('inventory.category')}
             value={categoryFilter}
             onChange={(e) => { setCategoryFilter(e.target.value); resetPage(); }}
             className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus:outline-none ${
@@ -1676,6 +1685,7 @@ function InventoryPage() {
         {/* Spool name dropdown chip */}
         {uniqueSpoolCatalogIds.length > 0 && (
           <select
+            aria-label={t('inventory.spoolName')}
             value={spoolFilter}
             onChange={(e) => { setSpoolFilter(e.target.value); resetPage(); }}
             className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus:outline-none ${
@@ -1696,6 +1706,7 @@ function InventoryPage() {
             (matches the category chip pattern). */}
         {(storageLocations.length > 0 || storageLocationFilter) && (
           <select
+            aria-label={t('inventory.storageLocation')}
             value={storageLocationFilter}
             onChange={(e) => { setStorageLocationFilter(e.target.value); }}
             className={`px-3 py-1.5 rounded-lg border text-xs font-medium transition-colors cursor-pointer focus:outline-none ${
@@ -2060,6 +2071,7 @@ function InventoryPage() {
               <div className="flex items-center gap-2">
                 <span className="text-bambu-gray">{t('inventory.show')}</span>
                 <select
+                  aria-label={t('inventory.show')}
                   value={pageSize}
                   onChange={(e) => handlePageSizeChange(Number(e.target.value))}
                   className="px-2 py-1 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded text-white text-sm focus:outline-none focus:border-bambu-green"
@@ -2286,6 +2298,7 @@ function PaginationBar({
       <div className="flex items-center gap-2">
         <span className="text-bambu-gray">{t('inventory.show')}</span>
         <select
+          aria-label={t('inventory.show')}
           value={pageSize}
           onChange={(e) => onPageSizeChange(Number(e.target.value))}
           className="px-2 py-1 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded text-white text-sm focus:outline-none focus:border-bambu-green"

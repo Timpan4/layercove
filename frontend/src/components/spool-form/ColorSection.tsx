@@ -312,7 +312,8 @@ export function ColorSection({
         <input
           type="text"
           className="w-full pl-9 pr-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
-          placeholder={t('inventory.searchColors')}
+          aria-label={t('inventory.searchColors')}
+            placeholder={t('inventory.searchColors')}
           value={colorSearch}
           onChange={(e) => setColorSearch(e.target.value)}
         />
@@ -407,8 +408,9 @@ export function ColorSection({
       {/* Manual Color Input */}
       <div className="grid grid-cols-2 gap-3">
         <div>
-          <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.colorName')}</label>
+          <label htmlFor="spool-color-name" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.colorName')}</label>
           <input
+            id="spool-color-name"
             type="text"
             className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
             placeholder={t('inventory.colorNamePlaceholder')}
@@ -417,11 +419,12 @@ export function ColorSection({
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.hexColor')}</label>
+          <label htmlFor="spool-hex-color" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.hexColor')}</label>
           <div className="flex gap-2">
             <div className="relative flex-1">
               <span className="absolute left-3 top-1/2 -translate-y-1/2 text-bambu-gray">#</span>
               <input
+                id="spool-hex-color"
                 type="text"
                 className="w-full pl-7 pr-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm font-mono uppercase focus:outline-none focus:border-bambu-green"
                 placeholder="RRGGBB"
@@ -473,6 +476,7 @@ export function ColorSection({
                 const hex = e.target.value.replace('#', '').toUpperCase();
                 updateField('rgba', hex + 'FF');
               }}
+              aria-label={t('inventory.pickColor')}
               title={t('inventory.pickColor')}
             />
           </div>
@@ -483,10 +487,11 @@ export function ColorSection({
           empty values keep the spool rendering as a solid swatch. */}
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-2 border-t border-bambu-dark-tertiary/50">
         <div>
-          <label className="block text-sm font-medium text-bambu-gray mb-1">
+          <label htmlFor="spool-extra-colors" className="block text-sm font-medium text-bambu-gray mb-1">
             {t('inventory.extraColorsLabel')}
           </label>
           <input
+            id="spool-extra-colors"
             type="text"
             className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm font-mono placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
             placeholder={t('inventory.extraColorsPlaceholder')}
@@ -504,12 +509,13 @@ export function ColorSection({
           )}
         </div>
         <div>
-          <label className="block text-sm font-medium text-bambu-gray mb-1 flex items-center gap-1.5">
+          <label htmlFor="spool-color-effect" className="block text-sm font-medium text-bambu-gray mb-1 flex items-center gap-1.5">
             <Sparkles className="w-3.5 h-3.5" />
             {t('inventory.colorEffectLabel')}
           </label>
           <div className="flex gap-2 items-stretch">
             <select
+              id="spool-color-effect"
               className="flex-1 px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
               value={formData.effect_type}
               onChange={(e) => updateField('effect_type', e.target.value)}

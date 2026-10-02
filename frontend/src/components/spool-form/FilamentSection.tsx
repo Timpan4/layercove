@@ -138,12 +138,13 @@ export function FilamentSection({
       {/* Slicer Preset (autocomplete) — hidden in quick-add mode */}
       {!quickAdd && (
         <div>
-          <label className="block text-sm font-medium text-bambu-gray mb-1">
+          <label htmlFor="spool-preset" className="block text-sm font-medium text-bambu-gray mb-1">
             {t('inventory.slicerPreset')} *
           </label>
           <div className="relative" ref={presetRef}>
             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray/50 pointer-events-none" />
             <input
+              id="spool-preset"
               type="text"
               className="w-full pl-9 pr-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
               placeholder={t('inventory.searchPresets')}
@@ -193,9 +194,10 @@ export function FilamentSection({
 
       {/* Material */}
       <div>
-        <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.material')} *</label>
+        <label htmlFor="spool-material" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.material')} *</label>
         <div className="relative" ref={materialRef}>
           <input
+            id="spool-material"
             type="text"
             className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
             placeholder={t('inventory.selectMaterial')}
@@ -256,11 +258,12 @@ export function FilamentSection({
 
       {/* Brand (dropdown with search) */}
       <div>
-        <label className="block text-sm font-medium text-bambu-gray mb-1">
+        <label htmlFor="spool-brand" className="block text-sm font-medium text-bambu-gray mb-1">
           {t('inventory.brand')}{!quickAdd && ' *'}
         </label>
           <div className="relative" ref={brandRef}>
             <input
+              id="spool-brand"
               type="text"
               className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
               placeholder={t('inventory.searchBrand')}
@@ -321,11 +324,12 @@ export function FilamentSection({
 
       {/* Variant / Subtype */}
       <div>
-        <label className="block text-sm font-medium text-bambu-gray mb-1">
+        <label htmlFor="spool-subtype" className="block text-sm font-medium text-bambu-gray mb-1">
           {t('inventory.subtype')}{!quickAdd && ' *'}
         </label>
           <div className="relative" ref={subtypeRef}>
             <input
+              id="spool-subtype"
               type="text"
               value={subtypeDropdownOpen ? subtypeSearch : formData.subtype}
               onChange={(e) => {
@@ -385,9 +389,10 @@ export function FilamentSection({
 
       {/* Label Weight */}
       <div>
-        <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.labelWeight')}</label>
+        <label htmlFor="spool-label-weight" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.labelWeight')}</label>
         <div className="relative">
           <input
+            id="spool-label-weight"
             type="number"
             className="w-full px-3 py-2 pr-7 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
             value={labelInput}
@@ -414,8 +419,9 @@ export function FilamentSection({
       {/* Quantity — only in quick-add mode */}
       {quickAdd && (
         <div>
-          <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.quantity')}</label>
+          <label htmlFor="spool-quantity" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.quantity')}</label>
           <input
+            id="spool-quantity"
             type="number"
             className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
             value={quantity}

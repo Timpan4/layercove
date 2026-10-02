@@ -97,7 +97,7 @@ function SpoolWeightPicker({
 
   return (
     <div>
-      <label className="block text-sm font-medium text-bambu-gray mb-1">
+      <label htmlFor="spool-core-weight" className="block text-sm font-medium text-bambu-gray mb-1">
         <span className="flex items-center gap-2">
           <Scale className="w-3.5 h-3.5 text-bambu-gray" />
           {t('inventory.coreWeight')}
@@ -107,6 +107,7 @@ function SpoolWeightPicker({
         <div className="flex-1 min-w-0 relative" ref={dropdownRef}>
           <input
             ref={inputRef}
+            aria-label={t('inventory.searchSpoolWeight')}
             type="text"
             className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
             placeholder={t('inventory.searchSpoolWeight')}
@@ -151,6 +152,7 @@ function SpoolWeightPicker({
         </div>
         <div className="flex items-center gap-1 shrink-0">
           <input
+            id="spool-core-weight"
             type="number"
             className="w-16 px-2 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm text-center font-mono focus:outline-none focus:border-bambu-green"
             value={value}
@@ -220,10 +222,11 @@ export function AdditionalSection({
 
       {/* Current Weight (remaining filament) */}
       <div>
-        <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.currentWeight')}</label>
+        <label htmlFor="spool-remaining-weight" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.currentWeight')}</label>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <input
+              id="spool-remaining-weight"
               type="number"
               value={remainingInput}
               min={0}
@@ -254,10 +257,11 @@ export function AdditionalSection({
 
       {/* Measured Weight (empty spool + remaining filament) */}
       <div>
-        <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.measuredWeight')}</label>
+        <label htmlFor="spool-measured-weight" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.measuredWeight')}</label>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <input
+              id="spool-measured-weight"
               type="number"
               value={measuredInput}
               min={0}
@@ -293,11 +297,12 @@ export function AdditionalSection({
 
       {/* Cost per kg */}
       <div>
-        <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.costPerKg', 'Cost per kg')}</label>
+        <label htmlFor="spool-cost" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.costPerKg', 'Cost per kg')}</label>
         <div className="flex items-center gap-2">
           <div className="relative flex-1">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-bambu-gray text-sm pointer-events-none">{currencySymbol}</span>
             <input
+              id="spool-cost"
               type="number"
               value={formData.cost_per_kg ?? ''}
               min={0}
@@ -374,8 +379,9 @@ export function AdditionalSection({
 
       {/* Note */}
       <div>
-        <label className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.note')}</label>
+        <label htmlFor="spool-note" className="block text-sm font-medium text-bambu-gray mb-1">{t('inventory.note')}</label>
         <textarea
+          id="spool-note"
           className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green resize-none min-h-[80px]"
           placeholder={t('inventory.notePlaceholder')}
           value={formData.note}
@@ -413,6 +419,7 @@ export function AdditionalSection({
               type="text"
               maxLength={255}
               className="flex-1 px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm placeholder:text-bambu-gray/50 focus:outline-none focus:border-bambu-green"
+              aria-label={t('locations.createPlaceholder')}
               placeholder={t('locations.createPlaceholder')}
               value={newLocationName}
               onChange={(e) => setNewLocationName(e.target.value)}

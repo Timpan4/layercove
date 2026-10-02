@@ -761,10 +761,10 @@ export function SpoolFormModal({
         onClick={onClose}
       />
 
-      <div className="relative w-full max-w-xl mx-4 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-xl shadow-2xl max-h-[90vh] flex flex-col">
+      <div role="dialog" aria-labelledby="spool-form-title" className="relative w-full max-w-xl mx-4 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-xl shadow-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-bambu-dark-tertiary flex-shrink-0">
-          <h2 className="text-lg font-semibold text-white flex items-baseline gap-2">
+          <h2 id="spool-form-title" className="text-lg font-semibold text-white flex items-baseline gap-2">
             {isEditing ? t('inventory.editSpool') : isCopying ? t('inventory.copySpool') : t('inventory.addSpool')}
             {isEditing && spool && (
               <span className="text-sm font-mono text-bambu-gray">#{spool.id}</span>
@@ -772,6 +772,7 @@ export function SpoolFormModal({
           </h2>
           <button
             onClick={onClose}
+            aria-label={t('common.close')}
             className="p-1 text-bambu-gray hover:text-white rounded transition-colors"
           >
             <X className="w-5 h-5" />
@@ -791,6 +792,9 @@ export function SpoolFormModal({
             </div>
             <button
               type="button"
+              role="switch"
+              aria-label={t('inventory.quickAdd')}
+              aria-checked={quickAdd}
               onClick={() => {
                 setQuickAdd(!quickAdd);
                 if (!quickAdd) setActiveTab('filament');
