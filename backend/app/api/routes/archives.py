@@ -985,6 +985,9 @@ async def export_archives(
 async def export_stats(
     format: str = Query("csv", description="Export format: csv or xlsx"),
     days: int = 30,
+    date_from: date | None = None,
+    date_to: date | None = None,
+    all_time: bool = False,
     printer_id: int | None = None,
     project_id: int | None = None,
     created_by_id: int | None = Query(None, description="Filter by user who created the print (-1 for no user)"),
@@ -1009,6 +1012,9 @@ async def export_stats(
             printer_id=printer_id,
             project_id=project_id,
             created_by_id=created_by_id,
+            date_from=date_from,
+            date_to=date_to,
+            all_time=all_time,
         )
     except ImportError as e:
         raise HTTPException(500, str(e))

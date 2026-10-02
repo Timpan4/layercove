@@ -29,6 +29,7 @@ class FailureAnalysisService:
         printer_id: int | None = None,
         project_id: int | None = None,
         created_by_id: int | None = None,
+        all_time: bool = False,
     ) -> dict:
         """Analyze failure patterns across logged print events."""
         # Build base query — separate date vs non-date filters for trend reuse
@@ -44,6 +45,8 @@ class FailureAnalysisService:
             range_start = dt_from if date_from else datetime.now(timezone.utc) - timedelta(days=365)
             range_end = dt_to if date_to else datetime.now(timezone.utc)
             effective_days = max((range_end - range_start).days, 1)
+        elif all_time:
+            effective_days = None
         else:
             effective_days = days if days is not None else 30
             cutoff_date = datetime.now(timezone.utc) - timedelta(days=effective_days)
@@ -186,45 +189,71 @@ class FailureAnalysisService:
             for e in recent_result.scalars().all()
         ]
 
-        # Failure rate trend (by week)
+        # Explicit date ranges and all-time exports use the same selected events
+        # as the summary, including the partial weeks at the range boundaries.
         trend_data = []
-        num_weeks = max(effective_days // 7, 1)
-        for i in range(num_weeks):
-            week_end = datetime.now(timezone.utc) - timedelta(weeks=i)
-            week_start = week_end - timedelta(weeks=1)
-
-            week_filter = [
-                PrintLogEntry.created_at >= week_start,
-                PrintLogEntry.created_at < week_end,
-                *non_date_filter,
-            ]
-
-            week_total = await self.db.execute(select(func.count(PrintLogEntry.id)).where(and_(*week_filter)))
-            week_successful = await self.db.execute(
-                select(func.count(PrintLogEntry.id)).where(and_(*week_filter, PrintLogEntry.status == "completed"))
+        if date_from or date_to or all_time:
+            event_result = await self.db.execute(
+                select(PrintLogEntry.created_at, PrintLogEntry.status).where(and_(*base_filter))
             )
-            week_failed = await self.db.execute(
-                select(func.count(PrintLogEntry.id)).where(
-                    and_(*week_filter, PrintLogEntry.status.in_(["failed", "aborted"]))
+            events = event_result.all()
+            first_date = date_from or (min(row[0].date() for row in events) if events else None)
+            last_date = date_to or (max(row[0].date() for row in events) if events else None)
+            if first_date and last_date:
+                buckets = defaultdict(lambda: {"total": 0, "successful": 0, "failed": 0})
+                for created_at, status in events:
+                    bucket = (created_at.date() - first_date).days // 7
+                    buckets[bucket]["total"] += 1
+                    buckets[bucket]["successful"] += status == "completed"
+                    buckets[bucket]["failed"] += status in ("failed", "aborted")
+                for i in range((last_date - first_date).days // 7 + 1):
+                    counts = buckets[i]
+                    outcomes = counts["successful"] + counts["failed"]
+                    trend_data.append(
+                        {
+                            "week_start": (first_date + timedelta(weeks=i)).isoformat(),
+                            "total_prints": counts["total"],
+                            "failed_prints": counts["failed"],
+                            "failure_rate": round(counts["failed"] / outcomes * 100, 1) if outcomes else 0,
+                        }
+                    )
+        else:
+            num_weeks = max(effective_days // 7, 1)
+            for i in range(num_weeks):
+                week_end = datetime.now(timezone.utc) - timedelta(weeks=i)
+                week_start = week_end - timedelta(weeks=1)
+
+                week_filter = [
+                    PrintLogEntry.created_at >= week_start,
+                    PrintLogEntry.created_at < week_end,
+                    *non_date_filter,
+                ]
+
+                week_total = await self.db.execute(select(func.count(PrintLogEntry.id)).where(and_(*week_filter)))
+                week_successful = await self.db.execute(
+                    select(func.count(PrintLogEntry.id)).where(and_(*week_filter, PrintLogEntry.status == "completed"))
                 )
-            )
+                week_failed = await self.db.execute(
+                    select(func.count(PrintLogEntry.id)).where(
+                        and_(*week_filter, PrintLogEntry.status.in_(["failed", "aborted"]))
+                    )
+                )
 
-            total = week_total.scalar() or 0
-            successful = week_successful.scalar() or 0
-            failed = week_failed.scalar() or 0
-            week_outcome = successful + failed
-            rate = (failed / week_outcome * 100) if week_outcome > 0 else 0
+                total = week_total.scalar() or 0
+                successful = week_successful.scalar() or 0
+                failed = week_failed.scalar() or 0
+                week_outcome = successful + failed
+                rate = (failed / week_outcome * 100) if week_outcome > 0 else 0
 
-            trend_data.append(
-                {
-                    "week_start": week_start.date().isoformat(),
-                    "total_prints": total,
-                    "failed_prints": failed,
-                    "failure_rate": round(rate, 1),
-                }
-            )
-
-        trend_data.reverse()  # Oldest first
+                trend_data.append(
+                    {
+                        "week_start": week_start.date().isoformat(),
+                        "total_prints": total,
+                        "failed_prints": failed,
+                        "failure_rate": round(rate, 1),
+                    }
+                )
+            trend_data.reverse()  # Oldest first
 
         return {
             "period_days": effective_days,

@@ -4603,6 +4603,9 @@ export const api = {
   exportStats: async (options?: {
     format?: 'csv' | 'xlsx';
     days?: number;
+    dateFrom?: string;
+    dateTo?: string;
+    allTime?: boolean;
     printerId?: number;
     projectId?: number;
     createdById?: number;
@@ -4610,6 +4613,9 @@ export const api = {
     const params = new URLSearchParams();
     if (options?.format) params.set('format', options.format);
     if (options?.days) params.set('days', String(options.days));
+    if (options?.dateFrom) params.set('date_from', options.dateFrom);
+    if (options?.dateTo) params.set('date_to', options.dateTo);
+    if (options?.allTime) params.set('all_time', 'true');
     if (options?.printerId) params.set('printer_id', String(options.printerId));
     if (options?.projectId) params.set('project_id', String(options.projectId));
     if (options?.createdById !== undefined) params.set('created_by_id', String(options.createdById));

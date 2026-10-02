@@ -1,6 +1,6 @@
 import csv
 import io
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any
 
 from sqlalchemy import select
@@ -164,6 +164,9 @@ class ExportService:
         printer_id: int | None = None,
         project_id: int | None = None,
         created_by_id: int | None = None,
+        date_from: date | None = None,
+        date_to: date | None = None,
+        all_time: bool = False,
     ) -> tuple[bytes, str, str]:
         """Export statistics summary to CSV or Excel format.
 
@@ -186,18 +189,34 @@ class ExportService:
             printer_id=printer_id,
             project_id=project_id,
             created_by_id=created_by_id,
+            date_from=date_from,
+            date_to=date_to,
+            all_time=all_time,
         )
 
         # Build stats rows
-        rows = [
-            ["Metric", "Value"],
-            ["Period (days)", analysis["period_days"]],
-            ["Total Prints", analysis["total_prints"]],
-            ["Failed Prints", analysis["failed_prints"]],
-            ["Failure Rate (%)", analysis["failure_rate"]],
-            [""],
-            ["Failures by Reason", ""],
-        ]
+        rows = [["Metric", "Value"]]
+        if date_from or date_to:
+            rows.extend(
+                [
+                    ["Period", "Date range"],
+                    ["Start date", date_from.isoformat() if date_from else "Unbounded"],
+                    ["End date", date_to.isoformat() if date_to else "Unbounded"],
+                ]
+            )
+        elif all_time:
+            rows.append(["Period", "All time"])
+        else:
+            rows.append(["Period (days)", analysis["period_days"]])
+        rows.extend(
+            [
+                ["Total Prints", analysis["total_prints"]],
+                ["Failed Prints", analysis["failed_prints"]],
+                ["Failure Rate (%)", analysis["failure_rate"]],
+                [""],
+                ["Failures by Reason", ""],
+            ]
+        )
 
         for reason, count in analysis["failures_by_reason"].items():
             rows.append([reason, count])
