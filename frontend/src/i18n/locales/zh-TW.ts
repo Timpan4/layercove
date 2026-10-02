@@ -3335,6 +3335,7 @@ export default {
       kprofiles: 'K 值設定',
     },
     orcaCloud: {
+      printerFilterUnavailable: "Orca Cloud 設定檔不支援依印表機相容性篩選。",
       connectedAs: '已連接',
       logout: '中斷連線',
       noLogoutPermission: '您沒有中斷連線的權限',

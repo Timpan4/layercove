@@ -3336,6 +3336,7 @@ export default {
       kprofiles: 'Profils K',
     },
     orcaCloud: {
+      printerFilterUnavailable: "Le filtrage par compatibilité avec une imprimante est indisponible pour les profils Orca Cloud.",
       connectedAs: 'Connecté en tant que',
       logout: 'Déconnecter',
       noLogoutPermission: 'Vous n\'avez pas la permission de vous déconnecter',

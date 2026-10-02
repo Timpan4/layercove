@@ -4,7 +4,7 @@ import type { TFunction } from 'i18next';
 import { Search, Filter, RefreshCw, Droplet, Settings2, Printer as PrinterIcon, Layers, X, Loader2, Clock } from 'lucide-react';
 
 import { api } from '../api/client';
-import type { OrcaProfileListResponse, OrcaProfileMeta, Printer } from '../api/client';
+import type { OrcaProfileListResponse, OrcaProfileMeta } from '../api/client';
 import { Button } from './Button';
 import { FilterDropdown } from '../pages/ProfilesPage';
 import { formatRelativeTime } from '../utils/date';
@@ -53,7 +53,6 @@ interface OrcaCloudProfilesViewProps {
   lastSyncTime?: Date;
   onRefresh: () => void;
   isRefreshing: boolean;
-  printers: Printer[];
   t: TFunction;
 }
 
@@ -62,12 +61,10 @@ export function OrcaCloudProfilesView({
   lastSyncTime,
   onRefresh,
   isRefreshing,
-  printers,
   t,
 }: OrcaCloudProfilesViewProps) {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterType, setFilterType] = useState<ProfileType>('all');
-  const [filterPrinter, setFilterPrinter] = useState('all');
   const [filterNozzle, setFilterNozzle] = useState('all');
   const [filterFilament, setFilterFilament] = useState('all');
   const [filterLayerHeight, setFilterLayerHeight] = useState('all');
@@ -92,38 +89,24 @@ export function OrcaCloudProfilesView({
       if (p.meta.layerHeight) layerHeights.add(p.meta.layerHeight);
     });
     return {
-      printers: printers.map(p => ({ id: p.id.toString(), name: p.name })),
       nozzles: Array.from(nozzles).sort((a, b) => parseFloat(a) - parseFloat(b)),
       filaments: Array.from(filaments).sort(),
       layerHeights: Array.from(layerHeights).sort((a, b) => parseFloat(a) - parseFloat(b)),
     };
-  }, [allPresetsWithMeta, printers]);
-
-  const selectedPrinterModel = useMemo(() => {
-    if (filterPrinter === 'all') return null;
-    const printer = printers.find(p => p.id.toString() === filterPrinter);
-    return printer?.model || null;
-  }, [filterPrinter, printers]);
+  }, [allPresetsWithMeta]);
 
   const filteredPresets = useMemo(() => {
     return allPresetsWithMeta
       .filter(s => filterType === 'all' || s.type === filterType)
-      .filter(s => {
-        if (filterPrinter === 'all' || !selectedPrinterModel) return true;
-        const presetPrinter = s.meta.printer?.toLowerCase() || '';
-        const configuredModel = selectedPrinterModel.toLowerCase();
-        return presetPrinter.includes(configuredModel) || configuredModel.includes(presetPrinter);
-      })
       .filter(s => filterNozzle === 'all' || s.meta.nozzle === filterNozzle)
       .filter(s => filterFilament === 'all' || s.meta.filamentType === filterFilament)
       .filter(s => filterLayerHeight === 'all' || s.meta.layerHeight === filterLayerHeight)
       .filter(s => searchQuery === '' || s.name.toLowerCase().includes(searchQuery.toLowerCase()))
       .sort((a, b) => a.name.localeCompare(b.name));
-  }, [allPresetsWithMeta, filterType, filterPrinter, selectedPrinterModel, filterNozzle, filterFilament, filterLayerHeight, searchQuery]);
+  }, [allPresetsWithMeta, filterType, filterNozzle, filterFilament, filterLayerHeight, searchQuery]);
 
   const clearFilters = () => {
     setFilterType('all');
-    setFilterPrinter('all');
     setFilterNozzle('all');
     setFilterFilament('all');
     setFilterLayerHeight('all');
@@ -132,7 +115,6 @@ export function OrcaCloudProfilesView({
 
   const hasActiveFilters =
     filterType !== 'all' ||
-    filterPrinter !== 'all' ||
     filterNozzle !== 'all' ||
     filterFilament !== 'all' ||
     filterLayerHeight !== 'all' ||
@@ -179,17 +161,6 @@ export function OrcaCloudProfilesView({
             ]}
             onChange={(v) => setFilterType(v as ProfileType)}
           />
-          {filterOptions.printers.length > 0 && (
-            <FilterDropdown
-              label={t('profiles.cloudView.filters.printer')}
-              value={filterPrinter}
-              options={[
-                { value: 'all', label: t('profiles.cloudView.filters.all') },
-                ...filterOptions.printers.map(p => ({ value: p.id, label: p.name })),
-              ]}
-              onChange={setFilterPrinter}
-            />
-          )}
           {filterOptions.nozzles.length > 0 && (
             <FilterDropdown
               label={t('profiles.cloudView.filters.nozzle')}
@@ -232,6 +203,7 @@ export function OrcaCloudProfilesView({
             </button>
           )}
         </div>
+        <p className="text-sm text-bambu-gray">{t('profiles.orcaCloud.printerFilterUnavailable')}</p>
       </div>
 
       <div className="flex flex-wrap items-center gap-4 mb-4 text-sm text-bambu-gray">
