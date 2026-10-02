@@ -193,6 +193,7 @@ export function LogViewer() {
 
               {/* Refresh button */}
               <button
+                aria-label="Refresh logs"
                 onClick={() => refetch()}
                 disabled={isLoading}
                 className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-bambu-dark-tertiary text-bambu-gray hover:text-white hover:bg-bambu-dark-secondary rounded transition-colors disabled:opacity-50"
@@ -220,9 +221,9 @@ export function LogViewer() {
             </div>
 
             {/* Search and Filter Row */}
-            <div className="flex items-center gap-2">
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               {/* Search input */}
-              <div className="relative flex-1">
+              <div className="relative min-w-0 sm:flex-1">
                 <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-4 h-4 text-bambu-gray" />
                 <input
                   type="text"
@@ -233,8 +234,9 @@ export function LogViewer() {
                 />
                 {searchQuery && (
                   <button
+                    aria-label="Clear search"
                     onClick={() => setSearchQuery('')}
-                    className="absolute right-2 top-1/2 -translate-y-1/2 text-bambu-gray hover:text-white"
+                    className="absolute right-1 top-1/2 -translate-y-1/2 p-1.5 text-bambu-gray hover:text-white"
                   >
                     <X className="w-4 h-4" />
                   </button>
