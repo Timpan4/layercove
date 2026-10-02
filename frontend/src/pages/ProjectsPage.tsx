@@ -148,10 +148,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
         <form onSubmit={handleSubmit} className="flex flex-col flex-1 min-h-0">
           <div className="p-4 space-y-4 overflow-y-auto flex-1">
           <div>
-            <label className="block text-sm font-medium text-white mb-1">
+            <label htmlFor="project-name" className="block text-sm font-medium text-white mb-1">
               {t('common.name')}
             </label>
             <input
+              id="project-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -162,10 +163,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-white mb-1">
+            <label htmlFor="project-description" className="block text-sm font-medium text-white mb-1">
               {t('common.description')}
             </label>
             <textarea
+              id="project-description"
               value={description}
               onChange={(e) => setDescription(e.target.value)}
               className="w-full bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green resize-none"
@@ -176,10 +178,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
 
           {/* #1155: External URL */}
           <div>
-            <label className="block text-sm font-medium text-white mb-1">
+            <label htmlFor="project-url" className="block text-sm font-medium text-white mb-1">
               {t('projects.urlLabel')}
             </label>
             <input
+              id="project-url"
               type="url"
               value={url}
               onChange={(e) => { setUrl(e.target.value); if (urlError) setUrlError(null); }}
@@ -272,10 +275,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
           {/* Target Counts - Plates and Parts side by side */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-white mb-1">
+              <label htmlFor="project-target-plates" className="block text-sm font-medium text-white mb-1">
                 {t('projects.targetPlates')}
               </label>
               <input
+                id="project-target-plates"
                 type="number"
                 value={targetCount}
                 onChange={(e) => setTargetCount(e.target.value)}
@@ -286,10 +290,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
               <p className="text-xs text-bambu-gray mt-1">{t('projects.targetPlatesHelp')}</p>
             </div>
             <div>
-              <label className="block text-sm font-medium text-white mb-1">
+              <label htmlFor="project-target-parts" className="block text-sm font-medium text-white mb-1">
                 {t('projects.targetParts')}
               </label>
               <input
+                id="project-target-parts"
                 type="number"
                 value={targetPartsCount}
                 onChange={(e) => setTargetPartsCount(e.target.value)}
@@ -303,10 +308,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
 
           {/* Tags */}
           <div>
-            <label className="block text-sm font-medium text-white mb-1">
+            <label htmlFor="project-tags" className="block text-sm font-medium text-white mb-1">
               {t('projects.tagsLabel')}
             </label>
             <input
+              id="project-tags"
               type="text"
               value={tags}
               onChange={(e) => setTags(e.target.value)}
@@ -318,10 +324,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
           {/* Due Date and Priority in a row */}
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <label className="block text-sm font-medium text-white mb-1">
+              <label htmlFor="project-due-date" className="block text-sm font-medium text-white mb-1">
                 {t('projects.dueDate')}
               </label>
               <input
+                id="project-due-date"
                 type="date"
                 value={dueDate}
                 onChange={(e) => setDueDate(e.target.value)}
@@ -329,10 +336,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-white mb-1">
+              <label htmlFor="project-priority" className="block text-sm font-medium text-white mb-1">
                 {t('projects.priority')}
               </label>
               <select
+                id="project-priority"
                 value={priority}
                 onChange={(e) => setPriority(e.target.value)}
                 className="w-full bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-white focus:outline-none focus:border-bambu-green"
@@ -346,7 +354,7 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
           </div>
 
           <div>
-            <label className="block text-sm font-medium text-white mb-1">
+            <label htmlFor="project-budget" className="block text-sm font-medium text-white mb-1">
               {t('projectDetail.cost.budget')}
             </label>
             <div className="relative">
@@ -354,6 +362,7 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
                 {currencySymbol}
               </span>
               <input
+                id="project-budget"
                 type="number"
                 step="0.01"
                 min="0"
@@ -367,10 +376,11 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
 
           {project && (
             <div>
-              <label className="block text-sm font-medium text-white mb-1">
+              <label htmlFor="project-status" className="block text-sm font-medium text-white mb-1">
                 {t('common.status')}
               </label>
               <select
+                id="project-status"
                 value={status}
                 onChange={(e) => setStatus(e.target.value)}
                 className="w-full bg-bambu-dark border border-bambu-dark-tertiary rounded px-3 py-2 text-white focus:outline-none focus:border-bambu-green"
