@@ -2426,6 +2426,7 @@ export function QueuePage() {
       {requeueItem && (
         <PrintModal
           mode="create"
+          initialScheduleType="queue"
           archiveId={requeueItem.archive_id ?? undefined}
           libraryFileId={requeueItem.library_file_id ?? undefined}
           archiveName={requeueItem.archive_name || requeueItem.library_file_name || `File #${requeueItem.archive_id || requeueItem.library_file_id}`}

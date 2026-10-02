@@ -49,6 +49,7 @@ export function PrintModal({
   sliceEstimates,
   queueItem,
   initialSelectedPrinterIds,
+  initialScheduleType,
   onClose,
   onSuccess,
   projectId,
@@ -138,7 +139,10 @@ export function PrintModal({
         staggerIntervalMinutes: DEFAULT_SCHEDULE_OPTIONS.staggerIntervalMinutes,
       };
     }
-    return DEFAULT_SCHEDULE_OPTIONS;
+    return {
+      ...DEFAULT_SCHEDULE_OPTIONS,
+      scheduleType: initialScheduleType ?? DEFAULT_SCHEDULE_OPTIONS.scheduleType,
+    };
   });
 
   // Manual slot overrides: slot_id (1-indexed) -> globalTrayId (default mapping for single printer or all printers)
@@ -1026,10 +1030,11 @@ export function PrintModal({
   // Modal title and action button text based on mode
   const getModalConfig = () => {
     if (!isEditing) {
+      const action = scheduleOptions.scheduleType === 'queue' ? t('printModal.queue') : t('common.print');
       return {
-        title: t('common.print'),
+        title: action,
         icon: Printer,
-        submitText: t('common.print'),
+        submitText: action,
         submitIcon: Printer,
         loadingText: submitProgress.total > 1
           ? t('queue.addingProgress', { current: submitProgress.current, total: submitProgress.total })
