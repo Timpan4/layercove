@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useId, useMemo, useState } from 'react';
 import DOMPurify from 'dompurify';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -108,6 +108,7 @@ function useElapsedSeconds(active: boolean): number {
 }
 
 export function MakerworldPage() {
+  const fieldId = useId();
   const { t } = useTranslation();
   const { hasPermission } = useAuth();
   const { showToast } = useToast();
@@ -456,8 +457,12 @@ export function MakerworldPage() {
           <h2 className="text-lg font-semibold">{t('makerworld.pasteUrlHeader')}</h2>
         </CardHeader>
         <CardContent>
+          <label htmlFor={`${fieldId}-url`} className="block text-sm text-gray-600 dark:text-gray-400 mb-2">
+            {t('makerworld.urlLabel')}
+          </label>
           <form onSubmit={handleResolve} className="flex gap-2">
             <input
+              id={`${fieldId}-url`}
               type="text"
               value={urlInput}
               onChange={(e) => setUrlInput(e.target.value)}
@@ -547,10 +552,11 @@ export function MakerworldPage() {
             <div className="flex flex-wrap items-center justify-between gap-3">
               <h2 className="text-lg font-semibold">{t('makerworld.platesHeader', { count: instances.length })}</h2>
               <div className="flex flex-wrap items-center gap-2">
-                <label className="text-xs text-gray-600 dark:text-gray-400">
+                <label htmlFor={`${fieldId}-folder`} className="text-xs text-gray-600 dark:text-gray-400">
                   {t('makerworld.importTo')}
                 </label>
                 <select
+                  id={`${fieldId}-folder`}
                   value={selectedFolderId ?? ''}
                   onChange={(e) => setSelectedFolderId(e.target.value ? Number(e.target.value) : null)}
                   className="text-sm px-2 py-1 border rounded bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-700"
@@ -628,7 +634,7 @@ export function MakerworldPage() {
                     key={instanceId}
                     className="flex flex-col gap-2 p-3 border rounded border-gray-200 dark:border-gray-700"
                   >
-                    <div className="flex gap-3 items-center">
+                    <div className="flex flex-wrap gap-3 items-center">
                       {(() => {
                         const gallery = getInstanceImages(inst);
                         const canOpen = gallery.length > 0;
@@ -686,7 +692,7 @@ export function MakerworldPage() {
                           </p>
                         )}
                       </div>
-                      <div className="flex gap-2 shrink-0">
+                      <div className="flex w-full flex-wrap gap-2 sm:w-auto sm:shrink-0">
                         <Button
                           variant="ghost"
                           size="sm"

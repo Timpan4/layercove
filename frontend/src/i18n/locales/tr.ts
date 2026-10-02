@@ -6539,6 +6539,7 @@ export default {
   },
 
   makerworld: {
+    urlLabel: "MakerWorld URL'si",
     title: 'MakerWorld',
     description: 'Bambu Handy uygulamasına gitmeden — doğrudan LayerCove\'den içe aktarmak ve yazdırmak için bir MakerWorld model URL\'si yapıştırın.',
     pasteUrlHeader: "MakerWorld'den İçe Aktar",

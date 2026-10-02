@@ -6588,6 +6588,7 @@ export default {
     noHistory: 'Aucune détection pour le moment.',
   },
   makerworld: {
+    urlLabel: "URL MakerWorld",
     title: 'MakerWorld',
     description: 'Collez une URL de modèle MakerWorld pour l\'importer et l\'imprimer directement depuis LayerCove — sans passer par l\'application Bambu Handy.',
     pasteUrlHeader: 'Importer depuis MakerWorld',

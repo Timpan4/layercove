@@ -6586,6 +6586,7 @@ export default {
     noHistory: '暂无检测记录。',
   },
   makerworld: {
+    urlLabel: "MakerWorld 链接",
     title: 'MakerWorld',
     description: '粘贴 MakerWorld 模型链接，即可直接在 LayerCove 中导入并打印 —— 无需切换到 Bambu Handy 应用。',
     pasteUrlHeader: '从 MakerWorld 导入',

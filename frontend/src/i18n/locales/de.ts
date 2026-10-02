@@ -6599,6 +6599,7 @@ export default {
   },
 
   makerworld: {
+    urlLabel: "MakerWorld-URL",
     title: 'MakerWorld',
     description: 'Füge eine MakerWorld-Modell-URL ein, um es direkt aus LayerCove zu importieren und zu drucken — ohne die Bambu Handy App zu öffnen.',
     pasteUrlHeader: 'Von MakerWorld importieren',

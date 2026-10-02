@@ -6599,6 +6599,7 @@ export default {
     noHistory: 'まだ検出はありません。',
   },
   makerworld: {
+    urlLabel: "MakerWorldのURL",
     title: 'MakerWorld',
     description: 'MakerWorld モデルの URL を貼り付けると、Bambu Handy アプリを開かなくても LayerCove から直接インポート・印刷できます。',
     pasteUrlHeader: 'MakerWorld からインポート',
