@@ -5020,6 +5020,8 @@ export default {
 
   // K-Profiles
   kProfiles: {
+    unsupportedPrinter: "I profili K non sono supportati per questa stampante",
+    unsupportedPrinterDesc: "La gestione dei profili K è disponibile per le stampanti Bambu. Per i test di pressure advance su questa stampante, usa la scheda Calibrazione.",
     title: 'Profili K',
     noPrintersConfigured: 'Nessuna stampante configurata',
     addPrinterInSettings: 'Aggiungi una stampante in Impostazioni per gestire i K-profiles',

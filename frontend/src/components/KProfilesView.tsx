@@ -757,6 +757,8 @@ export function KProfilesView() {
     queryKey: ['printers'],
     queryFn: api.getPrinters,
   });
+  const selectedPrinterData = printers?.find((p) => p.id === selectedPrinter);
+  const supportsKProfiles = selectedPrinterData?.provider === 'bambu';
 
   // Get K-profiles for selected printer (filtered by nozzle diameter)
   const {
@@ -773,7 +775,7 @@ export function KProfilesView() {
       console.log('[KProfiles] Received profiles:', result?.profiles?.length || 0, 'profiles');
       return result;
     },
-    enabled: !!selectedPrinter,
+    enabled: !!selectedPrinter && supportsKProfiles,
     retry: false,
     staleTime: 0,  // Always consider data stale to ensure fresh fetch
     gcTime: 0,  // Don't cache results
@@ -784,7 +786,7 @@ export function KProfilesView() {
   const { data: allProfiles } = useQuery({
     queryKey: ['kprofiles', selectedPrinter, '0.4'],
     queryFn: () => api.getKProfiles(selectedPrinter!, '0.4'),
-    enabled: !!selectedPrinter,
+    enabled: !!selectedPrinter && supportsKProfiles,
     staleTime: 60000,  // Cache for 1 minute
   });
 
@@ -809,7 +811,7 @@ export function KProfilesView() {
   } = useQuery({
     queryKey: ['kprofile-notes', selectedPrinter],
     queryFn: () => api.getKProfileNotes(selectedPrinter!),
-    enabled: !!selectedPrinter,
+    enabled: !!selectedPrinter && supportsKProfiles,
     staleTime: 30000,  // Cache for 30 seconds
   });
 
@@ -828,14 +830,14 @@ export function KProfilesView() {
 
   // Refetch profiles when printer selection changes
   useEffect(() => {
-    if (selectedPrinter) {
+    if (selectedPrinter && supportsKProfiles) {
       // Delay refetch to ensure query is enabled after state update
       const timer = setTimeout(() => {
         refetchProfiles();
       }, 150);
       return () => clearTimeout(timer);
     }
-  }, [selectedPrinter, nozzleDiameter]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [selectedPrinter, nozzleDiameter, supportsKProfiles]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Get connected printers for display
   const connectedPrinters = printers?.filter((p) => p.is_active) || [];
@@ -916,12 +918,12 @@ export function KProfilesView() {
   }, [kprofiles?.profiles, searchQuery, extruderFilter, flowTypeFilter, sortOption, resolveFilamentName]);
 
   // Check if selected printer is dual-nozzle (auto-detected from MQTT temperature data)
-  const selectedPrinterData = printers?.find((p) => p.id === selectedPrinter);
   const isDualNozzle = selectedPrinterData?.nozzle_count === 2;
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (!supportsKProfiles) return;
       // Don't trigger shortcuts when typing in input fields
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement || e.target instanceof HTMLSelectElement) {
         return;
@@ -946,7 +948,7 @@ export function KProfilesView() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [editingProfile, showAddModal, copyingProfile, selectionMode, refetchProfiles]);
+  }, [editingProfile, showAddModal, copyingProfile, selectionMode, refetchProfiles, supportsKProfiles]);
 
   // Export profiles to JSON file
   const handleExport = useCallback(() => {
@@ -1172,7 +1174,7 @@ export function KProfilesView() {
   return (
     <>
       {/* Loading overlay when refetching profiles (not initial load) */}
-      {isFetching && !kprofilesLoading && (
+      {supportsKProfiles && isFetching && !kprofilesLoading && (
         <div className="fixed inset-0 bg-black/50 flex flex-col items-center justify-center z-40">
           <Loader2 className="w-10 h-10 text-bambu-green animate-spin mb-3" />
           <p className="text-white font-medium">{t('kProfiles.loadingProfiles')}</p>
@@ -1197,6 +1199,7 @@ export function KProfilesView() {
           </select>
         </div>
 
+        {supportsKProfiles && <>
         <div className="w-32">
           <label htmlFor={`${filterId}-nozzle`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.nozzle')}</label>
           <select
@@ -1231,8 +1234,18 @@ export function KProfilesView() {
             {t('kProfiles.addProfile')}
           </Button>
         </div>
+        </>}
       </div>
 
+      {!supportsKProfiles ? (
+        <Card>
+          <CardContent className="py-12 text-center">
+            <Gauge className="w-12 h-12 text-bambu-gray mx-auto mb-4" />
+            <h3 className="text-lg font-semibold text-white mb-2">{t('kProfiles.unsupportedPrinter')}</h3>
+            <p className="text-bambu-gray">{t('kProfiles.unsupportedPrinterDesc')}</p>
+          </CardContent>
+        </Card>
+      ) : <>
       {/* Search & Filter Row */}
       <div className="flex flex-wrap gap-4 mb-4">
         <div className="flex-1 min-w-48 relative">
@@ -1572,6 +1585,7 @@ export function KProfilesView() {
           </Card>
         </div>
       )}
+      </>}
     </>
   );
 }

@@ -5032,6 +5032,8 @@ export default {
 
   // K-Profiles
   kProfiles: {
+    unsupportedPrinter: "このプリンターはKプロファイルに対応していません",
+    unsupportedPrinterDesc: "Kプロファイルの管理はBambuプリンターで利用できます。このプリンターのプレッシャーアドバンステストには、キャリブレーションタブを使用してください。",
     title: 'Kプロファイル',
     noPrintersConfigured: 'プリンターが設定されていません',
     addPrinterInSettings: 'Kプロファイルを管理するには設定でプリンターを追加してください',
