@@ -26,6 +26,7 @@ from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 logger = logging.getLogger(__name__)
 
@@ -123,7 +124,9 @@ async def collect_diagnostic_snapshot(db: AsyncSession) -> dict[str, Any]:
     from backend.app.models.printer import Printer
     from backend.app.models.virtual_printer import VirtualPrinter
 
-    printers_result = await db.execute(select(Printer).where(Printer.is_active.is_(True)))
+    printers_result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.is_active.is_(True))
+    )
     printers = list(printers_result.scalars().all())
 
     vps_result = await db.execute(select(VirtualPrinter).where(VirtualPrinter.enabled.is_(True)))

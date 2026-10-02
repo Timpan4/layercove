@@ -60,7 +60,7 @@ describe('ConnectionDiagnosticModal', () => {
 
     // Overall banner reflects "problems".
     expect(
-      screen.getByText(/Found problems that explain why the printer/i),
+      screen.getByText('Some connection checks failed. Review the results above.'),
     ).toBeInTheDocument();
 
     spy.mockRestore();
@@ -121,5 +121,38 @@ describe('ConnectionDiagnosticModal', () => {
     expect(screen.getByText(/Port 6000 is unreachable/i)).toBeInTheDocument();
 
     spy.mockRestore();
+  });
+
+  it('shows unavailable Moonraker telemetry without claiming the printer should work', async () => {
+    const spy = vi.spyOn(api, 'diagnosePrinter').mockResolvedValue({
+      printer_id: 1,
+      ip_address: '192.168.1.50',
+      overall: 'warnings',
+      checks: [
+        { id: 'moonraker_api', status: 'pass', params: {} },
+        { id: 'klipper_state', status: 'warn', params: {} },
+      ],
+    });
+    try {
+      renderModal({ printerId: 1, printerName: 'Fictional Voron', onClose: vi.fn() });
+      expect(await screen.findByText('Moonraker API')).toBeInTheDocument();
+      expect(screen.getByText('Klipper status')).toBeInTheDocument();
+      expect(screen.getByText('Live Klipper telemetry is unavailable or its state is unknown. Check the printer connection and status.')).toBeInTheDocument();
+      expect(screen.getByText('Some checks need attention or could not be verified.')).toBeInTheDocument();
+      expect(screen.queryByText(/printer should work|MQTT|FTPS|RTSPS|Developer Mode/i)).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it('describes pending saved-printer checks without assuming Bambu publishing', async () => {
+    const spy = vi.spyOn(api, 'diagnosePrinter').mockImplementation(() => new Promise(() => {}));
+    try {
+      renderModal({ printerId: 1, printerName: 'Fictional Voron', onClose: vi.fn() });
+      expect(await screen.findByText('Checking the configured connection and available printer status.')).toBeInTheDocument();
+      expect(screen.queryByText(/publish a status report/i)).not.toBeInTheDocument();
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

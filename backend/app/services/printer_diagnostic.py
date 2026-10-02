@@ -1,4 +1,4 @@
-"""Connection diagnostic for Bambu printers.
+"""Provider-aware connection diagnostics.
 
 Runs the checks a maintainer performs by hand when triaging a
 "printer won't connect / won't print" report — port reachability, LAN
@@ -18,7 +18,9 @@ from backend.app.models.printer import Printer
 from backend.app.schemas.printer import DiagnosticCheck, PrinterDiagnosticResult
 from backend.app.services.camera import get_camera_port
 from backend.app.services.discovery import is_running_in_docker
+from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
 from backend.app.services.printer_manager import printer_manager
+from backend.app.services.printer_types import NormalizedPrinterState
 from backend.app.utils.printer_models import has_external_storage
 
 logger = logging.getLogger(__name__)
@@ -113,6 +115,53 @@ def _same_subnet(ip_a: str, ip_b: str) -> bool | None:
     return net_a == net_b
 
 
+async def _run_moonraker_diagnostic(printer: Printer) -> PrinterDiagnosticResult:
+    config = printer.moonraker_config
+    api_check = DiagnosticCheck(id="moonraker_api", status="warn")
+    if config is not None:
+        try:
+            client = MoonrakerHTTPClient(
+                base_url=config.base_url,
+                api_key=config.api_key,
+                authorization=config.authorization,
+                tls_verify=config.tls_verify,
+            )
+            reachable = await client.test_connection()
+            api_check = DiagnosticCheck(id="moonraker_api", status="pass" if reachable else "fail")
+        except MoonrakerHTTPError as error:
+            api_check = DiagnosticCheck(id="moonraker_api", status="fail", params={"reason": error.code})
+        except ValueError:
+            # Configuration cannot be used. Never fall back to Bambu probes.
+            api_check = DiagnosticCheck(id="moonraker_api", status="warn")
+        except RuntimeError:
+            # Unreadable stored credentials must not escape or log a traceback.
+            api_check = DiagnosticCheck(id="moonraker_api", status="fail", params={"reason": "credential_error"})
+
+    snapshot = printer_manager.get_snapshot(printer.id)
+    state_status = "warn"
+    if snapshot is not None and snapshot.connected and not snapshot.telemetry_stale:
+        if snapshot.state == NormalizedPrinterState.ERROR:
+            state_status = "fail"
+        elif snapshot.state not in (
+            NormalizedPrinterState.OFFLINE,
+            NormalizedPrinterState.CONNECTING,
+            NormalizedPrinterState.UNKNOWN,
+        ):
+            state_status = "pass"
+    state_check = DiagnosticCheck(
+        id="klipper_state",
+        status=state_status,
+        params={"state": snapshot.state.value} if snapshot is not None else {},
+    )
+    statuses = {api_check.status, state_check.status}
+    return PrinterDiagnosticResult(
+        printer_id=printer.id,
+        ip_address=printer.ip_address or "",
+        overall="problems" if "fail" in statuses else "warnings" if "warn" in statuses else "ok",
+        checks=[api_check, state_check],
+    )
+
+
 async def run_connection_diagnostic(
     ip_address: str,
     *,
@@ -130,6 +179,9 @@ async def run_connection_diagnostic(
     pass / fail / warn / skip; the frontend renders the human-readable
     title and fix text (localized) keyed on that id + status.
     """
+    if printer is not None and getattr(printer, "provider", "bambu") == "moonraker":
+        return await _run_moonraker_diagnostic(printer)
+
     checks: list[DiagnosticCheck] = []
 
     # --- Port reachability (probed in parallel) ---

@@ -6406,19 +6406,31 @@ export default {
     modalTitle: '연결 진단 — {{name}}',
     running: '진단 실행 중...',
     runningElapsed: '진단 실행 중... ({{elapsed}}초)',
-    waitingForReportHint: '프린터가 상태 보고를 게시하기를 기다리는 중 — 최대 {{max}}초 걸릴 수 있습니다.',
+    waitingForReportHint: '설정된 연결과 확인 가능한 프린터 상태를 확인하고 있습니다.',
     runFailed: '진단 실행 실패: {{error}}',
     retry: '다시 실행',
     runButton: '진단 실행',
     sectionTitle: '연결 진단',
-    sectionDescription: '프린터가 연결되지 않거나 인쇄되지 않는 이유를 확인합니다 — 포트 연결 가능 여부, LAN 개발자 모드, Docker 네트워크 모드, 자격증명.',
+    sectionDescription: '각 프린터의 설정된 연결과 확인 가능한 상태를 점검합니다.',
     noPrinters: '구성된 프린터가 없습니다.',
     overall: {
-      ok: '문제가 발견되지 않았습니다 — 프린터 연결이 정상입니다.',
-      warnings: '프린터가 작동하지만 일부 항목에 주의가 필요합니다.',
-      problems: '프린터가 연결되지 않거나 인쇄되지 않는 원인이 되는 문제가 발견되었습니다.'
+      ok: '연결 점검을 통과했습니다. 인쇄 준비 상태를 확인한 것은 아닙니다.',
+      warnings: '일부 점검에 주의가 필요하거나 확인할 수 없었습니다.',
+      problems: '일부 연결 점검에 실패했습니다. 위의 결과를 확인하세요.',
     },
     check: {
+      moonraker_api: {
+        title: 'Moonraker API 연결',
+        pass: 'Moonraker API가 연결 점검에 응답했습니다.',
+        fail: 'Moonraker API 점검에 실패했습니다. 서비스, 주소, 인증 및 TLS 설정을 확인하세요.',
+        warn: 'Moonraker 설정을 사용할 수 없거나 유효하지 않습니다. 저장된 연결 설정을 확인하세요.',
+      },
+      klipper_state: {
+        title: 'Klipper 상태',
+        pass: '실시간 Klipper 텔레메트리를 사용할 수 있습니다.',
+        fail: 'Klipper가 오류를 보고합니다. 프린터 상태를 확인하세요.',
+        warn: '실시간 Klipper 텔레메트리를 사용할 수 없거나 상태를 알 수 없습니다. 프린터 연결과 상태를 확인하세요.',
+      },
       port_mqtt: {
         title: '제어 포트 (MQTT 8883)',
         pass: '연결 가능 — 프린터가 제어 연결을 수락하고 있습니다.',

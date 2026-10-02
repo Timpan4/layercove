@@ -262,11 +262,11 @@ describe('BugReportBubble', () => {
     expect(screen.getByText('Printer Beta')).toBeInTheDocument();
     expect(screen.queryByText('Printer Gamma')).not.toBeInTheDocument();
     // With more than one problem the per-printer checklists stay collapsed.
-    expect(screen.queryByText(/Found problems that explain/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Some connection checks failed. Review the results above.')).not.toBeInTheDocument();
 
     // Expanding a row reveals just that printer's checklist.
     await user.click(screen.getByText('Printer Alpha'));
-    expect(await screen.findByText(/Found problems that explain/)).toBeInTheDocument();
+    expect(await screen.findByText('Some connection checks failed. Review the results above.')).toBeInTheDocument();
   });
 
   it('auto-expands the checklist when only one printer has problems', async () => {
@@ -280,7 +280,7 @@ describe('BugReportBubble', () => {
       await screen.findByText('1 of 1 printers have connection issues')
     ).toBeInTheDocument();
     // Single problem → the checklist is expanded without a click.
-    expect(await screen.findByText(/Found problems that explain/)).toBeInTheDocument();
+    expect(await screen.findByText('Some connection checks failed. Review the results above.')).toBeInTheDocument();
   });
 
   it('shows the log-health panel when the scan finds known issues', async () => {
