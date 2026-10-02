@@ -273,8 +273,8 @@ function ProfileList({
           disabled={profileDisabled}
           onChange={() => onChoose(profile)}
         />
-        <span className="min-w-0">
-          <span className="block truncate">{profile.display_name} · {profile.source}</span>
+        <span className="min-w-0 flex-1 break-words">
+          <span className="block">{profile.display_name} · {profile.source}</span>
           {profile.classification.reason_details.length > 0 && (
             <span className={profileGroup === 'unclassified' ? 'text-amber-300' : 'text-bambu-gray'}>
               {profileGroup === 'unclassified' ? 'Manual confirmation required · ' : ''}
