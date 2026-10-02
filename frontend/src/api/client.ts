@@ -6871,11 +6871,12 @@ export const api = {
   }) => request<FilamentProfileCopy>(`/slicer/catalog/profiles/${profileId}/filament-copy`, {
     method: 'POST', body: JSON.stringify(body),
   }),
-  listSlicerCatalogProfiles: (options?: { includeInactive?: boolean; limit?: number; offset?: number }) => {
+  listSlicerCatalogProfiles: (options?: { includeInactive?: boolean; limit?: number; offset?: number; search?: string }) => {
     const search = new URLSearchParams();
     if (options?.includeInactive) search.set('include_inactive', 'true');
     if (options?.limit !== undefined) search.set('limit', String(options.limit));
     if (options?.offset !== undefined) search.set('offset', String(options.offset));
+    if (options?.search?.trim()) search.set('search', options.search.trim());
     const query = search.toString();
     return request<SlicerCatalogProfile[]>(`/slicer/catalog/profiles${query ? `?${query}` : ''}`);
   },

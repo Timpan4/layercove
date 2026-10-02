@@ -1,4 +1,9 @@
 export default {
+  slicerCatalog: {
+    searchProfiles: "Cerca profili del catalogo",
+    clearSearch: "Cancella ricerca",
+    noSearchMatches: "Nessun profilo del catalogo corrisponde alla ricerca.",
+  },
   slicerReadiness: {
     passed: "Controlli superati.",
     blocked: "Lo slicing è bloccato.",

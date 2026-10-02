@@ -91,6 +91,7 @@ async def list_catalog_profiles(
     include_inactive: bool = False,
     limit: int | None = None,
     offset: int = 0,
+    search: str | None = None,
 ) -> list[dict[str, Any]]:
     if limit is not None:
         limit = max(1, min(limit, 100))
@@ -100,13 +101,29 @@ async def list_catalog_profiles(
         visibility = or_(visibility, SlicerProfileAccount.user_id == current_user.id)
     else:
         visibility = or_(visibility, SlicerProfileAccount.user_id.is_(None))
+    conditions = [visibility]
+    name_search = (search or "").strip().casefold()
+    if name_search:
+        # SQLite's lower/LIKE do not fold Unicode. Fetch authorized names only.
+        names_query = (
+            select(SlicerProfile.id, SlicerProfile.display_name)
+            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+            .where(visibility)
+        )
+        if not include_inactive:
+            names_query = names_query.join(
+                SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id
+            )
+        names = (await db.execute(names_query)).all()
+        matching_ids = [profile_id for profile_id, name in names if name_search in name.casefold()]
+        conditions.append(SlicerProfile.id.in_(matching_ids))
     if not include_inactive:
         statement = (
             select(SlicerProfile, SlicerProfileRevision, SlicerProfileAccount)
             .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
             .join(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
             .join(SlicerProfileRevision, SlicerProfileRevision.id == SlicerProfileActivation.revision_id)
-            .where(visibility)
+            .where(*conditions)
             .order_by(SlicerProfile.display_name, SlicerProfile.id)
             .offset(offset)
         )
@@ -143,7 +160,7 @@ async def list_catalog_profiles(
         .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
         .outerjoin(SlicerProfileRevision, SlicerProfileRevision.id == latest_revision)
         .outerjoin(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
-        .where(visibility)
+        .where(*conditions)
         .order_by(SlicerProfile.display_name, SlicerProfile.id)
         .offset(offset)
     )

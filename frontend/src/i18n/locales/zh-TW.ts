@@ -1,4 +1,9 @@
 export default {
+  slicerCatalog: {
+    searchProfiles: "搜尋目錄設定檔",
+    clearSearch: "清除搜尋",
+    noSearchMatches: "沒有與搜尋相符的目錄設定檔。",
+  },
   slicerReadiness: {
     passed: "檢查通過。",
     blocked: "切片已遭阻擋。",

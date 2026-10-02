@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
@@ -16,6 +17,7 @@ const disabledTitle = 'Requires SETTINGS_UPDATE permission';
 const PROFILE_PAGE_SIZE = 25;
 
 export function SlicerCatalogAdmin() {
+  const { t } = useTranslation();
   const { hasPermission, authEnabled } = useAuth();
   const queryClient = useQueryClient();
   const canUpdate = !authEnabled || hasPermission('settings:update');
@@ -29,13 +31,16 @@ export function SlicerCatalogAdmin() {
   const [profileId, setProfileId] = useState('');
   const [printerId, setPrinterId] = useState('');
   const [profileOffset, setProfileOffset] = useState(0);
+  const [profileSearch, setProfileSearch] = useState('');
+  const profileQuery = profileSearch.trim();
 
   const profiles = useQuery({
-    queryKey: ['slicerCatalogProfiles', 'management', profileOffset],
+    queryKey: ['slicerCatalogProfiles', 'management', profileQuery, profileOffset],
     queryFn: () => api.listSlicerCatalogProfiles({
       includeInactive: true,
       limit: PROFILE_PAGE_SIZE + 1,
       offset: profileOffset,
+      ...(profileQuery ? { search: profileQuery } : {}),
     }),
   });
   const visibleProfiles = (profiles.data ?? []).slice(0, PROFILE_PAGE_SIZE);
@@ -112,6 +117,14 @@ export function SlicerCatalogAdmin() {
     </Collapsible></CardContent></Card>
 
     <Card><CardContent><Collapsible defaultOpen summary={<h3 className="text-base font-semibold text-white">Catalog profiles</h3>}>
+      <div className="mb-3 flex flex-wrap items-end gap-2">
+        <label className="min-w-0 flex-1 text-sm text-bambu-gray">
+          {t('slicerCatalog.searchProfiles')}
+          <input type="search" value={profileSearch} onChange={(event) => { setProfileSearch(event.target.value); setProfileOffset(0); }} className="mt-1 w-full rounded border border-bambu-dark-tertiary bg-bambu-dark px-3 py-2 text-white" />
+        </label>
+        {profileSearch && <Button size="sm" variant="secondary" onClick={() => { setProfileSearch(''); setProfileOffset(0); }}>{t('slicerCatalog.clearSearch')}</Button>}
+      </div>
+      {profiles.isSuccess && profileQuery && visibleProfiles.length === 0 && <p role="status" className="mb-3 text-sm text-bambu-gray">{t('slicerCatalog.noSearchMatches')}</p>}
       <div className="space-y-2">{visibleProfiles.map((profile, index) => <ProfileRow key={profile.profile_id} profile={profile} revisions={revisionQueries[index]?.data ?? []} revisionsLoading={revisionQueries[index]?.isLoading ?? false} canUpdate={canUpdate} updateTitle={updateTitle} onLifecycle={(revision, rollback) => lifecycle.mutate({ profile: profile.profile_id, revision, rollback })} onRetire={() => { retire.reset(); setRetireProfile(profile); }} />)}</div>
       {(profileOffset > 0 || hasNextProfilePage) && <div className="mt-4 flex items-center justify-between gap-3"><Button size="sm" variant="secondary" disabled={profileOffset === 0} onClick={() => setProfileOffset(Math.max(0, profileOffset - PROFILE_PAGE_SIZE))}>Previous</Button><span className="text-sm text-bambu-gray">Page {Math.floor(profileOffset / PROFILE_PAGE_SIZE) + 1}</span><Button size="sm" variant="secondary" disabled={!hasNextProfilePage} onClick={() => setProfileOffset(profileOffset + PROFILE_PAGE_SIZE)}>Next</Button></div>}
     </Collapsible></CardContent></Card>
