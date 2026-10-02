@@ -1068,7 +1068,13 @@ export function StatsPage() {
     setShowExportMenu(false);
     setIsExporting(true);
     try {
-      const { blob, filename } = await api.exportStats({ format, days: 90, createdById: createdByIdParam });
+      const { blob, filename } = await api.exportStats({
+        format,
+        dateFrom: effectiveDateRange.dateFrom,
+        dateTo: effectiveDateRange.dateTo,
+        allTime: !effectiveDateRange.dateFrom && !effectiveDateRange.dateTo,
+        createdById: createdByIdParam,
+      });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
