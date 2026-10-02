@@ -73,11 +73,22 @@ const selectToolbarDropdownOption = async (triggerName: RegExp, optionName: RegE
   await user.selectOptions(trigger, option);
 };
 
-const openPrinterControls = async () => {
+beforeEach(() => window.history.replaceState(null, '', '/'));
+
+const openPrinterControls = async (printerName = 'X1 Carbon') => {
   const user = userEvent.setup();
 
+  await user.click(await screen.findByRole('button', { name: `Inspect ${printerName}` }));
   await user.click(await screen.findByRole('button', { name: 'Open controls' }));
+  await screen.findByRole('button', { name: 'Back' });
+};
+
+const openFleetControls = async () => {
+  await screen.findByRole('heading', { name: 'Command deck' });
+  window.history.replaceState(null, '', '/#slicer-binding-1');
+  fireEvent.popState(window);
   await screen.findByRole('heading', { name: 'Printers' });
+  fireEvent.click(screen.getByRole('button', { name: 'M', exact: true }));
 };
 
 describe('PrintersPage', () => {
@@ -490,7 +501,7 @@ describe('PrintersPage', () => {
 
       render(<PrintersPage />);
 
-      await openPrinterControls();
+      await openFleetControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
@@ -590,7 +601,7 @@ describe('PrintersPage', () => {
     it('shows disabled state for disabled printers', async () => {
       render(<PrintersPage />);
 
-      await openPrinterControls();
+      await openPrinterControls('P1S Backup');
 
       await waitFor(() => {
         expect(screen.getAllByText('P1S Backup')[0]).toBeInTheDocument();
@@ -949,7 +960,7 @@ describe('PrintersPage', () => {
     it('shows select button in toolbar', async () => {
       render(<PrintersPage />);
 
-      await openPrinterControls();
+      await openFleetControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
@@ -963,7 +974,7 @@ describe('PrintersPage', () => {
     it('shows selection toolbar after clicking select button', async () => {
       render(<PrintersPage />);
 
-      await openPrinterControls();
+      await openFleetControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
@@ -981,7 +992,7 @@ describe('PrintersPage', () => {
     it('shows selection count when printers are selected', async () => {
       render(<PrintersPage />);
 
-      await openPrinterControls();
+      await openFleetControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
@@ -1006,7 +1017,7 @@ describe('PrintersPage', () => {
     it('shows select by state dropdown', async () => {
       render(<PrintersPage />);
 
-      await openPrinterControls();
+      await openFleetControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();
@@ -1023,7 +1034,7 @@ describe('PrintersPage', () => {
     it('exits selection mode on close button', async () => {
       render(<PrintersPage />);
 
-      await openPrinterControls();
+      await openFleetControls();
 
       await waitFor(() => {
         expect(screen.getAllByText('X1 Carbon')[0]).toBeInTheDocument();

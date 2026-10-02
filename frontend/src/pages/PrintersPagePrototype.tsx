@@ -54,6 +54,7 @@ interface PrintersPagePrototypeProps {
   onSortChange: (value: SortOption) => void;
   onAddPrinter?: () => void;
   onOpenControls?: (printerId: number) => void;
+  initialSelectedPrinterId?: number | null;
   production?: boolean;
 }
 
@@ -528,7 +529,7 @@ function InlineDeckVariant(props: PrintersPagePrototypeProps & { onAction: () =>
 }
 
 function CommandDeckVariant(props: PrintersPagePrototypeProps & { onAction: () => void }) {
-  const [selectedId, setSelectedId] = useState<number | null>(props.printers[0]?.printer.id ?? null);
+  const [selectedId, setSelectedId] = useState<number | null>(props.initialSelectedPrinterId ?? props.printers[0]?.printer.id ?? null);
   const selected = props.printers.find((item) => item.printer.id === selectedId) ?? props.printers[0];
 
   useEffect(() => {

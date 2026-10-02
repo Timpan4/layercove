@@ -8041,6 +8041,7 @@ export function PrintersPage() {
   const viewMode: ViewMode = cardSize === 1 ? 'compact' : 'expanded';
   const [compactDrilldownPrinterId, setCompactDrilldownPrinterId] = useState<number | null>(null);
   const [commandDeckControlsPrinterId, setCommandDeckControlsPrinterId] = useState<number | null>(null);
+  const [commandDeckSelectedPrinterId, setCommandDeckSelectedPrinterId] = useState<number | null>(null);
   const scrollPrinterIntoView = useCallback((printerId: number) => {
     requestAnimationFrame(() => {
       requestAnimationFrame(() => {
@@ -8921,6 +8922,7 @@ export function PrintersPage() {
       status: queryClient.getQueryData<PrinterStatus>(queryKeys.printerStatus(printer.id)),
     }))
     .filter(({ status }) => !hideDisconnected || status?.connected);
+  const controlPrinters = printers?.filter((printer) => printer.id === commandDeckControlsPrinterId) ?? [];
 
   if (commandDeckControlsPrinterId == null && !/^#slicer-binding-\d+$/.test(location.hash)) {
     return (
@@ -8942,9 +8944,11 @@ export function PrintersPage() {
           onHideOfflineChange={toggleHideDisconnected}
           onSortChange={handleSortChange}
           onAddPrinter={() => setShowAddModal(true)}
+          initialSelectedPrinterId={commandDeckSelectedPrinterId}
           onOpenControls={(printerId) => {
+            setCommandDeckSelectedPrinterId(printerId);
             setCommandDeckControlsPrinterId(printerId);
-            openCompactCard(printerId);
+            window.scrollTo(0, 0);
           }}
           production
         />
@@ -8961,7 +8965,15 @@ export function PrintersPage() {
 
   return (
     <div className="p-4 md:p-8">
-      <div className="space-y-3 mb-6">
+      {commandDeckControlsPrinterId != null ? (
+        <div className="mx-auto mb-4 flex max-w-3xl flex-wrap items-center gap-3">
+          <Button variant="secondary" onClick={() => { setCommandDeckControlsPrinterId(null); window.scrollTo(0, 0); }}>
+            <ArrowLeft className="h-4 w-4" />
+            {t('common.back')}
+          </Button>
+          <h1 className="text-2xl font-semibold text-white">{controlPrinters[0]?.name ?? t('printers.title')}</h1>
+        </div>
+      ) : <div className="space-y-3 mb-6">
         <div>
           <h1 className="text-2xl font-bold text-white flex items-center gap-3">
             <PrinterIcon className="w-7 h-7 text-bambu-green" />
@@ -9026,9 +9038,9 @@ export function PrintersPage() {
             </div>
           )}
         </div>
-      </div>
+      </div>}
 
-      {!isLoading && printers && printers.length > 0 && <PrinterSlicerBindings printers={printers} />}
+      {commandDeckControlsPrinterId == null && !isLoading && printers && printers.length > 0 && <PrinterSlicerBindings printers={printers} />}
 
       {isLoading ? (
         <div className="text-center py-12 text-bambu-gray">{t('common.loading')}</div>
@@ -9046,13 +9058,13 @@ export function PrintersPage() {
             </Button>
           </CardContent>
         </Card>
-      ) : sortedPrinters.length === 0 && (search.trim() || statusFilter !== 'all' || locationFilter !== 'all') ? (
+      ) : commandDeckControlsPrinterId == null && sortedPrinters.length === 0 && (search.trim() || statusFilter !== 'all' || locationFilter !== 'all') ? (
         <Card>
           <CardContent className="text-center py-12">
             <p className="text-bambu-gray">{t('printers.noSearchResults')}</p>
           </CardContent>
         </Card>
-      ) : pageView === 'camwall' ? (
+      ) : commandDeckControlsPrinterId == null && pageView === 'camwall' ? (
         <CameraWall
           printers={sortedPrinters.filter((printer) => printer.capabilities?.camera ?? printer.provider !== 'moonraker')}
           maxLive={camWallMaxLive}
@@ -9088,7 +9100,7 @@ export function PrintersPage() {
             localStorage.setItem('camWallStatusMode', next);
           }}
         />
-      ) : groupedPrinters ? (
+      ) : commandDeckControlsPrinterId == null && groupedPrinters ? (
         /* Grouped view (location, status, or model) */
         <div className="space-y-6">
           {(() => {
@@ -9187,15 +9199,15 @@ export function PrintersPage() {
         </div>
       ) : (
         /* Regular grid view */
-        <div className={`grid gap-4 ${cardSize >= 3 ? 'gap-6' : ''} ${getGridClasses()}`}>
-          {sortedPrinters.map((printer) => (
+        <div className={`grid gap-4 ${commandDeckControlsPrinterId != null ? 'mx-auto max-w-3xl' : `${cardSize >= 3 ? 'gap-6' : ''} ${getGridClasses()}`}`}>
+          {(commandDeckControlsPrinterId != null ? controlPrinters : sortedPrinters).map((printer) => (
             <PrinterCard
               key={printer.id}
               printer={printer}
-              hideIfDisconnected={hideDisconnected}
+              hideIfDisconnected={commandDeckControlsPrinterId == null && hideDisconnected}
               maintenanceInfo={maintenanceByPrinter[printer.id]}
-              viewMode={viewMode}
-              cardSize={cardSize}
+              viewMode={commandDeckControlsPrinterId != null ? 'expanded' : viewMode}
+              cardSize={commandDeckControlsPrinterId != null ? 2 : cardSize}
               spoolmanEnabled={spoolmanEnabled}
               hasUnlinkedSpools={hasUnlinkedSpools}
               linkedSpools={linkedSpools}
@@ -9223,7 +9235,7 @@ export function PrintersPage() {
               chamberTempPresets={effectiveChamberTempPresets}
               fanSpeedPresets={effectiveFanSpeedPresets}
               requirePlateClear={settings?.require_plate_clear === true}
-              selectionMode={selectionMode}
+              selectionMode={commandDeckControlsPrinterId == null && selectionMode}
               isSelected={selectedPrinterIds.has(printer.id)}
               onToggleSelect={toggleSelect}
               onOpenCompactCard={openCompactCard}
@@ -9232,7 +9244,13 @@ export function PrintersPage() {
         </div>
       )}
 
-      {cardSize === 2 && compactDrilldownPrinterId != null && (
+      {commandDeckControlsPrinterId != null && controlPrinters.length > 0 && (
+        <div className="mx-auto mt-6 max-w-3xl">
+          <PrinterSlicerBindings printers={controlPrinters} />
+        </div>
+      )}
+
+      {commandDeckControlsPrinterId == null && cardSize === 2 && compactDrilldownPrinterId != null && (
         <button
           type="button"
           onClick={returnToCompactCards}
@@ -9253,7 +9271,7 @@ export function PrintersPage() {
       )}
 
       {/* Bulk selection toolbar */}
-      {selectionMode && printers && (
+      {commandDeckControlsPrinterId == null && selectionMode && printers && (
         <BulkPrinterToolbar
           selectedIds={selectedPrinterIds}
           printers={printers}
