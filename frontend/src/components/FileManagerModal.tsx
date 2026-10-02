@@ -35,6 +35,7 @@ import { formatFileSize } from '../utils/file';
 interface FileManagerModalProps {
   printerId: number;
   printerName: string;
+  provider?: 'bambu' | 'moonraker';
   onClose: () => void;
 }
 
@@ -279,7 +280,7 @@ const SORT_OPTIONS: { value: SortOption; label: string }[] = [
   { value: 'date-desc', label: 'Date (newest)' },
 ];
 
-export function FileManagerModal({ printerId, printerName, onClose }: FileManagerModalProps) {
+export function FileManagerModal({ printerId, printerName, provider = 'bambu', onClose }: FileManagerModalProps) {
   const { t } = useTranslation();
   const { showToast } = useToast();
   const queryClient = useQueryClient();
@@ -306,7 +307,7 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
   // together while this modal sat open (#1480). A printer's file list only
   // changes on upload / delete (the mutations below invalidate the query)
   // or when a print finishes; the manual Refresh button covers the rest.
-  const { data, isLoading, refetch } = useQuery({
+  const { data, isLoading, isError, isFetching, refetch } = useQuery({
     queryKey: ['printerFiles', printerId, currentPath],
     queryFn: () => api.getPrinterFiles(printerId, currentPath),
   });
@@ -414,7 +415,7 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
   };
 
   // Quick navigation buttons for common directories
-  const quickDirs = [
+  const quickDirs = provider === 'moonraker' ? [{ path: '/', label: t('printerFiles.gcodes') }] : [
     { path: '/', label: 'Root' },
     { path: '/cache', label: 'Cache' },
     { path: '/model', label: 'Models' },
@@ -539,6 +540,13 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
             {isLoading ? (
               <div className="flex items-center justify-center py-12">
                 <Loader2 className="w-8 h-8 text-bambu-green animate-spin" />
+              </div>
+            ) : isError ? (
+              <div role="alert" className="flex flex-col items-center gap-3 py-12 text-bambu-gray-light">
+                <p>{t('printerFiles.failedToLoad')}</p>
+                <Button onClick={() => refetch()} disabled={isFetching}>
+                  {t('common.retry')}
+                </Button>
               </div>
             ) : !data?.files?.length ? (
               <div className="text-center py-12 text-bambu-gray">
@@ -700,7 +708,8 @@ export function FileManagerModal({ printerId, printerName, onClose }: FileManage
             </Button>
             <Button
               variant="secondary"
-              disabled={selectedFiles.size === 0 || deleteMutation.isPending}
+              disabled={selectedFiles.size === 0 || deleteMutation.isPending ||
+                data?.files?.some(file => selectedFiles.has(file.path) && file.permissions === 'r')}
               onClick={handleDelete}
               className="text-red-700 hover:text-red-800 dark:text-red-400 dark:hover:text-red-300"
             >

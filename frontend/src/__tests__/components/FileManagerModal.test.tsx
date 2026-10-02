@@ -142,6 +142,32 @@ describe('FileManagerModal', () => {
   });
 
   describe('navigation', () => {
+    it('browses the Moonraker G-code root and nested files without Bambu shortcuts', async () => {
+      server.use(
+        http.get('/api/v1/printers/:id/files', ({ request }) => {
+          const path = new URL(request.url).searchParams.get('path');
+          return HttpResponse.json({ files: path === '/nested'
+            ? [{ name: 'cube.gcode', path: '/nested/cube.gcode', size: 1024, is_directory: false }]
+            : [{ name: 'nested', path: '/nested', size: 0, is_directory: true }],
+          });
+        })
+      );
+
+      render(
+        <FileManagerModal printerId={1} printerName="Tim Voron" provider="moonraker" onClose={mockOnClose} />
+      );
+
+      expect(screen.getByRole('button', { name: 'G-code', exact: true })).toBeInTheDocument();
+      for (const name of ['Cache', 'Models', 'Timelapse']) {
+        expect(screen.queryByRole('button', { name, exact: true })).not.toBeInTheDocument();
+      }
+      fireEvent.click(await screen.findByText('nested'));
+      expect(await screen.findByText('cube.gcode')).toBeInTheDocument();
+      fireEvent.click(screen.getByRole('button', { name: 'G-code', exact: true }));
+      expect(await screen.findByText('nested')).toBeInTheDocument();
+      expect(screen.queryByText('cube.gcode')).not.toBeInTheDocument();
+    });
+
     it('navigates into a folder when clicked', async () => {
       server.use(
         http.get('/api/v1/printers/:id/files', ({ request }) => {
@@ -366,6 +392,37 @@ describe('FileManagerModal', () => {
 
       fireEvent.keyDown(window, { key: 'Escape' });
       expect(mockOnClose).toHaveBeenCalled();
+    });
+  });
+
+  describe('failed file requests', () => {
+    it('shows a load error instead of an empty directory and lets the user retry', async () => {
+      let requestFailed = true;
+      server.use(
+        http.get('/api/v1/printers/:id/files', () => {
+          if (requestFailed) {
+            return HttpResponse.json({ detail: 'Printer file service is unavailable' }, { status: 502 });
+          }
+          return HttpResponse.json({ files: mockFiles });
+        })
+      );
+
+      render(
+        <FileManagerModal
+          printerId={1}
+          printerName="Tim Voron"
+          onClose={mockOnClose}
+        />
+      );
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Failed to load files');
+      expect(screen.queryByText('No files in this directory')).not.toBeInTheDocument();
+
+      requestFailed = false;
+      fireEvent.click(screen.getByRole('button', { name: 'Retry', exact: true }));
+
+      expect(await screen.findByText('print_job.gcode')).toBeInTheDocument();
+      expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     });
   });
 

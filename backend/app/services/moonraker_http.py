@@ -3,14 +3,16 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import ipaddress
 import json
 import ssl
 from collections.abc import Callable
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Any, BinaryIO
-from urllib.parse import urlsplit
+from urllib.parse import quote, urlsplit
 
 import anyio
 import httpcore
@@ -39,9 +41,10 @@ TransportFactory = Callable[[str, int, frozenset[IPAddress], bool], httpx.AsyncB
 class MoonrakerHTTPError(Exception):
     """A safe error suitable for API responses and logs."""
 
-    def __init__(self, code: str, message: str):
+    def __init__(self, code: str, message: str, *, status_code: int | None = None):
         self.code = code
         self.message = message
+        self.status_code = status_code
         super().__init__(f"{code}: {message}")
 
 
@@ -365,6 +368,74 @@ class MoonrakerHTTPClient:
     async def list_webcams(self) -> MoonrakerHTTPResponse:
         return await self._request("GET", "/server/webcams/list")
 
+    async def get_directory(self, path: str = "/") -> dict:
+        """Browse only the G-code root, with application paths relative to it."""
+        relative = _moonraker_file_path(path, allow_root=True)
+        response = await self._request(
+            "GET", "/server/files/directory", params={"path": f"gcodes/{relative}".rstrip("/")}
+        )
+        try:
+            directory = json.loads(response.body)["result"]
+            if directory["root_info"]["name"] != "gcodes":
+                raise ValueError("Unexpected root")
+            files = []
+            for key, name_key in (("dirs", "dirname"), ("files", "filename")):
+                entries = directory[key]
+                if not isinstance(entries, list):
+                    raise ValueError("Invalid directory entries")
+                for entry in entries:
+                    name = entry[name_key]
+                    if not isinstance(name, str) or "/" in name:
+                        raise ValueError("Invalid entry name")
+                    _moonraker_file_path(f"/{name}")
+                    permissions = entry["permissions"]
+                    if permissions not in {"", "r", "rw"}:
+                        raise ValueError("Invalid entry permissions")
+                    if not permissions:
+                        continue
+                    size = entry["size"]
+                    if isinstance(size, bool) or not isinstance(size, int) or size < 0:
+                        raise ValueError("Invalid file size")
+                    files.append(
+                        {
+                            "name": name,
+                            "path": f"{path.rstrip('/')}/{name}",
+                            "is_directory": key == "dirs",
+                            "size": size,
+                            "mtime": datetime.fromtimestamp(entry["modified"], timezone.utc).isoformat(),
+                            "permissions": permissions,
+                        }
+                    )
+            return {"path": path, "files": files, "disk_usage": directory["disk_usage"]}
+        except (KeyError, TypeError, ValueError, OverflowError, MoonrakerHTTPError) as exc:
+            raise MoonrakerHTTPError("invalid_response", "Moonraker returned invalid directory information.") from exc
+
+    async def delete_file(self, path: str) -> None:
+        relative = _moonraker_file_path(path)
+        response = await self._request("DELETE", f"/server/files/gcodes/{quote(relative, safe='/')}")
+        try:
+            result = json.loads(response.body)["result"]
+            if (
+                result["action"] != "delete_file"
+                or result["item"]["root"] != "gcodes"
+                or result["item"]["path"] != relative
+            ):
+                raise ValueError("Unexpected deletion result")
+        except (KeyError, TypeError, ValueError) as exc:
+            raise MoonrakerHTTPError(
+                "invalid_response", "Moonraker did not confirm deletion of the requested file."
+            ) from exc
+
+    async def download_file(self, path: str, destination: BinaryIO) -> None:
+        """Stream binary content to a caller-owned file, preserving the JSON limit."""
+        relative = _moonraker_file_path(path)
+        await self._request(
+            "GET",
+            f"/server/files/gcodes/{quote(relative, safe='/')}",
+            total_timeout=_UPLOAD_TOTAL_TIMEOUT_SECONDS,
+            destination=destination,
+        )
+
     async def test_webcam(self, uid: str) -> MoonrakerHTTPResponse:
         return await self._request("POST", "/server/webcams/test", params={"uid": uid})
 
@@ -472,7 +543,9 @@ class MoonrakerHTTPClient:
                 ) from exc
             raise MoonrakerHTTPError("unavailable", "Could not connect to Moonraker.") from exc
 
-    async def _request_within_deadline(self, method: str, path: str, **request_options: Any) -> MoonrakerHTTPResponse:
+    async def _request_within_deadline(
+        self, method: str, path: str, *, destination: BinaryIO | None = None, **request_options: Any
+    ) -> MoonrakerHTTPResponse:
         try:
             peers = approved_peers(await self._resolver(self._host, self._port))
         except PrinterNetworkError as exc:
@@ -508,13 +581,33 @@ class MoonrakerHTTPClient:
                 raise MoonrakerHTTPError(
                     "http_status",
                     f"Moonraker returned HTTP {response.status_code}.",
+                    status_code=response.status_code,
                 )
             body = bytearray()
-            async for chunk in response.aiter_bytes():
-                body.extend(chunk)
-                if len(body) > _MAX_RESPONSE_BYTES:
-                    raise MoonrakerHTTPError("response_too_large", "Moonraker response exceeded size limit.")
+            async for chunk in response.aiter_bytes(chunk_size=io.DEFAULT_BUFFER_SIZE):
+                if destination is not None:
+                    await anyio.to_thread.run_sync(destination.write, chunk)
+                else:
+                    body.extend(chunk)
+                    if len(body) > _MAX_RESPONSE_BYTES:
+                        raise MoonrakerHTTPError("response_too_large", "Moonraker response exceeded size limit.")
             return MoonrakerHTTPResponse(response.status_code, dict(response.headers), bytes(body))
+
+
+def _moonraker_file_path(path: str, *, allow_root: bool = False) -> str:
+    if allow_root and path == "/":
+        return ""
+    if (
+        not isinstance(path, str)
+        or not path.startswith("/")
+        or "\\" in path
+        or any(ord(character) < 32 or ord(character) == 127 for character in path)
+    ):
+        raise MoonrakerHTTPError("invalid_path", "Printer file path is invalid.")
+    relative = path[1:]
+    if any(part in {"", ".", ".."} for part in relative.split("/")):
+        raise MoonrakerHTTPError("invalid_path", "Printer file path must stay within the G-code root.")
+    return relative
 
 
 def _safe_moonraker_gcode_path(path: object) -> bool:

@@ -4346,6 +4346,7 @@ export const api = {
         size: number;
         path: string;
         mtime?: string;
+        permissions?: 'r' | 'rw';
       }>;
     }>(`/printers/${printerId}/files?path=${encodeURIComponent(path)}`),
   getPrinterFileDownloadUrl: (printerId: number, path: string) =>
