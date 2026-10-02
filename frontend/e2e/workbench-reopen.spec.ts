@@ -21,7 +21,7 @@ const sort = (value: unknown): unknown => Array.isArray(value) ? value.map(sort)
   : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, sort(v)])) : value;
 const longFilamentName = 'PLA preset for Voron with a long manufacturer and detailed print-quality description';
 const longCompatibilityReason = 'compatibility unknown, nozzle match, ManufacturerSpecificCompatibilityDetailWithoutSpaces';
-async function installFixture(page: import('@playwright/test').Page, options: { mismatch?: boolean; corrupt?: boolean; plate?: 'default' | 'all'; archive?: boolean; downloadError?: boolean; pending?: boolean; fresh?: boolean; longFilament?: boolean; processSettings?: boolean } = {}) {
+async function installFixture(page: import('@playwright/test').Page, options: { mismatch?: boolean; corrupt?: boolean; plate?: 'default' | 'all'; archive?: boolean; downloadError?: boolean; pending?: boolean; fresh?: boolean; longFilament?: boolean; processSettings?: boolean; profileSearch?: boolean } = {}) {
   const { plate: _plate, ...withoutPlate } = snapshot;
   const savedRequest = options.plate === 'default' ? withoutPlate : options.plate === 'all' ? { ...snapshot, plate: 0 } : snapshot;
   let sliceRequests = 0;
@@ -29,9 +29,10 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
   let resliceComplete = false;
   let initialComplete = !options.pending;
   const libraryFile = (id: number, filename: string) => ({ id, filename, file_type: filename.endsWith('.gcode') ? 'gcode' : 'stl', file_size: 1024, folder_id: null, thumbnail_path: null, print_name: null, print_count: 0, duplicate_count: 0, created_at: '2026-10-01T00:00:00Z', tags: [] });
-  const profile = (id: number, profile_type: string) => ({ profile_id: id, revision_id: 10 + id, source: 'orca_cloud', remote_profile_id: `profile-${id}`, profile_type, display_name: `Cloud ${profile_type}`, content_hash: 'content', sharing_state: 'shared', tombstoned: false, stale: false, compatibility_metadata: {} });
+  const profile = (id: number, profile_type: string) => ({ profile_id: id, revision_id: 10 + id, source: 'orca_cloud', remote_profile_id: `profile-${id}`, profile_type, display_name: options.profileSearch && profile_type === 'process' ? '0.20mm Standard @Voron' : options.profileSearch && profile_type === 'filament' ? 'Inslogic 95A TPU' : `Cloud ${profile_type}`, content_hash: 'content', sharing_state: 'shared', tombstoned: false, stale: false, compatibility_metadata: {} });
   const unclassified = options.longFilament ? [{ ...profile(4, 'filament'), display_name: longFilamentName,
-    classification: { group: 'unclassified', compatibility: 'unknown', readiness: 'acknowledgement_required', reason_codes: ['compatibility_unknown'], reason_details: [longCompatibilityReason], selectable: true, auto_selectable: false, acknowledgement_required: true } }] : [];
+    classification: { group: 'unclassified', compatibility: 'unknown', readiness: 'acknowledgement_required', reason_codes: ['compatibility_unknown'], reason_details: [longCompatibilityReason], selectable: true, auto_selectable: false, acknowledgement_required: true } }] : options.profileSearch ? ['Generic ABS template', 'Generic PLA', 'İPLA template'].map((display_name, index) => ({ ...profile(index + 4, 'filament'), display_name,
+      classification: { group: 'unclassified', compatibility: 'unknown', readiness: 'acknowledgement_required', reason_codes: ['compatibility_unknown'], reason_details: ['compatibility unknown'], selectable: true, auto_selectable: false, acknowledgement_required: true } })) : [];
   const binding = { id: 5, profile_id: 1, printer_id: 1, printer_name: 'Physical device', profile_name: 'Cloud machine', expected_nozzle_diameter: 0.4, tool_index: 0, default_process_profile_id: 2, default_filament_profile_id: 3, enforcement_state: 'shadow', is_active: true, confirmed_at: null, readiness: { state: 'ready', reason_codes: [] }, nozzle: { status: 'confirmed', diameter: 0.4, tool_index: 0 } };
   const contract = {
     contract_version: '1', engine: { name: 'OrcaSlicer', version: '2.4.2', commit: 'pinned' },
@@ -98,6 +99,31 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
 }
 
 for (const width of [1280, 390]) {
+  test(`catalog search explains matches and preserves active profiles at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const fixture = await installFixture(page, { fresh: true, profileSearch: true });
+    await page.goto('/slicer/workbench?library_file=42');
+    if (width === 390) await page.getByRole('button', { name: 'settings', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
+    await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
+    await page.getByRole('checkbox', { name: /Confirm filament materials/ }).check();
+    await page.getByRole('searchbox', { name: 'Search catalog profiles', exact: true }).fill('PLA');
+    await expect(page.getByText('Selected: 0.20mm Standard @Voron', { exact: true })).toBeVisible();
+    await expect(page.getByText('Selected: Inslogic 95A TPU', { exact: true })).toBeVisible();
+    const filaments = page.getByRole('group', { name: 'Filament profile', exact: true });
+    await filaments.getByText('Unclassified (3)', { exact: true }).click();
+    await expect(filaments.getByRole('radio', { name: /Generic ABS template/ })).toBeVisible();
+    await expect(filaments.getByRole('radio', { name: /Generic PLA/ })).toBeVisible();
+    await expect(filaments.locator('mark')).toHaveText(['pla', 'PLA', 'PLA']);
+    await expect(page.getByRole('button', { name: 'Slice plate', exact: true })).toBeEnabled();
+    await page.getByRole('searchbox', { name: 'Search catalog profiles', exact: true }).fill('İPLA');
+    await expect(filaments.locator('mark')).toHaveText(['İPLA']);
+    await page.getByRole('searchbox', { name: 'Search catalog profiles', exact: true }).fill('');
+    await expect(filaments.locator('mark')).toHaveCount(0);
+    await expect(filaments.getByRole('radio', { name: /Inslogic 95A TPU/ })).toBeChecked();
+    expect(fixture.sliceRequests).toBe(0);
+  });
+
   for (const scope of ['global', 'object'] as const) {
     test(`typed decimal process settings retain their value at ${width}px (${scope})`, async ({ page }) => {
       await page.setViewportSize({ width, height: 844 });

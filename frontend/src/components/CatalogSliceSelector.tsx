@@ -167,6 +167,10 @@ export function CatalogSliceSelector({
   </div>;
 }
 
+function profileNameMatch(name: string, search: string) {
+  return search ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu').exec(name) : null;
+}
+
 function ProfileGroups({
   legend,
   profileType,
@@ -188,10 +192,10 @@ function ProfileGroups({
   disabled: boolean;
   onChoose: (profile: SlicerCatalogClassification) => void;
 }) {
-  const term = search.trim().toLocaleLowerCase();
+  const term = search.trim();
   const matches = (profile: SlicerCatalogClassification) =>
     profile.profile_type === profileType
-    && (!term || profile.display_name.toLocaleLowerCase().includes(term));
+    && (!term || profileNameMatch(profile.display_name, term) !== null);
   const selected = Object.values(groups ?? {}).flat().find((profile) => profile.profile_id === selectedId && profile.profile_type === profileType);
   const materialKey = canonicalFilamentType(material);
   const materialMatches = materialKey && profiles
@@ -211,6 +215,7 @@ function ProfileGroups({
         label={`${material} matches (${visibleMaterialMatches.length})`}
         group={null}
         profiles={visibleMaterialMatches}
+        search={term}
         selectedId={selectedId}
         disabled={disabled}
         onChoose={onChoose}
@@ -223,6 +228,7 @@ function ProfileGroups({
             label={`${groupLabels[group]} (${profiles.length})`}
             group={group}
             profiles={profiles}
+            search={term}
             selectedId={selectedId}
             disabled={disabled}
             onChoose={onChoose}
@@ -235,6 +241,7 @@ function ProfileGroups({
           <ProfileList
             group={group}
             profiles={profiles}
+            search={term}
             selectedId={selectedId}
             disabled={disabled}
             onChoose={onChoose}
@@ -249,6 +256,7 @@ function ProfileList({
   label,
   group,
   profiles,
+  search,
   selectedId,
   disabled,
   onChoose,
@@ -256,6 +264,7 @@ function ProfileList({
   label?: string;
   group: keyof SlicerCatalogGroups | null;
   profiles: SlicerCatalogClassification[];
+  search: string;
   selectedId: number | null;
   disabled: boolean;
   onChoose: (profile: SlicerCatalogClassification) => void;
@@ -264,6 +273,7 @@ function ProfileList({
     {label && <p className="text-xs font-medium text-bambu-gray-light">{label}</p>}
     {profiles.length === 0 && <p className="text-xs text-bambu-gray">No profiles</p>}
     {profiles.map((profile) => {
+      const match = profileNameMatch(profile.display_name, search);
       const profileGroup = group ?? profile.classification.group;
       const profileDisabled = disabled || profileGroup === 'other_installed_printers' || profileGroup === 'incompatible' || !profile.classification.selectable;
       return <label key={profile.profile_id} className={`flex items-start gap-2 rounded px-1 py-1 text-xs ${profileDisabled ? 'text-bambu-gray/60' : 'text-white'}`}>
@@ -274,7 +284,7 @@ function ProfileList({
           onChange={() => onChoose(profile)}
         />
         <span className="min-w-0 flex-1 break-words">
-          <span className="block">{profile.display_name} · {profile.source}</span>
+          <span className="block">{!match ? profile.display_name : <>{profile.display_name.slice(0, match.index)}<mark className="rounded-sm bg-bambu-green/20 text-inherit">{match[0]}</mark>{profile.display_name.slice(match.index + match[0].length)}</>} · {profile.source}</span>
           {profile.classification.reason_details.length > 0 && (
             <span className={profileGroup === 'unclassified' ? 'text-amber-300' : 'text-bambu-gray'}>
               {profileGroup === 'unclassified' ? 'Manual confirmation required · ' : ''}
