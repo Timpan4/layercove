@@ -132,6 +132,7 @@ async function openMoonrakerEdit(item = printer('moonraker')) {
 describe('provider capability UI', () => {
   beforeEach(() => {
     localStorage.clear();
+    window.history.replaceState(null, '', '/');
   });
 
   it('shows Moonraker temperature telemetry without exposing target controls', async () => {
@@ -250,6 +251,10 @@ describe('provider capability UI', () => {
     expect(screen.getAllByText('45%').length).toBeGreaterThan(0);
     expect(screen.getByRole('button', { name: /^stop$/i })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^print$/i })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back' }));
+    window.history.replaceState(null, '', '/#slicer-binding-41');
+    fireEvent.popState(window);
+    await screen.findByRole('heading', { name: 'Printers' });
     await user.click(screen.getByTitle('Select'));
     await user.click(await screen.findByRole('button', { name: /select all/i }));
     const resumeButtons = screen.getAllByRole('button', { name: /resume/i });
