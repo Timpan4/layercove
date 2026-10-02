@@ -1,4 +1,27 @@
 export default {
+  slicerReadiness: {
+    passed: "Verificações concluídas.",
+    blocked: "O fatiamento está bloqueado.",
+    confirmation: "É necessária confirmação antes de fatiar.",
+    unknown: "Não foi possível verificar a preparação. Recarregue os perfis e confira o vínculo da impressora.",
+    editorLoaded: "Editor carregado",
+    binding: "Escolha um vínculo de impressora ativo antes de fatiar.",
+    profile: "Escolha um perfil disponível para esta impressora.",
+    review: "Escolha um perfil revisado antes de fatiar.",
+    tool: "Selecione um vínculo para a ferramenta atual da impressora.",
+    nozzle: "Confira o bico instalado e escolha um perfil de impressora correspondente.",
+    defaults: "Escolha padrões de processo e filamento disponíveis nos vínculos da impressora.",
+    nozzleUnverified: "As informações do bico não foram verificadas. Confirme o bico instalado e o destino antes de fatiar.",
+    nozzleMatch: "O bico informado corresponde a este perfil de impressora.",
+    compatible: "A compatibilidade do perfil corresponde a este vínculo de impressora.",
+    incompatible: "Escolha um perfil compatível com a impressora selecionada.",
+    compatibilityUnverified: "A compatibilidade do perfil não foi verificada. Confirme o destino atual e o bico antes de fatiar.",
+    process: "Escolha um perfil de processo antes de fatiar.",
+    filament: "Escolha um perfil de filamento para cada material antes de fatiar.",
+    catalog: "Não foi possível carregar os perfis. Recarregue-os antes de fatiar.",
+    materialMismatch: "Os materiais dos filamentos diferem. Confira a origem e o filamento selecionado e confirme antes de fatiar.",
+    materialUnverified: "O material do filamento não foi verificado. Confira o material carregado e confirme antes de fatiar.",
+  },
   slicerBed: {
     parentIssues: {
       missing_parent: "O perfil principal da impressora não existe ou não está disponível para esta revisão.",

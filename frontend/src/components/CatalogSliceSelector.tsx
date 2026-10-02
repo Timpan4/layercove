@@ -1,10 +1,12 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import { FilamentProfileEditor } from './FilamentProfileEditor';
 import type { SlicerCatalogClassification, SlicerCatalogGroups } from '../api/client';
 import type { CatalogSliceSelectionState } from '../hooks/useCatalogSliceSelection';
 import { catalogFilamentMaterial } from '../utils/catalogSliceSelection';
 import { canonicalFilamentType } from '../utils/amsHelpers';
+import { displayedSlicerReadiness, slicerReadinessReasons, slicerReadinessState } from '../utils/slicerReadiness';
 
 const fieldClass = 'min-h-9 w-full rounded border border-bambu-dark-tertiary bg-bambu-dark px-2 text-sm text-white';
 const groupOrder: Array<keyof SlicerCatalogGroups> = [
@@ -29,6 +31,9 @@ export function CatalogSliceSelector({
   filamentSlots: Array<{ slot_id?: number; type: string; color: string; used_in_plate?: boolean }>;
   disabled?: boolean;
 }) {
+  const { t } = useTranslation();
+  const displayedReadiness = displayedSlicerReadiness(selection.selectionReadiness.state, selection.selectionReadiness.reason_codes);
+  const readinessText = slicerReadinessState(t, displayedReadiness);
   const [search, setSearch] = useState('');
   const [editingSlot, setEditingSlot] = useState<number | null>(null);
   const selectedProcessId = selection.processChoice?.id ?? null;
@@ -87,10 +92,10 @@ export function CatalogSliceSelector({
       </p>
     )}
 
-    {selection.selectedBinding && <div className={`rounded border px-2 py-1.5 text-xs ${selection.selectionReadiness.state === 'blocked' ? 'border-red-500/40 text-red-300' : selection.selectionReadiness.state === 'acknowledgement_required' ? 'border-amber-400/40 text-amber-300' : 'border-green-500/30 text-green-300'}`}>
-      Readiness: {selection.selectionReadiness.state}
-      {selection.selectionReadiness.reason_codes.length > 0 && ` · ${selection.selectionReadiness.reason_codes.join(', ')}`}
-      {' · '}Nozzle {selection.selectedBinding.nozzle.status}
+    {selection.selectedBinding && <div className={`rounded border px-2 py-1.5 text-xs ${displayedReadiness === 'blocked' ? 'border-red-500/40 text-red-300' : displayedReadiness === 'ready' ? 'border-green-500/30 text-green-300' : 'border-amber-400/40 text-amber-300'}`}>
+      <p>{readinessText}</p>
+      {slicerReadinessReasons(t, selection.selectionReadiness.reason_codes).filter((reason) => reason !== readinessText).map((reason) => <p key={reason}>{reason}</p>)}
+      Nozzle {selection.selectedBinding.nozzle.status}
       {selection.selectedBinding.nozzle.diameter != null && ` ${selection.selectedBinding.nozzle.diameter} mm`}
     </div>}
 
@@ -158,7 +163,7 @@ export function CatalogSliceSelector({
           ? `Confirm filament materials${otherAcknowledgementReasons.length > 0 ? ' and current target/nozzle' : ''} before slicing.`
           : 'Confirm current target and nozzle before slicing.'}
         {selection.materialWarnings.map((warning) => <span key={warning.message} className="block">{warning.message}</span>)}
-        {otherAcknowledgementReasons.length > 0 && <span className="block">{otherAcknowledgementReasons.join(', ')}</span>}
+        {otherAcknowledgementReasons.length > 0 && <span className="block">{slicerReadinessReasons(t, otherAcknowledgementReasons).join(' ')}</span>}
       </span>
     </label>}
     {selection.error && <p role="alert" className="text-xs text-red-400">

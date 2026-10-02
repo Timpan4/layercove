@@ -86,6 +86,31 @@ describe('PrinterSlicerBindings', () => {
     expect(screen.getByRole('heading', { name: 'Create slicer binding' })).toBeInTheDocument();
   });
 
+  it.each(['blocked', 'ready'] as const)('keeps an unknown readiness reason unverified when the server state is %s', async (state) => {
+    vi.spyOn(api, 'listSlicerCatalogBindings').mockResolvedValue([{
+      ...binding(1, 'Voron 0.4 profile'),
+      readiness: { state, reason_codes: ['future_backend_reason'] },
+    }]);
+    renderPanel([printer(1, 'Voron', null, 'moonraker')]);
+    const card = await screen.findByTestId('binding-1');
+    await waitFor(() => expect(card).toHaveTextContent('Readiness could not be verified. Reload the profiles and check the printer binding.'));
+    expect(card).not.toHaveTextContent('future_backend_reason');
+    expect(card).not.toHaveTextContent('Ready to slice');
+    expect(card).not.toHaveTextContent('Checks passed.');
+    expect(card.querySelector('.text-green-400')).toBeNull();
+  });
+
+  it('shows passed checks for a known ready nozzle match', async () => {
+    vi.spyOn(api, 'listSlicerCatalogBindings').mockResolvedValue([{
+      ...binding(1, 'Voron 0.4 profile'),
+      readiness: { state: 'ready', reason_codes: ['nozzle_match'] },
+    }]);
+    renderPanel([printer(1, 'Voron', null, 'moonraker')]);
+    const card = await screen.findByTestId('binding-1');
+    await waitFor(() => expect(card).toHaveTextContent('Checks passed.'));
+    expect(card).toHaveTextContent('Reported nozzle matches this printer profile.');
+  });
+
   it('keeps configured defaults visible when they are no longer compatible', async () => {
     const classification = (profileId: number, profileType: 'process' | 'filament'): SlicerCatalogClassification => ({
       profile_id: profileId,
