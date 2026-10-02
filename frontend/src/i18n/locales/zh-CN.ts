@@ -1,5 +1,11 @@
 export default {
   slicerCatalog: {
+    savedMappings: "已保存的兼容性映射",
+    profileUnavailable: "配置不可用",
+    printerUnavailable: "打印机不可用",
+    retiredProfile: "已停用的配置",
+    inactivePrinter: "未启用的打印机",
+    mappingIds: "配置 {{profileId}} · 打印机 {{printerId}}",
     searchProfiles: "搜索目录配置",
     clearSearch: "清除搜索",
     noSearchMatches: "没有与搜索匹配的目录配置。",

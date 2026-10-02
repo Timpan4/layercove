@@ -1,5 +1,11 @@
 export default {
   slicerCatalog: {
+    savedMappings: "Mapeamentos de compatibilidade salvos",
+    profileUnavailable: "Perfil indisponível",
+    printerUnavailable: "Impressora indisponível",
+    retiredProfile: "Perfil desativado",
+    inactivePrinter: "Impressora inativa",
+    mappingIds: "Perfil {{profileId}} · Impressora {{printerId}}",
     searchProfiles: "Pesquisar perfis do catálogo",
     clearSearch: "Limpar pesquisa",
     noSearchMatches: "Nenhum perfil do catálogo corresponde à sua pesquisa.",

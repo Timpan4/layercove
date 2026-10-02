@@ -1,5 +1,11 @@
 export default {
   slicerCatalog: {
+    savedMappings: "Kaydedilmiş uyumluluk eşlemeleri",
+    profileUnavailable: "Profil kullanılamıyor",
+    printerUnavailable: "Yazıcı kullanılamıyor",
+    retiredProfile: "Kullanımdan kaldırılmış profil",
+    inactivePrinter: "Etkin olmayan yazıcı",
+    mappingIds: "Profil {{profileId}} · Yazıcı {{printerId}}",
     searchProfiles: "Katalog profillerinde ara",
     clearSearch: "Aramayı temizle",
     noSearchMatches: "Aramanızla eşleşen katalog profili yok.",

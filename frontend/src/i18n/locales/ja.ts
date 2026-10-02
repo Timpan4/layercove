@@ -1,5 +1,11 @@
 export default {
   slicerCatalog: {
+    savedMappings: "保存済みの互換性マッピング",
+    profileUnavailable: "プロファイルを利用できません",
+    printerUnavailable: "プリンターを利用できません",
+    retiredProfile: "廃止済みプロファイル",
+    inactivePrinter: "無効なプリンター",
+    mappingIds: "プロファイル {{profileId}} · プリンター {{printerId}}",
     searchProfiles: "カタログプロファイルを検索",
     clearSearch: "検索をクリア",
     noSearchMatches: "検索に一致するカタログプロファイルはありません。",
