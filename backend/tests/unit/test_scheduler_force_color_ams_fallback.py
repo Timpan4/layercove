@@ -8,11 +8,21 @@ but ``force_color_match`` overrides are present.
 Related issue: #1436
 """
 
+from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from backend.app.services.bambu_backend import BambuBackend
+from backend.app.services.bambu_mqtt import PrinterState
 from backend.app.services.print_scheduler import PrintScheduler
+from backend.app.services.printer_types import PrinterProvider
+
+
+def _snapshot(raw_data):
+    state = PrinterState(connected=True, state="IDLE", raw_data=raw_data)
+    backend = SimpleNamespace(provider=PrinterProvider.BAMBU, client=SimpleNamespace(is_stale=lambda: False))
+    return BambuBackend._snapshot_from_state(backend, state)
 
 
 class TestBuildOverrideDirectMapping:
@@ -26,7 +36,7 @@ class TestBuildOverrideDirectMapping:
         raw: dict = {"ams": ams}
         if vt_tray is not None:
             raw["vt_tray"] = vt_tray
-        return MagicMock(raw_data=raw)
+        return _snapshot(raw)
 
     def test_single_force_override_matches_ams_slot(self, scheduler):
         """Override with type+color matches the correct AMS tray."""
@@ -143,8 +153,8 @@ class TestComputeAmsMappingFallback:
         return item
 
     def _make_status(self) -> MagicMock:
-        return MagicMock(
-            raw_data={
+        return _snapshot(
+            {
                 "ams": [
                     {
                         "id": 0,
@@ -161,7 +171,7 @@ class TestComputeAmsMappingFallback:
     async def test_fallback_used_when_filament_reqs_empty(self, mock_pm, scheduler):
         """When _get_filament_requirements returns None but force-color overrides
         are set, the fallback builds a mapping directly from the overrides."""
-        mock_pm.get_status.return_value = self._make_status()
+        mock_pm.get_snapshot.return_value = self._make_status()
 
         item = self._make_item(
             filament_overrides_json='[{"slot_id": 1, "type": "PLA", "color": "#CBC6B8", "force_color_match": true}]'
@@ -178,7 +188,7 @@ class TestComputeAmsMappingFallback:
     @patch("backend.app.services.print_scheduler.printer_manager")
     async def test_fallback_not_used_when_no_force_color(self, mock_pm, scheduler):
         """When overrides have no force_color_match, the fallback is not triggered."""
-        mock_pm.get_status.return_value = self._make_status()
+        mock_pm.get_snapshot.return_value = self._make_status()
 
         item = self._make_item(filament_overrides_json='[{"slot_id": 1, "type": "PLA", "color": "#CBC6B8"}]')
         db = AsyncMock()
@@ -192,7 +202,7 @@ class TestComputeAmsMappingFallback:
     @patch("backend.app.services.print_scheduler.printer_manager")
     async def test_fallback_not_used_when_no_overrides(self, mock_pm, scheduler):
         """When filament_overrides is None, the fallback is not triggered."""
-        mock_pm.get_status.return_value = self._make_status()
+        mock_pm.get_snapshot.return_value = self._make_status()
 
         item = self._make_item(filament_overrides_json=None)
         db = AsyncMock()
@@ -207,7 +217,7 @@ class TestComputeAmsMappingFallback:
     async def test_normal_path_used_when_filament_reqs_available(self, mock_pm, scheduler):
         """When filament requirements are available, the normal path is used
         (overrides applied to reqs, then matched)."""
-        mock_pm.get_status.return_value = self._make_status()
+        mock_pm.get_snapshot.return_value = self._make_status()
 
         item = self._make_item(
             filament_overrides_json='[{"slot_id": 1, "type": "PLA", "color": "#CBC6B8", "force_color_match": true}]'
@@ -230,7 +240,7 @@ class TestComputeAmsMappingFallback:
     @patch("backend.app.services.print_scheduler.printer_manager")
     async def test_fallback_returns_none_when_printer_status_unavailable(self, mock_pm, scheduler):
         """When the printer has no status, the fallback also returns None gracefully."""
-        mock_pm.get_status.return_value = None
+        mock_pm.get_snapshot.return_value = None
 
         item = self._make_item(
             filament_overrides_json='[{"slot_id": 1, "type": "PLA", "color": "#CBC6B8", "force_color_match": true}]'

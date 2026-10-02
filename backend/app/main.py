@@ -5505,34 +5505,6 @@ _ams_alarm_cooldown: dict[str, datetime] = {}
 AMS_ALARM_COOLDOWN_MINUTES = 60  # Don't send same alarm more than once per hour
 
 
-def _ams_has_filament(ams_data: dict) -> bool:
-    """True if this AMS unit has at least one tray slot holding filament.
-
-    Bambu firmware reports loaded slots via `tray_exist_bits`, a per-AMS hex
-    bitmap (one bit per tray slot — bit set = spool present). Empty AMS units
-    still report sensor readings, but those readings are ambient and not
-    actionable: no filament to dry, no humidity to push down. #1619 — gate
-    humidity/temperature alarms on this check so empty units don't generate
-    hourly noise. Sensor history still records regardless so the UI charts
-    stay continuous.
-
-    Fallback path inspects the `tray` array's `tray_type` fields for setups
-    where `tray_exist_bits` is missing (some early-connection pushall shapes).
-    """
-    bits = ams_data.get("tray_exist_bits")
-    if isinstance(bits, str) and bits.strip():
-        try:
-            return int(bits, 16) > 0
-        except ValueError:
-            pass
-    trays = ams_data.get("tray")
-    if isinstance(trays, list):
-        return any(
-            isinstance(t, dict) and isinstance(t.get("tray_type"), str) and t["tray_type"].strip() for t in trays
-        )
-    return False
-
-
 async def record_ams_history():
     """Background task to record AMS humidity and temperature data."""
     logger = logging.getLogger(__name__)
@@ -5595,41 +5567,19 @@ async def record_ams_history():
                 recorded_count = 0
                 for printer in printers:
                     # Get current state from printer manager
-                    state = printer_manager.get_status(printer.id)
-                    if not state or not state.connected or not state.raw_data:
+                    state = printer_manager.get_snapshot(printer.id)
+                    if not state or not state.connected or state.telemetry_stale:
                         continue  # Skip disconnected printers - don't use stale data
+                    from backend.app.services.printer_types import capabilities_for_provider
 
-                    raw_data = state.raw_data
-                    if "ams" not in raw_data or not isinstance(raw_data["ams"], list):
+                    if not capabilities_for_provider(state.provider).ams:
                         continue
 
                     # Record data for each AMS unit
-                    for ams_data in raw_data["ams"]:
-                        ams_id = int(ams_data.get("id", 0))
-
-                        # Get humidity (prefer humidity_raw)
-                        humidity_raw = ams_data.get("humidity_raw")
-                        humidity_idx = ams_data.get("humidity")
-                        humidity = None
-                        if humidity_raw is not None:
-                            try:
-                                humidity = float(humidity_raw)
-                            except (ValueError, TypeError):
-                                pass  # Skip unparseable humidity; will try fallback
-                        if humidity is None and humidity_idx is not None:
-                            try:
-                                humidity = float(humidity_idx)
-                            except (ValueError, TypeError):
-                                pass  # Skip unparseable humidity index value
-
-                        # Get temperature
-                        temperature = None
-                        temp_str = ams_data.get("temp")
-                        if temp_str is not None:
-                            try:
-                                temperature = float(temp_str)
-                            except (ValueError, TypeError):
-                                pass  # Skip unparseable temperature value
+                    for ams_data in state.ams_units:
+                        ams_id = ams_data.ams_id
+                        humidity = ams_data.humidity
+                        temperature = ams_data.temperature
 
                         # Skip if no data
                         if humidity is None and temperature is None:
@@ -5640,7 +5590,7 @@ async def record_ams_history():
                             printer_id=printer.id,
                             ams_id=ams_id,
                             humidity=humidity,
-                            humidity_raw=float(humidity_raw) if humidity_raw else None,
+                            humidity_raw=ams_data.humidity_raw,
                             temperature=temperature,
                         )
                         db.add(history)
@@ -5660,13 +5610,13 @@ async def record_ams_history():
                         # the UI charts stay continuous (#1619). Per-AMS check
                         # so a multi-AMS setup with one loaded + one empty
                         # still alarms on the loaded unit.
-                        if not _ams_has_filament(ams_data):
+                        if not ams_data.has_filament:
                             continue
 
                         # Resolve per-filament humidity threshold for this AMS
                         # unit (#1605). Falls back to the global ams_humidity_fair
                         # when no per-type overrides are configured.
-                        trays = ams_data.get("tray", []) or []
+                        trays = [{"tray_type": tray.material_type} for tray in ams_data.trays]
                         effective_humidity_threshold = float(
                             PrintScheduler.resolve_humidity_threshold(
                                 trays, per_type_humidity_thresholds, int(humidity_threshold)

@@ -2256,8 +2256,8 @@ async def get_inventory_remain(
     """
     from backend.app.services.print_scheduler import PrintScheduler
 
-    state = printer_manager.get_status(printer_id)
-    if not state:
+    state = printer_manager.get_snapshot(printer_id)
+    if not state or not state.connected or state.telemetry_stale:
         return {"inventory_remain_g": {}}
 
     scheduler = PrintScheduler()

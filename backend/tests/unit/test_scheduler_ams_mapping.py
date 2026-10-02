@@ -3,11 +3,22 @@
 import io
 import json
 import zipfile
+from types import SimpleNamespace
 
 import pytest
 
+from backend.app.services.bambu_backend import BambuBackend
+from backend.app.services.bambu_mqtt import PrinterState
 from backend.app.services.print_scheduler import PrintScheduler
+from backend.app.services.printer_types import PrinterProvider
 from backend.app.utils.threemf_tools import extract_nozzle_mapping_from_3mf
+
+
+def _snapshot(raw_data):
+    state = PrinterState(connected=True, state="IDLE", raw_data=raw_data)
+    state.ams_extruder_map = raw_data.get("ams_extruder_map", {})
+    backend = SimpleNamespace(provider=PrinterProvider.BAMBU, client=SimpleNamespace(is_stale=lambda: False))
+    return BambuBackend._snapshot_from_state(backend, state)
 
 
 class TestSchedulerAmsMappingHelpers:
@@ -85,7 +96,7 @@ class TestBuildLoadedFilaments:
         class MockStatus:
             raw_data = {}
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert result == []
 
     def test_build_loaded_filaments_with_ams(self, scheduler):
@@ -104,7 +115,7 @@ class TestBuildLoadedFilaments:
                 ]
             }
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 2
 
         # First filament
@@ -131,7 +142,7 @@ class TestBuildLoadedFilaments:
                 ]
             }
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 1
         assert result[0]["is_ht"] is True
         assert result[0]["global_tray_id"] == 128  # AMS-HT uses ams_id directly
@@ -142,7 +153,7 @@ class TestBuildLoadedFilaments:
         class MockStatus:
             raw_data = {"vt_tray": [{"tray_type": "TPU", "tray_color": "0000FF"}]}
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 1
         assert result[0]["type"] == "TPU"
         assert result[0]["is_external"] is True
@@ -165,7 +176,7 @@ class TestBuildLoadedFilaments:
                 ]
             }
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 1
         assert result[0]["type"] == "PLA"
 
@@ -792,7 +803,7 @@ class TestBuildLoadedFilamentsTrayInfoIdx:
                 ]
             }
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 2
         assert result[0]["tray_info_idx"] == "GFA00"
         assert result[1]["tray_info_idx"] == "GFA01"
@@ -812,7 +823,7 @@ class TestBuildLoadedFilamentsTrayInfoIdx:
                 ]
             }
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 1
         assert result[0]["tray_info_idx"] == ""
 
@@ -822,7 +833,7 @@ class TestBuildLoadedFilamentsTrayInfoIdx:
         class MockStatus:
             raw_data = {"vt_tray": [{"tray_type": "TPU", "tray_color": "0000FF", "tray_info_idx": "P4d64437"}]}
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 1
         assert result[0]["tray_info_idx"] == "P4d64437"
         assert result[0]["is_external"] is True
@@ -1146,7 +1157,7 @@ class TestNozzleAwareMapping:
                 "ams_extruder_map": {"0": 0, "1": 1},
             }
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 2
         assert result[0]["extruder_id"] == 0
         assert result[1]["extruder_id"] == 1
@@ -1161,7 +1172,7 @@ class TestNozzleAwareMapping:
                 ]
             }
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 1
         assert result[0]["extruder_id"] is None
 
@@ -1174,7 +1185,7 @@ class TestNozzleAwareMapping:
                 "ams_extruder_map": {"0": 0},
             }
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 1
         # Default vt_tray id=254 → Ext-L → LEFT nozzle (extruder 1)
         assert result[0]["extruder_id"] == 1
@@ -1186,7 +1197,7 @@ class TestNozzleAwareMapping:
         class MockStatus:
             raw_data = {"vt_tray": [{"tray_type": "TPU", "tray_color": "0000FF"}]}
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         assert len(result) == 1
         assert result[0]["extruder_id"] is None
 
@@ -1311,7 +1322,7 @@ class TestH2DModel:
         class MockStatus:
             raw_data = _h2d_raw_data()
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
 
         # Should have 13 loaded filaments (4 + 4 + 0 + 4 + 1 external)
         assert len(result) == 13
@@ -1344,7 +1355,7 @@ class TestH2DModel:
         class MockStatus:
             raw_data = _h2d_raw_data()
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         ext = [f for f in result if f["is_external"]]
         assert len(ext) == 1  # Only 254 has filament
         assert ext[0]["global_tray_id"] == 254
@@ -1357,7 +1368,7 @@ class TestH2DModel:
         class MockStatus:
             raw_data = _h2d_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         required = [
             {"slot_id": 1, "type": "PLA", "color": "#000000", "nozzle_id": 1},  # LEFT
         ]
@@ -1371,7 +1382,7 @@ class TestH2DModel:
         class MockStatus:
             raw_data = _h2d_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         required = [
             {"slot_id": 1, "type": "PLA", "color": "#FFFFFF", "nozzle_id": 0},  # RIGHT
         ]
@@ -1385,7 +1396,7 @@ class TestH2DModel:
         class MockStatus:
             raw_data = _h2d_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         # PLA-S only exists on AMS 2 T1 (LEFT), require on RIGHT
         required = [
             {"slot_id": 1, "type": "PLA-S", "color": "#FFFFFF", "nozzle_id": 0},
@@ -1399,7 +1410,7 @@ class TestH2DModel:
         class MockStatus:
             raw_data = _h2d_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         required = [
             {"slot_id": 1, "type": "PETG", "color": "#FFFFFF", "nozzle_id": 1, "tray_info_idx": "GFG02"},
             {"slot_id": 2, "type": "PLA", "color": "#FFFFFF", "nozzle_id": 0, "tray_info_idx": "GFA00"},
@@ -1415,7 +1426,7 @@ class TestH2DModel:
         class MockStatus:
             raw_data = _h2d_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         required = [
             {"slot_id": 1, "type": "PLA", "color": "#000000", "nozzle_id": 1, "tray_info_idx": "P4d64437"},
         ]
@@ -1436,7 +1447,7 @@ class TestX1CModel:
         class MockStatus:
             raw_data = _x1c_raw_data()
 
-        result = scheduler._build_loaded_filaments(MockStatus())
+        result = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
 
         # Only 3 loaded (AMS 1 trays 1-3)
         assert len(result) == 3
@@ -1451,7 +1462,7 @@ class TestX1CModel:
         class MockStatus:
             raw_data = _x1c_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         required = [
             {"slot_id": 1, "type": "PLA", "color": "#0066FF"},  # No nozzle_id
         ]
@@ -1465,7 +1476,7 @@ class TestX1CModel:
         class MockStatus:
             raw_data = _x1c_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         required = [
             {"slot_id": 1, "type": "PLA", "color": "#EBCFA6", "tray_info_idx": "PFUS22b2"},
         ]
@@ -1479,7 +1490,7 @@ class TestX1CModel:
         class MockStatus:
             raw_data = _x1c_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         # P4d64437 appears in AMS 1 T3 and T4
         required = [
             {"slot_id": 1, "type": "PLA", "color": "#FCECD6", "tray_info_idx": "P4d64437"},
@@ -1494,7 +1505,7 @@ class TestX1CModel:
         class MockStatus:
             raw_data = _x1c_raw_data()
 
-        loaded = scheduler._build_loaded_filaments(MockStatus())
+        loaded = scheduler._build_loaded_filaments(_snapshot(MockStatus.raw_data))
         required = [
             {"slot_id": 1, "type": "PLA", "color": "#EBCFA6"},
             {"slot_id": 2, "type": "PLA", "color": "#0066FF"},

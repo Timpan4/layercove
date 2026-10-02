@@ -8,7 +8,7 @@ array's ``tray_type`` strings) so the alarm dispatch in ``record_ams_history``
 can skip empty units while still alarming on loaded ones in the same printer.
 """
 
-from backend.app.main import _ams_has_filament
+from backend.app.services.bambu_backend import _ams_has_filament
 
 
 class TestAmsHasFilament:
