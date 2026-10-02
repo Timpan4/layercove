@@ -857,6 +857,7 @@ export interface TagInfo {
 export interface FailureAnalysis {
   period_days: number;
   total_prints: number;
+  outcome_prints: number;
   failed_prints: number;
   failure_rate: number;
   failures_by_reason: Record<string, number>;

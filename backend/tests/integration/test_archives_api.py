@@ -1197,6 +1197,25 @@ class TestFailureAnalysisAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_failure_rate_returns_its_outcome_denominator(self, async_client, printer_factory, db_session):
+        from backend.app.models.print_log import PrintLogEntry
+
+        printer = await printer_factory()
+        for status in ("completed", "failed", "aborted", "cancelled", "stopped", "skipped"):
+            db_session.add(PrintLogEntry(printer_id=printer.id, status=status, print_name=f"Outcome {status}"))
+        await db_session.commit()
+
+        response = await async_client.get("/api/v1/archives/analysis/failures")
+
+        assert response.status_code == 200
+        result = response.json()
+        assert result["total_prints"] == 6
+        assert result["failed_prints"] == 2
+        assert result["outcome_prints"] == 3
+        assert result["failure_rate"] == 66.7
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_failure_analysis_counts_reprints_and_orphans(
         self, async_client: AsyncClient, archive_factory, printer_factory, db_session
     ):

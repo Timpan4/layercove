@@ -1507,7 +1507,8 @@ export default {
     noPrintDataLast30Days: 'Nessun dato stampa negli ultimi 30 giorni',
     failureReasons: 'Cause guasto',
     topFailureReasons: 'Cause principali',
-    failedPrintsCount: '{{failed}} / {{total}} stampe fallite',
+    failedPrintsCount: 'Fallite: {{failed}} / {{total}} stampe completate o fallite',
+    failureRateExclusions: 'Le stampe annullate, interrotte e saltate sono escluse.',
     lastWeekRate: 'Settimana scorsa: {{rate}}%',
     // Actions
     resetLayout: 'Reimposta layout',

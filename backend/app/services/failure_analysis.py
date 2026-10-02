@@ -93,9 +93,8 @@ class FailureAnalysisService:
         # Failure rate divides by quality-outcome prints only — a cancelled or
         # skipped print is neither a success nor a failure of the printer, so
         # including it in the denominator silently lowered the displayed rate
-        # whenever the user stopped jobs (#1390). Total Prints (the absolute
-        # count incl. cancelled) is still returned separately for the "X / Y
-        # prints failed" caption.
+        # whenever the user stopped jobs (#1390). Return this denominator
+        # separately from Total Prints so the caption can explain the rate.
         outcome_prints = successful_prints + failed_prints
         failure_rate = (failed_prints / outcome_prints * 100) if outcome_prints > 0 else 0
 
@@ -258,6 +257,7 @@ class FailureAnalysisService:
         return {
             "period_days": effective_days,
             "total_prints": total_prints,
+            "outcome_prints": outcome_prints,
             "failed_prints": failed_prints,
             "failure_rate": round(failure_rate, 1),
             "failures_by_reason": failures_by_reason,

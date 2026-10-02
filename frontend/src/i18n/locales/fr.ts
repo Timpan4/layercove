@@ -1507,7 +1507,8 @@ export default {
     noPrintDataLast30Days: 'Aucune impression ces 30 derniers jours',
     failureReasons: 'Raisons des échecs',
     topFailureReasons: 'Top raisons d\'échec',
-    failedPrintsCount: '{{failed}} / {{total}} impressions ont échoué',
+    failedPrintsCount: 'Échecs : {{failed}} / {{total}} impressions terminées ou échouées',
+    failureRateExclusions: 'Les impressions annulées, arrêtées et ignorées sont exclues.',
     lastWeekRate: 'Semaine dernière : {{rate}}%',
     // Actions
     resetLayout: 'Réinitialiser la mise en page',

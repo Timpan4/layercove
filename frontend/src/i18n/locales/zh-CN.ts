@@ -1507,7 +1507,8 @@ export default {
     noPrintDataLast30Days: '最近 30 天无打印数据',
     failureReasons: '失败原因',
     topFailureReasons: '主要失败原因',
-    failedPrintsCount: '{{failed}} / {{total}} 次打印失败',
+    failedPrintsCount: '失败：已完成或失败的 {{total}} 次打印中有 {{failed}} 次',
+    failureRateExclusions: '已取消、停止和跳过的打印不计入。',
     lastWeekRate: '上周：{{rate}}%',
     // Actions
     resetLayout: '重置布局',

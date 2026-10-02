@@ -117,6 +117,7 @@ const mockSettings = {
 const mockFailureAnalysis = {
   period_days: 30,
   total_prints: 100,
+  outcome_prints: 100,
   failed_prints: 5,
   failure_rate: 5.0,
   failures_by_reason: {

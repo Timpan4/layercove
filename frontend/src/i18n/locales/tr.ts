@@ -1508,7 +1508,8 @@ export default {
     noPrintDataLast30Days: 'Son 30 günde baskı verisi yok',
     failureReasons: 'Başarısızlık Nedenleri',
     topFailureReasons: 'En Sık Başarısızlık Nedenleri',
-    failedPrintsCount: '{{total}} baskının {{failed}} tanesi başarısız',
+    failedPrintsCount: 'Başarısız: tamamlanan veya başarısız olan {{total}} baskıdan {{failed}} tanesi',
+    failureRateExclusions: 'İptal edilen, durdurulan ve atlanan baskılar hariç tutulur.',
     lastWeekRate: 'Geçen hafta: %{{rate}}',
     // İşlemler
     resetLayout: 'Düzeni Sıfırla',
