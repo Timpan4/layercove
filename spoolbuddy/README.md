@@ -17,7 +17,7 @@ sudo ./install.sh --mode spoolbuddy \
 
 `--bambuddy-url` is a retained option name; give it your LayerCove URL. Run `./install.sh --help` for all options. Use `--mode spoolbuddy` only: `--mode full` also installs a native server, which LayerCove does not support.
 
-The sections below cover wiring and the manual steps the installer automates.
+The sections below cover wiring and the manual steps the installer automates. Run the commands from the repository checkout root: the installer's checkout lives at `--path`, `/opt/bambuddy` by default.
 
 ## PN5180 NFC reader (SPI)
 

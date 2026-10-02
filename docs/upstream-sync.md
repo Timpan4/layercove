@@ -86,7 +86,7 @@ LayerCove has no historical migration chain. At startup, `Base.metadata.create_a
 Before resolving any persistence conflict:
 
 1. List every upstream schema change in the range: tables, columns, defaults, nullability, indexes, and dialect branches.
-2. New tables reach existing databases through `create_all`. Changes to existing tables do not. Record each one in the pull request; LayerCove has no supported upgrade path for them yet, so each needs an owner decision before merge.
+2. New tables reach existing databases through `create_all`. Changes to existing tables do not. Record each one in the pull request. No upgrade path for existing tables has been accepted: [ADR 0002](decisions/0002-python-rust-coexistence.md) keeps schema migrations in Python, and the migration owner and policy are open in #105. Each such change needs an owner decision before merge.
 3. Test a fresh database and a copy of a current LayerCove database, on SQLite and, where the change touches it, PostgreSQL. Rolling back an image may require restoring the pre-update backup.
 
 ## Generated frontend and deployment artifacts

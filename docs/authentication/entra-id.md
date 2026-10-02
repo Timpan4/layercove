@@ -49,7 +49,7 @@ In **Settings → Authentication → SSO / OIDC**, click **Add Provider** and fi
 | Email Claim | `preferred_username` |
 | Require email verified | Off |
 | Auto-create users | On to create a local account at first login. With it off, a login succeeds only for a user already linked to this provider, or linked by auto-link. |
-| Auto-link existing accounts | Off, unless you trust the tenant and every local user's email matches their Entra UPN |
+| Auto-link existing accounts | Off. With a custom claim such as `preferred_username`, LayerCove links to the local account whose email equals the claim value without any verification. Enable it only if users cannot change that value in your tenant. |
 
 ### Why `preferred_username`
 

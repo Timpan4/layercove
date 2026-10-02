@@ -45,7 +45,7 @@ Moonraker support assumes an administrator-configured, trusted printer origin. L
 
 Moonraker connections enforce these boundaries:
 
-- Only credential-free `http://` or `https://` origins are accepted. API keys and authorization values are stored separately and encrypted at rest.
+- Only credential-free `http://` or `https://` origins are accepted. API keys and authorization values are stored separately and encrypted at rest. Over `http://`, the API key or authorization header crosses the network in cleartext; use `https://` when you configure credentials.
 - DNS is resolved for each connection and the socket is pinned to an approved result. Loopback, link-local, multicast, unspecified, and known cloud metadata addresses are rejected. Private LAN and VPN addresses are allowed because they are the supported deployment topology.
 - HTTP and WebSocket redirects are rejected. Configure the final Moonraker origin directly.
 - Proxy environment variables are ignored for printer traffic. Connections have bounded timeouts and response sizes. Uploads accept only safe `.gcode` names and are size-bounded.

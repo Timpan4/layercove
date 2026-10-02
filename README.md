@@ -76,7 +76,7 @@ Moonraker printers use standard `.gcode` files and need no AMS fields. See [docs
 
 ### Server-side slicing
 
-Slicing runs in the [Orca Slicer API](https://github.com/Timpan4/orca-slicer-api) sidecar. Start its Compose stack beside LayerCove, then open **Settings → Workflow → Slicer**, turn on **Use Slicer API**, and set **Preferred Slicer** to OrcaSlicer. Set the sidecar URL there or with `SLICER_API_URL` if it is not at `http://localhost:3003`. Until **Use Slicer API** is on, Slice actions hand off to a desktop slicer instead. See [docs/calibration.md](docs/calibration.md) for guided filament calibration, which uses the same sidecar.
+Slicing runs in the [Orca Slicer API](https://github.com/Timpan4/orca-slicer-api) sidecar. Start its Compose stack beside LayerCove, then open **Settings → Workflow → Slicer**, turn on **Use Slicer API**, and set **Preferred Slicer** to OrcaSlicer. Set the sidecar URL there or with `SLICER_API_URL` if it is not at `http://localhost:3003`. On Docker Desktop, `localhost` is the LayerCove container itself; use `http://host.docker.internal:3003` for a sidecar published on the host. Until **Use Slicer API** is on, Slice actions hand off to a desktop slicer instead. See [docs/calibration.md](docs/calibration.md) for guided filament calibration, which uses the same sidecar.
 
 ## Features
 

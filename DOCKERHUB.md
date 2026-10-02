@@ -12,7 +12,7 @@ docker compose up -d
 
 Open **http://localhost:8000** and add a printer.
 
-The Compose file uses Linux host networking for printer discovery. On Docker Desktop for macOS and Windows, comment out `network_mode: host`, enable the `ports:` block, and add printers by address; discovery is not available there.
+The Compose file uses Linux host networking for printer discovery. On Docker Desktop for macOS and Windows, comment out `network_mode: host`, enable the `ports:` block, and add printers by address; discovery is not available there. Set `SLICER_API_URL` to `http://host.docker.internal:3003` if the slicer sidecar runs on the host.
 
 ## Image
 

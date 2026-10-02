@@ -56,7 +56,7 @@ A `v*` tag publishes semver tags (`X.Y.Z` and `X.Y`). No LayerCove release has b
 
 ## Database upgrades
 
-LayerCove starts only from its current schema. `run_migrations` in `backend/app/core/database.py` applies runtime invariants; historical schema upgrades are intentionally unsupported. To roll back, restore the backup taken before the update, as described in [UPDATING.md](../UPDATING.md#rollback). Upstream migrations brought in by a sync must follow [docs/upstream-sync.md](../docs/upstream-sync.md#migration-comparison).
+LayerCove starts only from its current schema. `run_migrations` in `backend/app/core/database.py` applies runtime invariants; historical schema upgrades are intentionally unsupported. To roll back, restore the backup taken before the update, as described in [UPDATING.md](../UPDATING.md#rollback). Upstream migrations brought in by a sync must follow [docs/upstream-sync.md](../docs/upstream-sync.md#migration-comparison). [ADR 0002](../docs/decisions/0002-python-rust-coexistence.md) keeps database access and schema migrations in Python during the Rust pilot. A future forward-compatible upgrade policy and its owner are undecided; see #105.
 
 ## Inherited repository settings
 
