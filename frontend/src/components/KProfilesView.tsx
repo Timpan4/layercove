@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useId } from 'react';
 import { useQuery, useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import {
@@ -174,6 +174,7 @@ function KProfileModal({
   onSaveNote,
   hasPermission,
 }: KProfileModalProps) {
+  const formId = useId();
   const { t } = useTranslation();
   const { showToast } = useToast();
 
@@ -409,8 +410,9 @@ function KProfileModal({
           <form onSubmit={handleSubmit} className="p-4 space-y-4">
             {/* Profile Name - read-only when editing */}
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.profileName')}</label>
+              <label htmlFor={`${formId}-name`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.profileName')}</label>
               <input
+                id={`${formId}-name`}
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
@@ -423,8 +425,9 @@ function KProfileModal({
 
             {/* K-Value - always editable */}
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.kValue')}</label>
+              <label htmlFor={`${formId}-k-value`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.kValue')}</label>
               <input
+                id={`${formId}-k-value`}
                 type="text"
                 inputMode="decimal"
                 value={kValue}
@@ -453,8 +456,9 @@ function KProfileModal({
 
             {/* Filament - read-only when editing */}
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.filament')}</label>
+              <label htmlFor={`${formId}-filament`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.filament')}</label>
               <select
+                id={`${formId}-filament`}
                 value={filamentId}
                 onChange={(e) => {
                   const newFilamentId = e.target.value;
@@ -497,8 +501,9 @@ function KProfileModal({
             {/* Flow Type and Nozzle Size - read-only when editing */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.flowType')}</label>
+                <label htmlFor={`${formId}-flow-type`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.flowType')}</label>
                 <select
+                  id={`${formId}-flow-type`}
                   value={nozzleType}
                   onChange={(e) => {
                     const newNozzleType = e.target.value;
@@ -521,8 +526,9 @@ function KProfileModal({
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.nozzleSize')}</label>
+                <label htmlFor={`${formId}-nozzle-size`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.nozzleSize')}</label>
                 <select
+                  id={`${formId}-nozzle-size`}
                   value={modalDiameter}
                   onChange={(e) => setModalDiameter(e.target.value)}
                   disabled={!!profile}
@@ -587,8 +593,9 @@ function KProfileModal({
 
             {/* Notes */}
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.notes')}</label>
+              <label htmlFor={`${formId}-notes`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.modal.notes')}</label>
               <textarea
+                id={`${formId}-notes`}
                 value={note}
                 onChange={(e) => setNote(e.target.value)}
                 placeholder={t('kProfiles.modal.notesPlaceholder')}
@@ -704,6 +711,7 @@ const STORAGE_KEYS = {
 };
 
 export function KProfilesView() {
+  const filterId = useId();
   const { t } = useTranslation();
   const { showToast } = useToast();
   const { hasPermission } = useAuth();
@@ -1174,8 +1182,9 @@ export function KProfilesView() {
       {/* Printer & Nozzle Selector */}
       <div className="flex flex-wrap gap-4 mb-6">
         <div className="flex-1 min-w-48">
-          <label className="block text-sm text-bambu-gray mb-1">{t('kProfiles.printer')}</label>
+          <label htmlFor={`${filterId}-printer`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.printer')}</label>
           <select
+            id={`${filterId}-printer`}
             value={selectedPrinter || ''}
             onChange={(e) => setSelectedPrinter(parseInt(e.target.value))}
             className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1189,8 +1198,9 @@ export function KProfilesView() {
         </div>
 
         <div className="w-32">
-          <label className="block text-sm text-bambu-gray mb-1">{t('kProfiles.nozzle')}</label>
+          <label htmlFor={`${filterId}-nozzle`} className="block text-sm text-bambu-gray mb-1">{t('kProfiles.nozzle')}</label>
           <select
+            id={`${filterId}-nozzle`}
             value={nozzleDiameter}
             onChange={(e) => setNozzleDiameter(e.target.value)}
             className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"

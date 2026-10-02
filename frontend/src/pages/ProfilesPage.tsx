@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useId } from 'react';
 import { useSearchParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
@@ -100,6 +100,7 @@ function isUserPreset(settingId: string): boolean {
 // ============================================================================
 
 function LoginForm({ onSuccess, t }: { onSuccess: () => void; t: TFunction }) {
+  const formId = useId();
   const { showToast } = useToast();
   const [step, setStep] = useState<LoginStep>('email');
   const [email, setEmail] = useState('');
@@ -178,8 +179,9 @@ function LoginForm({ onSuccess, t }: { onSuccess: () => void; t: TFunction }) {
           {step === 'email' && (
             <>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('profiles.login.email')}</label>
+                <label htmlFor={`${formId}-email`} className="block text-sm text-bambu-gray mb-1">{t('profiles.login.email')}</label>
                 <input
+                  id={`${formId}-email`}
                   type="email"
                   value={email}
                   onChange={(e) => setEmail(e.target.value)}
@@ -189,8 +191,9 @@ function LoginForm({ onSuccess, t }: { onSuccess: () => void; t: TFunction }) {
                 />
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('profiles.login.password')}</label>
+                <label htmlFor={`${formId}-password`} className="block text-sm text-bambu-gray mb-1">{t('profiles.login.password')}</label>
                 <input
+                  id={`${formId}-password`}
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
@@ -200,8 +203,9 @@ function LoginForm({ onSuccess, t }: { onSuccess: () => void; t: TFunction }) {
                 />
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('profiles.login.region')}</label>
+                <label htmlFor={`${formId}-region`} className="block text-sm text-bambu-gray mb-1">{t('profiles.login.region')}</label>
                 <select
+                  id={`${formId}-region`}
                   value={region}
                   onChange={(e) => setRegion(e.target.value)}
                   className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -238,9 +242,10 @@ function LoginForm({ onSuccess, t }: { onSuccess: () => void; t: TFunction }) {
           {step === 'token' && (
             <>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('profiles.login.accessToken')}</label>
+                <label htmlFor={`${formId}-token`} className="block text-sm text-bambu-gray mb-1">{t('profiles.login.accessToken')}</label>
                 <p className="text-xs text-bambu-gray mb-2">{t('profiles.login.accessTokenHint')}</p>
                 <textarea
+                  id={`${formId}-token`}
                   value={token}
                   onChange={(e) => setToken(e.target.value)}
                   className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-xs font-mono placeholder-bambu-gray-dark focus:border-bambu-green focus:outline-none resize-none"
@@ -250,8 +255,9 @@ function LoginForm({ onSuccess, t }: { onSuccess: () => void; t: TFunction }) {
                 />
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('profiles.login.region')}</label>
+                <label htmlFor={`${formId}-region`} className="block text-sm text-bambu-gray mb-1">{t('profiles.login.region')}</label>
                 <select
+                  id={`${formId}-region`}
                   value={region}
                   onChange={(e) => setRegion(e.target.value)}
                   className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
