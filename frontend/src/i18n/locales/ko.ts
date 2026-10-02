@@ -2784,6 +2784,7 @@ export default {
     all: '전체'
   },
   printerFiles: {
+    gcodes: 'G코드',
     title: '파일 관리자',
     storageUsed: '사용됨:',
     storageFree: '여유:',

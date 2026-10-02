@@ -2926,6 +2926,7 @@ export default {
 
   // Printer File Manager modal (printer internal storage)
   printerFiles: {
+    gcodes: 'G-code',
     title: 'Gerenciador de Arquivos',
     storageUsed: 'Usado:',
     storageFree: 'Livre:',

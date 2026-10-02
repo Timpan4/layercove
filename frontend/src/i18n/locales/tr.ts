@@ -2942,6 +2942,7 @@ export default {
 
   // Yazıcı Dosya Yöneticisi modali (yazıcı dahili deposu)
   printerFiles: {
+    gcodes: 'G-kodu',
     title: 'Dosya Yöneticisi',
     storageUsed: 'Kullanılan:',
     storageFree: 'Boş:',
