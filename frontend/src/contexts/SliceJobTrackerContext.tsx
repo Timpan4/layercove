@@ -193,6 +193,7 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
 
       // Refresh whichever list owns the result. Both are cheap to invalidate.
       queryClient.invalidateQueries({ queryKey: ['library-files'] });
+      queryClient.invalidateQueries({ queryKey: ['library-stats'] });
       queryClient.invalidateQueries({ queryKey: ['archives'] });
     },
     [dismissToast, queryClient, showToast, t],

@@ -197,15 +197,7 @@ describe('SpoolFormModal quick-add toggle', () => {
     // PA Profile tab should be visible initially
     expect(screen.getByText('PA Profile')).toBeInTheDocument();
 
-    // Toggle quick-add on — the toggle is a button[role="switch"] sibling of the label
-    const toggleButtons = screen.getAllByRole('button');
-    const quickAddToggle = toggleButtons.find(btn =>
-      btn.getAttribute('type') === 'button' &&
-      btn.className.includes('rounded-full') &&
-      btn.closest('div')?.textContent?.includes('Quick Add')
-    );
-    expect(quickAddToggle).toBeTruthy();
-    fireEvent.click(quickAddToggle!);
+    fireEvent.click(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true }));
 
     // PA Profile tab should be hidden
     await waitFor(() => {
@@ -245,15 +237,7 @@ describe('SpoolFormModal quick-add toggle', () => {
       expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
     });
 
-    // Toggle quick-add on
-    const toggleButtons = screen.getAllByRole('button');
-    const quickAddToggle = toggleButtons.find(btn =>
-      btn.getAttribute('type') === 'button' &&
-      btn.className.includes('rounded-full') &&
-      btn.closest('div')?.textContent?.includes('Quick Add')
-    );
-    expect(quickAddToggle).toBeTruthy();
-    fireEvent.click(quickAddToggle!);
+    fireEvent.click(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true }));
 
     // Quantity field should now be visible
     await waitFor(() => {
@@ -294,14 +278,7 @@ describe('SpoolFormModal quick-add toggle', () => {
       expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
     });
 
-    // Toggle quick-add on
-    const toggleButtons = screen.getAllByRole('button');
-    const quickAddToggle = toggleButtons.find(btn =>
-      btn.getAttribute('type') === 'button' &&
-      btn.className.includes('rounded-full') &&
-      btn.closest('div')?.textContent?.includes('Quick Add')
-    );
-    fireEvent.click(quickAddToggle!);
+    fireEvent.click(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true }));
 
     // Brand and Subtype should be visible (without asterisk = optional)
     await waitFor(() => {
