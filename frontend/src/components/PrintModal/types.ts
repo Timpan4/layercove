@@ -29,6 +29,8 @@ export interface PrintModalProps {
   queueItem?: PrintQueueItem;
   /** Pre-select specific printers when opening the modal */
   initialSelectedPrinterIds?: number[];
+  /** Initial scheduling choice for new queue items. */
+  initialScheduleType?: ScheduleType;
   /** Handler for closing the modal */
   onClose: () => void;
   /** Handler for successful operation */
