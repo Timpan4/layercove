@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Box3, Mesh, Vector3, type Scene } from 'three';
+import { Box3, Mesh, Vector3, type PerspectiveCamera, type Scene } from 'three';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ModelViewer } from '../../components/ModelViewer';
@@ -7,6 +7,7 @@ import { slicerBedFromProfile } from '../../utils/slicerBed';
 
 const rendererCreated = vi.hoisted(() => vi.fn());
 const renderedScene = vi.hoisted(() => ({ current: null as Scene | null }));
+const renderedCamera = vi.hoisted(() => ({ current: null as PerspectiveCamera | null }));
 
 vi.mock('three', async () => {
   const actual = await vi.importActual<typeof import('three')>('three');
@@ -15,7 +16,10 @@ vi.mock('three', async () => {
     domElement = document.createElement('canvas');
     setSize = vi.fn();
     setPixelRatio = vi.fn();
-    render = vi.fn((scene: Scene) => { renderedScene.current = scene; });
+    render = vi.fn((scene: Scene, camera: PerspectiveCamera) => {
+      renderedScene.current = scene;
+      renderedCamera.current = camera;
+    });
     dispose = vi.fn();
 
     constructor() {
@@ -26,15 +30,20 @@ vi.mock('three', async () => {
   return { ...actual, WebGLRenderer };
 });
 
-vi.mock('three/examples/jsm/controls/OrbitControls.js', () => ({
-  OrbitControls: class {
-    target = { copy: vi.fn(), set: vi.fn() };
+vi.mock('three/examples/jsm/controls/OrbitControls.js', async () => {
+  const { Vector3 } = await vi.importActual<typeof import('three')>('three');
+  return { OrbitControls: class {
+    target = new Vector3();
     enableDamping = false;
     dampingFactor = 0;
-    update = vi.fn();
+    constructor(private camera: PerspectiveCamera) {}
+    update = () => {
+      this.camera.lookAt(this.target);
+      this.camera.updateMatrixWorld();
+    };
     dispose = vi.fn();
-  },
-}));
+  } };
+});
 
 function triangleStl(): ArrayBuffer {
   const buffer = new ArrayBuffer(134);
@@ -102,6 +111,56 @@ describe('ModelViewer lifecycle', () => {
       expect(document.querySelector('.animate-spin')).not.toBeInTheDocument();
     });
   }
+
+  // Failure modes: narrow panels clip the model, resizing loses the fit,
+  // and Reset targets a fixed point instead of the currently loaded model.
+  it.each([300, 1280])('keeps the source model inside a %spx panel on open, Reset and phone resize', async (initialWidth) => {
+    let width = initialWidth;
+    let height = 600;
+    const widthSpy = vi.spyOn(HTMLElement.prototype, 'clientWidth', 'get').mockImplementation(() => width);
+    const heightSpy = vi.spyOn(HTMLElement.prototype, 'clientHeight', 'get').mockImplementation(() => height);
+    try {
+      render(<ModelViewer url="/cube.stl" fileType="stl" />);
+      await finishFetch(0);
+      const assertModelFits = () => {
+        const group = renderedScene.current!.children.find((object) => object.type === 'Group')!;
+        const bounds = new Box3().setFromObject(group);
+        const camera = renderedCamera.current!;
+        camera.updateMatrixWorld();
+        for (const x of [bounds.min.x, bounds.max.x]) {
+          for (const y of [bounds.min.y, bounds.max.y]) {
+            for (const z of [bounds.min.z, bounds.max.z]) {
+              const projected = new Vector3(x, y, z).project(camera);
+              expect(Math.abs(projected.x)).toBeLessThan(1);
+              expect(Math.abs(projected.y)).toBeLessThan(1);
+              expect(Math.abs(projected.z)).toBeLessThan(1);
+            }
+          }
+        }
+      };
+      assertModelFits();
+      // The existing icon-only Reset control is identified by its icon.
+      fireEvent.click(document.querySelector('button:has(.lucide-rotate-ccw)')!);
+      assertModelFits();
+      const camera = renderedCamera.current!;
+      const group = renderedScene.current!.children.find((object) => object.type === 'Group')!;
+      const center = new Box3().setFromObject(group).getCenter(new Vector3());
+      const chosenDirection = new Vector3(1, 1, -1).normalize();
+      const chosenDistance = camera.position.distanceTo(center) * 2;
+      camera.position.copy(center).addScaledVector(chosenDirection, chosenDistance);
+      camera.lookAt(center);
+      width = 200;
+      height = 600;
+      fireEvent(window, new Event('resize'));
+      assertModelFits();
+      const resizedDirection = camera.position.clone().sub(center).normalize();
+      expect(resizedDirection.distanceTo(chosenDirection)).toBeCloseTo(0);
+      expect(camera.position.distanceTo(center)).toBeGreaterThanOrEqual(chosenDistance);
+    } finally {
+      widthSpy.mockRestore();
+      heightSpy.mockRestore();
+    }
+  });
 
 
   it.each([true, false])('centers STL mesh bounds on the selected bed with arrange=%s, matching the CLI', async (arrange) => {

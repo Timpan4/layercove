@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
@@ -649,6 +649,27 @@ export function ModelViewer({
   const [parsedData, setParsedData] = useState<Parsed3MFData | null>(null);
   const [stlGeometry, setStlGeometry] = useState<THREE.BufferGeometry | null>(null);
 
+  const fitModel = useCallback((resetDirection = true) => {
+    const camera = cameraRef.current;
+    const controls = controlsRef.current;
+    const group = modelGroupRef.current;
+    if (!camera || !controls || !group) return;
+    const bounds = new THREE.Box3().setFromObject(group);
+    if (bounds.isEmpty()) return;
+    const sphere = bounds.getBoundingSphere(new THREE.Sphere());
+    if (sphere.radius <= 0) return;
+    const verticalHalfFov = THREE.MathUtils.degToRad(camera.fov / 2);
+    const horizontalHalfFov = Math.atan(Math.tan(verticalHalfFov) * camera.aspect);
+    const fitDistance = sphere.radius / Math.sin(Math.min(verticalHalfFov, horizontalHalfFov));
+    const distance = resetDirection ? fitDistance : Math.max(fitDistance, camera.position.distanceTo(controls.target));
+    const direction = resetDirection
+      ? new THREE.Vector3(0.7, 0.5, 0.7).normalize()
+      : camera.position.clone().sub(controls.target).normalize();
+    camera.position.copy(sphere.center).addScaledVector(direction, distance);
+    controls.target.copy(sphere.center);
+    controls.update();
+  }, []);
+
   useEffect(() => {
     if (!containerRef.current) return;
 
@@ -790,6 +811,7 @@ export function ModelViewer({
       camera.aspect = w / h;
       camera.updateProjectionMatrix();
       renderer.setSize(w, h);
+      fitModel(false);
     };
     window.addEventListener('resize', handleResize);
     const resizeObserver = new ResizeObserver(() => {
@@ -808,7 +830,7 @@ export function ModelViewer({
       plateRef.current = null;
       gridRef.current = null;
     };
-  }, [url, buildVolume, showBuildPlate, fileType, t]);
+  }, [url, buildVolume, showBuildPlate, fileType, t, fitModel]);
 
   useEffect(() => {
     if (!sceneRef.current || !cameraRef.current || !controlsRef.current) return;
@@ -891,32 +913,12 @@ export function ModelViewer({
       gridRef.current.position.z = plateCenterZ;
     }
 
-    // Recalculate bounding box after positioning
-    const finalBox = new THREE.Box3().setFromObject(group);
-    const finalCenter = finalBox.getCenter(new THREE.Vector3());
-    const finalSize = finalBox.getSize(new THREE.Vector3());
-
-    // Adjust camera to fit model
-    const maxDim = Math.max(finalSize.x, finalSize.y, finalSize.z);
-    const cameraDistance = maxDim * 1.8;
-    cameraRef.current.position.set(
-      finalCenter.x + cameraDistance * 0.7,
-      finalCenter.y + cameraDistance * 0.5,
-      finalCenter.z + cameraDistance * 0.7
-    );
-    controlsRef.current.target.copy(finalCenter);
-    controlsRef.current.update();
+    fitModel();
 
     setLoading(false);
-  }, [parsedData, stlGeometry, selectedPlateId, filamentColors, buildVolume, centerOnBed, showBuildPlate]);
+  }, [parsedData, stlGeometry, selectedPlateId, filamentColors, buildVolume, centerOnBed, showBuildPlate, fitModel]);
 
-  const resetView = () => {
-    if (cameraRef.current && controlsRef.current) {
-      cameraRef.current.position.set(150, 150, 150);
-      controlsRef.current.target.set(0, 50, 0);
-      controlsRef.current.update();
-    }
-  };
+  const resetView = () => fitModel();
 
   const zoom = (factor: number) => {
     if (cameraRef.current) {
