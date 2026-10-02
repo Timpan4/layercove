@@ -129,3 +129,24 @@ test('resize restores focus from hidden navigation and preserves outside focus',
   await expect(printers).toBeFocused();
   expect(writes).toEqual([]);
 });
+
+for (const sidebar of ['expanded desktop', 'collapsed desktop', 'phone drawer'] as const) {
+  test(`GitHub app repository link in ${sidebar}`, async ({ page }, testInfo) => {
+    const writes = await installFixture(page, sidebar === 'phone drawer' ? 390 : 1280);
+    if (sidebar === 'phone drawer') {
+      await page.getByRole('button', { name: 'Open menu', exact: true }).click();
+    }
+    if (sidebar === 'collapsed desktop') {
+      await page.getByRole('button', { name: 'Collapse sidebar', exact: true }).click();
+      await expect(page.getByRole('button', { name: 'Expand sidebar', exact: true })).toBeVisible();
+    }
+    const repository = page.getByRole('link', { name: 'View on GitHub', exact: true });
+    await expect(repository).toBeVisible();
+    await expect(repository).toHaveAttribute('title', 'View on GitHub');
+    await expect(repository).toHaveAttribute('target', '_blank');
+    await expect(repository).toHaveAttribute('rel', 'noopener noreferrer');
+    await expect(repository).toHaveAttribute('href', 'https://github.com/Timpan4/layercove');
+    expect(writes).toEqual([]);
+    await testInfo.attach('repository-link', { body: await page.screenshot(), contentType: 'image/png' });
+  });
+}
