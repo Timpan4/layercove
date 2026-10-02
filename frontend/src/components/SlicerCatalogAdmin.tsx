@@ -47,7 +47,7 @@ export function SlicerCatalogAdmin() {
   const hasNextProfilePage = (profiles.data?.length ?? 0) > PROFILE_PAGE_SIZE;
   const mappingProfiles = useQuery({
     queryKey: ['slicerCatalogProfiles', 'mapping'],
-    queryFn: () => api.listSlicerCatalogProfiles(),
+    queryFn: () => api.listSlicerCatalogProfiles({ includeInactive: true }),
   });
   const revisionQueries = useQueries({
     queries: visibleProfiles.map((profile) => ({
@@ -57,6 +57,8 @@ export function SlicerCatalogAdmin() {
   });
   const accounts = useQuery({ queryKey: ['slicerCatalogAccounts'], queryFn: api.listSlicerCatalogAccounts });
   const printers = useQuery<Printer[]>({ queryKey: ['printers'], queryFn: api.getPrinters });
+  const profilesById = new Map((mappingProfiles.data ?? []).map(profile => [profile.profile_id, profile]));
+  const printersById = new Map((printers.data ?? []).map(printer => [printer.id, printer]));
   const mappings = useQuery({ queryKey: ['slicerCatalogMappings'], queryFn: api.listSlicerCompatibilityMappings });
   const reviews = useQuery({
     queryKey: ['slicerCatalogReviews', selectedAccount],
@@ -134,7 +136,26 @@ export function SlicerCatalogAdmin() {
     </Collapsible></CardContent></Card>
 
     <Card><CardContent><Collapsible defaultOpen summary={<h3 className="text-base font-semibold text-white">Compatibility mappings</h3>}>
-      <div className="flex flex-wrap gap-2 mb-3"><select aria-label="Catalog profile" value={profileId} onChange={e => setProfileId(e.target.value)} className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1"><option value="">Profile</option>{(mappingProfiles.data || []).filter(p => !p.tombstoned).map(p => <option key={p.profile_id} value={p.profile_id}>{p.display_name}</option>)}</select><select aria-label="Physical printer" value={printerId} onChange={e => setPrinterId(e.target.value)} className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1"><option value="">Printer</option>{(printers.data || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><Button size="sm" disabled={!canUpdate || !profileId || !printerId} title={updateTitle} onClick={() => createMapping.mutate()}>Create mapping</Button></div>{(mappings.data || []).map(mapping => <div key={mapping.id} className="flex items-center gap-2 text-sm text-white py-1"><span>Profile {mapping.profile_id} → Printer {mapping.printer_id}</span><Button size="sm" variant="danger" disabled={!canUpdate} title={updateTitle} onClick={() => deleteMapping.mutate(mapping.id)}>Delete</Button></div>)}
+      <div className="flex flex-wrap gap-2 mb-3"><select aria-label="Catalog profile" value={profileId} onChange={e => setProfileId(e.target.value)} className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1"><option value="">Profile</option>{(mappingProfiles.data || []).filter(p => p.active && !p.tombstoned).map(p => <option key={p.profile_id} value={p.profile_id}>{p.display_name}</option>)}</select><select aria-label="Physical printer" value={printerId} onChange={e => setPrinterId(e.target.value)} className="bg-bambu-dark text-white border border-bambu-dark-tertiary rounded px-2 py-1"><option value="">Printer</option>{(printers.data || []).map(p => <option key={p.id} value={p.id}>{p.name}</option>)}</select><Button size="sm" disabled={!canUpdate || !profileId || !printerId} title={updateTitle} onClick={() => createMapping.mutate()}>Create mapping</Button></div>
+      <ul aria-label={t('slicerCatalog.savedMappings')}>
+        {(mappings.data || []).map(mapping => {
+          const profile = profilesById.get(mapping.profile_id);
+          const printer = printersById.get(mapping.printer_id);
+          return <li key={mapping.id} className="flex items-center gap-2 text-sm text-white py-2">
+            <div className="min-w-0 flex-1">
+              <p className="break-words">
+                <span>{profile?.display_name || t(mappingProfiles.isPending ? 'common.loading' : 'slicerCatalog.profileUnavailable')}</span>
+                {profile?.tombstoned && <span className="ml-1 text-xs text-bambu-gray">{t('slicerCatalog.retiredProfile')}</span>}
+                {' → '}
+                <span>{printer?.name || t(printers.isPending ? 'common.loading' : 'slicerCatalog.printerUnavailable')}</span>
+                {printer && !printer.is_active && <span className="ml-1 text-xs text-bambu-gray">{t('slicerCatalog.inactivePrinter')}</span>}
+              </p>
+              <p className="mt-1 text-xs text-bambu-gray">{t('slicerCatalog.mappingIds', { profileId: mapping.profile_id, printerId: mapping.printer_id })}</p>
+            </div>
+            <Button size="sm" variant="danger" className="shrink-0" disabled={!canUpdate} title={updateTitle} onClick={() => deleteMapping.mutate(mapping.id)}>Delete</Button>
+          </li>;
+        })}
+      </ul>
     </Collapsible></CardContent></Card>
 
     {consentAccount && <div className="fixed inset-0 z-50 bg-black/70 flex items-center justify-center p-4"><Card className="max-w-md"><CardContent><h3 className="text-lg font-semibold text-white">Share catalog account?</h3><p className="text-sm text-bambu-gray my-3">Sharing sends this account's catalog profiles to other authorized users.</p><label className="flex gap-2 text-sm text-white"><input type="checkbox" checked={consentChecked} onChange={e => setConsentChecked(e.target.checked)} /> I consent to sharing this account.</label><div className="flex gap-2 mt-4"><Button variant="secondary" onClick={() => setConsentAccount(null)}>Cancel</Button><Button disabled={!consentChecked || share.isPending} onClick={() => share.mutate()}>Confirm sharing</Button></div></CardContent></Card></div>}
