@@ -96,6 +96,14 @@ export function Layout() {
   const wasSlicerWorkbench = useRef(false);
   const isSlicerWorkbench = location.pathname === '/slicer/workbench';
   const [mobileDrawerOpen, setMobileDrawerOpen] = useState(false);
+  const sidebarRef = useRef<HTMLElement>(null);
+  const menuButtonRef = useRef<HTMLButtonElement>(null);
+  const closeMobileDrawer = useCallback(() => {
+    if (sidebarRef.current?.contains(document.activeElement)) {
+      menuButtonRef.current?.focus();
+    }
+    setMobileDrawerOpen(false);
+  }, []);
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [showSwitchbar, setShowSwitchbar] = useState(false);
   const defaultSidebarOrder = useMemo(() => defaultNavItems.map(i => i.id), []);
@@ -419,9 +427,9 @@ export function Layout() {
   // Close compact drawer on navigation
   useEffect(() => {
     if (isSidebarCompact) {
-      setMobileDrawerOpen(false);
+      closeMobileDrawer();
     }
-  }, [location.pathname, isSidebarCompact]);
+  }, [location.pathname, isSidebarCompact, closeMobileDrawer]);
 
   // Listen for plate detection warnings (objects on plate, print paused)
   // Only show to users with printers:control permission
@@ -444,6 +452,7 @@ export function Layout() {
 
   // Global keyboard shortcuts for navigation
   const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape' && isSidebarCompact && mobileDrawerOpen) closeMobileDrawer();
     const target = e.target as HTMLElement;
     // Ignore if typing in an input/textarea
     if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
@@ -486,7 +495,7 @@ export function Layout() {
           break;
       }
     }
-  }, [navigate, orderedSidebarIds, navItemsMap, extLinksMap]);
+  }, [navigate, orderedSidebarIds, navItemsMap, extLinksMap, isSidebarCompact, mobileDrawerOpen, closeMobileDrawer]);
 
   useEffect(() => {
     document.addEventListener('keydown', handleKeyDown);
@@ -499,9 +508,12 @@ export function Layout() {
       {isSidebarCompact && (
         <header className="fixed top-0 left-0 right-0 z-40 h-14 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary flex items-center px-4">
           <button
+            ref={menuButtonRef}
             onClick={() => setMobileDrawerOpen(true)}
             className="p-2 -ml-2 rounded-lg hover:bg-bambu-dark-tertiary transition-colors"
             aria-label="Open menu"
+            aria-expanded={mobileDrawerOpen}
+            aria-controls="sidebar-navigation"
           >
             <Menu className="w-6 h-6 text-white" />
           </button>
@@ -517,12 +529,16 @@ export function Layout() {
       {isSidebarCompact && mobileDrawerOpen && (
         <div
           className="fixed inset-0 bg-black/60 z-40 transition-opacity"
-          onClick={() => setMobileDrawerOpen(false)}
+          onMouseDown={(event) => event.preventDefault()}
+          onClick={closeMobileDrawer}
         />
       )}
 
       {/* Sidebar / Mobile Drawer */}
       <aside
+        ref={sidebarRef}
+        id="sidebar-navigation"
+        inert={isSidebarCompact && !mobileDrawerOpen}
         className={`bg-bambu-dark-secondary border-r border-bambu-dark-tertiary flex flex-col transition-all duration-300 ${
           isSidebarCompact
             ? `fixed inset-y-0 left-0 z-50 w-72 transform ${mobileDrawerOpen ? 'translate-x-0' : '-translate-x-full'}`
