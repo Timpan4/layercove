@@ -1,4 +1,5 @@
-import { useEffect, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Loader2 } from 'lucide-react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
@@ -28,6 +29,7 @@ import {
 } from '../features/slicer-workbench/SlicerSettingsSidebar';
 import { SlicerTopBar } from '../features/slicer-workbench/SlicerTopBar';
 import { SlicerBedStatus } from '../features/slicer-workbench/SlicerBedStatus';
+import { parseSlicerBed } from '../utils/slicerBed';
 import { parsePositiveInteger, resolveSettingsScope, resolveWorkbenchSource } from '../features/slicer-workbench/source';
 import {
   type SettingValue,
@@ -72,7 +74,7 @@ export function SlicerWorkbenchPage() {
   if (!source) {
     return <ErrorState message="Choose exactly one accessible archive or library model." onBack={() => navigate('/files')} />;
   }
-  return <Workbench source={source} initialJobId={initialJobId} onBack={() => navigate(backPath)} />;
+  return <Workbench key={`${source.kind}:${source.id}`} source={source} initialJobId={initialJobId} onBack={() => navigate(backPath)} />;
 }
 
 interface HistoricalResliceModel {
@@ -91,7 +93,7 @@ export function HistoricalReslice({ model }: { model: HistoricalResliceModel }) 
   const [error, setError] = useState<string | null>(null);
   const provenance = model.jobState?.provenance;
   const terminal = ['completed', 'failed', 'cancelled'].includes(model.jobState?.status ?? '');
-  if (model.jobId === null || !terminal || !provenance) return null;
+  if (model.jobId === null || !terminal || !provenance || model.jobState?.request_snapshot === null) return null;
 
   if (
     provenance.state !== 'resolved'
@@ -218,6 +220,7 @@ export function HistoricalReslice({ model }: { model: HistoricalResliceModel }) 
 function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; initialJobId: number | null; onBack: () => void }) {
   const { t } = useTranslation();
   const model = useSlicerWorkbench(source, initialJobId);
+  const reopenedJob = useRef(initialJobId !== null);
   const [previewMode, setPreviewMode] = useState<'prepare' | 'preview'>('prepare');
   const [mobilePanel, setMobilePanel] = useState<'canvas' | 'settings'>('canvas');
   const [sidebarWidth, setSidebarWidth] = useState(400);
@@ -228,6 +231,14 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
   useEffect(() => {
     if (!pageId && model.schemaQuery.data?.pages[0]) setPageId(model.schemaQuery.data.pages[0].name);
   }, [model.schemaQuery.data?.pages, pageId]);
+
+  if (model.jobState && (model.jobState.kind !== (source.kind === 'libraryFile' ? 'library_file' : 'archive')
+    || model.jobState.source_id !== source.id)) {
+    return <ErrorState message="This slice job belongs to a different source." onBack={onBack} />;
+  }
+  if (reopenedJob.current && model.jobState) {
+    return <SavedSliceResult model={model} onBack={onBack} />;
+  }
 
   const loading = model.capabilitiesQuery.isLoading || model.schemaQuery.isLoading || model.sourceQuery.isLoading || model.platesQuery.isLoading || model.catalogSelection.loading;
   if (loading) return <div className="flex min-h-[60vh] items-center justify-center text-bambu-gray-light"><Loader2 className="mr-2 h-5 w-5 animate-spin" />Loading slicer workbench…</div>;
@@ -376,5 +387,64 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       onClose={() => setShowPrint(false)}
       onSuccess={() => setShowPrint(false)}
     />}
+  </div>;
+}
+
+function SavedSliceResult({ model, onBack }: { model: ReturnType<typeof useSlicerWorkbench>; onBack: () => void }) {
+  const [showPrint, setShowPrint] = useState(false);
+  const job = model.jobState!;
+  const request = job.request_snapshot;
+  const revisionId = job.provenance?.printer_revision_id;
+  const printerRevision = useQuery({
+    queryKey: ['slicerCatalogRevision', revisionId],
+    queryFn: () => api.getSlicerCatalogRevision(revisionId!),
+    enabled: revisionId != null,
+    retry: false,
+  });
+  const bed = parseSlicerBed(printerRevision.data?.bed_content ?? printerRevision.data?.content).bed;
+  const result = model.result;
+  const canPrint = Boolean(job.status === 'completed' && request && job.request_fingerprint && job.provenance?.state === 'resolved' && result);
+  const inProgress = ['pending', 'running', 'cancel-requested'].includes(job.status);
+  const filaments = request?.filament_presets?.length ? request.filament_presets : request?.filament_preset ? [request.filament_preset] : [];
+
+  return <div className="flex min-h-[calc(100dvh-4rem)] flex-col gap-3 p-3 text-white">
+    <div className="flex flex-wrap items-center justify-between gap-3">
+      <div><h1 className="text-lg font-semibold">{job.status === 'completed' ? 'Saved slice result' : inProgress ? 'Slice in progress' : job.status === 'failed' ? 'Slice failed' : 'Slice cancelled'}</h1><p className="break-all text-sm text-bambu-gray-light">{job.source_name}</p></div>
+      <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={onBack}>Return to source</Button><Button onClick={() => setShowPrint(true)} disabled={!canPrint}>Print saved result</Button></div>
+    </div>
+    <p className="text-sm text-bambu-gray-light">These settings belong to this slice job. Use an explicit re-slice to change the result.</p>
+    {inProgress && <p role="status" className="text-sm">{job.progress?.stage ?? job.status}{job.progress && ` · ${job.progress.total_percent}%`}</p>}
+    {job.error_detail && <p role="alert" className="text-sm text-red-300">{job.error_detail}</p>}
+    {!request && <p role="alert" className="text-sm text-amber-300">Saved settings could not be verified. Return to the source to make a new slice.</p>}
+    <div className="flex min-h-0 flex-1 flex-col gap-3 lg:flex-row">
+      <aside aria-label="Saved slice settings" className="min-w-0 space-y-3 text-sm lg:w-80 lg:shrink-0">
+        {request && <>
+          <dl className="space-y-2 break-words">
+            <div><dt className="text-bambu-gray-light">Printer profile</dt><dd>{request.printer_preset?.id ?? request.printer_preset_id ?? 'Unavailable'}</dd></div>
+            <div><dt className="text-bambu-gray-light">Process profile</dt><dd>{request.process_preset?.id ?? request.process_preset_id ?? 'Unavailable'}</dd></div>
+            <div><dt className="text-bambu-gray-light">Filament profiles</dt><dd>{filaments.map((filament) => filament.id).join(', ') || request.filament_preset_id || 'Unavailable'}</dd></div>
+            <div><dt className="text-bambu-gray-light">Plate</dt><dd>{request.plate === 0 ? 'All plates' : request.plate ?? 1}</dd></div>
+            {request.bed_type && <div><dt className="text-bambu-gray-light">Bed type</dt><dd>{request.bed_type}</dd></div>}
+            <div><dt className="text-bambu-gray-light">Arrange</dt><dd>{request.arrange ? 'On' : 'Off'}</dd></div>
+          </dl>
+          {Object.keys(request.process_overrides ?? {}).length > 0 && <div><h2 className="font-semibold">Process overrides</h2>{Object.entries(request.process_overrides!).map(([key, value]) => <p key={key} className="break-words">{key}: {Array.isArray(value) ? value.join(', ') : String(value)}</p>)}</div>}
+          {request.model_state && <div><h2 className="font-semibold">Saved objects</h2><p>Arrange objects: {request.model_state.arrange ? 'On' : 'Off'}</p>{(request.model_state.objects ?? []).map((object) => <div key={object.id} className="mt-2 break-words">
+            <p className="font-medium">{object.id}</p>
+            <p>Position: {(object.transform?.position ?? [0, 0, 0]).join(', ')}</p>
+            <p>Rotation: {(object.transform?.rotation ?? [0, 0, 0]).join(', ')}</p>
+            <p>Scale: {(object.transform?.scale ?? [1, 1, 1]).join(', ')}</p>
+            {Object.entries(object.overrides ?? {}).map(([key, value]) => <p key={key}>{key}: {Array.isArray(value) ? value.join(', ') : String(value)}</p>)}
+            {request.model_state?.hidden_object_ids?.includes(object.id) && <p>Hidden</p>}
+            {request.model_state?.lay_flat_object_ids?.includes(object.id) && <p>Lay flat</p>}
+          </div>)}</div>}
+        </>}
+      </aside>
+      <section aria-label="Saved toolpath preview" className="relative h-[60dvh] min-h-80 min-w-0 flex-1 lg:h-auto">
+        {model.previewUrl ? <GcodeViewer buildVolume={bed ?? undefined} showBuildPlate={Boolean(bed && !bed.outline)} gcodeUrl={model.previewUrl} className="h-full w-full" /> : <p>Saved toolpath is unavailable.</p>}
+        {!bed && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">Bed geometry unavailable. Preview only; printer fit and placement are unverified.</p>}
+      </section>
+    </div>
+    <HistoricalReslice model={model} />
+    {showPrint && result && <PrintModal mode="create" archiveId={'archive_id' in result ? result.archive_id : undefined} libraryFileId={'library_file_id' in result ? result.library_file_id : undefined} archiveName={result.name} onClose={() => setShowPrint(false)} onSuccess={() => setShowPrint(false)} />}
   </div>;
 }

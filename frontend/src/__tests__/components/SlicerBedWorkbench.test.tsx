@@ -17,7 +17,7 @@ vi.mock('../../components/GcodeViewer', () => ({
 }));
 vi.mock('../../contexts/SliceJobTrackerContext', () => ({
   useSliceJobTracker: () => ({ trackJob: vi.fn(), jobStates: { 9: {
-    status: 'completed', result: { library_file_id: 77 }, request_fingerprint: 'previous',
+    status: 'completed', kind: 'library_file', source_id: 42, result: { library_file_id: 77 }, request_fingerprint: 'previous',
   } } }),
 }));
 
@@ -39,6 +39,7 @@ const binding = {
 };
 
 beforeEach(() => {
+  vi.spyOn(api, 'sliceLibraryFile').mockResolvedValue({ job_id: 9, status: 'pending', status_url: '/api/v1/slice-jobs/9' });
   const contract = {
     contract_version: '1', engine: { name: 'OrcaSlicer', version: '2.4.2', commit: 'pinned' },
     image_identity: { digest: `sha256:${'b'.repeat(64)}` }, schema_hash: 'a'.repeat(64),
@@ -73,9 +74,15 @@ afterEach(async () => {
 });
 
 async function selectMachine() {
-  render(<MemoryRouter initialEntries={['/slicer?library_file=42&job=9']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
+  render(<MemoryRouter initialEntries={['/slicer?library_file=42']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
   fireEvent.change(await screen.findByRole('combobox', { name: 'Physical printer' }), { target: { value: '1' } });
   fireEvent.change(await screen.findByRole('combobox', { name: 'Exact slicer binding' }), { target: { value: '5' } });
+  const acknowledgement = await screen.findByRole('checkbox', { name: /Confirm filament materials/ });
+  fireEvent.click(acknowledgement);
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Slice plate' })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: 'Slice plate' }));
+  await screen.findByRole('button', { name: 'Slice again' });
+  fireEvent.click(acknowledgement);
 }
 
 describe('bed geometry in the actual workbench', () => {

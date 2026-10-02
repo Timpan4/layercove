@@ -1344,6 +1344,50 @@ class TestSliceLibraryFile:
 class TestSliceJobs:
     @pytest.mark.asyncio
     @pytest.mark.integration
+    @pytest.mark.parametrize("corrupt", [False, True])
+    async def test_reopened_job_returns_its_exact_saved_request(self, async_client, db_session, corrupt):
+        import hashlib
+
+        from backend.app.models.slice_job import SliceJobRecord
+
+        snapshot = {
+            "printer_preset": {"source": "local", "id": "voron"},
+            "process_preset": {"source": "local", "id": "pla"},
+            "filament_preset": {"source": "local", "id": "pla"},
+            "plate": 2,
+            "schema_hash": "a" * 64,
+            "process_overrides": {"layer_height": 0.28},
+            "model_state": {
+                "objects": [{"id": "cube", "transform": {"position": [10, 20, 0]}}],
+                "hidden_object_ids": [],
+                "lay_flat_object_ids": [],
+                "arrange": False,
+            },
+        }
+        fingerprint = hashlib.sha256(json.dumps(snapshot, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if corrupt:
+            snapshot["process_overrides"]["layer_height"] = 0.2
+        job = SliceJobRecord(
+            source_kind="library_file",
+            source_id=42,
+            source_name="cube.3mf",
+            status="completed",
+            created_at=datetime.now(timezone.utc),
+            request_snapshot=snapshot,
+            request_fingerprint=fingerprint,
+            result={"library_file_id": 77},
+        )
+        db_session.add(job)
+        await db_session.commit()
+
+        response = await async_client.get(f"/api/v1/slice-jobs/{job.id}")
+
+        assert response.status_code == 200
+        assert response.json()["request_snapshot"] == (None if corrupt else snapshot)
+        assert response.json()["request_fingerprint"] == fingerprint
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_unknown_job_returns_404(self, async_client: AsyncClient):
         r = await async_client.get("/api/v1/slice-jobs/999999")
         assert r.status_code == 404

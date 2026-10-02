@@ -2081,6 +2081,8 @@ export interface SliceJobState {
   source_name: string;
   schema_hash: string | null;
   request_fingerprint: string | null;
+  /** Retained request, validated against the job fingerprint by the server. */
+  request_snapshot?: SliceRequest | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;

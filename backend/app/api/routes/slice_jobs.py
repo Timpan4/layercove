@@ -17,6 +17,7 @@ from backend.app.services.slice_dispatch import slice_dispatch
 from backend.app.services.slicer_catalog_selection import (
     CatalogSelectionError,
     prepare_historical_reslice,
+    verified_job_request_snapshot,
 )
 
 router = APIRouter(prefix="/slice-jobs", tags=["slice-jobs"])
@@ -49,6 +50,7 @@ async def get_slice_job(
 ):
     job = _require_job_access(await slice_dispatch.get(job_id), caller)
     provenance = await slice_dispatch.get_provenance(job.id)
+    snapshot = verified_job_request_snapshot(job)
 
     body: dict = {
         "job_id": job.id,
@@ -58,6 +60,7 @@ async def get_slice_job(
         "source_name": job.source_name,
         "schema_hash": job.schema_hash,
         "request_fingerprint": job.request_fingerprint,
+        "request_snapshot": snapshot,
         "created_at": job.created_at.isoformat(),
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
