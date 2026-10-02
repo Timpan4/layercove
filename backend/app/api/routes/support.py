@@ -748,13 +748,33 @@ async def _collect_support_info() -> dict:
         except Exception:
             logger.debug("Failed to load obico_enabled_printers", exc_info=True)
 
-        # Check reachability in parallel
-        reachability_tasks = [_check_port(p.ip_address, 8883) for p in printers]
+        # Bambu MQTT reachability. Moonraker uses the API diagnostic below.
+        bambu_printers = [p for p in printers if p.provider == "bambu"]
+        reachability_tasks = [_check_port(p.ip_address, 8883) for p in bambu_printers]
         reachable_results = await asyncio.gather(*reachability_tasks, return_exceptions=True)
+        reachable_by_id = dict(zip((p.id for p in bambu_printers), reachable_results, strict=True))
 
         for i, printer in enumerate(printers):
+            if printer.provider == "moonraker":
+                snapshot = printer_manager.get_snapshot(printer.id)
+                info["printers"].append(
+                    {
+                        "index": i + 1,
+                        "provider": "moonraker",
+                        "model": printer.model or "Unknown",
+                        "nozzle_count": printer.nozzle_count,
+                        "is_active": printer.is_active,
+                        "connected": snapshot.connected if snapshot else False,
+                        "state": snapshot.state if snapshot else "unknown",
+                        "telemetry_stale": snapshot.telemetry_stale if snapshot else None,
+                    }
+                )
+                continue
+
             state = statuses.get(printer.id)
-            reachable = reachable_results[i] if not isinstance(reachable_results[i], Exception) else False
+            reachable = reachable_by_id[printer.id]
+            if isinstance(reachable, Exception):
+                reachable = False
 
             # Count AMS units and trays from raw_data
             ams_unit_count = 0
@@ -1266,6 +1286,8 @@ async def generate_support_bundle(
         async with async_session() as db:
             db_printers = (await db.execute(select(Printer))).scalars().all()
         for i, printer in enumerate(db_printers):
+            if printer.provider != "bambu":
+                continue
             state = statuses.get(printer.id)
             if state is None or not state.raw_data:
                 continue
