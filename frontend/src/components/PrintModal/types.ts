@@ -1,4 +1,4 @@
-import type { PrintQueueItem, Printer } from '../../api/client';
+import type { PrintQueueItem, Printer, SliceResponse } from '../../api/client';
 
 /**
  * Mode of operation for the PrintModal.
@@ -23,6 +23,8 @@ export interface PrintModalProps {
   libraryFileId?: number;
   /** Display name for the print */
   archiveName: string;
+  /** Slicer estimates for the completed artifact shown in this handoff. */
+  sliceEstimates?: Pick<SliceResponse, 'print_time_seconds' | 'filament_used_g'>;
   /** Existing queue item (only for edit-queue-item mode) */
   queueItem?: PrintQueueItem;
   /** Pre-select specific printers when opening the modal */

@@ -32,6 +32,39 @@ function open() {
 }
 
 describe('Workbench with missing bed metadata', () => {
+  it('does not present missing slicer estimates as zero time or filament', () => {
+    vi.mocked(useSlicerWorkbench).mockReturnValue({
+      ...mockedModel(),
+      result: { library_file_id: 77, name: 'cube.gcode', print_time_seconds: 0, filament_used_g: 0, filament_used_mm: 0, used_embedded_settings: false },
+    });
+    open();
+    expect(screen.getAllByText('Unavailable')).toHaveLength(2);
+    expect(screen.queryByText('0m')).not.toBeInTheDocument();
+    expect(screen.queryByText('0 g')).not.toBeInTheDocument();
+  });
+
+  it('keeps positive estimates visible for a small calibration print', () => {
+    vi.mocked(useSlicerWorkbench).mockReturnValue({
+      ...mockedModel(),
+      result: { library_file_id: 77, name: 'calibration.gcode', print_time_seconds: 45, filament_used_g: 0.04, filament_used_mm: 13, used_embedded_settings: false },
+    });
+    open();
+    expect(screen.getByText('45s')).toBeInTheDocument();
+    expect(screen.getByText('0.04 g')).toBeInTheDocument();
+  });
+
+  it('shows slicer time and material after a fresh slice completes', () => {
+    vi.mocked(useSlicerWorkbench).mockReturnValue({
+      ...mockedModel(),
+      result: { library_file_id: 77, name: 'cube.gcode', print_time_seconds: 3720, filament_used_g: 12.5, filament_used_mm: 4000, used_embedded_settings: false },
+    });
+    open();
+    fireEvent.click(screen.getByRole('button', { name: 'preview' }));
+    expect(screen.getByRole('region', { name: 'Slice estimates' })).toBeInTheDocument();
+    expect(screen.getByText('1h 2m')).toBeInTheDocument();
+    expect(screen.getByText('12.5 g')).toBeInTheDocument();
+  });
+
   it('lets phone users reach settings and return to each canvas without losing the model', () => {
     open();
     const settings = screen.getByRole('button', { name: /settings/i });

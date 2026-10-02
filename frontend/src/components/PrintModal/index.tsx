@@ -8,6 +8,7 @@ import { api } from '../../api/client';
 import { useAuth } from '../../contexts/AuthContext';
 import { Card, CardContent } from '../Card';
 import { Button } from '../Button';
+import { SliceEstimates } from '../SliceEstimates';
 import { ConfirmModal } from '../ConfirmModal';
 import { useToast } from '../../contexts/ToastContext';
 import { buildLoadedFilaments, useFilamentMapping } from '../../hooks/useFilamentMapping';
@@ -45,6 +46,7 @@ export function PrintModal({
   archiveId,
   libraryFileId,
   archiveName,
+  sliceEstimates,
   queueItem,
   initialSelectedPrinterIds,
   onClose,
@@ -1061,6 +1063,10 @@ export function PrintModal({
               <span className="block text-bambu-gray mb-1">Print Job</span>
               <span className="text-white font-medium truncate block">{archiveName}</span>
             </p>
+            {sliceEstimates && <div className="space-y-2">
+              <p className="text-xs text-bambu-gray-light">Estimates cover the complete slice.{isMultiPlate && ' Plate selections below may change the printed time and filament.'}</p>
+              <SliceEstimates result={sliceEstimates} />
+            </div>}
 
             {/* Build-plate badge for the selected (or sole) plate — surfaced
                 early so the user knows which plate to mount before scheduling
