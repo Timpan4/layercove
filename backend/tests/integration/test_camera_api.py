@@ -294,6 +294,31 @@ class TestCameraAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_moonraker_camera_diagnose_reports_unavailable(self, async_client: AsyncClient, printer_factory):
+        from backend.app.services.camera_diagnose import CameraDiagnoseResult, CameraDiagnoseStage
+
+        printer = await printer_factory(provider="moonraker", model="Voron")
+        bambu_failure = CameraDiagnoseResult(
+            printer_id=printer.id,
+            protocol="chamber_image",
+            port=6000,
+            profile="default",
+            overall_status="failed",
+            stages=[CameraDiagnoseStage(name="tcp_reachable", status="failed", duration_ms=1, code="tcp_refused")],
+            summary_code="tcp_refused",
+        )
+        with patch(
+            "backend.app.services.camera_diagnose.diagnose_camera",
+            new_callable=AsyncMock,
+            return_value=bambu_failure,
+        ):
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/camera/diagnose")
+
+        assert response.status_code == 501
+        assert response.json()["detail"] == "Moonraker camera diagnostics are unavailable"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_camera_diagnose_returns_structured_result(self, async_client: AsyncClient, printer_factory):
         """Endpoint returns the per-stage shape the frontend modal renders."""
         from backend.app.services.camera_diagnose import (

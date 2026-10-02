@@ -1382,6 +1382,8 @@ async def diagnose_camera_route(
     from backend.app.services.camera_diagnose import diagnose_camera
 
     printer = await get_printer_or_404(printer_id, db)
+    if printer.provider == "moonraker":
+        raise HTTPException(status_code=501, detail="Moonraker camera diagnostics are unavailable")
     ip_address = printer.ip_address
     access_code = printer.access_code
     model = printer.model
