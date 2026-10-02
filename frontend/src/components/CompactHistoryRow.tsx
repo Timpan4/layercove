@@ -139,6 +139,7 @@ export function CompactHistoryRow({
       {/* Meta row — printer / filament / duration / user. Indented under the
           thumbnail so it lines up with the name. */}
       <div className="mt-1 ml-[3.25rem] flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-bambu-gray">
+        <span className="text-bambu-gray-light">{t(`queue.status.${item.status}`)}</span>
         {item.printer_name && (
           <span className="flex items-center gap-1 shrink-0">
             <Printer className="w-3 h-3" />
