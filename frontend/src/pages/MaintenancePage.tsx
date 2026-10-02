@@ -264,6 +264,7 @@ function MaintenanceCard({
           <span title={!hasPermission('maintenance:update') ? t('maintenance.noPermissionUpdate') : undefined}>
             <Toggle
               checked={item.enabled}
+              ariaLabel={`${t('common.enable')} ${item.maintenance_type_name}, ${item.printer_name}`}
               onChange={(checked) => onToggle(item.id, checked)}
               disabled={!hasPermission('maintenance:update')}
             />
@@ -370,7 +371,11 @@ function PrinterSection({
             </div>
             {editingHours ? (
               <div className="flex items-center gap-2">
+                <label htmlFor={`maintenance-hours-${overview.printer_id}`} className="sr-only">
+                  {t('maintenance.editPrintHours')}, {overview.printer_name}
+                </label>
                 <input
+                  id={`maintenance-hours-${overview.printer_id}`}
                   type="number"
                   value={hoursInput}
                   onChange={(e) => setHoursInput(e.target.value)}
@@ -650,8 +655,9 @@ function SettingsSection({
                     />
                   </div>
                   <div>
-                    <label className="block text-xs text-bambu-gray mb-1.5">{t('maintenance.intervalType')}</label>
+                    <label htmlFor="maintenance-new-interval-type" className="block text-xs text-bambu-gray mb-1.5">{t('maintenance.intervalType')}</label>
                     <select
+                      id="maintenance-new-interval-type"
                       value={newTypeIntervalType}
                       onChange={(e) => {
                         setNewTypeIntervalType(e.target.value as 'hours' | 'days');
@@ -669,10 +675,11 @@ function SettingsSection({
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs text-bambu-gray mb-1.5">
+                    <label htmlFor="maintenance-new-interval-value" className="block text-xs text-bambu-gray mb-1.5">
                       {t('maintenance.intervalValue', { type: newTypeIntervalType === 'days' ? t('maintenance.calendarDays').toLowerCase() : t('common.hours') })}
                     </label>
                     <input
+                      id="maintenance-new-interval-value"
                       type="number"
                       value={newTypeInterval}
                       onChange={(e) => setNewTypeInterval(e.target.value)}
@@ -691,6 +698,8 @@ function SettingsSection({
                           <button
                             key={iconName}
                             type="button"
+                            aria-label={`${t('maintenance.icon')} ${iconName}`}
+                            aria-pressed={newTypeIcon === iconName}
                             onClick={() => setNewTypeIcon(iconName)}
                             className={`p-2 rounded-lg transition-colors ${
                               newTypeIcon === iconName
@@ -772,6 +781,7 @@ function SettingsSection({
                     </div>
                   </div>
                   <button
+                    aria-label={`${t('common.delete')} ${type.name}`}
                     onClick={() => {
                       if (!hasPermission('maintenance:delete')) return;
                       setPendingSystemDelete(type);
