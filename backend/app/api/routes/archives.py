@@ -1048,12 +1048,13 @@ async def get_archive_stats(
     _validate_user_filter_permission(current_user, created_by_id)
 
     # Build date filter conditions scoped to PrintLogEntry (event-time).
+    # PrintLogEntry.created_at stores naive UTC timestamps on both databases.
     base_conditions = []
     if date_from:
-        dt_from = datetime.combine(date_from, time.min, tzinfo=timezone.utc)
+        dt_from = datetime.combine(date_from, time.min)
         base_conditions.append(PrintLogEntry.created_at >= dt_from)
     if date_to:
-        dt_to = datetime.combine(date_to, time.max, tzinfo=timezone.utc)
+        dt_to = datetime.combine(date_to, time.max)
         base_conditions.append(PrintLogEntry.created_at <= dt_to)
     _apply_run_user_filter(base_conditions, created_by_id)
 
