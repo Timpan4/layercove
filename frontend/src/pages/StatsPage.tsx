@@ -752,7 +752,7 @@ function FailureAnalysisWidget({ size = 1, dateFrom, dateTo, createdById }: {
   const { data: analysis, isLoading } = useQuery({
     queryKey: ['failureAnalysis', dateFrom, dateTo, createdById ?? 'all'],
     queryFn: () => api.getFailureAnalysis({
-      ...(hasDateRange ? { dateFrom, dateTo } : { days: 30 }),
+      ...(hasDateRange ? { dateFrom, dateTo } : { allTime: true }),
       createdById,
     }),
   });
@@ -766,7 +766,7 @@ function FailureAnalysisWidget({ size = 1, dateFrom, dateTo, createdById }: {
   }
 
   if (!analysis || analysis.total_prints === 0) {
-    return <p className="text-bambu-gray text-center py-4">{hasDateRange ? t('stats.noPrintDataInRange') : t('stats.noPrintDataLast30Days')}</p>;
+    return <p className="text-bambu-gray text-center py-4">{hasDateRange ? t('stats.noPrintDataInRange') : t('stats.noPrintData')}</p>;
   }
 
   // Show more reasons when expanded
