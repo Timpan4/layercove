@@ -1,73 +1,46 @@
-# React + TypeScript + Vite
+# LayerCove frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React, TypeScript, Vite, and Tailwind CSS, managed with Bun 1.3.14. `bun run build` writes the production bundle to `../static`, which the backend serves.
 
-Currently, two official plugins are available:
+## Development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Babel](https://babeljs.io/) (or [oxc](https://oxc.rs) when used in [rolldown-vite](https://vite.dev/guide/rolldown)) for Fast Refresh
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/) for Fast Refresh
-
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+```bash
+bun install --frozen-lockfile
+bun run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://github.com/Rel1cx/eslint-react/tree/main/packages/plugins/eslint-plugin-react-dom) for React-specific lint rules:
+The dev server runs on `http://localhost:5173` and proxies API and WebSocket traffic to `http://localhost:${BACKEND_PORT:-8000}`. Set `BACKEND_URL` to use a remote LayerCove backend instead. To start the backend too, run `bash scripts/dev.sh` from the repository root.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Scripts
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+| Command | Purpose |
+|---|---|
+| `bun run dev` | Vite dev server |
+| `bun run build` | Type-check and build into `../static` |
+| `bun run lint` | Oxlint, warnings as errors |
+| `bun x tsc --noEmit` | Type check |
+| `bun run test` | Vitest in watch mode |
+| `bun run test:run` | Vitest once, then i18n parity and brand-asset checks |
+| `bun run test:coverage` | Vitest with coverage |
+| `bun run test:e2e` | Playwright E2E against a running server |
+| `bun run check:i18n` | Locale key and translation parity |
+| `bun run generate:api` | Regenerate `src/api/generated.ts` from the backend OpenAPI schema |
+| `bun run check:api` | Fail if `src/api/generated.ts` is out of date |
+
+## Layout
+
+- `src/pages/`, `src/components/`, `src/features/`: UI
+- `src/api/`: API client and generated OpenAPI types
+- `src/i18n/locales/`: translations; every key must exist in all locales
+- `src/__tests__/`: Vitest tests
+- `e2e/`: Playwright tests
+
+## E2E tests
+
+Playwright runs against a live server, `http://localhost:8001` by default:
+
+```bash
+LAYERCOVE_URL=http://localhost:8001 bun run test:e2e
 ```
+
+Each run writes `playwright-report/`, plus a trace on failure. To use an external CDP browser such as [Obscura](https://github.com/h4ckf0r0day/obscura), set `E2E_CDP_URL`. See [AGENTS.md](../AGENTS.md#testing) for its current limitations.
