@@ -5020,6 +5020,8 @@ export default {
 
   // K-Profiles
   kProfiles: {
+    unsupportedPrinter: "此打印机不支持 K 值配置",
+    unsupportedPrinterDesc: "Bambu 打印机支持 K 值配置管理。要在此打印机上进行压力提前测试，请使用校准选项卡。",
     title: 'K 值配置',
     noPrintersConfigured: '未配置打印机',
     addPrinterInSettings: '在设置中添加打印机以管理 K 值配置',

@@ -5075,6 +5075,8 @@ export default {
 
   // K-Profiles
   kProfiles: {
+    unsupportedPrinter: "K-profiles are not supported for this printer",
+    unsupportedPrinterDesc: "K-profile management is available for Bambu printers. For pressure-advance tests on this printer, use the Calibration tab.",
     title: 'K-Profiles',
     noPrintersConfigured: 'No Printers Configured',
     addPrinterInSettings: 'Add a printer in Settings to manage K-profiles',

@@ -5031,6 +5031,8 @@ export default {
 
   // K-Profiles
   kProfiles: {
+    unsupportedPrinter: "K-Profile werden für diesen Drucker nicht unterstützt",
+    unsupportedPrinterDesc: "Die K-Profilverwaltung ist für Bambu-Drucker verfügbar. Verwenden Sie für Druckvorschubtests mit diesem Drucker den Tab Kalibrierung.",
     title: 'K-Profile',
     noPrintersConfigured: 'Keine Drucker konfiguriert',
     addPrinterInSettings: 'Fügen Sie einen Drucker in den Einstellungen hinzu, um K-Profile zu verwalten',

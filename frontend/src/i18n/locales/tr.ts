@@ -5004,6 +5004,8 @@ export default {
 
   // K-Profilleri
   kProfiles: {
+    unsupportedPrinter: "Bu yazıcı K-profillerini desteklemiyor",
+    unsupportedPrinterDesc: "K-profili yönetimi Bambu yazıcılar için kullanılabilir. Bu yazıcıda basınç ilerlemesi testleri için Kalibrasyon sekmesini kullanın.",
     title: 'K-Profilleri',
     noPrintersConfigured: 'Yapılandırılmış Yazıcı Yok',
     addPrinterInSettings: 'K-profillerini yönetmek için Ayarlarda bir yazıcı ekleyin',
