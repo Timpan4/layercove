@@ -3347,6 +3347,7 @@ export default {
       kprofiles: 'Kプロファイル',
     },
     orcaCloud: {
+      printerFilterUnavailable: "Orca Cloudのプロファイルでは、プリンターとの互換性による絞り込みは利用できません。",
       connectedAs: '接続中',
       logout: '切断',
       noLogoutPermission: '切断する権限がありません',

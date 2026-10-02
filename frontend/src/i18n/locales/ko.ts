@@ -3171,6 +3171,7 @@ export default {
       kprofiles: 'K-프로필'
     },
     orcaCloud: {
+      printerFilterUnavailable: "Orca Cloud 프로필에서는 프린터 호환성 필터를 사용할 수 없습니다.",
       connectedAs: '연결됨',
       logout: '연결 해제',
       noLogoutPermission: '연결을 해제할 권한이 없습니다',

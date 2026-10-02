@@ -3351,6 +3351,7 @@ export default {
       kprofiles: 'K-Profilleri',
     },
     orcaCloud: {
+      printerFilterUnavailable: "Orca Cloud profilleri için yazıcı uyumluluğuna göre filtreleme kullanılamıyor.",
       connectedAs: 'Bağlı kullanıcı',
       logout: 'Bağlantıyı kes',
       noLogoutPermission: 'Bağlantıyı kesme izniniz yok',
