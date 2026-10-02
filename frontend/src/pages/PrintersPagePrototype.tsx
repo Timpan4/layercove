@@ -351,6 +351,9 @@ function CommandDrawerVariant(props: PrintersPagePrototypeProps & { onAction: ()
 function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose }: { item: PrototypePrinter; onAction: () => void; onOpenControls?: (printerId: number) => void; compact?: boolean; onClose?: () => void }) {
   const { printer, status } = item;
   const state = getState(status, printer.provider !== 'moonraker');
+  const doorOpen = printer.provider !== 'moonraker' && status?.connected
+    && ['X1C', 'X1', 'X1E', 'X2D', 'P2S', 'H2D', 'H2D Pro', 'H2C', 'H2S'].includes(printer.model ?? '')
+    && typeof status.door_open === 'boolean' ? status.door_open : null;
   const progress = Math.round(status?.progress ?? 0);
   const temperatures = status?.temperatures;
   const active = state === 'printing' || state === 'paused';
@@ -385,7 +388,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
   const notices: string[] = [];
   if (knownHmsCount) notices.push(`${knownHmsCount} machine ${knownHmsCount === 1 ? 'alert' : 'alerts'}`);
   if (status?.awaiting_plate_clear && (state === 'idle' || state === 'finished')) notices.push('Build plate needs clearing');
-  if (status?.door_open) notices.push('Enclosure door open');
+  if (doorOpen === true) notices.push('Enclosure door open');
 
   return (
     <section className={`lc-glass overflow-hidden rounded-[1.75rem] border border-white/10 shadow-[0_30px_80px_rgba(0,0,0,0.3)] ${compact ? '' : 'min-h-[42rem]'}`}>
@@ -463,7 +466,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
             <p className="mt-3 text-base font-medium text-white">{state === 'finished' || (state === 'idle' && status?.awaiting_plate_clear) ? 'Clear plate and prepare next job' : active ? 'Monitor this print' : state === 'offline' ? 'Check printer connection' : 'Choose a file to print'}</p>
             <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
               <span className="rounded-lg bg-white/[0.05] px-2.5 py-2 text-bambu-gray"><HardDrive className="mr-1.5 inline h-3.5 w-3.5" />{status?.firmware_version || 'Firmware unknown'}</span>
-              <span className="rounded-lg bg-white/[0.05] px-2.5 py-2 text-bambu-gray"><DoorOpen className="mr-1.5 inline h-3.5 w-3.5" />{status?.door_open ? 'Door open' : 'Door closed'}</span>
+              {doorOpen !== null && <span className="rounded-lg bg-white/[0.05] px-2.5 py-2 text-bambu-gray"><DoorOpen className="mr-1.5 inline h-3.5 w-3.5" />{doorOpen ? 'Door open' : 'Door closed'}</span>}
             </div>
           </div>
 
