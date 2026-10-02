@@ -25,6 +25,7 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
   const { plate: _plate, ...withoutPlate } = snapshot;
   const savedRequest = options.plate === 'default' ? withoutPlate : options.plate === 'all' ? { ...snapshot, plate: 0 } : snapshot;
   let sliceRequests = 0;
+  let sliceRequest: unknown;
   let resliceComplete = false;
   let initialComplete = !options.pending;
   const libraryFile = (id: number, filename: string) => ({ id, filename, file_type: filename.endsWith('.gcode') ? 'gcode' : 'stl', file_size: 1024, folder_id: null, thumbnail_path: null, print_name: null, print_count: 0, duplicate_count: 0, created_at: '2026-10-01T00:00:00Z', tags: [] });
@@ -38,7 +39,7 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
     capabilities: { process_schema: true, model_state: true, progress: true, cancel: false }, supported_scopes: ['global', 'object'],
     pages: options.processSettings ? [{ name: 'Quality', groups: [{ name: 'Layer height', options: ['layer_height'] }] }] : [],
     options: options.processSettings ? [{ key: 'layer_height', label: 'Layer height', type: 'float', default: 0.2, mode: 'simple', min: 0.01, max: 1 }] : [],
-    scopes: options.processSettings ? { layer_height: ['global'] } : {}, samples: options.processSettings ? { layer_height: 0.18 } : {},
+    scopes: options.processSettings ? { layer_height: ['global', 'object'] } : {}, samples: options.processSettings ? { layer_height: 0.18 } : {},
   };
   const job = {
     job_id: 25, status: 'completed', kind: options.archive ? 'archive' : 'library_file', source_id: options.mismatch ? 99 : 42, source_name: 'cube.3mf',
@@ -57,6 +58,7 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
     }
     if (route.request().method() === 'POST' && path.endsWith('/files/42/slice')) {
       sliceRequests++;
+      sliceRequest = route.request().postDataJSON();
       await route.fulfill({ status: 202, json: { job_id: 37, status: 'pending', status_url: '/api/v1/slice-jobs/37' } });
       return;
     }
@@ -92,10 +94,49 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
       : [];
     await route.fulfill({ json: body });
   });
-  return { get sliceRequests() { return sliceRequests; }, completeReslice() { resliceComplete = true; }, completeInitial() { initialComplete = true; } };
+  return { get sliceRequests() { return sliceRequests; }, get sliceRequest() { return sliceRequest; }, completeReslice() { resliceComplete = true; }, completeInitial() { initialComplete = true; } };
 }
 
 for (const width of [1280, 390]) {
+  for (const scope of ['global', 'object'] as const) {
+    test(`typed decimal process settings retain their value at ${width}px (${scope})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      const fixture = await installFixture(page, { fresh: true, processSettings: true });
+      await page.route('**/api/v1/library/files/42/plates', (route) => route.fulfill({ json: {
+        file_id: 42, filename: 'cube.3mf', is_multi_plate: false,
+        plates: [{ index: 1, objects: ['Cube'], object_ids: ['cube'], filaments: [] }],
+      } }));
+      await page.goto('/slicer/workbench?library_file=42');
+      if (width === 390) await page.getByRole('button', { name: 'settings', exact: true }).click();
+      await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
+      await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
+      if (scope === 'object') await page.getByRole('button', { name: 'object', exact: true }).click();
+      const height = page.getByRole('spinbutton', { name: 'Layer height', exact: true });
+      await expect(height).toHaveValue('0.2');
+      await height.press('ControlOrMeta+A');
+      await height.pressSequentially('0.28');
+      await expect(height).toHaveValue('0.28');
+      await height.press('Tab');
+      await expect(height).toHaveValue('0.28');
+      await height.fill('');
+      await expect(height).toHaveValue('');
+      await height.press('Tab');
+      await expect(height).toHaveValue('0.28');
+      if (scope === 'global') {
+        await page.getByRole('button', { name: 'Undo', exact: true }).click();
+        await expect(height).toHaveValue('0.2');
+        await page.getByRole('button', { name: 'Redo', exact: true }).click();
+        await expect(height).toHaveValue('0.28');
+      }
+      await page.getByRole('checkbox', { name: /Confirm filament materials/ }).check();
+      await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
+      expect(fixture.sliceRequests).toBe(1);
+      expect(fixture.sliceRequest).toMatchObject(scope === 'global'
+        ? { process_overrides: { layer_height: 0.28 } }
+        : { model_state: { objects: [{ id: 'cube', overrides: { layer_height: 0.28 } }] } });
+    });
+  }
+
   test(`process edits can be undone, redone and replaced at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     const fixture = await installFixture(page, { fresh: true, processSettings: true });
