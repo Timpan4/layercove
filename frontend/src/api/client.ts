@@ -263,7 +263,9 @@ export interface DiagnosticCheck {
     | 'network_mode'
     | 'subnet'
     | 'mqtt_auth'
-    | 'developer_mode';
+    | 'developer_mode'
+    | 'moonraker_api'
+    | 'klipper_state';
   status: DiagnosticStatus;
   params: Record<string, string | number>;
 }

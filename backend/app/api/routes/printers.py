@@ -1212,7 +1212,9 @@ async def diagnose_printer(
     """
     from backend.app.services.printer_diagnostic import PUBLISH_WAIT_DEFAULT
 
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+    )
     printer = result.scalar_one_or_none()
     if not printer:
         raise HTTPException(404, "Printer not found")

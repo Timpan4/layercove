@@ -37,6 +37,17 @@ returns a safe success or failure message. It accepts no URL, credential, or
 request target. Updating a Moonraker config saves the update without probing;
 call this endpoint afterward to validate the stored values.
 
+## Connection diagnostics
+
+From the System page, run Connection Diagnostic for a saved printer. This
+requires `printers:read`. For Moonraker, LayerCove checks the saved API
+configuration with a read-only `GET /server/info` and reports Klipper status
+from normalized live telemetry. Missing, disconnected, stale, or unknown
+telemetry is reported as unavailable; a reported Klipper error fails that
+check. Passing checks confirm connectivity and available status, not print
+readiness. The support diagnostic snapshot uses the same checks and sanitizes
+sensitive values. Bambu printers keep their existing connection checks.
+
 ## Live status
 
 LayerCove opens one backend-owned WebSocket per active Moonraker printer. It

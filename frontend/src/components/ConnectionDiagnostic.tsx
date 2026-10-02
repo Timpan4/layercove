@@ -84,13 +84,6 @@ type Connection = {
   access_code?: string;
 };
 
-// Keep in sync with backend `PUBLISH_WAIT_DEFAULT` in
-// backend/app/services/printer_diagnostic.py — that's the upper bound on how
-// long the existing-printer route waits for the printer's first status report
-// after a bridge reconnect. The countdown is purely cosmetic; if the two
-// drift the worst case is the hint text being off by a couple of seconds.
-const PUBLISH_WAIT_DEFAULT_SECONDS = 10;
-
 type ConnectionDiagnosticModalProps = {
   onClose: () => void;
   printerName?: string | null;
@@ -127,11 +120,7 @@ export function ConnectionDiagnosticModal(props: ConnectionDiagnosticModalProps)
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  // Tick an elapsed-seconds counter while the diagnostic is running so the
-  // existing-printer flow (which waits up to PUBLISH_WAIT_DEFAULT_SECONDS for
-  // the printer's first status report) doesn't look hung. Resets on each
-  // (re)run. No effect on the pre-add flow other than a ticking counter,
-  // which is still useful feedback.
+  // Show elapsed time while provider-specific checks run. Reset on each run.
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   useEffect(() => {
     if (!diagnose.isPending) {
@@ -182,7 +171,7 @@ export function ConnectionDiagnosticModal(props: ConnectionDiagnosticModalProps)
               </div>
               {printerId !== undefined && (
                 <p className="text-xs text-bambu-gray-light pl-6">
-                  {t('diagnostic.waitingForReportHint', { max: PUBLISH_WAIT_DEFAULT_SECONDS })}
+                  {t('diagnostic.waitingForReportHint')}
                 </p>
               )}
             </div>
