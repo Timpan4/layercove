@@ -55,6 +55,12 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
       : path.includes('/slicer/') && /capabilities|schema/.test(path) ? contract
       : path.endsWith('/files/42/plates') ? { file_id: 42, filename: 'cube.3mf', is_multi_plate: true, plates: [{ index: 1, objects: [], object_ids: [], filaments: [] }, { index: 2, objects: ['Cube'], object_ids: ['cube'], filaments: [] }] }
       : path.endsWith('/files/42') ? { id: 42, filename: 'cube.3mf' }
+      : path.endsWith('/files/77') ? { id: 77, filename: options.plate === 'all' ? 'cube.gcode.3mf' : 'cube.gcode' }
+      : path.endsWith('/files/77/plates') ? { is_multi_plate: options.plate === 'all', plates: options.plate === 'all' ? [
+        { index: 1, name: 'First plate', objects: [], filaments: [], has_thumbnail: false, thumbnail_url: null, print_time_seconds: 20, filament_used_grams: 0.3 },
+        { index: 2, name: 'Second plate', objects: [], filaments: [], has_thumbnail: false, thumbnail_url: null, print_time_seconds: 40, filament_used_grams: 0.7 },
+      ] : [] }
+      : path.endsWith('/filament-requirements') ? { filaments: [] }
       : path.endsWith('/settings') ? { currency: 'USD' }
       : path.includes('/revisions/11') ? { id: 11, profile_id: 1, review_state: 'approved', content_hash: 'bed', content: { printable_area: ['0x0', '300x0', '300x300', '0x300'], printable_height: '300' } }
       : [];
@@ -64,6 +70,24 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
 }
 
 for (const width of [1280, 390]) {
+  test(`completed slice estimates remain visible in the result and print handoff at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    await installFixture(page);
+    await page.goto('/slicer/workbench?library_file=42&job=25');
+    const estimates = page.getByRole('region', { name: 'Slice estimates', exact: true });
+    await expect(estimates).toHaveCount(1);
+    await expect(estimates.getByText('Estimated time', { exact: true })).toBeVisible();
+    await expect(estimates.getByText('1m', { exact: true })).toBeVisible();
+    await expect(estimates.getByText('Estimated filament', { exact: true })).toBeVisible();
+    await expect(estimates.getByText('1 g', { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(estimates.getByText('1m', { exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Print saved result', exact: true }).click();
+    await expect(estimates).toHaveCount(2);
+    await expect(estimates.last().getByText('1m', { exact: true })).toBeVisible();
+    await expect(estimates.last().getByText('1 g', { exact: true })).toBeVisible();
+  });
+
   test(`reopening a saved slice preserves its settings and opens the toolpath at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await installFixture(page);
@@ -91,6 +115,18 @@ test('a job for another source cannot display or print its artifact here', async
   await expect(page.getByText('This slice job belongs to a different source.', { exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Print saved result' })).toHaveCount(0);
   await expect(page.getByRole('button', { name: 'Exact historical' })).toHaveCount(0);
+});
+
+test('print handoff labels complete-slice totals when selecting a plate subset', async ({ page }) => {
+  await installFixture(page, { plate: 'all' });
+  await page.goto('/slicer/workbench?library_file=42&job=25');
+  await page.getByRole('button', { name: 'Print saved result', exact: true }).click();
+  await expect(page.getByText('Estimates cover the complete slice. Plate selections below may change the printed time and filament.', { exact: true })).toBeVisible();
+  await page.getByRole('button', { name: /Second plate/ }).click();
+  await expect(page.getByText('Estimates cover the complete slice. Plate selections below may change the printed time and filament.', { exact: true })).toBeVisible();
+  const estimates = page.getByRole('region', { name: 'Slice estimates', exact: true }).last();
+  await expect(estimates.getByText('1m', { exact: true })).toBeVisible();
+  await expect(estimates.getByText('1 g', { exact: true })).toBeVisible();
 });
 
 test('a changed saved request cannot enable printing the old artifact', async ({ page }) => {

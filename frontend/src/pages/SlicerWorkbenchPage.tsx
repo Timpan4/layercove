@@ -6,6 +6,7 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { GcodeViewer } from '../components/GcodeViewer';
 import { ModelViewer } from '../components/ModelViewer';
 import { PrintModal } from '../components/PrintModal';
+import { SliceEstimates } from '../components/SliceEstimates';
 import { ConfirmModal } from '../components/ConfirmModal';
 import { Button } from '../components/Button';
 import { Card, CardContent } from '../components/Card';
@@ -317,6 +318,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       onPrint={() => setShowPrint(true)}
       canPrint={model.canPrint}
     />
+    {result && <SliceEstimates result={result} />}
     <div className="flex shrink-0 rounded-md border border-white/10 bg-[#292a2e] p-1 text-xs text-white md:hidden">
       {(['canvas', 'settings'] as const).map((panel) => <button key={panel} type="button" aria-pressed={mobilePanel === panel} onClick={() => setMobilePanel(panel)} className={`min-h-10 flex-1 rounded-sm font-semibold capitalize focus:ring-2 focus:ring-bambu-green ${mobilePanel === panel ? 'bg-bambu-green text-black' : 'text-bambu-gray-light'}`}>{panel}</button>)}
     </div>
@@ -384,6 +386,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       archiveId={'archive_id' in result ? result.archive_id : undefined}
       libraryFileId={'library_file_id' in result ? result.library_file_id : undefined}
       archiveName={result.name}
+      sliceEstimates={result}
       onClose={() => setShowPrint(false)}
       onSuccess={() => setShowPrint(false)}
     />}
@@ -413,6 +416,7 @@ function SavedSliceResult({ model, onBack }: { model: ReturnType<typeof useSlice
       <div className="flex flex-wrap gap-2"><Button variant="secondary" onClick={onBack}>Return to source</Button><Button onClick={() => setShowPrint(true)} disabled={!canPrint}>Print saved result</Button></div>
     </div>
     <p className="text-sm text-bambu-gray-light">These settings belong to this slice job. Use an explicit re-slice to change the result.</p>
+    {result && <SliceEstimates result={result} />}
     {inProgress && <p role="status" className="text-sm">{job.progress?.stage ?? job.status}{job.progress && ` · ${job.progress.total_percent}%`}</p>}
     {job.error_detail && <p role="alert" className="text-sm text-red-300">{job.error_detail}</p>}
     {!request && <p role="alert" className="text-sm text-amber-300">Saved settings could not be verified. Return to the source to make a new slice.</p>}
@@ -445,6 +449,6 @@ function SavedSliceResult({ model, onBack }: { model: ReturnType<typeof useSlice
       </section>
     </div>
     <HistoricalReslice model={model} />
-    {showPrint && result && <PrintModal mode="create" archiveId={'archive_id' in result ? result.archive_id : undefined} libraryFileId={'library_file_id' in result ? result.library_file_id : undefined} archiveName={result.name} onClose={() => setShowPrint(false)} onSuccess={() => setShowPrint(false)} />}
+    {showPrint && result && <PrintModal mode="create" archiveId={'archive_id' in result ? result.archive_id : undefined} libraryFileId={'library_file_id' in result ? result.library_file_id : undefined} archiveName={result.name} sliceEstimates={result} onClose={() => setShowPrint(false)} onSuccess={() => setShowPrint(false)} />}
   </div>;
 }
