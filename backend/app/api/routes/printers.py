@@ -1,16 +1,22 @@
 import asyncio
+import io
 import logging
 import re
+import shutil
+import tempfile
 import zipfile
+from contextlib import asynccontextmanager
+from pathlib import Path
 from urllib.parse import urlsplit, urlunsplit
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
-from fastapi.responses import Response
+from fastapi.responses import FileResponse, Response
 from python_multipart.exceptions import MultipartParseError
 from python_multipart.multipart import parse_options_header
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from starlette.background import BackgroundTask
 from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
@@ -1486,6 +1492,123 @@ async def get_printer_cover(
 # ============================================
 
 
+async def _file_printer(db: AsyncSession, printer_id: int) -> Printer:
+    result = await db.execute(
+        select(Printer).options(selectinload(Printer.moonraker_config)).where(Printer.id == printer_id)
+    )
+    printer = result.scalar_one_or_none()
+    if not printer:
+        raise HTTPException(404, "Printer not found")
+    return printer
+
+
+def _moonraker_file_client(printer: Printer) -> MoonrakerHTTPClient:
+    config = printer.moonraker_config
+    if config is None:
+        raise HTTPException(400, "Moonraker printer does not have connection settings")
+    return MoonrakerHTTPClient(
+        base_url=config.base_url,
+        api_key=config.api_key,
+        authorization=config.authorization,
+        tls_verify=config.tls_verify,
+    )
+
+
+def _moonraker_file_error(error: MoonrakerHTTPError) -> HTTPException:
+    status = 400 if error.code == "invalid_path" else error.status_code if error.status_code in {404, 409} else 502
+    return HTTPException(status, error.message)
+
+
+async def _download_moonraker_file(printer: Printer, path: str) -> Path:
+    # A seekable disk file supports downloads and ZIP previews without buffering
+    # a whole printer file in memory. The response or archive owns cleanup.
+    with tempfile.NamedTemporaryFile(delete=False) as output:
+        temporary_path = Path(output.name)
+        try:
+            await _moonraker_file_client(printer).download_file(path, output)
+        except BaseException as error:
+            output.close()
+            temporary_path.unlink(missing_ok=True)
+            if isinstance(error, MoonrakerHTTPError):
+                raise _moonraker_file_error(error) from error
+            raise
+    return temporary_path
+
+
+def _temporary_file_response(path: Path, media_type: str, headers: dict | None = None) -> FileResponse:
+    return FileResponse(
+        path,
+        media_type=media_type,
+        headers=headers,
+        background=BackgroundTask(path.unlink, missing_ok=True),
+    )
+
+
+@asynccontextmanager
+async def _printer_file_archive(printer: Printer, path: str):
+    if printer.provider == PrinterProvider.MOONRAKER:
+        temporary_path = await _download_moonraker_file(printer, path)
+        try:
+            with zipfile.ZipFile(temporary_path) as archive:
+                yield archive
+        finally:
+            temporary_path.unlink(missing_ok=True)
+    else:
+        data = await download_file_bytes_async(
+            printer.ip_address, printer.access_code, path, printer_model=printer.model
+        )
+        if data is None:
+            raise HTTPException(404, f"File not found: {path}")
+        with zipfile.ZipFile(io.BytesIO(data)) as archive:
+            yield archive
+
+
+async def _moonraker_gcode_response(printer: Printer, path: str) -> FileResponse:
+    if path.lower().endswith(".gcode"):
+        return _temporary_file_response(await _download_moonraker_file(printer, path), "text/plain")
+    if not path.lower().endswith(".3mf"):
+        raise HTTPException(400, "Unsupported file type")
+    try:
+        async with _printer_file_archive(printer, path) as archive:
+            entries = [name for name in archive.namelist() if name.endswith(".gcode")]
+            if not entries:
+                raise HTTPException(404, "No gcode found in 3MF file")
+            with tempfile.NamedTemporaryFile(delete=False) as output:
+                temporary_path = Path(output.name)
+                try:
+                    with archive.open(entries[0]) as source:
+                        await asyncio.to_thread(shutil.copyfileobj, source, output)
+                except BaseException:
+                    output.close()
+                    temporary_path.unlink(missing_ok=True)
+                    raise
+        return _temporary_file_response(temporary_path, "text/plain")
+    except zipfile.BadZipFile as error:
+        raise HTTPException(400, "Invalid 3MF file") from error
+
+
+async def _moonraker_zip_response(printer: Printer, paths: list[str]) -> FileResponse:
+    if not isinstance(paths, list) or any(not isinstance(path, str) for path in paths):
+        raise HTTPException(400, "File paths must be a list of strings")
+    with tempfile.NamedTemporaryFile(delete=False) as output:
+        temporary_path = Path(output.name)
+        try:
+            with zipfile.ZipFile(output, "w", zipfile.ZIP_DEFLATED) as archive:
+                for path in paths:
+                    source = await _download_moonraker_file(printer, path)
+                    try:
+                        await asyncio.to_thread(archive.write, source, path.rsplit("/", 1)[-1])
+                    finally:
+                        source.unlink(missing_ok=True)
+        except BaseException:
+            output.close()
+            temporary_path.unlink(missing_ok=True)
+            raise
+    return _temporary_file_response(
+        temporary_path, "application/zip", {"Content-Disposition": 'attachment; filename="printer-files.zip"'}
+    )
+
+
 @router.get("/{printer_id}/files")
 async def list_printer_files(
     printer_id: int,
@@ -1494,10 +1617,13 @@ async def list_printer_files(
     db: AsyncSession = Depends(get_db),
 ):
     """List files on the printer at the specified path."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
+    printer = await _file_printer(db, printer_id)
+
+    if printer.provider == PrinterProvider.MOONRAKER:
+        try:
+            return await _moonraker_file_client(printer).get_directory(path)
+        except MoonrakerHTTPError as error:
+            raise _moonraker_file_error(error) from error
 
     files = await list_files_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
 
@@ -1519,14 +1645,7 @@ async def download_printer_file(
     db: AsyncSession = Depends(get_db),
 ):
     """Download a file from the printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
-
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
-    if data is None:
-        raise HTTPException(404, f"File not found: {path}")
+    printer = await _file_printer(db, printer_id)
 
     # Determine content type based on extension
     filename = path.split("/")[-1]
@@ -1544,6 +1663,16 @@ async def download_printer_file(
         "txt": "text/plain",
     }
     content_type = content_types.get(ext, "application/octet-stream")
+    if printer.provider == PrinterProvider.MOONRAKER:
+        return _temporary_file_response(
+            await _download_moonraker_file(printer, path),
+            content_type,
+            {"Content-Disposition": build_content_disposition(filename)},
+        )
+
+    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
+    if data is None:
+        raise HTTPException(404, f"File not found: {path}")
 
     return Response(
         content=data,
@@ -1563,10 +1692,10 @@ async def get_printer_file_gcode(
     import io
 
     # Validate printer
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
+    printer = await _file_printer(db, printer_id)
+
+    if printer.provider == PrinterProvider.MOONRAKER:
+        return await _moonraker_gcode_response(printer, path)
 
     data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
     if data is None:
@@ -1599,16 +1728,12 @@ async def get_printer_file_plates(
     db: AsyncSession = Depends(get_db),
 ):
     """Get available plates from a multi-plate 3MF file stored on a printer."""
-    import io
     import json
 
     import defusedxml.ElementTree as ET
 
     # Validate printer
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
+    printer = await _file_printer(db, printer_id)
 
     filename = path.split("/")[-1]
     if not filename.lower().endswith(".3mf"):
@@ -1620,14 +1745,10 @@ async def get_printer_file_plates(
             "is_multi_plate": False,
         }
 
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
-    if data is None:
-        raise HTTPException(404, f"File not found: {path}")
-
     plates = []
 
     try:
-        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
+        async with _printer_file_archive(printer, path) as zf:
             namelist = zf.namelist()
 
             # Find all plate gcode files to determine available plates
@@ -1823,6 +1944,8 @@ async def get_printer_file_plates(
                     }
                 )
 
+    except HTTPException:
+        raise
     except Exception as e:
         logger.warning("Failed to parse plates from printer file %s: %s", path, e)
 
@@ -1844,23 +1967,17 @@ async def get_printer_file_plate_thumbnail(
     db: AsyncSession = Depends(get_db),
 ):
     """Get a plate thumbnail image from a printer-stored 3MF file."""
-    import io
 
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
-
-    data = await download_file_bytes_async(printer.ip_address, printer.access_code, path, printer_model=printer.model)
-    if data is None:
-        raise HTTPException(404, f"File not found: {path}")
+    printer = await _file_printer(db, printer_id)
 
     try:
-        with zipfile.ZipFile(io.BytesIO(data), "r") as zf:
+        async with _printer_file_archive(printer, path) as zf:
             thumb_path = f"Metadata/plate_{plate_index}.png"
             if thumb_path in zf.namelist():
                 image_data = zf.read(thumb_path)
                 return Response(content=image_data, media_type="image/png")
+    except HTTPException:
+        raise
     except Exception:
         pass  # Corrupt or unreadable 3MF; fall through to 404
 
@@ -1881,10 +1998,10 @@ async def download_printer_files_as_zip(
     if not paths:
         raise HTTPException(400, "No files specified")
 
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
+    printer = await _file_printer(db, printer_id)
+
+    if printer.provider == PrinterProvider.MOONRAKER:
+        return await _moonraker_zip_response(printer, paths)
 
     # Create ZIP in memory
     zip_buffer = io.BytesIO()
@@ -1922,10 +2039,14 @@ async def delete_printer_file(
     db: AsyncSession = Depends(get_db),
 ):
     """Delete a file from the printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
+    printer = await _file_printer(db, printer_id)
+
+    if printer.provider == PrinterProvider.MOONRAKER:
+        try:
+            await _moonraker_file_client(printer).delete_file(path)
+        except MoonrakerHTTPError as error:
+            raise _moonraker_file_error(error) from error
+        return {"status": "deleted", "path": path}
 
     from backend.app.services.bambu_ftp import DeleteResult
 
@@ -1945,10 +2066,15 @@ async def get_printer_storage(
     db: AsyncSession = Depends(get_db),
 ):
     """Get storage information from the printer."""
-    result = await db.execute(select(Printer).where(Printer.id == printer_id))
-    printer = result.scalar_one_or_none()
-    if not printer:
-        raise HTTPException(404, "Printer not found")
+    printer = await _file_printer(db, printer_id)
+
+    if printer.provider == PrinterProvider.MOONRAKER:
+        try:
+            directory = await _moonraker_file_client(printer).get_directory()
+        except MoonrakerHTTPError as error:
+            raise _moonraker_file_error(error) from error
+        usage = directory["disk_usage"]
+        return {"used_bytes": usage["used"], "free_bytes": usage["free"]}
 
     storage_info = await get_storage_info_async(printer.ip_address, printer.access_code, printer_model=printer.model)
 
