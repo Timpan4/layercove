@@ -534,23 +534,89 @@ async def test_offline_requires_acknowledgement_but_shadow_never_blocks(catalog_
 
 
 async def _persist_original_job(factory, ids: dict[str, int]) -> tuple[int, int]:
+    import hashlib
+
     original_request = request_for(ids)
+    snapshot = original_request.model_dump(mode="json", exclude_none=True)
     async with factory() as db:
         job = SliceJobRecord(
             owner_id=7,
             source_kind="library_file",
             source_id=1,
             source_name="model.3mf",
-            request_snapshot=original_request.model_dump(mode="json", exclude_none=True),
+            request_snapshot=snapshot,
             status="completed",
             created_at=datetime.now(timezone.utc),
         )
         db.add(job)
         await db.flush()
         await persist_catalog_selection(db, job, original_request)
+        job.request_fingerprint = hashlib.sha256(
+            json.dumps(job.request_snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
         await db.commit()
         provenance = await db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id))
         return job.id, provenance.process_revision_id
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["exact", "upgrade"])
+async def test_historical_preparation_rejects_altered_saved_request(catalog_db, monkeypatch, mode):
+    ids = await setup_catalog(catalog_db)
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _printer_id: PrinterSnapshot(
+            PrinterProvider.BAMBU,
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+    source_job_id, _ = await _persist_original_job(catalog_db, ids)
+    async with catalog_db() as db:
+        source_job = await db.get(SliceJobRecord, source_job_id)
+        source_job.request_snapshot["arrange"] = not source_job.request_snapshot.get("arrange", False)
+        with pytest.raises(CatalogSelectionError) as blocked:
+            await prepare_historical_reslice(db, source_job, HistoricalReslicePrepareRequest(mode=mode))
+        assert blocked.value.status_code == 409
+        assert blocked.value.code == "historical_request_unavailable"
+
+
+@pytest.mark.asyncio
+async def test_history_enqueue_rejects_altered_saved_request(catalog_db, monkeypatch):
+    ids = await setup_catalog(catalog_db)
+    monkeypatch.setattr(
+        printer_manager,
+        "get_snapshot",
+        lambda _printer_id: PrinterSnapshot(
+            PrinterProvider.BAMBU,
+            True,
+            NormalizedPrinterState.IDLE,
+            nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+        ),
+    )
+    source_job_id, _ = await _persist_original_job(catalog_db, ids)
+    async with catalog_db() as db:
+        source_job = await db.get(SliceJobRecord, source_job_id)
+        source_job.request_snapshot["arrange"] = not source_job.request_snapshot.get("arrange", False)
+        job = SliceJobRecord(
+            owner_id=7,
+            source_kind="library_file",
+            source_id=1,
+            source_name="model.3mf",
+            status="pending",
+            created_at=datetime.now(timezone.utc),
+        )
+        db.add(job)
+        await db.flush()
+        replay = request_for(ids)
+        replay.catalog_history_job_id = source_job_id
+        replay.catalog_history_mode = "exact"
+        with pytest.raises(CatalogSelectionError) as blocked:
+            await persist_catalog_selection(db, job, replay)
+        assert blocked.value.status_code == 409
+        assert blocked.value.code == "historical_request_unavailable"
 
 
 @pytest.mark.asyncio
@@ -836,6 +902,8 @@ async def test_exact_history_rejects_unknown_provenance(catalog_db):
 
 @pytest.mark.asyncio
 async def test_historical_preview_clears_old_warning_acknowledgement(catalog_db, monkeypatch):
+    import hashlib
+
     ids = await setup_catalog(catalog_db)
     monkeypatch.setattr(
         printer_manager,
@@ -851,6 +919,9 @@ async def test_historical_preview_clears_old_warning_acknowledgement(catalog_db,
     async with catalog_db() as db:
         source_job = await db.get(SliceJobRecord, source_job_id)
         source_job.request_snapshot["catalog_acknowledgement"] = {"confirmed": True, "old": True}
+        source_job.request_fingerprint = hashlib.sha256(
+            json.dumps(source_job.request_snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
         preview = await prepare_historical_reslice(
             db,
             source_job,

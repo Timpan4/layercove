@@ -44249,6 +44249,10 @@ export interface components {
             } | null;
             /** Request Fingerprint */
             request_fingerprint?: string | null;
+            /** Request Snapshot */
+            request_snapshot?: {
+                [key: string]: unknown;
+            } | null;
             /** Result */
             result?: {
                 [key: string]: unknown;

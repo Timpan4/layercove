@@ -18,7 +18,7 @@ function mockedModel(filename = 'cube.stl') {
     sourceName: 'cube.stl', modelUrl: '/cube.stl', previewUrl: '/cube.gcode',
     objects: [], selectedPlateMetadata: null, filamentSlots: [], arrange: true,
     settingsView: 'global', mode: 'simple', jobId: null, canPrint: true,
-    jobState: { status: 'completed' }, request: {}, processOverrides: {},
+    jobState: { status: 'completed', kind: 'library_file', source_id: 42 }, request: {}, processOverrides: {},
     processProfileQuery: {}, schemaOptions: new Map(),
   } as unknown as ReturnType<typeof useSlicerWorkbench>;
 }

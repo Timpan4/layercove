@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 import zipfile
 from dataclasses import asdict, dataclass
@@ -10,6 +11,7 @@ from decimal import Decimal
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -70,6 +72,19 @@ ProfileRow = tuple[SlicerProfile, SlicerProfileRevision, SlicerProfileAccount]
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def verified_job_request_snapshot(job: SliceJobRecord) -> dict[str, Any] | None:
+    if job.source_kind not in ("library_file", "archive") or job.request_snapshot is None:
+        return None
+    try:
+        SliceRequest.model_validate(job.request_snapshot)
+        fingerprint = hashlib.sha256(
+            json.dumps(job.request_snapshot, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode()
+        ).hexdigest()
+        return job.request_snapshot if fingerprint == job.request_fingerprint else None
+    except (ValidationError, ValueError, TypeError):
+        return None
 
 
 def _metadata(revision: SlicerProfileRevision) -> dict[str, Any]:
@@ -237,6 +252,8 @@ async def _load_history_source(
             ["historical_provenance_unknown"],
             status_code=409,
         )
+    if verified_job_request_snapshot(source_job) is None:
+        raise CatalogSelectionError("historical_request_unavailable", ["historical_request_unavailable"], 409)
     return source_job, provenance
 
 
@@ -583,6 +600,9 @@ async def prepare_historical_reslice(
             ["historical_provenance_unknown"],
             status_code=409,
         )
+    saved_request = verified_job_request_snapshot(source_job)
+    if saved_request is None:
+        raise CatalogSelectionError("historical_request_unavailable", ["historical_request_unavailable"], 409)
     printer_id, binding_id = _history_target(provenance)
     printer_row, process_row, filament_rows = await _historical_rows(db, provenance, source_job.owner_id)
     tombstoned = any(row[0].tombstoned_at is not None for row in (printer_row, process_row, *filament_rows))
@@ -597,13 +617,7 @@ async def prepare_historical_reslice(
         ]
         tombstoned = False
 
-    snapshot = dict(source_job.request_snapshot or {})
-    if not snapshot:
-        raise CatalogSelectionError(
-            "historical_request_unavailable",
-            ["historical_request_unavailable"],
-            status_code=409,
-        )
+    snapshot = dict(saved_request)
     snapshot.pop("catalog_acknowledgement", None)
     snapshot.pop("catalog_tombstone_acknowledgement", None)
     snapshot.update(

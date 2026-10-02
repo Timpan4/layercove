@@ -111,6 +111,7 @@ class SliceJobStateResponse(BaseModel):
     source_name: str
     schema_hash: str | None = None
     request_fingerprint: str | None = None
+    request_snapshot: dict[str, Any] | None = None
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None
