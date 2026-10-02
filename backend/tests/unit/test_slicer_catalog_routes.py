@@ -1,5 +1,6 @@
 """Catalog API visibility and consent tests."""
 
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -26,7 +27,7 @@ from backend.app.core.database import Base
 from backend.app.core.permissions import Permission
 from backend.app.models.group import Group
 from backend.app.models.slice_job import SliceJobRecord  # noqa: F401
-from backend.app.models.slicer_profile_catalog import SlicerProfileRevision
+from backend.app.models.slicer_profile_catalog import SlicerProfileAccount, SlicerProfileRevision
 from backend.app.models.user import User
 from backend.app.schemas.slicer_presets import UnifiedPreset
 from backend.app.services.slicer_catalog import (
@@ -788,3 +789,94 @@ async def test_completed_review_batch_cannot_rewrite_revision_state(db):
     assert repeated.value.status_code == 409
     revision = await db.get(SlicerProfileRevision, result.revision_ids[0])
     assert revision.review_state == "approved"
+
+
+@pytest.mark.parametrize("include_inactive", [False, True])
+@pytest.mark.parametrize("viewer", ["owner", "outsider", "anonymous"])
+async def test_catalog_name_search_filters_before_paging_with_visibility(db, include_inactive, viewer):
+    from fastapi import FastAPI
+    from httpx import ASGITransport, AsyncClient
+
+    owner = User(username="search-owner", role="admin")
+    outsider = User(username="search-outsider")
+    db.add_all([owner, outsider])
+    await db.commit()
+    standard = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="standard",
+            remote_account_id="search-standard",
+            profiles=[
+                CatalogProfile(str(index), "process", f"Alpha {index:02}", {"value": index}) for index in range(30)
+            ]
+            + [
+                CatalogProfile("unicode", "process", "Österreich 100%_profile", {"value": "unicode"}),
+                CatalogProfile("wildcard-decoy", "process", "Österreich 100XYZprofile", {"value": "decoy"}),
+            ],
+        ),
+    )
+    await approve_review_batch(db, standard.review_batch_id)
+    for revision_id in standard.revision_ids:
+        await activate_revision(db, revision_id)
+    expected = []
+    for account, user_id, shared, active, name in [
+        ("owned", owner.id, False, True, "Voron owned"),
+        ("shared", outsider.id, True, True, "Voron shared"),
+        ("private", outsider.id, False, True, "Voron private"),
+        ("inactive", owner.id, False, False, "Voron inactive"),
+    ]:
+        result = await ingest_catalog(
+            db,
+            CatalogInput(
+                source="orca_cloud",
+                remote_account_id=account,
+                user_id=user_id,
+                profiles=[CatalogProfile(account, "printer", name, {"value": account})],
+            ),
+        )
+        if shared:
+            catalog_account = await db.get(SlicerProfileAccount, result.account_id)
+            catalog_account.sharing_state = "shared"
+            catalog_account.consent_at = datetime(2026, 10, 2)
+        if active:
+            await approve_review_batch(db, result.review_batch_id, user_id)
+            await activate_revision(db, result.revision_ids[0], user_id)
+        if (
+            shared or user_id == (owner.id if viewer == "owner" else outsider.id if viewer == "outsider" else None)
+        ) and (active or include_inactive):
+            expected.append(name)
+    await db.commit()
+    current_user = owner if viewer == "owner" else outsider if viewer == "outsider" else None
+    app = FastAPI()
+    app.include_router(catalog_routes.router)
+    app.dependency_overrides[catalog_routes.get_db] = lambda: db
+    route = next(route for route in app.routes if route.path == "/slicer/catalog/profiles")
+    user_dependency = next(
+        dependency.call for dependency in route.dependant.dependencies if dependency.name == "current_user"
+    )
+    app.dependency_overrides[user_dependency] = lambda: current_user
+    async with AsyncClient(transport=ASGITransport(app=app), base_url="http://fixture") as client:
+        params = {"include_inactive": str(include_inactive).lower(), "limit": 25, "offset": 0}
+        initial = await client.get("/slicer/catalog/profiles", params=params)
+        assert initial.status_code == 200
+        assert [item["display_name"] for item in initial.json()] == [f"Alpha {index:02}" for index in range(25)]
+        matched = await client.get("/slicer/catalog/profiles", params={**params, "search": "  vOrOn  "})
+        assert matched.status_code == 200
+        assert [item["display_name"] for item in matched.json()] == sorted(expected)
+        later = await client.get("/slicer/catalog/profiles", params={**params, "search": "voron", "offset": 1})
+        assert [item["display_name"] for item in later.json()] == sorted(expected)[1:]
+        empty = await client.get("/slicer/catalog/profiles", params={**params, "search": "not-a-profile"})
+        assert empty.json() == []
+        cleared = await client.get("/slicer/catalog/profiles", params={**params, "search": "   "})
+        assert cleared.json() == initial.json()
+        unicode_match = await client.get("/slicer/catalog/profiles", params={**params, "search": "  öster  "})
+        assert [item["display_name"] for item in unicode_match.json()] == [
+            "Österreich 100%_profile",
+            "Österreich 100XYZprofile",
+        ]
+        unicode_page = await client.get(
+            "/slicer/catalog/profiles", params={**params, "search": "ÖSTER", "offset": 1, "limit": 1}
+        )
+        assert [item["display_name"] for item in unicode_page.json()] == ["Österreich 100XYZprofile"]
+        literal = await client.get("/slicer/catalog/profiles", params={**params, "search": "100%_"})
+        assert [item["display_name"] for item in literal.json()] == ["Österreich 100%_profile"]

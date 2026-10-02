@@ -1,4 +1,9 @@
 export default {
+  slicerCatalog: {
+    searchProfiles: "カタログプロファイルを検索",
+    clearSearch: "検索をクリア",
+    noSearchMatches: "検索に一致するカタログプロファイルはありません。",
+  },
   slicerReadiness: {
     passed: "チェックに合格しました。",
     blocked: "スライスがブロックされています。",

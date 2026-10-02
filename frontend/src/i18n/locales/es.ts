@@ -1,4 +1,9 @@
 export default {
+  slicerCatalog: {
+    searchProfiles: "Buscar perfiles del catálogo",
+    clearSearch: "Borrar búsqueda",
+    noSearchMatches: "Ningún perfil del catálogo coincide con su búsqueda.",
+  },
   slicerReadiness: {
     passed: "Comprobaciones superadas.",
     blocked: "El laminado está bloqueado.",

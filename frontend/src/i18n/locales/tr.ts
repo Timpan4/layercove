@@ -1,4 +1,9 @@
 export default {
+  slicerCatalog: {
+    searchProfiles: "Katalog profillerinde ara",
+    clearSearch: "Aramayı temizle",
+    noSearchMatches: "Aramanızla eşleşen katalog profili yok.",
+  },
   slicerReadiness: {
     passed: "Kontroller geçti.",
     blocked: "Dilimleme engellendi.",
