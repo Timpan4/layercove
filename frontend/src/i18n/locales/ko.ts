@@ -4780,7 +4780,7 @@ export default {
   },
   kProfiles: {
     unsupportedPrinter: "이 프린터는 K-프로필을 지원하지 않습니다",
-    unsupportedPrinterDesc: "K-프로필 관리는 Bambu 프린터에서 사용할 수 있습니다. 이 프린터의 압력 보정 테스트에는 보정 탭을 사용하세요.",
+    unsupportedPrinterDesc: "K-프로필 관리는 Bambu 프린터에서 사용할 수 있습니다. 이 프린터의 압력 전진 보정 테스트에는 보정 탭을 사용하세요.",
     title: 'K-프로필',
     noPrintersConfigured: '구성된 프린터 없음',
     addPrinterInSettings: 'K-프로필을 관리하려면 설정에서 프린터를 추가하세요',
