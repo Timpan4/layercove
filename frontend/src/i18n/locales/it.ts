@@ -1,4 +1,27 @@
 export default {
+  slicerReadiness: {
+    passed: "Controlli superati.",
+    blocked: "Lo slicing è bloccato.",
+    confirmation: "È richiesta una conferma prima dello slicing.",
+    unknown: "Non è stato possibile verificare la preparazione. Ricarica i profili e controlla l’associazione della stampante.",
+    editorLoaded: "Editor caricato",
+    binding: "Scegli un’associazione stampante attiva prima dello slicing.",
+    profile: "Scegli un profilo disponibile per questa stampante.",
+    review: "Scegli un profilo verificato prima dello slicing.",
+    tool: "Seleziona un’associazione per lo strumento corrente della stampante.",
+    nozzle: "Controlla l’ugello installato e scegli un profilo stampante corrispondente.",
+    defaults: "Scegli profili predefiniti di processo e filamento disponibili nelle associazioni stampante.",
+    nozzleUnverified: "Le informazioni sull’ugello non sono verificate. Conferma l’ugello installato e la destinazione prima dello slicing.",
+    nozzleMatch: "L’ugello segnalato corrisponde a questo profilo stampante.",
+    compatible: "La compatibilità del profilo corrisponde a questa associazione stampante.",
+    incompatible: "Scegli un profilo compatibile con la stampante selezionata.",
+    compatibilityUnverified: "La compatibilità del profilo non è verificata. Conferma la destinazione corrente e l’ugello prima dello slicing.",
+    process: "Scegli un profilo di processo prima dello slicing.",
+    filament: "Scegli un profilo filamento per ogni materiale prima dello slicing.",
+    catalog: "Impossibile caricare i profili. Ricaricali prima dello slicing.",
+    materialMismatch: "I materiali dei filamenti differiscono. Controlla la sorgente e il filamento selezionato, poi conferma prima dello slicing.",
+    materialUnverified: "Il materiale del filamento non è verificato. Controlla il materiale caricato e conferma prima dello slicing.",
+  },
   slicerBed: {
     parentIssues: {
       missing_parent: "Il profilo padre della stampante manca o non è disponibile per questa revisione.",

@@ -1,4 +1,27 @@
 export default {
+  slicerReadiness: {
+    passed: "Prüfungen bestanden.",
+    blocked: "Slicen ist blockiert.",
+    confirmation: "Bestätigung vor dem Slicen erforderlich.",
+    unknown: "Bereitschaft konnte nicht geprüft werden. Laden Sie die Profile neu und prüfen Sie die Druckerzuordnung.",
+    editorLoaded: "Editor geladen",
+    binding: "Wählen Sie vor dem Slicen eine aktive Druckerzuordnung.",
+    profile: "Wählen Sie ein verfügbares Profil für diesen Drucker.",
+    review: "Wählen Sie vor dem Slicen ein geprüftes Profil.",
+    tool: "Wählen Sie eine Zuordnung für das aktuelle Druckerwerkzeug.",
+    nozzle: "Prüfen Sie die installierte Düse und wählen Sie ein passendes Druckerprofil.",
+    defaults: "Wählen Sie verfügbare Prozess- und Filamentvorgaben in den Druckerzuordnungen.",
+    nozzleUnverified: "Düseninformationen sind ungeprüft. Bestätigen Sie die installierte Düse und das Ziel vor dem Slicen.",
+    nozzleMatch: "Die gemeldete Düse passt zu diesem Druckerprofil.",
+    compatible: "Die Profilkompatibilität passt zu dieser Druckerzuordnung.",
+    incompatible: "Wählen Sie ein mit dem ausgewählten Drucker kompatibles Profil.",
+    compatibilityUnverified: "Profilkompatibilität ist ungeprüft. Bestätigen Sie das aktuelle Ziel und die Düse vor dem Slicen.",
+    process: "Wählen Sie vor dem Slicen ein Prozessprofil.",
+    filament: "Wählen Sie vor dem Slicen ein Filamentprofil für jedes Material.",
+    catalog: "Profile konnten nicht geladen werden. Laden Sie die Profile vor dem Slicen neu.",
+    materialMismatch: "Filamentmaterialien unterscheiden sich. Prüfen Sie die Quelle und das gewählte Filament und bestätigen Sie vor dem Slicen.",
+    materialUnverified: "Filamentmaterial ist ungeprüft. Prüfen Sie das geladene Material und bestätigen Sie vor dem Slicen.",
+  },
   slicerBed: {
     parentIssues: {
       missing_parent: "Das übergeordnete Druckerprofil fehlt oder ist für diese Revision nicht verfügbar.",

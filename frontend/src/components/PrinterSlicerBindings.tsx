@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   api,
   type Printer,
@@ -12,6 +13,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { Button } from './Button';
 import { Card, CardContent } from './Card';
 import { ConfirmModal } from './ConfirmModal';
+import { displayedSlicerReadiness, slicerReadinessReasons, slicerReadinessState } from '../utils/slicerReadiness';
 
 const selectClass = 'rounded border border-bambu-dark-tertiary bg-bambu-dark px-2 py-1 text-white';
 const inputClass = `${selectClass} w-24`;
@@ -280,6 +282,9 @@ function BindingEditor({
   onUpdate: (data: Partial<SlicerCatalogBindingInput>) => void;
   onDisable: () => void;
 }) {
+  const { t } = useTranslation();
+  const displayedReadiness = displayedSlicerReadiness(binding.readiness.state, binding.readiness.reason_codes);
+  const readinessText = slicerReadinessState(t, displayedReadiness);
   const processProfiles = compatibleProfiles.filter((profile) => profile.profile_type === 'process');
   const filamentProfiles = compatibleProfiles.filter((profile) => profile.profile_type === 'filament');
   const missingProcessDefault = binding.default_process_profile_id != null
@@ -292,10 +297,10 @@ function BindingEditor({
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <strong className="text-white">{binding.profile_name}</strong>
         <span className="text-bambu-gray">{binding.expected_nozzle_diameter} mm · tool {binding.tool_index}</span>
-        <span className={binding.readiness.state === 'ready' ? 'text-green-400' : 'text-amber-400'}>
-          {binding.readiness.state}
+        <span className={displayedReadiness === 'ready' ? 'text-green-400' : 'text-amber-400'}>
+          {readinessText}
         </span>
-        <span className="text-xs text-bambu-gray">{binding.readiness.reason_codes.join(', ') || 'ready'}</span>
+        {slicerReadinessReasons(t, binding.readiness.reason_codes).filter((reason) => reason !== readinessText).map((reason) => <span key={reason} className="text-xs text-bambu-gray">{reason}</span>)}
         {canUpdate && (
           <Button className="ml-auto" size="sm" variant="danger" disabled={disablePending} onClick={onDisable}>
             Disable

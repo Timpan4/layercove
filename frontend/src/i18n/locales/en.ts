@@ -1,4 +1,27 @@
 export default {
+  slicerReadiness: {
+    passed: "Checks passed.",
+    blocked: "Slicing is blocked.",
+    confirmation: "Confirmation required before slicing.",
+    unknown: "Readiness could not be verified. Reload the profiles and check the printer binding.",
+    editorLoaded: "Editor loaded",
+    binding: "Choose an active printer binding before slicing.",
+    profile: "Choose an available profile for this printer.",
+    review: "Choose a reviewed profile before slicing.",
+    tool: "Select a binding for the current printer tool.",
+    nozzle: "Check the installed nozzle and choose a matching printer profile.",
+    defaults: "Choose available process and filament defaults in printer bindings.",
+    nozzleUnverified: "Nozzle information is unverified. Confirm the installed nozzle and target before slicing.",
+    nozzleMatch: "Reported nozzle matches this printer profile.",
+    compatible: "Profile compatibility matches this printer binding.",
+    incompatible: "Choose a profile compatible with the selected printer.",
+    compatibilityUnverified: "Profile compatibility is unverified. Confirm the current target and nozzle before slicing.",
+    process: "Choose a process profile before slicing.",
+    filament: "Choose a filament profile for each material before slicing.",
+    catalog: "Profiles could not load. Reload the profiles before slicing.",
+    materialMismatch: "Filament materials differ. Check the source and selected filament, then confirm before slicing.",
+    materialUnverified: "Filament material is unverified. Check the loaded material and confirm before slicing.",
+  },
   slicerBed: {
     parentIssues: {
       missing_parent: "The printer inheritance parent is missing or unavailable for this revision.",

@@ -413,7 +413,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       >{!model.buildVolume && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">Bed geometry unavailable. Preview only; printer fit and placement are unverified.</p>}</SlicerCanvasWorkspace></div>
     </div>
     <HistoricalReslice model={model} />
-    <SlicerFooter status={sliceStatus ?? 'Ready'} plateName={model.selectedPlateMetadata?.name || `Plate ${model.selectedPlate ?? 1}`} objectCount={model.selectedPlateMetadata?.object_count ?? (model.objects.length || null)} engine={`${schema.engine.version} · ${schema.schema_hash.slice(0, 8)}`} />
+    <SlicerFooter status={sliceStatus ?? t('slicerReadiness.editorLoaded')} plateName={model.selectedPlateMetadata?.name || `Plate ${model.selectedPlate ?? 1}`} objectCount={model.selectedPlateMetadata?.object_count ?? (model.objects.length || null)} engine={`${schema.engine.version} · ${schema.schema_hash.slice(0, 8)}`} />
     {showPrint && result && <PrintModal
       mode="create"
       archiveId={'archive_id' in result ? result.archive_id : undefined}

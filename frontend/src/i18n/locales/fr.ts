@@ -1,4 +1,27 @@
 export default {
+  slicerReadiness: {
+    passed: "Vérifications réussies.",
+    blocked: "Le tranchage est bloqué.",
+    confirmation: "Confirmation requise avant le tranchage.",
+    unknown: "La préparation n’a pas pu être vérifiée. Rechargez les profils et vérifiez l’association de l’imprimante.",
+    editorLoaded: "Éditeur chargé",
+    binding: "Choisissez une association d’imprimante active avant le tranchage.",
+    profile: "Choisissez un profil disponible pour cette imprimante.",
+    review: "Choisissez un profil vérifié avant le tranchage.",
+    tool: "Sélectionnez une association pour l’outil actuel de l’imprimante.",
+    nozzle: "Vérifiez la buse installée et choisissez un profil d’imprimante correspondant.",
+    defaults: "Choisissez des profils de processus et de filament par défaut disponibles dans les associations d’imprimante.",
+    nozzleUnverified: "Les informations de la buse ne sont pas vérifiées. Confirmez la buse installée et la destination avant le tranchage.",
+    nozzleMatch: "La buse signalée correspond à ce profil d’imprimante.",
+    compatible: "La compatibilité du profil correspond à cette association d’imprimante.",
+    incompatible: "Choisissez un profil compatible avec l’imprimante sélectionnée.",
+    compatibilityUnverified: "La compatibilité du profil n’est pas vérifiée. Confirmez la destination actuelle et la buse avant le tranchage.",
+    process: "Choisissez un profil de processus avant le tranchage.",
+    filament: "Choisissez un profil de filament pour chaque matériau avant le tranchage.",
+    catalog: "Les profils n’ont pas pu être chargés. Rechargez-les avant le tranchage.",
+    materialMismatch: "Les matériaux des filaments diffèrent. Vérifiez la source et le filament sélectionné, puis confirmez avant le tranchage.",
+    materialUnverified: "Le matériau du filament n’est pas vérifié. Vérifiez le matériau chargé et confirmez avant le tranchage.",
+  },
   slicerBed: {
     parentIssues: {
       missing_parent: "Le profil parent de l'imprimante est introuvable ou indisponible pour cette révision.",

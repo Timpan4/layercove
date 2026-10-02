@@ -1,4 +1,27 @@
 export default {
+  slicerReadiness: {
+    passed: "Comprobaciones superadas.",
+    blocked: "El laminado está bloqueado.",
+    confirmation: "Se requiere confirmación antes de laminar.",
+    unknown: "No se pudo verificar la preparación. Recargue los perfiles y compruebe la vinculación de la impresora.",
+    editorLoaded: "Editor cargado",
+    binding: "Elija una vinculación activa de impresora antes de laminar.",
+    profile: "Elija un perfil disponible para esta impresora.",
+    review: "Elija un perfil revisado antes de laminar.",
+    tool: "Seleccione una vinculación para la herramienta actual de la impresora.",
+    nozzle: "Compruebe la boquilla instalada y elija un perfil de impresora que coincida.",
+    defaults: "Elija valores predeterminados disponibles de proceso y filamento en las vinculaciones de impresora.",
+    nozzleUnverified: "La información de la boquilla no está verificada. Confirme la boquilla instalada y el destino antes de laminar.",
+    nozzleMatch: "La boquilla informada coincide con este perfil de impresora.",
+    compatible: "La compatibilidad del perfil coincide con esta vinculación de impresora.",
+    incompatible: "Elija un perfil compatible con la impresora seleccionada.",
+    compatibilityUnverified: "La compatibilidad del perfil no está verificada. Confirme el destino actual y la boquilla antes de laminar.",
+    process: "Elija un perfil de proceso antes de laminar.",
+    filament: "Elija un perfil de filamento para cada material antes de laminar.",
+    catalog: "No se pudieron cargar los perfiles. Recárguelos antes de laminar.",
+    materialMismatch: "Los materiales de filamento difieren. Compruebe el origen y el filamento seleccionado y confirme antes de laminar.",
+    materialUnverified: "El material del filamento no está verificado. Compruebe el material cargado y confirme antes de laminar.",
+  },
   slicerBed: {
     parentIssues: {
       missing_parent: "El perfil principal de la impresora no existe o no está disponible para esta revisión.",

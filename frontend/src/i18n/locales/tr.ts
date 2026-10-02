@@ -1,4 +1,27 @@
 export default {
+  slicerReadiness: {
+    passed: "Kontroller geçti.",
+    blocked: "Dilimleme engellendi.",
+    confirmation: "Dilimlemeden önce onay gerekiyor.",
+    unknown: "Hazırlık doğrulanamadı. Profilleri yeniden yükleyin ve yazıcı eşlemesini kontrol edin.",
+    editorLoaded: "Düzenleyici yüklendi",
+    binding: "Dilimlemeden önce etkin bir yazıcı eşlemesi seçin.",
+    profile: "Bu yazıcı için kullanılabilir bir profil seçin.",
+    review: "Dilimlemeden önce incelenmiş bir profil seçin.",
+    tool: "Geçerli yazıcı aracı için bir eşleme seçin.",
+    nozzle: "Takılı nozülü kontrol edin ve eşleşen bir yazıcı profili seçin.",
+    defaults: "Yazıcı eşlemelerinde kullanılabilir işlem ve filament varsayılanlarını seçin.",
+    nozzleUnverified: "Nozül bilgisi doğrulanmadı. Dilimlemeden önce takılı nozülü ve hedefi onaylayın.",
+    nozzleMatch: "Bildirilen nozül bu yazıcı profiliyle eşleşiyor.",
+    compatible: "Profil uyumluluğu bu yazıcı eşlemesiyle eşleşiyor.",
+    incompatible: "Seçili yazıcıyla uyumlu bir profil seçin.",
+    compatibilityUnverified: "Profil uyumluluğu doğrulanmadı. Dilimlemeden önce geçerli hedefi ve nozülü onaylayın.",
+    process: "Dilimlemeden önce bir işlem profili seçin.",
+    filament: "Dilimlemeden önce her malzeme için bir filament profili seçin.",
+    catalog: "Profiller yüklenemedi. Dilimlemeden önce profilleri yeniden yükleyin.",
+    materialMismatch: "Filament malzemeleri farklı. Kaynağı ve seçili filamenti kontrol edin, ardından dilimlemeden önce onaylayın.",
+    materialUnverified: "Filament malzemesi doğrulanmadı. Yüklü malzemeyi kontrol edin ve dilimlemeden önce onaylayın.",
+  },
   slicerBed: {
     parentIssues: {
       missing_parent: "Bu revizyon için üst yazıcı profili eksik veya kullanılamıyor.",

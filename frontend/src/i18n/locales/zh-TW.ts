@@ -1,4 +1,27 @@
 export default {
+  slicerReadiness: {
+    passed: "檢查通過。",
+    blocked: "切片已遭阻擋。",
+    confirmation: "切片前需要確認。",
+    unknown: "無法驗證就緒狀態。請重新載入設定檔並檢查印表機綁定。",
+    editorLoaded: "編輯器已載入",
+    binding: "切片前請選擇有效的印表機綁定。",
+    profile: "請選擇此印表機可用的設定檔。",
+    review: "切片前請選擇已審核的設定檔。",
+    tool: "請選擇目前印表機工具對應的綁定。",
+    nozzle: "請檢查已安裝的噴嘴並選擇相符的印表機設定檔。",
+    defaults: "請在印表機綁定中選擇可用的製程和耗材預設設定檔。",
+    nozzleUnverified: "噴嘴資訊尚未驗證。切片前請確認已安裝的噴嘴和目標。",
+    nozzleMatch: "回報的噴嘴與此印表機設定檔相符。",
+    compatible: "設定檔相容性與此印表機綁定相符。",
+    incompatible: "請選擇與所選印表機相容的設定檔。",
+    compatibilityUnverified: "設定檔相容性尚未驗證。切片前請確認目前目標和噴嘴。",
+    process: "切片前請選擇製程設定檔。",
+    filament: "切片前請為每種材料選擇耗材設定檔。",
+    catalog: "無法載入設定檔。切片前請重新載入設定檔。",
+    materialMismatch: "耗材材料不同。請檢查來源檔案和所選耗材，然後在切片前確認。",
+    materialUnverified: "耗材材料尚未驗證。請檢查已裝載的材料並在切片前確認。",
+  },
   slicerBed: {
     parentIssues: {
       missing_parent: "此修訂版本的上層印表機設定檔不存在或無法使用。",
