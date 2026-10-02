@@ -1687,7 +1687,7 @@ describe('PrintModal', () => {
       await user.click(screen.getByRole('button', { name: /^queue$/i }));
       expect(screen.getByLabelText(/require manual start/i)).toBeInTheDocument();
       await user.click(screen.getByLabelText(/require manual start/i));
-      await user.click(screen.getByRole('button', { name: /^print$/i }));
+      await user.click(screen.getByText(/^queue$/i, { selector: 'button[type="submit"]' }));
 
       await waitFor(() => {
         expect(capturedBody).not.toBeNull();
