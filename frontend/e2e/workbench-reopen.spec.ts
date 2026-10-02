@@ -19,11 +19,15 @@ const snapshot = {
 };
 const sort = (value: unknown): unknown => Array.isArray(value) ? value.map(sort)
   : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, sort(v)])) : value;
-async function installFixture(page: import('@playwright/test').Page, options: { mismatch?: boolean; corrupt?: boolean; plate?: 'default' | 'all' } = {}) {
+async function installFixture(page: import('@playwright/test').Page, options: { mismatch?: boolean; corrupt?: boolean; plate?: 'default' | 'all'; archive?: boolean; downloadError?: boolean; pending?: boolean; fresh?: boolean } = {}) {
   const { plate: _plate, ...withoutPlate } = snapshot;
   const savedRequest = options.plate === 'default' ? withoutPlate : options.plate === 'all' ? { ...snapshot, plate: 0 } : snapshot;
   let sliceRequests = 0;
   let resliceComplete = false;
+  let initialComplete = !options.pending;
+  const libraryFile = (id: number, filename: string) => ({ id, filename, file_type: filename.endsWith('.gcode') ? 'gcode' : 'stl', file_size: 1024, folder_id: null, thumbnail_path: null, print_name: null, print_count: 0, duplicate_count: 0, created_at: '2026-10-01T00:00:00Z', tags: [] });
+  const profile = (id: number, profile_type: string) => ({ profile_id: id, revision_id: 10 + id, source: 'orca_cloud', remote_profile_id: `profile-${id}`, profile_type, display_name: `Cloud ${profile_type}`, content_hash: 'content', sharing_state: 'shared', tombstoned: false, stale: false, compatibility_metadata: {} });
+  const binding = { id: 5, profile_id: 1, printer_id: 1, printer_name: 'Physical device', profile_name: 'Cloud machine', expected_nozzle_diameter: 0.4, tool_index: 0, default_process_profile_id: 2, default_filament_profile_id: 3, enforcement_state: 'shadow', is_active: true, confirmed_at: null, readiness: { state: 'ready', reason_codes: [] }, nozzle: { status: 'confirmed', diameter: 0.4, tool_index: 0 } };
   const contract = {
     contract_version: '1', engine: { name: 'OrcaSlicer', version: '2.4.2', commit: 'pinned' },
     image_identity: { digest: `sha256:${'b'.repeat(64)}` }, schema_hash: 'a'.repeat(64),
@@ -31,14 +35,20 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
     pages: [], options: [], scopes: {}, samples: {},
   };
   const job = {
-    job_id: 25, status: 'completed', kind: 'library_file', source_id: options.mismatch ? 99 : 42, source_name: 'cube.3mf',
+    job_id: 25, status: 'completed', kind: options.archive ? 'archive' : 'library_file', source_id: options.mismatch ? 99 : 42, source_name: 'cube.3mf',
     schema_hash: contract.schema_hash, request_snapshot: options.corrupt ? null : savedRequest, request_fingerprint: createHash('sha256').update(JSON.stringify(sort(savedRequest))).digest('hex'),
     created_at: '2026-10-01T00:00:00Z', started_at: null, completed_at: '2026-10-01T00:01:00Z', progress: null,
     provenance: { state: 'resolved', printer_revision_id: 11, process_revision_id: 12, filament_revision_ids: [13], selection_evidence: {}, created_at: '2026-10-01T00:00:00Z' },
-    result: { library_file_id: 77, name: 'cube.gcode', print_time_seconds: 60, filament_used_g: 1 },
+    result: { ...(options.archive ? { archive_id: 77 } : { library_file_id: 77 }), name: 'edited-cube.gcode', print_time_seconds: 60, filament_used_g: 1 },
   };
   await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
-    const path = new URL(route.request().url()).pathname;
+    const path = new URL(route.request().url()).pathname.replace(/\/$/, '');
+    if (path.endsWith('/77/download')) {
+      await route.fulfill(options.downloadError
+        ? { status: 403, json: { detail: 'You cannot download this slice.' } }
+        : { contentType: 'application/octet-stream', headers: { 'Content-Disposition': 'attachment; filename="edited-cube.gcode"' }, body: 'G90\n; exact edited job 25\nG1 X10 Y20 E3\n' });
+      return;
+    }
     if (route.request().method() === 'POST' && path.endsWith('/files/42/slice')) {
       sliceRequests++;
       await route.fulfill({ status: 202, json: { job_id: 37, status: 'pending', status_url: '/api/v1/slice-jobs/37' } });
@@ -49,12 +59,20 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
       return;
     }
     const body = path.endsWith('/auth/status') ? { auth_enabled: false, requires_setup: false }
-      : path.endsWith('/slice-jobs/25') ? job
+      : path.endsWith('/slice-jobs/25') ? { ...job, status: initialComplete ? 'completed' : 'running', result: initialComplete ? job.result : undefined }
       : path.endsWith('/slice-jobs/37') ? { ...job, job_id: 37, status: resliceComplete ? 'completed' : 'running', result: resliceComplete ? job.result : undefined }
       : path.endsWith('/reslice-request') ? { source_kind: 'library_file', source_id: 42, request: savedRequest, tombstoned: false, revision_ids: { printer: 11, process: 12, filaments: [13] } }
       : path.includes('/slicer/') && /capabilities|schema/.test(path) ? contract
-      : path.endsWith('/files/42/plates') ? { file_id: 42, filename: 'cube.3mf', is_multi_plate: true, plates: [{ index: 1, objects: [], object_ids: [], filaments: [] }, { index: 2, objects: ['Cube'], object_ids: ['cube'], filaments: [] }] }
-      : path.endsWith('/files/42') ? { id: 42, filename: 'cube.3mf' }
+      : path.endsWith('/slicer/catalog/profiles') ? [profile(1, 'printer'), profile(2, 'process'), profile(3, 'filament')]
+      : path.endsWith('/slicer/catalog/bindings') ? [binding]
+      : path.endsWith('/classification') ? { selected_printer: ['process', 'filament'].map((type, index) => ({ ...profile(index + 2, type), classification: { group: 'selected_printer', compatibility: 'match', readiness: 'ready', reason_codes: [], reason_details: [], selectable: true, auto_selectable: true, acknowledgement_required: false } })), other_installed_printers: [], unclassified: [], incompatible: [] }
+      : path.endsWith('/slicer/profiles/process') ? { preset_type: 'process', source: 'orca_cloud', id: 'profile-2', values: {} }
+      : path.endsWith('/printers') && options.fresh ? [{ id: 1, name: 'Physical device', provider: 'moonraker', is_active: true }]
+      : path.endsWith('/library/files') ? [libraryFile(42, 'cube.stl'), ...(initialComplete ? [libraryFile(77, 'edited-cube.gcode')] : [])]
+      : path.endsWith('/library/stats') ? { total_files: initialComplete ? 2 : 1, total_folders: 0, total_size_bytes: 2048 }
+      : path.endsWith('/library/trash') ? { total: 0, items: [] }
+      : /\/(files|archives)\/42\/plates$/.test(path) ? { file_id: 42, filename: 'cube.3mf', is_multi_plate: true, plates: [{ index: 1, objects: [], object_ids: [], filaments: [] }, { index: 2, objects: ['Cube'], object_ids: ['cube'], filaments: [] }] }
+      : /\/(files|archives)\/42$/.test(path) ? { id: 42, filename: 'cube.3mf' }
       : path.endsWith('/files/77') ? { id: 77, filename: options.plate === 'all' ? 'cube.gcode.3mf' : 'cube.gcode' }
       : path.endsWith('/files/77/plates') ? { is_multi_plate: options.plate === 'all', plates: options.plate === 'all' ? [
         { index: 1, name: 'First plate', objects: [], filaments: [], has_thumbnail: false, thumbnail_url: null, print_time_seconds: 20, filament_used_grams: 0.3 },
@@ -66,10 +84,49 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
       : [];
     await route.fulfill({ json: body });
   });
-  return { get sliceRequests() { return sliceRequests; }, completeReslice() { resliceComplete = true; } };
+  return { get sliceRequests() { return sliceRequests; }, completeReslice() { resliceComplete = true; }, completeInitial() { initialComplete = true; } };
 }
 
 for (const width of [1280, 390]) {
+  test(`a fresh workbench result downloads the completed slice after settings change at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const fixture = await installFixture(page, { fresh: true });
+    await page.goto('/slicer/workbench?library_file=42');
+    if (width === 390) await page.getByRole('button', { name: 'settings', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Physical printer' }).selectOption('1');
+    await page.getByRole('combobox', { name: 'Exact slicer binding' }).selectOption('5');
+    await page.getByRole('checkbox', { name: /Confirm filament materials/ }).check();
+    await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
+    fixture.completeReslice();
+    await expect(page.getByText('Saved to File Manager', { exact: true })).toBeVisible();
+    await page.getByRole('checkbox', { name: 'Arrange on selected printer bed' }).uncheck();
+    await expect(page.getByText('This is the previous slice. Slice again to save your changes.', { exact: true })).toBeVisible();
+    const downloading = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download slice', exact: true }).click();
+    expect((await downloading).suggestedFilename()).toBe('edited-cube.gcode');
+    expect(fixture.sliceRequests).toBe(1);
+  });
+
+  test(`a completed workbench slice visibly stays saved and downloads its exact output at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const fixture = await installFixture(page);
+    await page.goto('/slicer/workbench?library_file=42&job=25');
+    await expect(page.getByText('Saved to File Manager', { exact: true })).toBeVisible();
+    await expect(page.getByText('edited-cube.gcode', { exact: true })).toBeVisible();
+    const downloading = page.waitForEvent('download');
+    await page.getByRole('button', { name: 'Download slice', exact: true }).click();
+    const download = await downloading;
+    expect(download.suggestedFilename()).toBe('edited-cube.gcode');
+    const stream = await download.createReadStream();
+    const chunks = [];
+    for await (const chunk of stream!) chunks.push(chunk);
+    expect(Buffer.concat(chunks).toString()).toBe('G90\n; exact edited job 25\nG1 X10 Y20 E3\n');
+    await page.reload();
+    await expect(page.getByText('Saved to File Manager', { exact: true })).toBeVisible();
+    await expect(page.getByRole('link', { name: 'Open File Manager', exact: true })).toHaveAttribute('href', '/files');
+    expect(fixture.sliceRequests).toBe(0);
+  });
+
   test(`completed slice estimates remain visible in the result and print handoff at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await installFixture(page);
@@ -108,6 +165,40 @@ for (const width of [1280, 390]) {
     await expect(page.getByRole('button', { name: 'Exact historical' })).toBeVisible();
   });
 }
+
+test('an archive slice downloads the completed archive artifact and links to Print Archives', async ({ page }) => {
+  await installFixture(page, { archive: true });
+  await page.goto('/slicer/workbench?archive=42&job=25');
+  await expect(page.getByText('Saved to Print Archives', { exact: true })).toBeVisible();
+  await expect(page.getByRole('link', { name: 'Open Print Archives', exact: true })).toHaveAttribute('href', '/archives');
+  const downloading = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'Download slice', exact: true }).click();
+  expect((await downloading).suggestedFilename()).toBe('edited-cube.gcode');
+});
+
+test('returning immediately after completion refreshes the saved file count', async ({ page }) => {
+  const fixture = await installFixture(page, { pending: true });
+  await page.goto('/slicer/workbench?library_file=42&job=25');
+  await expect(page.getByRole('heading', { name: 'Slice in progress' })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to source', exact: true }).click();
+  const total = page.getByText('Files:', { exact: true }).locator('..');
+  await expect(total).toHaveText('Files:1');
+  await page.goBack();
+  await expect(page.getByRole('heading', { name: 'Slice in progress' })).toBeVisible();
+  fixture.completeInitial();
+  await expect(page.getByRole('heading', { name: 'Saved slice result' })).toBeVisible();
+  await page.getByRole('button', { name: 'Return to source', exact: true }).click();
+  await expect(page.getByRole('button', { name: 'Actions: edited-cube.gcode', exact: true })).toBeVisible();
+  await expect(total).toHaveText('Files:2');
+});
+
+test('a rejected slice download explains the failure and allows retry', async ({ page }) => {
+  await installFixture(page, { downloadError: true });
+  await page.goto('/slicer/workbench?library_file=42&job=25');
+  await page.getByRole('button', { name: 'Download slice', exact: true }).click();
+  await expect(page.getByRole('alert')).toHaveText('You cannot download this slice.');
+  await expect(page.getByRole('button', { name: 'Download slice', exact: true })).toBeEnabled();
+});
 
 test('a job for another source cannot display or print its artifact here', async ({ page }) => {
   await installFixture(page, { mismatch: true });

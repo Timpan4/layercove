@@ -2,7 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { AlertTriangle, Loader2 } from 'lucide-react';
-import { useNavigate, useSearchParams } from 'react-router-dom';
+import { Link, useNavigate, useSearchParams } from 'react-router-dom';
 import { GcodeViewer } from '../components/GcodeViewer';
 import { ModelViewer } from '../components/ModelViewer';
 import { PrintModal } from '../components/PrintModal';
@@ -218,6 +218,33 @@ export function HistoricalReslice({ model }: { model: HistoricalResliceModel }) 
   </>;
 }
 
+function SliceOutput({ result, stale = false }: { result: NonNullable<SliceJobState['result']>; stale?: boolean }) {
+  const [downloading, setDownloading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const inLibrary = 'library_file_id' in result;
+  const destination = inLibrary ? 'File Manager' : 'Print Archives';
+  const download = async () => {
+    setDownloading(true);
+    setError(null);
+    try {
+      if ('library_file_id' in result) await api.downloadLibraryFile(result.library_file_id, result.name);
+      else await api.downloadArchive(result.archive_id, result.name);
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'This slice could not be downloaded. Try again.');
+    } finally {
+      setDownloading(false);
+    }
+  };
+
+  return <section aria-label="Saved slice output" className="flex shrink-0 flex-wrap items-center gap-3 rounded-md border border-white/10 bg-bambu-dark p-3 text-sm text-white">
+    <div className="min-w-0 flex-1"><p className="font-medium">Saved to {destination}</p><p className="break-all text-bambu-gray-light">{result.name}</p></div>
+    <Link to={inLibrary ? '/files' : '/archives'} className="rounded text-bambu-green underline focus-visible:outline focus-visible:outline-2 focus-visible:outline-bambu-green">Open {destination}</Link>
+    <Button variant="secondary" onClick={() => void download()} disabled={downloading}>{downloading && <Loader2 aria-hidden="true" className="h-4 w-4 animate-spin" />}Download slice</Button>
+    {stale && <p className="w-full text-amber-300">This is the previous slice. Slice again to save your changes.</p>}
+    {error && <p role="alert" className="w-full text-red-300">{error}</p>}
+  </section>;
+}
+
 function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; initialJobId: number | null; onBack: () => void }) {
   const { t } = useTranslation();
   const model = useSlicerWorkbench(source, initialJobId);
@@ -319,6 +346,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       canPrint={model.canPrint}
     />
     {result && <SliceEstimates result={result} />}
+    {result && <SliceOutput result={result} stale={model.previewStale} />}
     <div className="flex shrink-0 rounded-md border border-white/10 bg-[#292a2e] p-1 text-xs text-white md:hidden">
       {(['canvas', 'settings'] as const).map((panel) => <button key={panel} type="button" aria-pressed={mobilePanel === panel} onClick={() => setMobilePanel(panel)} className={`min-h-10 flex-1 rounded-sm font-semibold capitalize focus:ring-2 focus:ring-bambu-green ${mobilePanel === panel ? 'bg-bambu-green text-black' : 'text-bambu-gray-light'}`}>{panel}</button>)}
     </div>
@@ -417,6 +445,7 @@ function SavedSliceResult({ model, onBack }: { model: ReturnType<typeof useSlice
     </div>
     <p className="text-sm text-bambu-gray-light">These settings belong to this slice job. Use an explicit re-slice to change the result.</p>
     {result && <SliceEstimates result={result} />}
+    {result && <SliceOutput result={result} />}
     {inProgress && <p role="status" className="text-sm">{job.progress?.stage ?? job.status}{job.progress && ` · ${job.progress.total_percent}%`}</p>}
     {job.error_detail && <p role="alert" className="text-sm text-red-300">{job.error_detail}</p>}
     {!request && <p role="alert" className="text-sm text-amber-300">Saved settings could not be verified. Return to the source to make a new slice.</p>}

@@ -247,6 +247,13 @@ class TestSliceLibraryFile:
         assert final["result"]["library_file_id"] != slice_test_setup["src_file_id"]
         assert final["result"]["print_time_seconds"] == 656
         assert captured["url"].endswith("/slice")
+        saved_id = final["result"]["library_file_id"]
+        listing = await async_client.get("/api/v1/library/files")
+        assert listing.status_code == 200
+        assert saved_id in {file["id"] for file in listing.json()}
+        download = await async_client.get(f"/api/v1/library/files/{saved_id}/download")
+        assert download.status_code == 200
+        assert download.content == b"PK\x03\x04 fake-3mf"
 
     @pytest.mark.asyncio
     @pytest.mark.integration
