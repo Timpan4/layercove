@@ -26,7 +26,7 @@ uv run --with-requirements requirements-dev.txt ruff format backend/
 # Frontend Checks
 cd frontend
 bun run lint
-bun x tsc --noEmit
+bun x tsc -b
 bun run test:run
 ```
 

@@ -15,7 +15,7 @@ Fresh deployments use LayerCove names:
 - volumes `layercove_data` and `layercove_logs`;
 - backup archives `layercove-backup-<timestamp>.zip`.
 
-LayerCove never opens, renames, or migrates a Bambuddy or BambuTrack database. If `bambuddy.db` or `bambutrack.db` exists in `DATA_DIR` and `DATABASE_URL` is unset, LayerCove refuses to start. Backup restore rejects archives that contain either file.
+LayerCove never renames or migrates a Bambuddy or BambuTrack database and does not open one implicitly. If `bambuddy.db` or `bambutrack.db` exists in `DATA_DIR` and `DATABASE_URL` is unset, LayerCove refuses to start. Backup restore rejects archives that contain either file.
 
 ## Environment aliases
 
@@ -27,7 +27,11 @@ For renamed project-specific settings, LayerCove reads `LAYERCOVE_<SUFFIX>` firs
 | `LAYERCOVE_EXTERNAL_ROOTS` | `BAMBUDDY_EXTERNAL_ROOTS` |
 | `LAYERCOVE_VP_DUMP_WIRE` | `BAMBUDDY_VP_DUMP_WIRE` |
 
-The fallback names are supported interfaces, not deprecated typos. Generic variables such as `DATABASE_URL`, `DATA_DIR`, `LOG_DIR`, `PORT`, and `MFA_ENCRYPTION_KEY` are unchanged.
+The fallback names are supported interfaces, not deprecated typos.
+
+The secret encryption key works differently: `LAYERCOVE_SECRET_ENCRYPTION_KEY` is preferred and `MFA_ENCRYPTION_KEY` is its legacy alias. If both are set, they must be valid and identical. Otherwise LayerCove logs an error and runs without an encryption key rather than using the key file.
+
+Generic variables such as `DATABASE_URL`, `DATA_DIR`, `LOG_DIR`, and `PORT` are unchanged.
 
 ## Retained Bambuddy identifiers
 

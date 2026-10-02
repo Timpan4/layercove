@@ -94,7 +94,9 @@ The check covers `backend/app/core/auth.py`, `backend/app/core/permissions.py`, 
 
 ### 3. No hardcoded fallback secrets
 
-JWT signing keys, encryption keys, OAuth client secrets, and API tokens have no string-literal fallback in source. They come from environment variables or are generated on first run. If a secret is missing and cannot be generated, the app refuses to start. CI fails on any `-change-in-production`-style string.
+JWT signing keys, encryption keys, OAuth client secrets, and API tokens have no string-literal fallback in source. They come from environment variables, a file in the data directory, or are generated on first run. CI fails on any `-change-in-production`-style string and on a hardcoded JWT secret fallback.
+
+If a generated secret cannot be saved to the data directory, LayerCove keeps running: the JWT secret is regenerated on every restart, which invalidates sessions, and TOTP keys and OIDC client secrets are stored in plaintext. Set `JWT_SECRET_KEY` and `LAYERCOVE_SECRET_ENCRYPTION_KEY` (legacy alias `MFA_ENCRYPTION_KEY`), or fix the data directory's permissions, to avoid both.
 
 ### 4. Negative-path tests for auth changes
 
@@ -120,7 +122,7 @@ A site with its own guard, such as an explicit resolve plus `is_relative_to` or 
 | 1. Allowlist (permissions) | `test_every_permission_has_a_classification` | `backend/tests/integration/test_auth_apikey_rbac.py` |
 | 1. Allowlist (routes) | `test_routes_have_explicit_auth_deps` | `backend/tests/unit/test_route_auth_coverage.py` |
 | 2. Fail closed | `test_no_fail_open_in_auth_modules` | `backend/tests/unit/test_no_fail_open_in_auth.py` |
-| 3. No fallback secrets | `test_no_hardcoded_secrets` | `backend/tests/unit/test_no_hardcoded_secrets.py` |
+| 3. No fallback secrets | `test_no_hardcoded_secrets_in_production_source`, `test_jwt_secret_loader_has_no_hardcoded_fallback` | `backend/tests/unit/test_no_hardcoded_secrets.py` |
 | 4. Negative-path tests | Pull request review | — |
 | 5. Safe joins | `test_route_path_arithmetic_is_safe_joined_or_marked` | `backend/tests/unit/test_no_unsafe_path_joins.py` |
 

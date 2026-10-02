@@ -16,7 +16,7 @@ The supported development environment is Linux or macOS. On Windows, use WSL.
 
 Prerequisites:
 
-- Python 3.10 or later (CI uses 3.11) and [uv](https://docs.astral.sh/uv/)
+- Python 3.11 or later and [uv](https://docs.astral.sh/uv/)
 - Bun 1.3.14 (pinned by `packageManager` in `frontend/package.json`)
 - Docker with Compose v2 for image and integration checks
 
@@ -61,15 +61,16 @@ Tests live in `backend/tests/unit/` and `backend/tests/integration/`. Pass a pat
 ```bash
 cd frontend
 bun run lint          # Oxlint
-bun x tsc --noEmit    # type check
+bun x tsc -b          # type check
 bun run test:run      # Vitest, i18n parity, and brand-asset checks
 bun run build         # production build
 ```
 
-Browser E2E tests in `frontend/e2e/` use Playwright against a running server:
+Browser E2E tests in `frontend/e2e/` use Playwright against a running server. Install the browser once, then run them:
 
 ```bash
 cd frontend
+bun x playwright install --with-deps chromium
 LAYERCOVE_URL=http://localhost:8001 bun run test:e2e
 ```
 
@@ -83,8 +84,9 @@ See [rust/README.md](rust/README.md).
 
 ```bash
 docker compose -f docker-compose.test.yml run --rm backend-test
-docker compose -f docker-compose.test.yml run --rm frontend-test
 ```
+
+The `frontend-test` service in `docker-compose.test.yml` still runs `npm ci` without an npm lockfile, so use the Bun checks above for the frontend.
 
 ### Test policy
 
@@ -136,7 +138,7 @@ Add each new key to every locale with the same key path, grouped by feature (`sp
 
 ## Authentication and permissions
 
-Authentication is optional. When it is off, endpoints are open. When it is on, endpoints check a JWT or API key against granular permissions.
+Authentication is optional. When it is off, routes that use the optional-auth dependencies below are open. When it is on, they check a JWT or API key against granular permissions. Webhook endpoints always require an API key.
 
 Protect a route with `RequirePermissionIfAuthEnabled`:
 
@@ -182,4 +184,4 @@ Update the matching documentation in this repository with any change to user-vis
 
 ## Reporting bugs and requesting features
 
-Use the [bug report](https://github.com/Timpan4/layercove/issues/new?template=bug_report.yml) or [feature request](https://github.com/Timpan4/layercove/issues/new?template=feature_request.yml) template. For bugs, include reproduction steps, expected and actual behavior, your LayerCove version, deployment method, printer model and firmware, and relevant logs or a support package.
+Use the [bug report](https://github.com/Timpan4/layercove/issues/new?template=bug_report.yml) or [feature request](https://github.com/Timpan4/layercove/issues/new?template=feature_request.yml) template. For bugs, include reproduction steps, expected and actual behavior, your LayerCove version, deployment method, printer model and firmware, and relevant logs or a support bundle.

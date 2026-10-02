@@ -62,7 +62,7 @@ cd layercove
 docker compose up -d --build
 ```
 
-Open **http://localhost:8000**. The Compose file uses host networking on Linux so printer discovery works. Docker Desktop on macOS and Windows does not support host networking: comment out `network_mode: host`, enable the `ports:` block, and add printers by address. The [install scripts](install/README.md) do this for you.
+Open **http://localhost:8000**. The Compose file uses Linux host networking so printer discovery works. On Docker Desktop for macOS and Windows, comment out `network_mode: host`, enable the `ports:` block, and add printers by address; discovery is not available there. The [install scripts](install/README.md) do this for you.
 
 The Compose file creates the `layercove` container and the `layercove_data` and `layercove_logs` volumes. The default SQLite database is `layercove.db`. LayerCove does not attach Bambuddy volumes or databases. Read [UPDATING.md](UPDATING.md) before replacing an existing Compose file.
 
@@ -76,7 +76,7 @@ Moonraker printers use standard `.gcode` files and need no AMS fields. See [docs
 
 ### Server-side slicing
 
-Slicing runs in the [Orca Slicer API](https://github.com/Timpan4/orca-slicer-api) sidecar. Start its Compose stack beside LayerCove and set `SLICER_API_URL` if it is not at `http://localhost:3003`. See [docs/calibration.md](docs/calibration.md) for guided filament calibration, which uses the same sidecar.
+Slicing runs in the [Orca Slicer API](https://github.com/Timpan4/orca-slicer-api) sidecar. Start its Compose stack beside LayerCove, then open **Settings → Workflow → Slicer**, turn on **Use Slicer API**, and set **Preferred Slicer** to OrcaSlicer. Set the sidecar URL there or with `SLICER_API_URL` if it is not at `http://localhost:3003`. Until **Use Slicer API** is on, Slice actions hand off to a desktop slicer instead. See [docs/calibration.md](docs/calibration.md) for guided filament calibration, which uses the same sidecar.
 
 ## Features
 
@@ -132,6 +132,7 @@ Slicing runs in the [Orca Slicer API](https://github.com/Timpan4/orca-slicer-api
 - Emulates a Bambu printer so Bambu Studio and OrcaSlicer can send prints to LayerCove
 - Archive, Review, Queue, and Proxy modes; Proxy mode relays to a real printer over TLS for remote printing
 - SSDP discovery on the same LAN, or manual IP entry over VPN
+- The slicer must trust the virtual printer CA once: download it from **Settings → Virtual Printer** and import it into Bambu Studio or OrcaSlicer. This is required over Tailscale too, because the slicers trust only their bundled CA and accept printers by IP address.
 
 ### Notifications and integrations
 

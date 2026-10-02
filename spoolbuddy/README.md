@@ -91,15 +91,16 @@ sudo i2cdetect -y 1   # expect 0x2a (NAU7802)
 
 ```bash
 sudo apt install python3-spidev python3-libgpiod gpiod libgpiod3 i2c-tools
-pip install spidev gpiod smbus2
+python3 -m venv --system-site-packages spoolbuddy/venv
+spoolbuddy/venv/bin/pip install spidev gpiod smbus2
 ```
 
-`gpiod` provides GPIO access on both Pi 4 and Pi 5. The `gpiod` apt package adds command-line GPIO tools for debugging.
+Raspberry Pi OS blocks system-wide `pip install`, so the Python packages go into a virtual environment, as the installer does. The `gpiod` Python package provides GPIO access on both Pi 4 and Pi 5. The `gpiod` apt package adds command-line GPIO tools for debugging.
 
 ### 4. Check the NFC reader
 
 ```bash
-sudo python3 spoolbuddy/scripts/pn5180_diag.py
+sudo spoolbuddy/venv/bin/python spoolbuddy/scripts/pn5180_diag.py
 ```
 
 The output includes the product version (for example `v4.0`), firmware version, a register dump, and `Diagnostics complete`.
@@ -107,7 +108,7 @@ The output includes the product version (for example `v4.0`), firmware version, 
 ### 5. Read a tag
 
 ```bash
-sudo python3 spoolbuddy/scripts/read_tag.py
+sudo spoolbuddy/venv/bin/python spoolbuddy/scripts/read_tag.py
 ```
 
 | Tag type | SAK | Use |
@@ -119,7 +120,7 @@ sudo python3 spoolbuddy/scripts/read_tag.py
 ### 6. Check the scale
 
 ```bash
-sudo python3 spoolbuddy/scripts/scale_diag.py
+sudo spoolbuddy/venv/bin/python spoolbuddy/scripts/scale_diag.py
 ```
 
 The script reads 10 samples at 10 SPS and prints raw ADC values, the average, and the spread. Idle readings are typically around 500k with a spread under 20k.

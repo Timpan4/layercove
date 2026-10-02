@@ -18,7 +18,7 @@ The dev server runs on `http://localhost:5173` and proxies API and WebSocket tra
 | `bun run dev` | Vite dev server |
 | `bun run build` | Type-check and build into `../static` |
 | `bun run lint` | Oxlint, warnings as errors |
-| `bun x tsc --noEmit` | Type check |
+| `bun x tsc -b` | Type check of the app and node projects |
 | `bun run test` | Vitest in watch mode |
 | `bun run test:run` | Vitest once, then i18n parity and brand-asset checks |
 | `bun run test:coverage` | Vitest with coverage |

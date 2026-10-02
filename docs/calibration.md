@@ -30,7 +30,7 @@ The UI explains the value-to-height mapping. The step size must reach the highes
 
 ## Printing
 
-Printing a test requires a current generated artifact, current printer telemetry, a confirmed matching nozzle, an idle printer, an empty queue, and plate and filament confirmation. AMS requires a Bambu printer and exactly one loaded slot matching the pinned filament type. Each new test needs a fresh plate confirmation. The normal queue handles cancellation and printing status.
+Printing a test requires a current generated artifact, current printer telemetry, a confirmed matching nozzle, an idle printer, an empty queue, and plate and filament confirmation. AMS requires a Bambu printer and exactly one selected AMS slot, which must be loaded with the pinned filament type. Each new test needs a fresh plate confirmation. The normal queue handles cancellation and printing status.
 
 ## Privacy and uploads
 
@@ -46,7 +46,7 @@ Artifact checks do not prove physical print quality or a safe final material lim
 
 For isolated browser verification:
 
-1. Start the backend on port 8001 with `DATA_DIR=/tmp/layercove-calibration-preview-...` and the local sidecar URL.
+1. Export `DATA_DIR=/tmp/layercove-calibration-preview-...` and the local sidecar URL in your shell, then start the backend on port 8001. The seed command below must see the same `DATA_DIR`.
 2. Seed it:
 
    ```bash

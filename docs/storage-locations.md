@@ -35,7 +35,7 @@ LayerCove keeps its own location catalog. With Spoolman enabled:
 
 - The `locations` table holds each location's `name` and a case-insensitive `name_key`.
 - `spool.location_id` is the source of truth for a spool's location.
-- `spool.storage_location` is a derived display string and the value sent to Spoolman. `location_service.resolve_spool_location_fields()` sets it on every write.
+- `spool.storage_location` is a derived display string and the value sent to Spoolman. `location_service.resolve_spool_location_fields()` sets it whenever a write changes the spool's location.
 - The frontend spool form sends only `location_id`.
 
 Tests: `backend/tests/integration/test_locations_api.py` and `backend/tests/unit/test_location_service.py`.

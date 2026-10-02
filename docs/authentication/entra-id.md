@@ -48,13 +48,14 @@ In **Settings → Authentication → SSO / OIDC**, click **Add Provider** and fi
 | Scopes | `openid email profile` |
 | Email Claim | `preferred_username` |
 | Require email verified | Off |
+| Auto-create users | On to create a local account at first login. With it off, a login succeeds only for a user already linked to this provider, or linked by auto-link. |
 | Auto-link existing accounts | Off, unless you trust the tenant and every local user's email matches their Entra UPN |
 
 ### Why `preferred_username`
 
-Entra ID ID tokens do not include an `email_verified` claim, so the `email` claim with **Require email verified** on rejects every login. Two configurations work:
+Entra ID ID tokens do not include an `email_verified` claim. With the `email` claim and **Require email verified** on, LayerCove discards the email, so it cannot link accounts by email and auto-created users have no email. Two configurations keep the email:
 
-- **`preferred_username`** (recommended). Entra fills it with the tenant-administered UPN, for example `user@contoso.com`. LayerCove checks that it is email-shaped and skips the `email_verified` check. `upn` behaves the same way.
+- **`preferred_username`** (recommended). Entra usually fills it with the user's UPN, for example `user@contoso.com`, but it can also hold a phone number or another username. LayerCove uses it only if it is email-shaped and skips the `email_verified` check. `upn` behaves the same way.
 - **`email` with Require email verified off.** LayerCove accepts the claim unless the token explicitly marks it unverified. Use this only when you control the tenant. LayerCove refuses to enable auto-link in this configuration.
 
 ## Session length
@@ -66,6 +67,7 @@ LayerCove exchanges the OIDC code for its own token at login, so Entra's token l
 | Symptom | Likely cause |
 |---|---|
 | Entra redirects back and LayerCove shows "OIDC login failed" | The redirect URI registered in Azure does not exactly match the callback URL, or **External URL** is wrong. Check the scheme, host, port, and path. |
-| A user is created with an empty email | Entra did not send `preferred_username`. Try the `email` claim with **Require email verified** off. |
+| A user is created with an empty email | `preferred_username` is missing or not email-shaped. Try the `upn` claim, or `email` with **Require email verified** off. |
+| Login fails with no linked account | **Auto-create users** is off and no local account is linked to this identity. Turn on **Auto-create users**, or **Auto-link existing accounts** if the local email matches. |
 | Azure reports "invalid client" | The client secret expired or was copied incorrectly. Create a new secret and update the provider. |
 | A login links to the wrong local user | Turn off **Auto-link existing accounts** until every local email matches the user's Entra UPN. |
