@@ -28,6 +28,7 @@ export interface SlicerSettingsSidebarProps {
   scope: SettingsScope;
   onScopeChange: (scope: SettingsScope) => void;
   onSettingChange: (key: string, value: string) => void;
+  onSettingEditEnd?: () => void;
   supportsObjectState?: boolean;
   objects?: SlicerObject[];
   selectedObjectId?: string;
@@ -61,7 +62,7 @@ export function SlicerSettingsSidebar(props: SlicerSettingsSidebarProps) {
       <section className="min-w-0 shrink-0 rounded-md border border-white/10 bg-[#292a2e] p-3 shadow-md shadow-black/15"><div className="mb-2 flex items-center gap-2 text-base font-semibold"><Printer className="h-4 w-4 text-bambu-green" />Printer</div><Preset label="Machine preset" value={props.printerName ?? ''} options={props.printerOptions ?? []} onChange={(value) => props.onPrinterChange?.(value)} /></section>
       <section className="min-w-0 shrink-0 rounded-md border border-white/10 bg-[#292a2e] p-3 shadow-md shadow-black/15"><div className="mb-2 flex items-center gap-2 text-base font-semibold"><span className="h-4 w-1.5 rounded-sm bg-bambu-green" />Filament</div><Preset label="Filament preset" value={props.filamentName ?? ''} options={props.filamentOptions ?? []} onChange={(value) => props.onFilamentChange?.(value)} /></section>
     </>}
-    <section className="flex min-w-0 shrink-0 flex-col rounded-md border border-white/10 bg-[#292a2e] shadow-md shadow-black/15">
+    <section onBlur={props.onSettingEditEnd} className="flex min-w-0 shrink-0 flex-col rounded-md border border-white/10 bg-[#292a2e] shadow-md shadow-black/15">
       <div className="flex items-center justify-between border-b border-white/10 px-3 py-2"><div className="flex items-center gap-2 text-base font-semibold"><Layers3 className="h-4 w-4 text-bambu-green" />Process</div><div className="flex rounded-md border border-white/10 bg-black/20 p-0.5">{modes.map((item) => <button key={item} type="button" onClick={() => props.onModeChange(item)} className={`min-h-7 rounded-sm px-2 text-[10px] capitalize ${props.mode === item ? 'bg-white/10 text-white' : 'text-bambu-gray'}`}>{item}</button>)}</div></div>
       {!props.selectionPanel && <div className="border-b border-white/10 p-3"><Preset label="Process preset" value={props.processName ?? ''} options={props.processOptions ?? []} onChange={(value) => props.onProcessChange?.(value)} /></div>}
       <div className="flex border-b border-white/10 px-2">{scopes.map((item) => <button key={item} type="button" onClick={() => props.onScopeChange(item)} className={`min-h-10 flex-1 text-xs capitalize ${props.scope === item ? 'border-b-2 border-bambu-green text-white' : 'text-bambu-gray'}`}>{item}</button>)}</div>

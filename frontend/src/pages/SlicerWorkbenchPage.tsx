@@ -339,6 +339,10 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       onModeChange={(mode) => { setPreviewMode(mode); setMobilePanel('canvas'); }}
       title={model.sourceName}
       subtitle={`${schema.engine.name} ${schema.engine.version} · ${schema.schema_hash.slice(0, 10)}`}
+      canUndo={model.canUndo}
+      canRedo={model.canRedo}
+      onUndo={model.undo}
+      onRedo={model.redo}
       sliceState={sliceState}
       onSlice={() => void model.slice()}
       canSlice={model.request !== null}
@@ -367,6 +371,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
           scope={settingsScope}
           supportsObjectState={supportsModelState}
           onScopeChange={(scope) => model.setSettingsView(scope === 'object' ? 'objects' : 'global')}
+          onSettingEditEnd={model.finishProcessEdit}
           onSettingChange={(key, value) => {
             const option = model.schemaOptions.get(key);
             if (!option) return;

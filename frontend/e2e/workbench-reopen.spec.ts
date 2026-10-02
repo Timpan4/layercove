@@ -21,7 +21,7 @@ const sort = (value: unknown): unknown => Array.isArray(value) ? value.map(sort)
   : value && typeof value === 'object' ? Object.fromEntries(Object.entries(value).sort(([a], [b]) => a.localeCompare(b)).map(([k, v]) => [k, sort(v)])) : value;
 const longFilamentName = 'PLA preset for Voron with a long manufacturer and detailed print-quality description';
 const longCompatibilityReason = 'compatibility unknown, nozzle match, ManufacturerSpecificCompatibilityDetailWithoutSpaces';
-async function installFixture(page: import('@playwright/test').Page, options: { mismatch?: boolean; corrupt?: boolean; plate?: 'default' | 'all'; archive?: boolean; downloadError?: boolean; pending?: boolean; fresh?: boolean; longFilament?: boolean } = {}) {
+async function installFixture(page: import('@playwright/test').Page, options: { mismatch?: boolean; corrupt?: boolean; plate?: 'default' | 'all'; archive?: boolean; downloadError?: boolean; pending?: boolean; fresh?: boolean; longFilament?: boolean; processSettings?: boolean } = {}) {
   const { plate: _plate, ...withoutPlate } = snapshot;
   const savedRequest = options.plate === 'default' ? withoutPlate : options.plate === 'all' ? { ...snapshot, plate: 0 } : snapshot;
   let sliceRequests = 0;
@@ -36,7 +36,9 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
     contract_version: '1', engine: { name: 'OrcaSlicer', version: '2.4.2', commit: 'pinned' },
     image_identity: { digest: `sha256:${'b'.repeat(64)}` }, schema_hash: 'a'.repeat(64),
     capabilities: { process_schema: true, model_state: true, progress: true, cancel: false }, supported_scopes: ['global', 'object'],
-    pages: [], options: [], scopes: {}, samples: {},
+    pages: options.processSettings ? [{ name: 'Quality', groups: [{ name: 'Layer height', options: ['layer_height'] }] }] : [],
+    options: options.processSettings ? [{ key: 'layer_height', label: 'Layer height', type: 'float', default: 0.2, mode: 'simple', min: 0.01, max: 1 }] : [],
+    scopes: options.processSettings ? { layer_height: ['global'] } : {}, samples: options.processSettings ? { layer_height: 0.18 } : {},
   };
   const job = {
     job_id: 25, status: 'completed', kind: options.archive ? 'archive' : 'library_file', source_id: options.mismatch ? 99 : 42, source_name: 'cube.3mf',
@@ -70,7 +72,7 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
       : path.endsWith('/slicer/catalog/profiles') ? [profile(1, 'printer'), profile(2, 'process'), profile(3, 'filament'), ...unclassified]
       : path.endsWith('/slicer/catalog/bindings') ? [binding]
       : path.endsWith('/classification') ? { selected_printer: ['process', 'filament'].map((type, index) => ({ ...profile(index + 2, type), classification: { group: 'selected_printer', compatibility: 'match', readiness: 'ready', reason_codes: [], reason_details: [], selectable: true, auto_selectable: true, acknowledgement_required: false } })), other_installed_printers: [], unclassified, incompatible: [] }
-      : path.endsWith('/slicer/profiles/process') ? { preset_type: 'process', source: 'orca_cloud', id: 'profile-2', values: {} }
+      : path.endsWith('/slicer/profiles/process') ? { preset_type: 'process', source: 'orca_cloud', id: 'profile-2', values: options.processSettings ? { layer_height: 0.2 } : {} }
       : path.endsWith('/printers') && options.fresh ? [{ id: 1, name: 'Physical device', provider: 'moonraker', is_active: true }]
       : path.endsWith('/library/files') ? [libraryFile(42, 'cube.stl'), ...(initialComplete ? [libraryFile(77, 'edited-cube.gcode')] : [])]
       : path.endsWith('/library/stats') ? { total_files: initialComplete ? 2 : 1, total_folders: 0, total_size_bytes: 2048 }
@@ -94,6 +96,65 @@ async function installFixture(page: import('@playwright/test').Page, options: { 
 }
 
 for (const width of [1280, 390]) {
+  test(`process edits can be undone, redone and replaced at ${width}px`, async ({ page }) => {
+    await page.setViewportSize({ width, height: 844 });
+    const fixture = await installFixture(page, { fresh: true, processSettings: true });
+    await page.goto('/slicer/workbench?library_file=42');
+    if (width === 390) await page.getByRole('button', { name: 'settings', exact: true }).click();
+    await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
+    await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
+    const height = page.getByRole('spinbutton', { name: 'Layer height', exact: true });
+    const undo = page.getByRole('button', { name: 'Undo', exact: true });
+    const redo = page.getByRole('button', { name: 'Redo', exact: true });
+    await expect(height).toHaveValue('0.2');
+    await expect(undo).toBeDisabled();
+    await expect(redo).toBeDisabled();
+    await height.fill('0.2');
+    await expect(undo).toBeDisabled();
+    await height.fill('0.28');
+    await height.fill('0.2');
+    await expect(undo).toBeDisabled();
+    await expect(redo).toBeDisabled();
+    await height.fill('0.28');
+    await expect(height).toHaveValue('0.28');
+    await expect(undo).toBeEnabled();
+    await expect(redo).toBeDisabled();
+    await undo.click();
+    await expect(height).toHaveValue('0.2');
+    await expect(undo).toBeDisabled();
+    await expect(redo).toBeEnabled();
+    await redo.click();
+    await expect(height).toHaveValue('0.28');
+    await expect(undo).toBeEnabled();
+    await expect(redo).toBeDisabled();
+    await height.fill('0.2');
+    await undo.click();
+    await expect(height).toHaveValue('0.28');
+    await redo.click();
+    await expect(height).toHaveValue('0.2');
+    await undo.click();
+    await expect(height).toHaveValue('0.28');
+    await height.press('Tab');
+    await height.press('End');
+    await height.press('Backspace');
+    await height.pressSequentially('9');
+    await height.press('Tab');
+    await expect(height).toHaveValue('0.29');
+    await undo.click();
+    await expect(height).toHaveValue('0.28');
+    await redo.click();
+    await expect(height).toHaveValue('0.29');
+    await undo.click();
+    await undo.click();
+    await expect(height).toHaveValue('0.2');
+    await height.fill('0.24');
+    await expect(redo).toBeDisabled();
+    await undo.click();
+    await expect(height).toHaveValue('0.2');
+    await expect(undo).toBeDisabled();
+    expect(fixture.sliceRequests).toBe(0);
+  });
+
   test(`quick slicing keeps full filament names and compatibility reasons readable at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await installFixture(page, { fresh: true, longFilament: true });

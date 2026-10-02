@@ -108,7 +108,13 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
   const [settingsView, setSettingsView] = useState<'global' | 'objects'>('global');
   const [selectedPlate, setSelectedPlate] = useState<number | null>(null);
   const [bedType, setBedType] = useState<string | null>(null);
-  const [processOverrides, setProcessOverrides] = useState<Record<string, SettingValue>>({});
+  const [processHistory, setProcessHistory] = useState<{
+    past: Array<Record<string, SettingValue>>;
+    present: Record<string, SettingValue>;
+    future: Array<Record<string, SettingValue>>;
+    editingKey: string | null;
+  }>({ past: [], present: {}, future: [], editingKey: null });
+  const processOverrides = processHistory.present;
   const [objects, setObjects] = useState<WorkbenchObject[]>([]);
   const [arrange, setArrange] = useState(true);
   const [layFlatObjectIds, setLayFlatObjectIds] = useState<string[]>([]);
@@ -265,16 +271,38 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
 
   const updateProcessOverride = useCallback((key: string, value: SettingValue) => {
     const baseValue = processProfileQuery.data?.values[key] ?? schemaQuery.data?.samples[key];
-    setProcessOverrides((current) => {
-      if (JSON.stringify(value) === JSON.stringify(baseValue)) {
-        const next = { ...current };
-        delete next[key];
-        return next;
+    setProcessHistory((history) => {
+      const next = { ...history.present };
+      if (JSON.stringify(value) === JSON.stringify(baseValue)) delete next[key];
+      else next[key] = value;
+      if (JSON.stringify(next) === JSON.stringify(history.present)) return history;
+      const past = history.editingKey === key ? history.past : [...history.past, history.present];
+      if (JSON.stringify(next) === JSON.stringify(past[past.length - 1])) {
+        return { past: past.slice(0, -1), present: next, future: [], editingKey: null };
       }
-      return { ...current, [key]: value };
+      return { past, present: next, future: [], editingKey: key };
     });
   }, [processProfileQuery.data?.values, schemaQuery.data?.samples]);
 
+  const finishProcessEdit = useCallback(() => {
+    setProcessHistory((history) => history.editingKey === null ? history : { ...history, editingKey: null });
+  }, []);
+  const undo = useCallback(() => {
+    setProcessHistory((history) => history.past.length === 0 ? history : {
+      past: history.past.slice(0, -1),
+      present: history.past[history.past.length - 1],
+      future: [history.present, ...history.future],
+      editingKey: null,
+    });
+  }, []);
+  const redo = useCallback(() => {
+    setProcessHistory((history) => history.future.length === 0 ? history : {
+      past: [...history.past, history.present],
+      present: history.future[0],
+      future: history.future.slice(1),
+      editingKey: null,
+    });
+  }, []);
   const updateObject = useCallback((id: string, update: Partial<WorkbenchObject>) => {
     if (update.transform) setArrange(false); // Do not discard an explicit placement on the next slice.
     setObjects((current) => current.map((object) => object.id === id ? { ...object, ...update } : object));
@@ -345,6 +373,11 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     settingsView,
     setSettingsView,
     processOverrides,
+    canUndo: processHistory.past.length > 0,
+    canRedo: processHistory.future.length > 0,
+    undo,
+    redo,
+    finishProcessEdit,
     updateProcessOverride,
     objects,
     updateObject,
