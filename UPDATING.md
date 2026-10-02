@@ -2,7 +2,9 @@
 
 LayerCove supports Docker Compose as its production deployment path. Take a backup first through **Settings → Backup → Create Backup** and record the image currently running.
 
-LayerCove does not import inherited `bambutrack.db` or `bambuddy.db` databases implicitly. Export old data before starting LayerCove, or configure an explicit external `DATABASE_URL`. The default SQLite database is `layercove.db`.
+LayerCove never opens Bambuddy or BambuTrack data. If `bambuddy.db` or `bambutrack.db` is in the data directory and `DATABASE_URL` is unset, LayerCove refuses to start. Export the old data and move the file out, or set `DATABASE_URL` to a new database. Backup restore also rejects archives that contain either file. The default SQLite database is `layercove.db`.
+
+LayerCove starts only from its current schema and has no historical migration chain. Keep the pre-update backup until the new version is confirmed working; restoring it is the rollback path.
 
 ## Existing LayerCove deployment
 

@@ -1,243 +1,127 @@
-# Contributing to Bambuddy
+# Contributing to LayerCove
 
-Thank you for your interest in contributing to Bambuddy! This document provides guidelines and instructions for contributing.
+Read the [Code of Conduct](CODE_OF_CONDUCT.md) before taking part. Report security issues privately as described in [SECURITY.md](SECURITY.md), not in public issues.
 
-## Table of Contents
+## Start with an issue
 
-- [Code of Conduct](#code-of-conduct)
-- [Before You Start](#before-you-start)
-- [Documentation Requirements](#documentation-requirements)
-- [Getting Started](#getting-started)
-- [Development Setup](#development-setup)
-- [Making Changes](#making-changes)
-- [Code Style](#code-style)
-- [Internationalization (i18n)](#internationalization-i18n)
-- [Authentication & Permissions](#authentication--permissions)
-- [Testing](#testing)
-- [CI Pipeline](#ci-pipeline)
-- [Submitting Changes](#submitting-changes)
-- [Reporting Bugs](#reporting-bugs)
-- [Requesting Features](#requesting-features)
+1. Open an issue, or comment on an existing one, describing the change.
+2. Agree on scope and approach with a maintainer.
+3. Wait to be assigned, then open a pull request for that issue.
 
-## Code of Conduct
+Pull requests without an assigned issue will be closed.
 
-Please read and follow our [Code of Conduct](CODE_OF_CONDUCT.md) to keep our community welcoming and respectful.
+## Development setup
 
-## Before You Start
+The supported development environment is Linux or macOS. On Windows, use WSL.
 
-**Every contribution starts with an issue.** Before writing any code or opening a pull request:
+Prerequisites:
 
-1. **Open a new issue** or **comment on an existing one** describing what you'd like to work on
-2. **Wait for agreement** — discuss the approach with a maintainer so we're aligned on scope and direction
-3. **Get assigned** — once we agree, a maintainer will assign the issue to you
-4. **Then start coding** — only open a PR for an issue that is assigned to you
+- Python 3.10 or later (CI uses 3.11) and [uv](https://docs.astral.sh/uv/)
+- Bun 1.3.14 (pinned by `packageManager` in `frontend/package.json`)
+- Docker with Compose v2 for image and integration checks
 
-**No assigned issue = no PR.** Pull requests without a corresponding assigned issue will be closed.
-
-This keeps everyone on the same page, avoids wasted effort on changes that may not fit the project's direction, and prevents multiple contributors from working on the same thing.
-
-## Documentation Requirements
-
-Features and user-visible behavior changes **must** include matching documentation updates in the docs repos:
-
-- **[bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki)** — end-user guide (installation, configuration, feature walkthroughs, reference)
-- **[bambuddy-website](https://github.com/maziggy/bambuddy-website)** — marketing site (updated only when the change affects public claims or feature lists)
-
-### When docs updates are required
-
-| Change | Needs wiki? | Needs website? |
-|---|---|---|
-| New feature | ✅ | Maybe (if in the feature list) |
-| New config key / setting | ✅ | ❌ |
-| New port, URL, API endpoint | ✅ | ❌ |
-| Installation or upgrade steps change | ✅ | ✅ |
-| UI change that affects screenshots | ✅ | ❌ |
-| Bug fix with no observable behavior change | ❌ | ❌ |
-| Internal refactor | ❌ | ❌ |
-| Test-only change | ❌ | ❌ |
-
-### Workflow
-
-1. Open your code PR here in `bambuddy`
-2. Open companion PR(s) in `bambuddy-wiki` and/or `bambuddy-website`
-3. **Link the companion PR(s) in the code PR description** (the PR template has a dedicated section)
-4. Merge the PRs together — usually code first, then docs, unless the docs reference new things that don't exist yet
-
-If your change truly doesn't need docs (internal refactor, silent bug fix), say so in the PR description and give a one-line reason.
-
-### Previews before you merge
-
-Clone the docs repo and run it locally to see your changes rendered with the real theme before opening the PR:
-
-- **Wiki** (`bambuddy-wiki`) — `pip install -r requirements.txt && mkdocs serve` — live-reload on `http://localhost:8000`
-- **Website** (`bambuddy-website`) — static HTML/CSS, open the changed file directly or serve with `python -m http.server`
-
-Review like you would the production site. Catch broken links, layout regressions, typos, missing images. If it looks right, open the PR.
-
-### Editing docs without a local clone
-
-Both docs repos can be edited directly in the browser, no `git clone` required:
-
-- **GitHub web editor** — click the pencil icon on any file in the repo
-- **github.dev** — press `.` (period) on any repo page to open VS Code in your browser, with multi-file editing and syntax highlighting
-
-## Getting Started
-
-1. **Fork the repository** on GitHub
-2. **Clone your fork** locally:
-   ```bash
-   git clone https://github.com/YOUR_USERNAME/bambuddy.git
-   cd bambuddy
-   ```
-3. **Add the upstream remote**:
-   ```bash
-   git remote add upstream https://github.com/maziggy/bambuddy.git
-   ```
-
-## Development Setup
-
-### Prerequisites
-
-- Python 3.11+
-- Bun 1.3.14 (pinned in `frontend/package.json`)
-
-### Backend Setup
+Start the backend and frontend together:
 
 ```bash
-# Create virtual environment
-python3 -m venv venv
-source venv/bin/activate  # On Windows: venv\Scripts\activate
-
-# Install dependencies
-pip install -r requirements.txt
-pip install -r requirements-dev.txt  # Dev/test dependencies (pytest, ruff, bandit, etc.)
-
-# Install pre-commit hooks
-pip install pre-commit
-pre-commit install
-
-# Run backend (--loop asyncio matches production; avoids a uvloop TLS bug
-# that can truncate Virtual Printer FTP uploads on slow storage — see #1896)
-DEBUG=true uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000 --loop asyncio
+bash scripts/dev.sh
 ```
 
-### Frontend Setup
+Open `http://localhost:5173`. Vite proxies API and WebSocket traffic to the backend on `http://localhost:8000`. Set `BACKEND_PORT` to use another backend port. `Ctrl+C` stops both servers.
+
+To run them separately:
 
 ```bash
+# Backend. --loop asyncio matches production and avoids a uvloop TLS bug
+# that can truncate virtual-printer FTP uploads.
+DEBUG=true uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt \
+  uvicorn backend.app.main:app --reload --host 0.0.0.0 --port 8000 --loop asyncio
+
+# Frontend
 cd frontend
-
-# Install the locked dependencies
 bun install --frozen-lockfile
-
-# Run development server
 bun run dev
 ```
 
-The frontend will be available at `http://localhost:5173` and will proxy API requests to the backend.
+Pre-commit hooks run Ruff, whitespace and YAML/JSON checks, private-key detection, an import-shadowing test, and a TypeScript check. Install them with `uvx pre-commit install`. The last two hooks call `python -m pytest` and `npx tsc` from your shell, so commit from an environment that has the backend dependencies and frontend `node_modules` installed.
 
-### Running with Docker
+## Checks
+
+### Backend
 
 ```bash
-# Run the full application
-docker compose up -d --build
+uv run --with-requirements requirements-dev.txt ruff check backend/
+uv run --with-requirements requirements-dev.txt ruff format --check backend/
+uv run --with-requirements requirements.txt --with-requirements requirements-dev.txt pytest backend/tests/
+```
 
-# Run tests in Docker (mirrors CI)
+Tests live in `backend/tests/unit/` and `backend/tests/integration/`. Pass a path to run a subset.
+
+### Frontend
+
+```bash
+cd frontend
+bun run lint          # Oxlint
+bun x tsc --noEmit    # type check
+bun run test:run      # Vitest, i18n parity, and brand-asset checks
+bun run build         # production build
+```
+
+Browser E2E tests in `frontend/e2e/` use Playwright against a running server:
+
+```bash
+cd frontend
+LAYERCOVE_URL=http://localhost:8001 bun run test:e2e
+```
+
+If you change backend API schemas, run `bun run check:api` to confirm `src/api/generated.ts` is current.
+
+### Rust service
+
+See [rust/README.md](rust/README.md).
+
+### Docker
+
+```bash
 docker compose -f docker-compose.test.yml run --rm backend-test
 docker compose -f docker-compose.test.yml run --rm frontend-test
 ```
 
-## Making Changes
+### Test policy
 
-1. **Create a branch** from `dev` for your changes:
-   ```bash
-   git checkout dev
-   git pull upstream dev
-   git checkout -b feature/your-feature-name
-   # or
-   git checkout -b fix/your-bug-fix
-   ```
+[AGENTS.md](AGENTS.md) holds the repository test policy. In short:
 
-2. **Make your changes** following our code style guidelines
+- Prefer E2E tests.
+- Every bug fix includes a regression test that fails before the fix and passes after it.
+- Do not add tests that only restate the implementation, such as asserting mock calls or source text.
 
-3. **Test your changes** thoroughly
+## CI
 
-4. **Commit your changes** with clear, descriptive messages:
-   ```bash
-   git commit -m "Add feature: description of what you added"
-   ```
+`.github/workflows/ci.yml` runs on pull requests to `main` and pushes to `main`:
 
-### Branch Naming
+| Job | Checks |
+|---|---|
+| Backend Lint | `ruff check` and `ruff format --check` |
+| Backend Tests | pytest in four shards |
+| PostgreSQL Camera Token Expiry | camera token expiry against a PostgreSQL clock |
+| Frontend Checks | CI workflow regression test, Oxlint, TypeScript, build, Vitest |
+| Docker Backend Tests | pytest in the test image, four shards |
+| Docker Build | production image, health/API/static smoke tests, Playwright E2E |
+| Rust service | `cargo fmt`, `clippy`, and tests |
 
-- `feature/` - New features
-- `fix/` - Bug fixes
-- `docs/` - Documentation changes
-- `refactor/` - Code refactoring
-- `test/` - Test additions or fixes
+CodeQL (`codeql.yml`) and the security audit (`security.yml`) run as separate workflows.
 
-## Code Style
+## Code style
 
-### Backend (Python)
+- Python: Ruff, configured in `pyproject.toml`.
+- TypeScript/React: Oxlint and `tsc`.
+- Keep printer-specific behavior behind the provider contracts in [ADR 0001](docs/decisions/0001-multi-backend-printer-architecture.md).
+- Do not rename retained Bambuddy identifiers without a tested migration; see [docs/rebranding.md](docs/rebranding.md).
 
-We use [Ruff](https://github.com/astral-sh/ruff) for linting and formatting. Configuration is in `pyproject.toml`.
+## Internationalization
 
-```bash
-# Check linting
-ruff check backend/
+All user-visible frontend text goes through [react-i18next](https://react.i18next.com/). Do not hardcode strings.
 
-# Auto-fix issues
-ruff check --fix backend/
-
-# Format code
-ruff format backend/
-
-# Check formatting without changes
-ruff format --check backend/
-```
-
-### Frontend (TypeScript/React)
-
-We use Oxlint for linting and TypeScript for type checking:
-
-```bash
-cd frontend
-
-# Lint
-bun run lint
-
-# Type check
-bun x tsc --noEmit
-```
-
-### Pre-commit Hooks
-
-Pre-commit hooks run automatically on `git commit` and include Ruff linting/formatting, trailing whitespace fixes, YAML/JSON validation, and import shadowing checks. To run manually:
-
-```bash
-pre-commit run --all-files
-```
-
-## Internationalization (i18n)
-
-The frontend uses [react-i18next](https://react.i18next.com/) for all user-facing text. **Never hardcode user-visible strings** — always use translation keys.
-
-### Locale Files
-
-Translations live in `frontend/src/i18n/locales/`:
-
-| File | Language |
-|------|----------|
-| `en.ts` | English (primary) |
-| `de.ts` | German |
-| `fr.ts` | French |
-| `ja.ts` | Japanese |
-| `pt-BR.ts` | Brazilian Portuguese |
-[...]
-check for possibly more files!!!
-
-### Adding New Strings
-
-1. Add the key to the appropriate section in **all three** locale files
-2. Use the `useTranslation` hook in your component:
+Locale files live in `frontend/src/i18n/locales/`: `en.ts` (primary), `de.ts`, `es.ts`, `fr.ts`, `it.ts`, `ja.ts`, `ko.ts`, `pt-BR.ts`, `tr.ts`, `zh-CN.ts`, and `zh-TW.ts`.
 
 ```tsx
 import { useTranslation } from 'react-i18next';
@@ -248,30 +132,13 @@ function MyComponent() {
 }
 ```
 
-3. Keys are organized by feature (e.g., `spoolman.`, `nav.`, `common.`)
+Add each new key to every locale with the same key path, grouped by feature (`spoolman.`, `nav.`, `common.`). `bun run check:i18n`, which `bun run test:run` includes, fails on missing keys, mismatched plural forms, or untranslated English copies.
 
-### Important Notes
+## Authentication and permissions
 
-- All three locale files must use the **same key structure** — same nesting, same key paths
-- Always add keys to all three locales to maintain parity
-- Run frontend tests after changes — locale parity is validated
-- If you find structural inconsistencies between locales, fix them — different key paths cause silent fallback to English
+Authentication is optional. When it is off, endpoints are open. When it is on, endpoints check a JWT or API key against granular permissions.
 
-## Authentication & Permissions
-
-Bambuddy has an optional authentication system. When auth is enabled, API endpoints are protected by granular permissions.
-
-### How It Works
-
-Authentication is **opt-in** — when disabled, all endpoints are open. The system uses `RequirePermissionIfAuthEnabled` which:
-
-- Checks if auth is enabled in settings
-- If disabled: allows the request through (no-op)
-- If enabled: validates JWT token/API key and checks the user has the required permission
-
-### Adding Auth to New Endpoints
-
-Use the `RequirePermissionIfAuthEnabled` dependency in your route:
+Protect a route with `RequirePermissionIfAuthEnabled`:
 
 ```python
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
@@ -284,136 +151,35 @@ async def get_my_resource(
     ...
 ```
 
-### Permission Convention
+Permissions use `resource:action` names such as `filaments:read` and `printers:control`. Standard actions are `read`, `create`, `update`, and `delete`. Some resources have more, for example `printers:files`, `queue:create`, `library:upload`, and `archives:reprint_own`/`archives:reprint_all`. Archive reprint also needs `queue:create`.
 
-Permissions follow the `resource:action` pattern (e.g., `filaments:read`, `printers:control`). Standard actions:
+To add a permission:
 
-| Action | Usage |
-|--------|-------|
-| `read` | View/list resources |
-| `create` | Create new resources |
-| `update` | Modify existing resources |
-| `delete` | Remove resources |
+1. Add it to the `Permission` enum in `backend/app/core/permissions.py`.
+2. Add it to a category in `PERMISSION_CATEGORIES`.
+3. Add it to the right entries in `DEFAULT_GROUPS`. Administrators get every permission.
+4. Classify it for API keys in `_APIKEY_SCOPE_BY_PERMISSION` or `_APIKEY_DENIED_PERMISSIONS` in `backend/app/core/auth.py`. CI fails on unclassified permissions.
+5. Add negative-path tests. See the rules in [SECURITY.md](SECURITY.md#security-rules-for-contributors).
 
-Some resources have additional actions. Examples: `printers:control` for live printer controls
-such as stop/pause/resume, `printers:files` for printer storage access, `queue:create` for
-creating queue items that may dispatch immediately when scheduled ASAP, `library:upload` for
-File Manager uploads/imports, and `archives:reprint_own` / `archives:reprint_all` for archive
-reprint eligibility. Archive reprint still needs `queue:create` before it can enqueue a job.
+| Default group | Access |
+|---|---|
+| Administrators | All permissions |
+| Operators | Printer control, own archive and queue items, read-only settings |
+| Viewers | Read-only access |
 
-### Adding New Permissions
+## Documentation
 
-1. Add the permission to the `Permission` enum in `backend/app/core/permissions.py`
-2. Add it to the appropriate category in `PERMISSION_CATEGORIES`
-3. Add it to the relevant default groups (`Administrators` gets all, `Operators` and `Viewers` as appropriate)
-4. Use it in your route with `RequirePermissionIfAuthEnabled`
+Update the matching documentation in this repository with any change to user-visible behavior, settings, ports, URLs, API endpoints, or install and upgrade steps. That covers the README, `docs/`, `UPDATING.md`, `install/README.md`, and `docker-compose.yml` comments. Bug fixes with no visible change, internal refactors, and test-only changes need no documentation; say so in the pull request.
 
-### Default Groups
+## Pull requests
 
-| Group | Access Level |
-|-------|-------------|
-| **Administrators** | All permissions |
-| **Operators** | Full control of printers, own items in archives/queue, read-only settings |
-| **Viewers** | Read-only access to all resources |
+1. Branch from `main` with a prefix: `feat/`, `fix/`, `docs/`, `refactor/`, `test/`, `perf/`, or `chore/`.
+2. Keep each pull request to one feature or fix.
+3. Target `main` and fill in the pull request template.
+4. Link the issue the pull request resolves.
+5. Include before and after screenshots for any UI change.
+6. Make sure CI passes.
 
-## Testing
+## Reporting bugs and requesting features
 
-The easiest way to run tests is with the provided scripts in the project root:
-
-```bash
-./test_frontend.sh    # TypeScript check + Oxlint + Vitest
-./test_backend.sh     # Ruff lint/format + pytest (parallel)
-./test_docker.sh      # Full Docker build, unit tests, and integration tests
-./test_all.sh         # All of the above (frontend → backend → docker)
-./test_security.sh    # Security scans (bandit, pip-audit, npm-audit)
-```
-
-`test_docker.sh` supports flags like `--backend-only`, `--skip-integration`, `--fresh` — run with `--help` for details.
-
-`test_security.sh` runs fast scans by default. Use `--full` for the complete suite (CodeQL, Trivy, etc.) or specify individual scans like `./test_security.sh bandit codeql`.
-
-### Running Tests Individually
-
-**Backend** — tests are in `backend/tests/` with `unit/` and `integration/` subdirectories:
-
-```bash
-pytest backend/tests/ -v           # All tests
-pytest backend/tests/unit/         # Unit tests only
-pytest backend/tests/ --cov=backend  # With coverage
-```
-
-**Frontend** — tests use [Vitest](https://vitest.dev/) and are in `frontend/src/__tests__/`:
-
-```bash
-cd frontend
-bun run test:run       # Single run
-bun run test           # Watch mode
-bun run test:coverage  # With coverage
-```
-
-## CI Pipeline
-
-Pull requests trigger automated CI checks via GitHub Actions (`.github/workflows/ci.yml`):
-
-- **Backend**: Ruff lint + format check, unit/integration tests, pip-audit
-- **Frontend**: Oxlint, TypeScript type check, Vitest tests, production build
-- **Docker**: Full image build, backend/frontend tests in Docker, integration health checks
-- **Security**: CodeQL analysis, dependency audits
-
-All checks must pass before merging. Run `./test_all.sh` locally before pushing to catch issues early.
-
-## Submitting Changes
-
-1. **Push your branch** to your fork:
-   ```bash
-   git push origin feature/your-feature-name
-   ```
-
-2. **Create a Pull Request** on GitHub:
-   - **Always target the `dev` branch** as the base branch (not `main`)
-   - Use a clear, descriptive title
-   - Fill out the PR template completely
-   - Link any related issues
-   - Include before/after screenshots for any visual changes
-
-3. **Wait for review** - maintainers will review your PR and may request changes
-
-### PR Guidelines
-
-- Keep PRs focused and reasonably sized
-- One feature or fix per PR
-- Update documentation if needed
-- Add tests for new functionality
-- Ensure all tests pass
-- Follow the existing code style
-- **Visual changes require screenshots** — if your PR changes any frontend UI, include before/after screenshots showing the old and new appearance
-
-## Reporting Bugs
-
-Use the [Bug Report template](https://github.com/maziggy/bambuddy/issues/new?template=bug_report.yml) and include:
-
-- Clear description of the bug
-- Steps to reproduce
-- Expected vs actual behavior
-- Your environment (OS, Python version, browser)
-- Printer model and firmware version
-- Relevant logs
-
-## Requesting Features
-
-Use the [Feature Request template](https://github.com/maziggy/bambuddy/issues/new?template=feature_request.yml) and include:
-
-- Clear description of the feature
-- Use case / problem it solves
-- Proposed solution
-- Alternatives considered
-
-## Questions?
-
-- Check the [Documentation](http://wiki.bambuddy.cool)
-- Open a [Discussion](https://github.com/maziggy/bambuddy/discussions)
-- Review existing [Issues](https://github.com/maziggy/bambuddy/issues)
-
----
-
-Thank you for contributing to Bambuddy!
+Use the [bug report](https://github.com/Timpan4/layercove/issues/new?template=bug_report.yml) or [feature request](https://github.com/Timpan4/layercove/issues/new?template=feature_request.yml) template. For bugs, include reproduction steps, expected and actual behavior, your LayerCove version, deployment method, printer model and firmware, and relevant logs or a support package.
