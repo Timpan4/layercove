@@ -24,6 +24,8 @@ export function FilamentMapping({
   defaultExpanded = false,
   forceColorMatch,
   onForceColorMatchChange,
+  externalSpool = false,
+  materialUnknown = false,
 }: FilamentMappingProps & { defaultExpanded?: boolean }) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -150,7 +152,7 @@ export function FilamentMapping({
   }
 
   // Determine status indicator color
-  const statusColor = hasTypeMismatch
+  const statusColor = materialUnknown ? '#facc15' : hasTypeMismatch
     ? '#f97316' // orange
     : hasColorMismatch
     ? '#facc15' // yellow
@@ -193,8 +195,10 @@ export function FilamentMapping({
         className="flex items-center gap-2 text-sm text-bambu-gray hover:text-white transition-colors w-full"
       >
         <Circle className="w-4 h-4" fill={statusColor} stroke="none" />
-        <span>{t('printModal.filamentMapping')}</span>
-        {hasTypeMismatch ? (
+        <span>{externalSpool ? 'External spool' : t('printModal.filamentMapping')}</span>
+        {materialUnknown ? (
+          <span className="text-xs text-yellow-700 dark:text-yellow-400">(Not reported)</span>
+        ) : hasTypeMismatch ? (
           <span className="text-xs text-orange-700 dark:text-orange-400">(Type not found)</span>
         ) : hasColorMismatch ? (
           <span className="text-xs text-yellow-700 dark:text-yellow-400">(Color mismatch)</span>
@@ -211,7 +215,9 @@ export function FilamentMapping({
       {isExpanded && (
         <div className="mt-2 bg-bambu-dark rounded-lg p-3 space-y-2">
           <div className="flex items-center justify-between mb-2">
-            <span className="text-xs text-bambu-gray">Click to change slot assignment</span>
+            <span className="text-xs text-bambu-gray">
+              {!(externalSpool && loadedFilaments.length === 0) && 'Click to change slot assignment'}
+            </span>
             <button
               type="button"
               onClick={handleRefresh}
@@ -258,7 +264,9 @@ export function FilamentMapping({
                 {/* Arrow */}
                 <span className="text-bambu-gray">→</span>
                 {/* Slot selector dropdown */}
-                <select
+                {externalSpool && loadedFilaments.length === 0 ? (
+                  <span className="text-xs text-bambu-gray">Not reported</span>
+                ) : <select
                   value={item.loaded?.globalTrayId ?? ''}
                   onChange={(e) => handleSlotChange(slotId, e.target.value)}
                   className={`flex-1 px-2 py-1 rounded border text-xs bg-bambu-dark-secondary focus:outline-none focus:ring-1 focus:ring-bambu-green ${
@@ -310,9 +318,13 @@ export function FilamentMapping({
                         </option>
                       );
                   })}
-                </select>
+                </select>}
                 {/* Status icon */}
-                {item.status === 'match' ? (
+                {materialUnknown ? (
+                  <span title="Loaded material is not reported">
+                    <AlertTriangle className="w-3 h-3 text-yellow-600 dark:text-yellow-400" />
+                  </span>
+                ) : item.status === 'match' ? (
                   <Check className="w-3 h-3 text-bambu-green" />
                 ) : item.status === 'type_only' ? (
                   <span title="Same type, different color">
@@ -346,7 +358,7 @@ export function FilamentMapping({
               {totalCost > 0 || hasAnyCost ? `${currencySymbol}${totalCost.toFixed(2)}` : 'N/A'}
             </span>
           </div>
-          {hasTypeMismatch && (
+          {hasTypeMismatch && !materialUnknown && (
             <p className="text-xs text-orange-700 dark:text-orange-400 mt-2">Required filament type not found in printer.</p>
           )}
         </div>

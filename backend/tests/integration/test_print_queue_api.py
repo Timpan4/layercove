@@ -100,6 +100,227 @@ class TestPrintQueueAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "provider,ams,vt,mapping,diameter,external,blocked,confirmation",
+        [
+            ("bambu", [{"id": 0, "tray": [{"id": 0, "tray_type": "PLA"}]}], [], [0], 0.4, False, False, False),
+            ("bambu", [], [{"id": 254, "tray_type": "PLA"}], [254], 0.4, True, False, False),
+            ("bambu", [], [], [-1], 0.4, True, False, True),
+            ("bambu", [], [{"id": 254, "tray_type": "PETG"}], [-1], 0.4, True, True, False),
+            ("bambu", [], [{"id": 254, "tray_type": "PETG"}], [0], 0.4, True, True, False),
+            ("bambu", [], [{"id": 254, "tray_type": "PETG"}], [254], 0.4, True, True, False),
+            ("bambu", [{"id": 0, "tray": [{"id": 0, "tray_type": "PETG"}]}], [], [0], 0.4, False, True, False),
+            ("moonraker", [], [], None, 0.4, True, False, True),
+            ("moonraker", [], [], None, 0.6, True, True, False),
+        ],
+    )
+    async def test_provider_material_check(
+        self,
+        async_client,
+        printer_factory,
+        archive_factory,
+        tmp_path,
+        monkeypatch,
+        provider,
+        ams,
+        vt,
+        mapping,
+        diameter,
+        external,
+        blocked,
+        confirmation,
+    ):
+        from types import SimpleNamespace
+
+        from backend.app.services.printer_manager import printer_manager
+        from backend.app.services.printer_types import (
+            NormalizedPrinterState,
+            NozzleSnapshot,
+            PrinterProvider,
+            PrinterSnapshot,
+        )
+
+        printer = await printer_factory(provider=provider)
+        source = tmp_path / ("cube.gcode.3mf" if provider == "bambu" else "cube.gcode")
+        if provider == "bambu":
+            import zipfile
+
+            with zipfile.ZipFile(source, "w") as file:
+                file.writestr(
+                    "Metadata/slice_info.config",
+                    '<config><filament id="1" type="PLA" color="#FFFFFF" used_g="13"/></config>',
+                )
+        else:
+            source.write_text("G28\n")
+        archive = await archive_factory(
+            printer_id=printer.id,
+            filename=source.name,
+            file_path=str(source),
+            filament_type="PLA",
+            nozzle_diameter=0.4,
+        )
+        monkeypatch.setattr(printer_manager, "get_backend", lambda _: None)
+        monkeypatch.setattr(
+            printer_manager, "get_status", lambda _: SimpleNamespace(raw_data={"ams": ams, "vt_tray": vt})
+        )
+        monkeypatch.setattr(
+            printer_manager,
+            "get_snapshot",
+            lambda _: PrinterSnapshot(
+                PrinterProvider(provider),
+                True,
+                NormalizedPrinterState.IDLE,
+                nozzles=(NozzleSnapshot(0, diameter, "confirmed"),),
+            ),
+        )
+        response = await async_client.post(
+            "/api/v1/queue/material-check",
+            json={
+                "printer_id": printer.id,
+                "archive_id": archive.id,
+                "ams_mapping": mapping,
+            },
+        )
+        assert response.status_code == 200
+        result = response.json()
+        assert result["external_spool"] is external
+        assert result["supports_ams"] is (provider == "bambu")
+        assert bool(result["blocking"]) is blocked
+        assert bool(result["confirmation_key"]) is confirmation
+        assert result["filaments"][0]["type"] == "PLA"
+        if provider == "moonraker" and not blocked:
+            assert any("not reported" in message for message in result["advisories"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "scenario", ["external-conflict", "stale-rack", "disconnected-rack", "rack-edit", "sparse-rack"]
+    )
+    async def test_material_check_uses_actual_feed_and_fresh_rack(
+        self, async_client, printer_factory, archive_factory, tmp_path, monkeypatch, scenario
+    ):
+        import zipfile
+        from types import SimpleNamespace
+
+        from backend.app.services.printer_manager import printer_manager
+        from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
+
+        printer = await printer_factory(provider="bambu")
+        source = tmp_path / "cube.gcode.3mf"
+        with zipfile.ZipFile(source, "w") as file:
+            file.writestr(
+                "Metadata/slice_info.config",
+                '<config><filament id="1" type="PLA" color="#FFFFFF" used_g="13"/></config>',
+            )
+        archive = await archive_factory(
+            printer_id=printer.id, filename=source.name, file_path=str(source), nozzle_diameter=0.4
+        )
+        monkeypatch.setattr(printer_manager, "get_backend", lambda _: None)
+        monkeypatch.setattr(
+            printer_manager,
+            "get_status",
+            lambda _: SimpleNamespace(
+                raw_data={
+                    "ams": [{"id": 0, "tray": [{"id": 0, "tray_type": "PLA"}]}],
+                    "vt_tray": [{"id": 254, "tray_type": "PETG"}],
+                    "nozzle_rack": [{"id": 3, "diameter": 0.4}, {"id": 8, "diameter": 0.6}],
+                }
+            ),
+        )
+        monkeypatch.setattr(
+            printer_manager,
+            "get_snapshot",
+            lambda _: PrinterSnapshot(
+                PrinterProvider.BAMBU,
+                scenario != "disconnected-rack",
+                NormalizedPrinterState.IDLE,
+                telemetry_stale=scenario == "stale-rack",
+            ),
+        )
+        request = {
+            "printer_id": printer.id,
+            "archive_id": archive.id,
+            "manual_start": True,
+            "ams_mapping": [0],
+            "nozzle_mapping": [3, -1, -1, 8, -1, -1, -1, -1] if scenario == "sparse-rack" else [3],
+            "use_ams": scenario != "external-conflict",
+        }
+        from dataclasses import asdict
+
+        from backend.app.services.print_material import check_print_material
+
+        result = asdict(
+            await check_print_material(
+                printer, archive, source, None, [0], request["use_ams"], request["nozzle_mapping"]
+            )
+        )
+        if scenario == "external-conflict":
+            assert result["blocking"]
+            assert result["confirmation_key"] is None
+        elif scenario in {"stale-rack", "disconnected-rack"}:
+            assert not result["blocking"]
+            assert any("Nozzle size is not verified" in message for message in result["advisories"])
+            assert result["confirmation_key"]
+        elif scenario == "sparse-rack":
+            assert not result["blocking"]
+            assert not result["advisories"]
+            assert result["confirmation_key"] is None
+        else:
+            # Persisted H2C rack selection must use the same confirmation basis
+            # in preview, creation and a later edit.
+            request["ams_mapping"] = None
+            monkeypatch.setattr(printer_manager, "get_snapshot", lambda _: None)
+            checked = await async_client.post("/api/v1/queue/material-check", json=request)
+            key = checked.json()["confirmation_key"]
+            queued = await async_client.post("/api/v1/queue/", json={**request, "material_confirmation": key})
+            assert queued.status_code == 200
+            item_id = queued.json()["id"]
+            mapped = await async_client.patch(f"/api/v1/queue/{item_id}", json={"nozzle_mapping": [3]})
+            assert mapped.status_code == 200
+            edited = await async_client.patch(f"/api/v1/queue/{item_id}", json={"material_confirmation": key})
+            assert edited.status_code == 200
+            assert edited.json()["nozzle_mapping"] == [3]
+            assert edited.json()["material_confirmation"] == key
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_material_confirmation_round_trip_and_source_change(
+        self,
+        async_client,
+        printer_factory,
+        archive_factory,
+        tmp_path,
+        monkeypatch,
+    ):
+        from backend.app.services.printer_manager import printer_manager
+
+        printer = await printer_factory(provider="moonraker")
+        source = tmp_path / "cube.gcode"
+        source.write_text("G28\n")
+        archive = await archive_factory(
+            printer_id=printer.id,
+            filename=source.name,
+            file_path=str(source),
+            filament_type="PLA",
+        )
+        monkeypatch.setattr(printer_manager, "get_backend", lambda _: None)
+        monkeypatch.setattr(printer_manager, "get_snapshot", lambda _: None)
+        request = {"printer_id": printer.id, "archive_id": archive.id, "manual_start": True}
+        before = await async_client.post("/api/v1/queue/material-check", json=request)
+        key = before.json()["confirmation_key"]
+        queued = await async_client.post("/api/v1/queue/", json={**request, "material_confirmation": key})
+        assert queued.status_code == 200
+        item_id = queued.json()["id"]
+        read = await async_client.get(f"/api/v1/queue/{item_id}")
+        assert read.json()["material_confirmation"] == key
+        source.write_text("G28\nM104 S200\n")
+        stale = await async_client.post("/api/v1/queue/", json={**request, "material_confirmation": key})
+        assert stale.status_code == 409
+        after = await async_client.post("/api/v1/queue/material-check", json=request)
+        assert after.json()["confirmation_key"] != key
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_list_queue_empty(self, async_client: AsyncClient):
         """Verify empty list when no queue items exist."""
         response = await async_client.get("/api/v1/queue/")

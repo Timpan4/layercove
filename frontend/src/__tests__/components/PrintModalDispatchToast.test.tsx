@@ -47,6 +47,11 @@ describe('PrintModal dispatch toast', () => {
       http.get('/api/v1/printers/:id/status', () => {
         return HttpResponse.json({ connected: true, state: 'IDLE', ams: [], vt_tray: [] });
       }),
+      http.post('/api/v1/queue/material-check', () => HttpResponse.json({
+        external_spool: true, supports_ams: true, material_unknown: true,
+        filaments: [], blocking: [], advisories: ['The file\'s required material is unknown.'],
+        confirmation_key: 'a'.repeat(64),
+      })),
       http.post('/api/v1/queue/', () => {
         return HttpResponse.json({ id: 1, status: 'pending' });
       }),
@@ -72,6 +77,7 @@ describe('PrintModal dispatch toast', () => {
     await user.click(screen.getByText('X1 Carbon'));
 
     // Submit the print
+    await user.click(await screen.findByRole('checkbox', { name: /I loaded the required filament/i }));
     const printButton = screen.getByRole('button', { name: /^print$/i });
     await user.click(printButton);
 
@@ -106,6 +112,7 @@ describe('PrintModal dispatch toast', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^print$/i })).toBeInTheDocument();
     });
+    await user.click(await screen.findByRole('checkbox', { name: /I loaded the required filament/i }));
     await user.click(screen.getByRole('button', { name: /^print$/i }));
 
     await waitFor(() => {
@@ -145,6 +152,7 @@ describe('PrintModal dispatch toast', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^print$/i })).toBeInTheDocument();
     });
+    await user.click(await screen.findByRole('checkbox', { name: /I loaded the required filament/i }));
     await user.click(screen.getByRole('button', { name: /^print$/i }));
 
     await waitFor(() => {
@@ -183,6 +191,7 @@ describe('PrintModal dispatch toast', () => {
     await waitFor(() => {
       expect(screen.getByRole('button', { name: /^print$/i })).toBeInTheDocument();
     });
+    await user.click(await screen.findByRole('checkbox', { name: /I loaded the required filament/i }));
     await user.click(screen.getByRole('button', { name: /^print$/i }));
 
     await waitFor(() => {

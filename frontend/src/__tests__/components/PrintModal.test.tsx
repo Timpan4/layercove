@@ -72,6 +72,10 @@ describe('PrintModal', () => {
       http.get('/api/v1/printers/:id/status', () => {
         return HttpResponse.json({ connected: true, state: 'IDLE', ams: [], vt_tray: [] });
       }),
+      http.post('/api/v1/queue/material-check', () => HttpResponse.json({
+        external_spool: false, supports_ams: true, material_unknown: false,
+        filaments: [], blocking: [], advisories: [], confirmation_key: null,
+      })),
       http.post('/api/v1/queue/', () => {
         return HttpResponse.json({ id: 1, status: 'pending' });
       }),
@@ -82,6 +86,124 @@ describe('PrintModal', () => {
   });
 
   describe('create mode', () => {
+    it('explains deferred material confirmation before model-based submission', async () => {
+      const user = userEvent.setup();
+      render(<PrintModal mode="create" archiveId={1} archiveName="Cube.3mf" onClose={mockOnClose} />);
+      await user.click(await screen.findByRole('button', { name: 'Any Model', exact: true }));
+      expect(screen.getByText('Filament and nozzle checks run when a printer is assigned. Jobs needing confirmation stay in the queue until you check and confirm that printer.')).toBeInTheDocument();
+    });
+
+    it('requires external-spool confirmation when Moonraker cannot report loaded material', async () => {
+      const user = userEvent.setup();
+      let submitted: Record<string, unknown> | undefined;
+      server.use(
+        http.get('/api/v1/printers/', () => HttpResponse.json([
+          { id: 2, name: 'Tim Voron', model: 'Voron 2.4', provider: 'moonraker', is_active: true,
+            capabilities: { ams: false } },
+        ])),
+        http.get('/api/v1/archives/:id', () => HttpResponse.json({
+          id: 10, filename: 'Voron_Design_Cube_v8.gcode',
+          extra_data: { destination_artifact_kind: 'klipper_gcode' },
+        })),
+        http.get('/api/v1/archives/:id/filament-requirements', () => HttpResponse.json({
+          filaments: [{ slot_id: 1, type: 'PLA', color: '#FFFFFF', used_grams: 13 }],
+        })),
+        http.post('/api/v1/queue/material-check', () => HttpResponse.json({
+          external_spool: true, supports_ams: false, material_unknown: true,
+          filaments: [{ slot_id: 1, type: 'PLA' }], blocking: [],
+          advisories: ['Loaded material is not reported. Check the loaded filament before printing.'],
+          confirmation_key: 'a'.repeat(64),
+        })),
+        http.post('/api/v1/queue/', async ({ request }) => {
+          submitted = await request.json() as Record<string, unknown>;
+          return HttpResponse.json({ id: 1, status: 'pending' });
+        }),
+      );
+
+      render(<PrintModal
+        mode="create"
+        archiveId={10}
+        archiveName="Voron_Design_Cube_v8.gcode"
+        initialSelectedPrinterIds={[2]}
+        onClose={mockOnClose}
+      />);
+
+      expect(await screen.findByText('PLA')).toBeInTheDocument();
+      const print = screen.getByRole('button', { name: /^print$/i });
+      expect(print).toBeDisabled();
+      expect(screen.queryByText(/Type not found/i)).not.toBeInTheDocument();
+      expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+      await user.click(screen.getByRole('checkbox', { name: 'I loaded the required filament and checked the nozzle for Tim Voron' }));
+      expect(print).toBeEnabled();
+      await user.click(print);
+      await waitFor(() => expect(submitted?.material_confirmation).toBe('a'.repeat(64)));
+      expect(submitted?.ams_mapping).toBeUndefined();
+    });
+
+    it('drops an obsolete confirmation when a new mapping reports no advisory', async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get('/api/v1/printers/:id/status', () => HttpResponse.json({
+          connected: true, state: 'IDLE', ams: [{ id: 0, tray: [
+            { id: 0, tray_type: 'PLA', tray_color: 'FFFFFF' },
+            { id: 1, tray_type: 'PLA', tray_color: 'FFFFFF' },
+          ] }], vt_tray: [],
+        })),
+        http.get('/api/v1/archives/:id/filament-requirements', () => HttpResponse.json({
+          filaments: [{ slot_id: 1, type: 'PLA', color: '#FFFFFF', used_grams: 13 }],
+        })),
+        http.post('/api/v1/queue/material-check', async ({ request }) => {
+          const data = await request.json() as Record<string, unknown>;
+          const ready = JSON.stringify(data.ams_mapping) === '[1]';
+          return HttpResponse.json({
+            external_spool: false, supports_ams: true, material_unknown: false,
+            filaments: [{ slot_id: 1, type: 'PLA' }], blocking: [],
+            advisories: ready ? [] : ['Nozzle size is not verified.'],
+            confirmation_key: ready ? null : 'a'.repeat(64),
+          });
+        }),
+        http.post('/api/v1/queue/', async ({ request }) => {
+          const data = await request.json() as Record<string, unknown>;
+          if (data.material_confirmation) return HttpResponse.json({ detail: 'Stale confirmation' }, { status: 409 });
+          return HttpResponse.json({ id: 1, status: 'pending' });
+        }),
+      );
+      render(<PrintModal mode="create" archiveId={1} archiveName="Cube.3mf"
+        initialSelectedPrinterIds={[1]} onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+      await user.click(await screen.findByRole('checkbox', { name: /I loaded the required filament/i }));
+      await user.selectOptions(await screen.findByRole('combobox'), '1');
+      await waitFor(() => expect(screen.queryByRole('checkbox', { name: /I loaded the required filament/i })).not.toBeInTheDocument());
+      const print = screen.getByRole('button', { name: /^print$/i });
+      expect(print).toBeEnabled();
+      await user.click(print);
+      await waitFor(() => expect(mockOnSuccess).toHaveBeenCalled());
+    });
+
+    it.each([false, true])('uses reported Bambu material with external spool %s', async (external) => {
+      server.use(
+        http.get('/api/v1/printers/', () => HttpResponse.json([
+          { id: 1, name: 'Bambu', model: 'X1C', provider: 'bambu', is_active: true, capabilities: { ams: true } },
+        ])),
+        http.get('/api/v1/printers/:id/status', () => HttpResponse.json({
+          connected: true, state: 'IDLE',
+          ams: external ? [] : [{ id: 0, tray: [{ id: 0, tray_type: 'PLA', tray_color: 'FFFFFF' }] }],
+          vt_tray: external ? [{ id: 254, tray_type: 'PLA', tray_color: 'FFFFFF' }] : [],
+        })),
+        http.get('/api/v1/archives/:id/filament-requirements', () => HttpResponse.json({
+          filaments: [{ slot_id: 1, type: 'PLA', color: '#FFFFFF', used_grams: 13 }],
+        })),
+        http.post('/api/v1/queue/material-check', () => HttpResponse.json({
+          external_spool: external, supports_ams: true, material_unknown: false,
+          filaments: [{ slot_id: 1, type: 'PLA' }], blocking: [], advisories: [], confirmation_key: null,
+        })),
+      );
+      render(<PrintModal mode="create" archiveId={1} archiveName="Cube.3mf" initialSelectedPrinterIds={[1]} onClose={mockOnClose} />);
+      await waitFor(() => expect(screen.getByRole('button', { name: /^print$/i })).toBeEnabled());
+      expect(screen.queryByText(/Type not found/i)).not.toBeInTheDocument();
+      expect(screen.queryByLabelText(/I loaded the required filament/i)).not.toBeInTheDocument();
+      if (external) expect(screen.getByRole('heading', { name: 'External spool · Bambu' })).toBeInTheDocument();
+    });
+
     it('shows compatible printers when an incompatible preselected printer is removed', async () => {
       const user = userEvent.setup();
       server.use(
@@ -417,6 +539,71 @@ describe('PrintModal', () => {
   });
 
   describe('edit-queue-item mode', () => {
+    it('confirms the external spool when a saved job disables AMS', async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.get('/api/v1/printers/:id/status', () => HttpResponse.json({
+          connected: true, state: 'IDLE', ams: [{ id: 0, tray: [{ id: 0, tray_type: 'PLA', tray_color: 'FFFFFF' }] }], vt_tray: [],
+        })),
+        http.post('/api/v1/queue/material-check', async ({ request }) => {
+          const data = await request.json() as Record<string, unknown>;
+          const external = data.use_ams === false && data.ams_mapping === null;
+          return HttpResponse.json({
+            external_spool: true, supports_ams: true, material_unknown: true,
+            filaments: [{ slot_id: 1, type: 'PLA' }],
+            blocking: external ? [] : ['AMS slots cannot be selected when AMS use is disabled.'],
+            advisories: external ? ['Loaded material is not reported.'] : [],
+            confirmation_key: external ? 'a'.repeat(64) : null,
+          });
+        }),
+        http.patch('/api/v1/queue/:id', async ({ request }) => {
+          const data = await request.json() as Record<string, unknown>;
+          if (data.ams_mapping !== null || data.material_confirmation !== 'a'.repeat(64)) {
+            return HttpResponse.json({ detail: 'Conflicting AMS mapping' }, { status: 409 });
+          }
+          return HttpResponse.json({ id: 1, status: 'pending', use_ams: false, ams_mapping: null });
+        }),
+      );
+      render(<PrintModal mode="edit-queue-item" archiveId={1} archiveName="Cube.3mf"
+        queueItem={createMockQueueItem({ use_ams: false, ams_mapping: [0] })}
+        onClose={mockOnClose} onSuccess={mockOnSuccess} />);
+      await user.click(await screen.findByRole('checkbox', { name: /I loaded the required filament/i }));
+      expect(screen.getByText((_, element) => element?.tagName === 'P' && element.textContent === 'Required material: PLA')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /Filament Mapping/ })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: /^save$/i }));
+      await waitFor(() => expect(mockOnSuccess).toHaveBeenCalled());
+    });
+
+    it('confirms and saves an item with a persisted nozzle-rack mapping', async () => {
+      const user = userEvent.setup();
+      server.use(
+        http.post('/api/v1/queue/material-check', async ({ request }) => {
+          const data = await request.json() as Record<string, unknown>;
+          return HttpResponse.json({
+            external_spool: false, supports_ams: true, material_unknown: true,
+            filaments: [], blocking: [], advisories: ['Loaded material is not reported.'],
+            confirmation_key: JSON.stringify(data.nozzle_mapping) === '[3]' ? 'b'.repeat(64) : 'a'.repeat(64),
+          });
+        }),
+        http.patch('/api/v1/queue/:id', async ({ request }) => {
+          const data = await request.json() as Record<string, unknown>;
+          if (data.material_confirmation !== 'b'.repeat(64)) {
+            return HttpResponse.json({ detail: 'Printer or file requirements changed. Confirm them again.' }, { status: 409 });
+          }
+          return HttpResponse.json({ id: 1, status: 'pending', nozzle_mapping: [3] });
+        }),
+      );
+      render(<PrintModal mode="edit-queue-item" archiveId={1} archiveName="Cube.3mf"
+        queueItem={createMockQueueItem({ nozzle_mapping: [3] })}
+        onClose={mockOnClose} onSuccess={mockOnSuccess}
+      />);
+      await user.click(await screen.findByRole('checkbox', { name: /I loaded the required filament/i }));
+      const save = screen.getByRole('button', { name: /^save$/i });
+      await waitFor(() => expect(save).toBeEnabled());
+      await user.click(save);
+      await waitFor(() => expect(mockOnSuccess).toHaveBeenCalled());
+    });
+
     it('renders the modal title', () => {
       const item = createMockQueueItem();
 

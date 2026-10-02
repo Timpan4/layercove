@@ -17,6 +17,7 @@ Three guards exercised here:
 * Best-effort delete of the file we just FTP'd up when the CAS aborts.
 """
 
+import json
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -29,8 +30,9 @@ import backend.app.models  # noqa: F401 - populate Base.metadata
 import backend.app.services.print_scheduler as scheduler_module
 from backend.app.core.database import Base
 from backend.app.models.archive import PrintArchive
-from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.print_queue import PrintMaterialConfirmation, PrintQueueItem
 from backend.app.models.printer import Printer
+from backend.app.services.print_material import check_print_material
 from backend.app.services.print_scheduler import PrintScheduler
 
 
@@ -96,6 +98,17 @@ async def queue_factory(tmp_path):
                 **options,
             )
             db.add(item)
+            await db.flush()
+            check = await check_print_material(
+                printer,
+                archive,
+                archive_abs,
+                item.plate_id,
+                json.loads(item.ams_mapping) if item.ams_mapping else None,
+                item.use_ams,
+                json.loads(item.nozzle_mapping) if item.nozzle_mapping else None,
+            )
+            db.add(PrintMaterialConfirmation(queue_item_id=item.id, confirmation_key=check.confirmation_key))
             await db.commit()
 
             return SimpleNamespace(

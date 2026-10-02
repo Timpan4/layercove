@@ -90,6 +90,7 @@ async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_sel
     monkeypatch.setattr(manager, "_sync_moonraker_cameras_once", AsyncMock())
     for module in (printer_manager, slicer_catalog_selection, slicer_catalog_bindings, print_scheduler):
         monkeypatch.setattr(module, "printer_manager", manager)
+    monkeypatch.setattr("backend.app.services.print_material.printer_manager", manager)
     monkeypatch.setattr(print_scheduler, "async_session", async_sessionmaker(test_engine, expire_on_commit=False))
     scheduler = PrintScheduler()
     monkeypatch.setattr(print_scheduler, "scheduler", scheduler)
@@ -228,6 +229,25 @@ async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_sel
         assert printed.status_code == 200, printed.text
         session = printed.json()
         queue_id = session["prints"]["temperature"]
+        queued = await async_client.get(f"/api/v1/queue/{queue_id}")
+        check = await async_client.post(
+            "/api/v1/queue/material-check",
+            json={
+                "printer_id": printer.id,
+                "library_file_id": queued.json()["library_file_id"],
+                "use_ams": queued.json()["use_ams"],
+                "ams_mapping": queued.json()["ams_mapping"],
+            },
+        )
+        assert check.status_code == 200, check.text
+        assert not check.json()["blocking"]
+        confirmed = await async_client.patch(
+            f"/api/v1/queue/{queue_id}",
+            json={
+                "material_confirmation": check.json()["confirmation_key"],
+            },
+        )
+        assert confirmed.status_code == 200, confirmed.text
         blocked = await async_client.put(
             base + "/results/temperature", json={"version": session["version"], "value": 210}
         )

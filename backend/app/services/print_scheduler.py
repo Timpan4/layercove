@@ -1009,6 +1009,8 @@ class PrintScheduler:
         Returns:
             AMS mapping array or None if no mapping needed/possible
         """
+        if item.use_ams is False:
+            return None
         backend = printer_manager.get_backend(printer_id)
         if backend is not None and not backend.capabilities.ams:
             return None
@@ -2607,6 +2609,37 @@ class PrintScheduler:
 
         return artifact_matches_provider(printer.provider, file_path, metadata)
 
+    async def _block_on_material_check(self, db, item, printer, source, file_path) -> bool:
+        from backend.app.models.print_queue import PrintMaterialConfirmation
+        from backend.app.services.print_material import check_print_material
+
+        check = await check_print_material(
+            printer,
+            source,
+            file_path,
+            item.plate_id,
+            json.loads(item.ams_mapping) if item.ams_mapping else None,
+            item.use_ams,
+            json.loads(item.nozzle_mapping) if item.nozzle_mapping else None,
+        )
+        confirmation = await db.get(PrintMaterialConfirmation, item.id)
+        reason = " ".join(check.blocking)
+        if (
+            not reason
+            and check.confirmation_key
+            and (confirmation is None or confirmation.confirmation_key != check.confirmation_key)
+        ):
+            reason = (
+                "Filament and nozzle confirmation is required. Open the queued print and check the printer and file."
+            )
+        if reason:
+            item.manual_start = True
+            item.waiting_reason = reason
+            item.error_message = reason
+            await db.commit()
+            return True
+        return False
+
     @staticmethod
     def _safe_moonraker_path(value: object) -> str:
         from pathlib import PurePosixPath
@@ -3301,6 +3334,9 @@ class PrintScheduler:
                 )
                 return
 
+            if await self._block_on_material_check(db, item, printer, archive, file_path):
+                return
+
         elif item.library_file_id:
             # Print from library file (file manager)
             result = await db.execute(LibraryFile.active().where(LibraryFile.id == item.library_file_id))
@@ -3326,6 +3362,9 @@ class PrintScheduler:
                     filename,
                     f"Source artifact is not compatible with {printer.provider} printers. Re-slice for the selected printer.",
                 )
+                return
+
+            if await self._block_on_material_check(db, item, printer, library_file, file_path):
                 return
 
             # Create archive from library file so usage tracking has access to the 3MF

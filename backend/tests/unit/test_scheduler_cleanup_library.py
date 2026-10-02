@@ -11,8 +11,9 @@ import backend.app.services.print_scheduler as scheduler_module
 from backend.app.core.database import Base
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
-from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.print_queue import PrintMaterialConfirmation, PrintQueueItem
 from backend.app.models.printer import Printer
+from backend.app.services.print_material import check_print_material
 from backend.app.services.print_scheduler import PrintScheduler
 
 
@@ -86,6 +87,9 @@ async def queue_factory(tmp_path):
                 nozzle_offset_cali=True,
             )
             db.add(item)
+            await db.flush()
+            check = await check_print_material(printer, library_file, source_path, None, None, item.use_ams)
+            db.add(PrintMaterialConfirmation(queue_item_id=item.id, confirmation_key=check.confirmation_key))
             await db.commit()
 
             return SimpleNamespace(

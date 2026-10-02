@@ -153,6 +153,18 @@ class PrintQueueItem(Base):
     project: Mapped["Project | None"] = relationship(back_populates="queue_items")
     batch: Mapped["PrintBatch | None"] = relationship(back_populates="queue_items")
     created_by: Mapped["User | None"] = relationship()
+    material_confirmation_record: Mapped["PrintMaterialConfirmation | None"] = relationship(
+        cascade="all, delete-orphan", uselist=False, lazy="selectin"
+    )
+
+
+class PrintMaterialConfirmation(Base):
+    """A user's check of unreported material/nozzle data for one queued source."""
+
+    __tablename__ = "print_material_confirmations"
+
+    queue_item_id: Mapped[int] = mapped_column(ForeignKey("print_queue.id", ondelete="CASCADE"), primary_key=True)
+    confirmation_key: Mapped[str] = mapped_column(String(64))
 
 
 from backend.app.models.archive import PrintArchive  # noqa: E402
