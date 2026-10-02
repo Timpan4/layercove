@@ -1,4 +1,5 @@
 import asyncio
+import zipfile
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -16,7 +17,7 @@ from backend.app.core.identity import CallerIdentity
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
 from backend.app.models.print_log import PrintLogEntry
-from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.print_queue import PrintMaterialConfirmation, PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.services.print_scheduler import PrintScheduler
 from backend.app.services.printer_backend import (
@@ -30,6 +31,7 @@ from backend.app.services.printer_backend import (
 from backend.app.services.printer_manager import PrinterManager, PrintLifecycleEvent
 from backend.app.services.printer_types import (
     NormalizedPrinterState,
+    NozzleSnapshot,
     PrinterCapabilities,
     PrinterProvider,
     PrinterSnapshot,
@@ -61,6 +63,11 @@ async def moonraker_queue(tmp_path):
         await db.flush()
         item = PrintQueueItem(printer_id=printer.id, archive_id=archive.id, status="pending")
         db.add(item)
+        await db.flush()
+        from backend.app.services.print_material import check_print_material
+
+        check = await check_print_material(printer, archive, source, None, None)
+        db.add(PrintMaterialConfirmation(queue_item_id=item.id, confirmation_key=check.confirmation_key))
         await db.commit()
         ids = SimpleNamespace(printer=printer.id, archive=archive.id, item=item.id)
     try:
@@ -78,6 +85,181 @@ def _backend(*, upload=None, start=None):
         bind_queued_job=MagicMock(),
         clear_queued_job_binding=MagicMock(),
     )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("model_assignment", [False, True])
+async def test_confirmed_external_spool_dispatch_keeps_ams_disabled(moonraker_queue, model_assignment):
+    from backend.app.services.print_material import check_print_material
+
+    sessions, base_dir, _source, ids = moonraker_queue
+    source = base_dir / "cube.gcode.3mf"
+    with zipfile.ZipFile(source, "w") as file:
+        file.writestr(
+            "Metadata/slice_info.config",
+            '<config><filament id="1" type="PLA" color="#FFFFFF" used_g="13"/></config>',
+        )
+    status = SimpleNamespace(
+        raw_data={"ams": [{"id": 0, "tray": [{"id": 0, "tray_type": "PLA", "tray_color": "FFFFFF"}]}]},
+        ams_filament_backup=False,
+    )
+    snapshot = PrinterSnapshot(
+        PrinterProvider.BAMBU,
+        True,
+        NormalizedPrinterState.IDLE,
+        nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+    )
+    scheduler = PrintScheduler()
+    with (
+        patch.object(scheduler_module.settings, "base_dir", base_dir),
+        patch.object(scheduler_module.printer_manager, "is_connected", return_value=True),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=None),
+        patch.object(scheduler_module.printer_manager, "get_snapshot", return_value=snapshot),
+        patch.object(scheduler_module.printer_manager, "get_status", return_value=status),
+        patch.object(scheduler_module.printer_manager, "get_client", return_value=None),
+        patch.object(scheduler_module.printer_manager, "start_print", return_value=True),
+        patch.object(scheduler_module.printer_manager, "set_awaiting_plate_clear"),
+        patch.object(scheduler_module, "get_ftp_retry_settings", AsyncMock(return_value=(False, 0, 0, 1.0))),
+        patch.object(scheduler_module, "delete_file_async", AsyncMock(return_value=True)),
+        patch.object(scheduler_module, "upload_file_async", AsyncMock(return_value=True)),
+        patch.object(scheduler_module, "cache_3mf_download"),
+        patch.object(scheduler_module, "spawn_background_task", side_effect=lambda coroutine, **_: coroutine.close()),
+        patch.object(main_module, "register_expected_print"),
+        patch.object(scheduler, "_is_printer_idle", return_value=True),
+        patch.object(scheduler, "_find_idle_printer_for_model", AsyncMock(return_value=(ids.printer, None))),
+        patch.object(scheduler, "_propagate_owner_to_printer_manager", AsyncMock()),
+        patch.object(scheduler_module.notification_service, "on_queue_job_assigned", AsyncMock()),
+    ):
+        async with sessions() as db:
+            printer = await db.get(Printer, ids.printer)
+            printer.provider = "bambu"
+            printer.model = "P1S"
+            archive = await db.get(PrintArchive, ids.archive)
+            archive.filename = source.name
+            archive.file_path = source.name
+            archive.extra_data = {"destination_artifact_kind": "bambu_3mf"}
+            archive.nozzle_diameter = 0.4
+            item = await db.get(PrintQueueItem, ids.item)
+            item.use_ams = False
+            item.ams_mapping = None
+            check = await check_print_material(printer, archive, source, None, None, False)
+            assert check.confirmation_key and not check.blocking
+            record = await db.get(PrintMaterialConfirmation, ids.item)
+            record.confirmation_key = check.confirmation_key
+            if model_assignment:
+                item.printer_id = None
+                item.target_model = "P1S"
+            await db.commit()
+        async with sessions() as db:
+            await scheduler._dispatch_pending_item(db, await db.get(PrintQueueItem, ids.item), set(), {}, False, False)
+
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        assert item.status == "printing", item.error_message
+        assert item.ams_mapping is None
+        assert item.use_ams is False
+
+
+@pytest.mark.asyncio
+async def test_moonraker_without_material_confirmation_blocks_before_upload(moonraker_queue):
+    sessions, base_dir, _source, ids = moonraker_queue
+    backend = _backend()
+    async with sessions() as db:
+        await db.delete(await db.get(PrintMaterialConfirmation, ids.item))
+        await db.commit()
+    scheduler = PrintScheduler()
+    with (
+        patch.object(scheduler_module.settings, "base_dir", base_dir),
+        patch.object(scheduler_module.printer_manager, "is_connected", return_value=True),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
+        patch.object(scheduler, "_propagate_owner_to_printer_manager", AsyncMock()),
+        patch.object(scheduler_module.notification_service, "on_queue_job_started", AsyncMock()),
+        patch.object(scheduler, "_schedule_moonraker_start_reconciliation"),
+    ):
+        async with sessions() as db:
+            await scheduler._start_print(db, await db.get(PrintQueueItem, ids.item))
+
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        assert item.status == "pending"
+        assert item.manual_start is True
+        assert "confirmation" in item.error_message.lower()
+    backend.upload.assert_not_awaited()
+    backend.start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("changed", [None, "source", "printer", "plate", "ams_mapping", "nozzle_mapping", "nozzle"])
+async def test_delayed_material_confirmation_rechecks_before_upload(moonraker_queue, changed):
+    sessions, base_dir, source, ids = moonraker_queue
+    backend = _backend()
+    snapshot = PrinterSnapshot(
+        PrinterProvider.MOONRAKER,
+        True,
+        NormalizedPrinterState.IDLE,
+        nozzles=(NozzleSnapshot(0, 0.4, "confirmed"),),
+    )
+    scheduler = PrintScheduler()
+    with (
+        patch.object(scheduler_module.settings, "base_dir", base_dir),
+        patch.object(scheduler_module.printer_manager, "is_connected", return_value=True),
+        patch.object(scheduler_module.printer_manager, "get_backend", return_value=backend),
+        patch.object(scheduler_module.printer_manager, "get_snapshot", side_effect=lambda _: snapshot),
+        patch.object(scheduler, "_propagate_owner_to_printer_manager", AsyncMock()),
+        patch.object(scheduler_module.notification_service, "on_queue_job_started", AsyncMock()),
+        patch.object(scheduler, "_schedule_moonraker_start_reconciliation"),
+    ):
+        from backend.app.services.print_material import check_print_material
+
+        async with sessions() as db:
+            item = await db.get(PrintQueueItem, ids.item)
+            archive = await db.get(PrintArchive, ids.archive)
+            archive.nozzle_diameter = 0.4
+            archive.filament_type = "PLA"
+            printer = await db.get(Printer, ids.printer)
+            check = await check_print_material(printer, archive, source, None, None)
+            record = await db.get(PrintMaterialConfirmation, ids.item)
+            record.confirmation_key = check.confirmation_key
+            await db.commit()
+        # A different DB session simulates the scheduler consuming a persisted
+        # confirmation later. Changed print requirements must invalidate it.
+        async with sessions() as db:
+            item = await db.get(PrintQueueItem, ids.item)
+            if changed == "source":
+                source.write_bytes(b"G28\nM104 S200\n")
+            elif changed == "printer":
+                other = Printer(name="Other Voron", provider="moonraker", model="Voron")
+                db.add(other)
+                await db.flush()
+                item.printer_id = other.id
+            elif changed == "plate":
+                item.plate_id = 2
+            elif changed == "ams_mapping":
+                item.ams_mapping = "[254]"
+            elif changed == "nozzle_mapping":
+                item.nozzle_mapping = "[3]"
+            elif changed == "nozzle":
+                snapshot = PrinterSnapshot(
+                    PrinterProvider.MOONRAKER,
+                    True,
+                    NormalizedPrinterState.IDLE,
+                    nozzles=(NozzleSnapshot(0, 0.6, "confirmed"),),
+                )
+            await db.commit()
+            await scheduler._start_print(db, item)
+
+    async with sessions() as db:
+        item = await db.get(PrintQueueItem, ids.item)
+        if changed is None:
+            assert item.status == "printing"
+            backend.upload.assert_awaited_once()
+            backend.start.assert_awaited_once()
+        else:
+            assert item.status == "pending"
+            assert item.manual_start is True
+            assert item.error_message
+            backend.upload.assert_not_awaited()
+            backend.start.assert_not_awaited()
 
 
 @pytest.mark.asyncio

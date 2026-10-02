@@ -2466,6 +2466,8 @@ export interface QueueDispatchProgress {
 }
 
 export interface PrintQueueItem {
+  material_confirmation?: string | null;
+  nozzle_mapping?: number[] | null;
   dispatch_progress?: QueueDispatchProgress | null;
   id: number;
   printer_id: number | null;  // null = unassigned
@@ -2553,6 +2555,8 @@ export interface PrintBatch {
 }
 
 export interface PrintQueueItemCreate {
+  material_confirmation?: string | null;
+  nozzle_mapping?: number[] | null;
   printer_id?: number | null;  // null = unassigned
   target_model?: string | null;  // Target printer model (mutually exclusive with printer_id)
   target_location?: string | null;  // Target location filter (only used with target_model)
@@ -2603,6 +2607,8 @@ export interface PrintBatchCreate {
 }
 
 export interface PrintQueueItemUpdate {
+  material_confirmation?: string | null;
+  nozzle_mapping?: number[] | null;
   printer_id?: number | null;  // null = unassign
   target_model?: string | null;  // Target printer model (mutually exclusive with printer_id)
   target_location?: string | null;  // Target location filter (only used with target_model)
@@ -2612,7 +2618,7 @@ export interface PrintQueueItemUpdate {
   require_previous_success?: boolean;
   auto_off_after?: boolean;
   manual_start?: boolean;
-  ams_mapping?: number[];
+  ams_mapping?: number[] | null;
   plate_id?: number | null;  // Plate ID for multi-plate 3MF files
   // Print options
   bed_levelling?: boolean;
@@ -5326,6 +5332,16 @@ export const api = {
     return request<PrintQueueItem[]>(`/queue/?${params}`);
   },
   getQueueItem: (id: number) => request<PrintQueueItem>(`/queue/${id}`),
+  checkPrintMaterial: (data: PrintQueueItemCreate) =>
+    request<{
+      external_spool: boolean;
+      supports_ams: boolean;
+      material_unknown: boolean;
+      filaments: Array<{ slot_id: number; type: string }>;
+      blocking: string[];
+      advisories: string[];
+      confirmation_key: string | null;
+    }>('/queue/material-check', { method: 'POST', body: JSON.stringify(data) }),
   addToQueue: (data: PrintQueueItemCreate) =>
     request<PrintQueueItem>('/queue/', {
       method: 'POST',

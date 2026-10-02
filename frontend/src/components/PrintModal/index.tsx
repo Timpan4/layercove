@@ -542,6 +542,51 @@ export function PrintModal({
   const isMultiPlate = platesData?.is_multi_plate ?? false;
   const plates = platesData?.plates ?? [];
 
+  const getMappingForPrinter = (printerId: number): number[] | null | undefined => {
+    if (queueItem?.use_ams === false) return null;
+    const printer = printers?.find((item) => item.id === printerId);
+    if (printer?.capabilities?.ams === false || (!printer?.capabilities && printer?.provider === 'moonraker')) return undefined;
+    if (selectedPrinters.length > 1) {
+      const config = perPrinterConfigs[printerId];
+      if (config && !config.useDefault) return multiPrinterMapping.getFinalMapping(printerId);
+    }
+    return amsMapping;
+  };
+  const [materialConfirmations, setMaterialConfirmations] = useState<Record<string, string>>({});
+  const materialTargets = assignmentMode === 'printer'
+    ? selectedPrinters.flatMap((printerId) => (isMultiPlate ? [...selectedPlates] : [selectedPlate]).map((plateId) => ({
+      key: `${printerId}:${plateId ?? 'default'}`,
+      printerId,
+      plateId,
+      request: {
+        printer_id: printerId,
+        archive_id: isLibraryFile ? undefined : archiveId,
+        library_file_id: isLibraryFile ? libraryFileId : undefined,
+        plate_id: plateId,
+        ams_mapping: getMappingForPrinter(printerId),
+        use_ams: queueItem?.use_ams ?? true,
+        nozzle_mapping: queueItem?.nozzle_mapping,
+      },
+    }))) : [];
+  const materialQueries = useQueries({ queries: materialTargets.map((target) => ({
+    queryKey: ['print-material', target.request],
+    queryFn: () => api.checkPrintMaterial(target.request),
+    retry: false,
+  })) });
+  const materialReady = materialTargets.every((target, index) => {
+    const query = materialQueries[index];
+    return !!query.data && !query.isError && query.data.blocking.length === 0 && (
+      !query.data.confirmation_key || materialConfirmations[target.key] === query.data.confirmation_key
+    );
+  });
+  const singleMaterialCheck = selectedPrinters.length === 1 ? materialQueries[0]?.data : undefined;
+  const getMaterialConfirmation = (printerId: number, plateId: number | undefined | null) => {
+    const key = `${printerId}:${plateId ?? 'default'}`;
+    const index = materialTargets.findIndex((target) => target.key === key);
+    const currentKey = materialQueries[index]?.data?.confirmation_key;
+    return currentKey && materialConfirmations[key] === currentKey ? currentKey : undefined;
+  };
+
   const spoolAssignmentsByPrinter = useMemo(() => {
     const map = new Map<number, Map<number, SpoolAssignment>>();
     if (!spoolAssignments) return map;
@@ -593,6 +638,7 @@ export function PrintModal({
 
   const handleSubmit = async (e?: React.FormEvent, options?: { skipFilamentCheck?: boolean }) => {
     e?.preventDefault();
+    if (!materialReady) return;
 
     if (
       !options?.skipFilamentCheck &&
@@ -680,18 +726,6 @@ export function PrintModal({
       success: 0,
       failed: 0,
       errors: [],
-    };
-
-    // Get mapping for a specific printer (per-printer override or default)
-    const getMappingForPrinter = (printerId: number): number[] | undefined => {
-      // For multi-printer selection, check if this printer has an override
-      if (selectedPrinters.length > 1) {
-        const printerConfig = perPrinterConfigs[printerId];
-        if (printerConfig && !printerConfig.useDefault) {
-          return multiPrinterMapping.getFinalMapping(printerId);
-        }
-      }
-      return amsMapping;
     };
 
     // Convert filament overrides from Record to array format for API.
@@ -787,6 +821,11 @@ export function PrintModal({
       skip_filament_check: options?.skipFilamentCheck === true ? true : undefined,
       ams_mapping: printerId ? getMappingForPrinter(printerId) : undefined,
       plate_id: plateOverride !== undefined ? plateOverride : selectedPlate,
+      use_ams: queueItem?.use_ams ?? true,
+      nozzle_mapping: queueItem?.nozzle_mapping,
+      material_confirmation: printerId
+        ? getMaterialConfirmation(printerId, plateOverride !== undefined ? plateOverride : selectedPlate)
+        : undefined,
       scheduled_time: scheduleOptions.scheduleType === 'scheduled' && scheduleOptions.scheduledTime
         ? new Date(scheduleOptions.scheduledTime).toISOString()
         : undefined,
@@ -873,6 +912,7 @@ export function PrintModal({
                 manual_start: scheduleOptions.scheduleType === 'queue' && scheduleOptions.requireManualStart,
                 ams_mapping: printerMapping,
                 plate_id: plateId,
+                material_confirmation: getMaterialConfirmation(printerId, plateId),
                 scheduled_time: scheduleOptions.scheduleType === 'scheduled' && scheduleOptions.scheduledTime
                   ? new Date(scheduleOptions.scheduledTime).toISOString()
                   : null,
@@ -948,6 +988,7 @@ export function PrintModal({
 
   const canSubmit = useMemo(() => {
     if (isPending) return false;
+    if (!materialReady) return false;
 
     if (artifactKind && (
       assignmentMode === 'printer'
@@ -963,7 +1004,7 @@ export function PrintModal({
     if (isMultiPlate && selectedPlates.size === 0) return false;
 
     return true;
-  }, [selectedPrinters, assignmentMode, targetModel, isMultiPlate, selectedPlates.size, isPending, artifactKind, compatiblePrinters]);
+  }, [selectedPrinters, assignmentMode, targetModel, isMultiPlate, selectedPlates.size, isPending, artifactKind, compatiblePrinters, materialReady]);
 
   // Quantity only applies for single-printer or model-based assignment (not multi-printer)
   const effectiveQuantity = (assignmentMode === 'printer' && selectedPrinters.length > 1) ? 1 : quantity;
@@ -1181,8 +1222,10 @@ export function PrintModal({
             )}
 
             {/* Filament mapping - only show when single printer selected */}
-            {showFilamentMapping && !archiveDataMissing && selectedPrinters.length === 1 && (
+            {showFilamentMapping && !archiveDataMissing && selectedPrinters.length === 1 && singleMaterialCheck?.supports_ams && queueItem?.use_ams !== false && (
               <FilamentMapping
+                externalSpool={singleMaterialCheck.external_spool}
+                materialUnknown={singleMaterialCheck.material_unknown}
                 printerId={effectivePrinterId!}
                 filamentReqs={effectiveFilamentReqs}
                 manualMappings={manualMappings}
@@ -1196,6 +1239,37 @@ export function PrintModal({
                 }
               />
             )}
+
+            {assignmentMode === 'model' && <p className="text-sm text-yellow-700 dark:text-yellow-400">
+              Filament and nozzle checks run when a printer is assigned. Jobs needing confirmation stay in the queue until you check and confirm that printer.
+            </p>}
+
+            {materialTargets.map((target, index) => {
+              const query = materialQueries[index];
+              const check = query.data;
+              const printerName = printers?.find((printer) => printer.id === target.printerId)?.name ?? `Printer ${target.printerId}`;
+              if (query.isError) return <div key={target.key} role="alert" className="text-sm text-red-400">
+                Could not check filament and nozzle for {printerName}.
+                <button type="button" onClick={() => void query.refetch()} className="ml-2 underline">Retry check</button>
+              </div>;
+              if (!check) return <p key={target.key} role="status" className="text-sm text-bambu-gray">Checking filament and nozzle for {printerName}…</p>;
+              return <div key={target.key} className="p-3 space-y-2 rounded-lg bg-bambu-dark-secondary text-sm">
+                <h4 className="font-medium">{check.external_spool ? 'External spool' : 'Filament and nozzle'} · {printerName}{isMultiPlate ? ` · Plate ${target.plateId}` : ''}</h4>
+                {(!check.supports_ams || queueItem?.use_ams === false) && check.filaments.map((filament) => <p key={filament.slot_id}>Required material: <span>{filament.type || 'Unknown'}</span></p>)}
+                {check.blocking.map((message) => <p role="alert" key={message} className="text-red-400">{message} Printing is blocked.</p>)}
+                {check.advisories.map((message) => <p key={message} className="text-yellow-700 dark:text-yellow-400">{message}</p>)}
+                {check.confirmation_key && <label className="flex items-start gap-2 cursor-pointer">
+                  <input type="checkbox" className="mt-1 accent-bambu-green"
+                    checked={materialConfirmations[target.key] === check.confirmation_key}
+                    onChange={(event) => setMaterialConfirmations((previous) => ({
+                      ...previous, [target.key]: event.target.checked ? check.confirmation_key! : '',
+                    }))}
+                  />
+                  <span>I loaded the required filament and checked the nozzle for {printerName}</span>
+                </label>}
+                {!check.blocking.length && !check.advisories.length && <p className="text-bambu-green">Reported filament and nozzle match the file.</p>}
+              </div>;
+            })}
 
             {/* Print options */}
             {(mode === 'create' || effectivePrinterCount > 0 || (assignmentMode === 'model' && targetModel)) && (
