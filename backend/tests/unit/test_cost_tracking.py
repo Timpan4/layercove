@@ -25,6 +25,13 @@ from backend.app.services.usage_tracker import (
 )
 
 
+@pytest.fixture(autouse=True)
+def clear_usage_sessions():
+    _active_sessions.clear()
+    yield
+    _active_sessions.clear()
+
+
 def _make_spool(spool_id=1, label_weight=1000, weight_used=0, cost_per_kg=None):
     """Create a mock Spool object with cost fields."""
     spool = MagicMock()
@@ -152,12 +159,6 @@ def _mock_db_sequential(responses):
 
 class TestCostCalculation:
     """Tests for cost calculation in usage tracking."""
-
-    @pytest.fixture(autouse=True)
-    def _clear_sessions(self):
-        _active_sessions.clear()
-        yield
-        _active_sessions.clear()
 
     @pytest.mark.asyncio
     async def test_cost_with_spool_specific_cost_per_kg(self):
