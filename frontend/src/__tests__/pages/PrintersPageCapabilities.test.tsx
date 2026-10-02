@@ -100,7 +100,7 @@ function printer(provider: 'bambu' | 'moonraker', capabilities = provider === 'b
   };
 }
 
-function setupPage(item = printer('moonraker'), currentStatus = status) {
+function setupPage(item = printer('moonraker'), currentStatus: Omit<typeof status, 'temperatures'> & { temperatures?: Partial<typeof status.temperatures> } = status) {
   server.use(
     http.get('/api/v1/printers/', () => HttpResponse.json([item])),
     http.get('/api/v1/printers/:id/status', () => HttpResponse.json(currentStatus)),
@@ -110,7 +110,7 @@ function setupPage(item = printer('moonraker'), currentStatus = status) {
   render(<PrintersPage />);
 }
 
-async function openControls(item = printer('moonraker'), currentStatus = status) {
+async function openControls(item = printer('moonraker'), currentStatus: Omit<typeof status, 'temperatures'> & { temperatures?: Partial<typeof status.temperatures> } = status) {
   const user = userEvent.setup();
   setupPage(item, currentStatus);
   await screen.findByRole('heading', { name: item.name, level: 2 });
@@ -132,6 +132,26 @@ async function openMoonrakerEdit(item = printer('moonraker')) {
 describe('provider capability UI', () => {
   beforeEach(() => {
     localStorage.clear();
+  });
+
+  it('shows Moonraker temperature telemetry without exposing target controls', async () => {
+    const user = await openControls();
+
+    expect(screen.getByText('Nozzle')).toBeInTheDocument();
+    expect(screen.getByText('Bed')).toBeInTheDocument();
+    await user.click(screen.getByText('210°C'));
+    await user.click(screen.getByText('60°C'));
+    expect(screen.queryByText('Set Nozzle Temperature')).not.toBeInTheDocument();
+    expect(screen.queryByText('Set Bed Temperature')).not.toBeInTheDocument();
+    expect(screen.queryByTitle(/view heater history/i)).not.toBeInTheDocument();
+  });
+
+  it('marks missing Moonraker telemetry unavailable without replacing measured zero', async () => {
+    await openControls(printer('moonraker'), { ...status, temperatures: { nozzle: 0 } });
+
+    expect(screen.getByText('Nozzle').parentElement).toHaveTextContent('0°C');
+    expect(screen.getByText('Bed').parentElement).toHaveTextContent('--');
+    expect(screen.getByText('Bed').parentElement).not.toHaveTextContent('0°C');
   });
 
   it('keeps Bambu capability controls and capability queries', async () => {
