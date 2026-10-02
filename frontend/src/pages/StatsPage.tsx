@@ -364,13 +364,13 @@ function TimeAccuracyWidget({
           <span>{t('stats.perfectEstimate')}</span>
         </div>
         {printerEntries.length > 0 && (
-          <div className={`mt-2 ${size === 4 ? 'grid grid-cols-3 gap-x-6 gap-y-1' : size === 2 ? 'grid grid-cols-2 gap-x-6 gap-y-1' : 'space-y-1'}`} style={{ width: 'fit-content' }}>
+          <div className={`mt-2 ${size === 4 ? 'grid grid-cols-3 gap-x-6 gap-y-1' : size === 2 ? 'grid grid-cols-2 gap-x-6 gap-y-1' : 'space-y-1'}`}>
             {printerEntries.map(([printerId, acc]) => (
-              <div key={printerId} className="flex items-center gap-2 text-xs">
-                <span className="text-bambu-gray truncate max-w-[100px]">
+              <div key={printerId} className="flex min-w-0 items-center gap-2 text-xs">
+                <span className="min-w-0 text-bambu-gray truncate max-w-[100px]">
                   {printerMap.get(printerId) || `${t('common.printer')} ${printerId}`}
                 </span>
-                <span className={`font-medium ${
+                <span className={`flex-shrink-0 font-medium ${
                   acc >= 95 && acc <= 105 ? 'text-status-ok' :
                   acc > 105 ? 'text-blue-700 dark:text-blue-400' : 'text-status-warning'
                 }`}>
