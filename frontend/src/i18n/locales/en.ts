@@ -6643,6 +6643,7 @@ export default {
   },
 
   makerworld: {
+    urlLabel: "MakerWorld URL",
     title: 'MakerWorld',
     description: 'Paste a MakerWorld model URL to import and print it directly from LayerCove — without leaving for the Bambu Handy app.',
     pasteUrlHeader: 'Import from MakerWorld',
