@@ -31,6 +31,7 @@ import { ConfirmModal } from '../components/ConfirmModal';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import { getCurrencySymbol } from '../utils/currency';
+import { getColorName } from '../utils/colors';
 
 const PROJECT_COLORS = [
   '#ef4444', // red
@@ -256,6 +257,8 @@ export function ProjectModal({ project, onClose, onSave, isLoading, currencySymb
                 <button
                   key={c}
                   type="button"
+                  aria-label={`${t('projects.color')} ${getColorName(c)} ${c}`}
+                  aria-pressed={color === c}
                   onClick={() => setColor(c)}
                   className={`w-8 h-8 rounded-full transition-transform ${
                     color === c ? 'ring-2 ring-white ring-offset-2 ring-offset-bambu-dark-secondary scale-110' : ''
@@ -658,6 +661,7 @@ function ProjectCard({ project, onClick, onEdit, onDelete, hasPermission, t }: P
           <div className="relative" onClick={(e) => e.stopPropagation()}>
             <button
               className="p-1.5 rounded-lg hover:bg-bambu-dark text-bambu-gray hover:text-white transition-colors opacity-0 group-hover:opacity-100"
+              aria-label={`${t('common.actions')} ${project.name}`}
               onClick={() => setShowActions(!showActions)}
             >
               <MoreVertical className="w-4 h-4" />
