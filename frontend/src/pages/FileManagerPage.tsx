@@ -735,6 +735,7 @@ interface FileCardProps {
   onDownload: (id: number) => void;
   onPrint?: (file: LibraryFileListItem) => void;
   onSlice?: (file: LibraryFileListItem) => void;
+  onEditSlice?: (file: LibraryFileListItem) => void;
   onRunPipeline?: (file: LibraryFileListItem) => void;
   useSlicerApi?: boolean;
   onPreview3d?: (file: LibraryFileListItem) => void;
@@ -748,7 +749,7 @@ interface FileCardProps {
   t: TFunction;
 }
 
-function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, onPrint, onSlice, onRunPipeline, useSlicerApi, onPreview3d, onRename, onGenerateThumbnail, onTagClick, thumbnailVersion, hasPermission, canLibraryFileAction, authEnabled, t }: FileCardProps) {
+function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, onPrint, onSlice, onEditSlice, onRunPipeline, useSlicerApi, onPreview3d, onRename, onGenerateThumbnail, onTagClick, thumbnailVersion, hasPermission, canLibraryFileAction, authEnabled, t }: FileCardProps) {
   const [showActions, setShowActions] = useState(false);
 
   return (
@@ -870,7 +871,18 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
                   title={!hasPermission('library:upload') ? t('fileManager.noPermissionSlice') : undefined}
                 >
                   <Cog className="w-3.5 h-3.5" />
-                  {t('slice.action')}
+                  {t('slice.quickAction', { defaultValue: 'Quick slice' })}
+                </button>
+              )}
+              {onEditSlice && useSlicerApi && isSliceableFilename(file.filename) && (
+                <button
+                  className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 ${hasPermission('library:upload') ? 'text-white hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'}`}
+                  onClick={() => { if (hasPermission('library:upload')) { onEditSlice(file); setShowActions(false); } }}
+                  disabled={!hasPermission('library:upload')}
+                  title={!hasPermission('library:upload') ? t('fileManager.noPermissionSlice') : undefined}
+                >
+                  <Cog className="w-3.5 h-3.5" />
+                  {t('slice.workbenchAction', { defaultValue: 'Edit in workbench' })}
                 </button>
               )}
               {onRunPipeline && useSlicerApi && isSliceableFilename(file.filename) && (
@@ -2296,6 +2308,7 @@ export function FileManagerPage() {
                     onDownload={handleDownload}
                     onPrint={setPrintFile}
                     onSlice={setSliceFile}
+                    onEditSlice={workbenchAvailable ? (file) => navigate(`/slicer/workbench?library_file=${file.id}`) : undefined}
                     onRunPipeline={setRunPipelineFile}
                     useSlicerApi={settings?.use_slicer_api ?? false}
                     onPreview3d={(f) => {
@@ -2447,7 +2460,7 @@ export function FileManagerPage() {
                       )}
                     </div>
                     {/* Actions */}
-                    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex flex-wrap items-center gap-1" onClick={(e) => e.stopPropagation()}>
                       {isSlicedFilename(file.filename) && (
                         <>
                           <button
@@ -2468,18 +2481,28 @@ export function FileManagerPage() {
                         <button
                           onClick={() => {
                             if (!hasPermission('library:upload')) return;
-                            if (workbenchAvailable) navigate(`/slicer/workbench?library_file=${file.id}`);
-                            else setSliceFile(file);
+                            setSliceFile(file);
                           }}
                           className={`p-1.5 rounded transition-colors ${
                             hasPermission('library:upload')
                               ? 'hover:bg-bambu-dark text-bambu-gray hover:text-bambu-green'
                               : 'text-bambu-gray/50 cursor-not-allowed'
                           }`}
-                          title={hasPermission('library:upload') ? t('slice.action') : t('fileManager.noPermissionSlice')}
+                          title={hasPermission('library:upload') ? t('slice.quickAction', { defaultValue: 'Quick slice' }) : t('fileManager.noPermissionSlice')}
                           disabled={!hasPermission('library:upload')}
                         >
                           <Cog className="w-4 h-4" />
+                          <span className="ml-1 text-xs">{t('slice.quickAction', { defaultValue: 'Quick slice' })}</span>
+                        </button>
+                      )}
+                      {(settings?.use_slicer_api ?? false) && workbenchAvailable && isSliceableFilename(file.filename) && (
+                        <button
+                          onClick={() => hasPermission('library:upload') && navigate(`/slicer/workbench?library_file=${file.id}`)}
+                          className={`p-1.5 rounded transition-colors ${hasPermission('library:upload') ? 'hover:bg-bambu-dark text-bambu-gray hover:text-bambu-green' : 'text-bambu-gray/50 cursor-not-allowed'}`}
+                          title={hasPermission('library:upload') ? t('slice.workbenchAction', { defaultValue: 'Edit in workbench' }) : t('fileManager.noPermissionSlice')}
+                          disabled={!hasPermission('library:upload')}
+                        >
+                          <span className="text-xs">{t('slice.workbenchAction', { defaultValue: 'Edit in workbench' })}</span>
                         </button>
                       )}
                       {(settings?.use_slicer_api ?? false) && isSliceableFilename(file.filename) && (
@@ -2711,6 +2734,9 @@ export function FileManagerPage() {
           title={viewerFile.print_name || viewerFile.filename}
           fileType={viewerFile.file_type}
           onClose={() => setViewerFile(null)}
+          sliceActionLabel={workbenchAvailable
+            ? t('slice.workbenchAction', { defaultValue: 'Edit in workbench' })
+            : t('slice.quickAction', { defaultValue: 'Quick slice' })}
           onSliceWithBambuddy={
             // Only offer in-app slicing on files the SliceModal can actually
             // handle (matches the file-row Cog visibility check at :2127).
