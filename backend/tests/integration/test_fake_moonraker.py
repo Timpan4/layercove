@@ -327,6 +327,7 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
     try:
         with (
             patch.object(scheduler_module, "printer_manager", manager),
+            patch("backend.app.services.print_material.printer_manager", manager),
             patch.object(scheduler_module, "async_session", sessions),
             patch.object(scheduler_module.settings, "base_dir", tmp_path),
             patch.object(scheduler_module.notification_service, "on_queue_job_started", AsyncMock()),
@@ -334,6 +335,13 @@ async def test_queue_lifecycle_runs_through_fake_backed_backend(
             patch.object(scheduler, "_schedule_moonraker_start_reconciliation"),
         ):
             async with sessions() as db:
+                from backend.app.models.print_queue import PrintMaterialConfirmation
+                from backend.app.services.print_material import check_print_material
+
+                queued = await db.get(PrintQueueItem, ids.item)
+                check = await check_print_material(printer, archive, source, queued.plate_id, None, queued.use_ams)
+                db.add(PrintMaterialConfirmation(queue_item_id=queued.id, confirmation_key=check.confirmation_key))
+                await db.commit()
                 await scheduler._start_print(db, await db.get(PrintQueueItem, ids.item))
 
             async with sessions() as db:

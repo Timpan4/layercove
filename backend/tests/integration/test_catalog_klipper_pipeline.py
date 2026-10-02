@@ -106,6 +106,7 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
     monkeypatch.setattr(slicer_catalog_selection, "printer_manager", manager)
     monkeypatch.setattr(slicer_catalog_bindings, "printer_manager", manager)
     monkeypatch.setattr(print_scheduler, "printer_manager", manager)
+    monkeypatch.setattr("backend.app.services.print_material.printer_manager", manager)
     monkeypatch.setattr(print_scheduler, "async_session", async_sessionmaker(test_engine, expire_on_commit=False))
     monkeypatch.setattr(print_scheduler.notification_service, "on_queue_job_started", AsyncMock())
     monkeypatch.setattr(print_scheduler.notification_service, "on_queue_job_failed", AsyncMock())
@@ -261,13 +262,18 @@ async def test_catalog_slice_reaches_moonraker_as_raw_gcode(
         artifact = await db_session.get(LibraryFile if source_kind == "library" else PrintArchive, artifact_id)
         assert artifact.filename == f"{model_path.stem}_PLA_9m42s.gcode"
         assert (tmp_path / artifact.file_path).read_bytes() == raw_gcode
+        request = {
+            "printer_id": printer_id,
+            "library_file_id" if source_kind == "library" else "archive_id": artifact_id,
+            "require_previous_success": False,
+        }
+        check = await async_client.post("/api/v1/queue/material-check", json=request)
+        assert check.status_code == 200, check.text
+        assert not check.json()["blocking"]
+        request["material_confirmation"] = check.json()["confirmation_key"]
         queued = await async_client.post(
             "/api/v1/queue/",
-            json={
-                "printer_id": printer_id,
-                "library_file_id" if source_kind == "library" else "archive_id": artifact_id,
-                "require_previous_success": False,
-            },
+            json=request,
         )
         assert queued.status_code == 200, queued.text
         item_id = queued.json()["id"]
