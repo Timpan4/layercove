@@ -684,7 +684,7 @@ function SettingsSection({
                 <div className="mt-4 flex items-end justify-between">
                   <div>
                     <label className="block text-xs text-bambu-gray mb-1.5">{t('maintenance.icon')}</label>
-                    <div className="flex gap-1">
+                    <div className="flex flex-wrap gap-1">
                       {Object.keys(iconMap).map((iconName) => {
                         const IconComp = iconMap[iconName];
                         return (
