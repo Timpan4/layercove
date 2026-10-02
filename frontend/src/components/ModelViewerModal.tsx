@@ -17,11 +17,9 @@ interface ModelViewerModalProps {
   title: string;
   fileType?: string;
   onClose: () => void;
-  // When set and `settings.use_slicer_api` is on, the header's slicer button
-  // becomes "Slice" and calls this instead of opening BambuStudio / Orca
-  // externally — so the preview modal's slice action matches the file row's
-  // Cog (in-app Bambuddy SliceModal) when the slicer API is enabled.
+  // When the slicer API is enabled, use the caller's in-app slicing action.
   onSliceWithBambuddy?: () => void;
+  sliceActionLabel?: string;
 }
 
 interface Capabilities {
@@ -32,7 +30,7 @@ interface Capabilities {
   filament_colors: string[];
 }
 
-export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, onClose, onSliceWithBambuddy }: ModelViewerModalProps) {
+export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, onClose, onSliceWithBambuddy, sliceActionLabel }: ModelViewerModalProps) {
   const { t } = useTranslation();
   const { data: settings } = useQuery({ queryKey: ['settings'], queryFn: api.getSettings });
   // Desktop "Open in Slicer" target — falls back to preferred_slicer when the
@@ -346,7 +344,7 @@ export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, on
             {useBambuddySlicer ? (
               <Button variant="secondary" size="sm" onClick={onSliceWithBambuddy}>
                 <Cog className="w-4 h-4" />
-                {t('slice.action')}
+                {sliceActionLabel ?? t('slice.action')}
               </Button>
             ) : (
               <Button variant="secondary" size="sm" onClick={handleOpenInSlicer} disabled={!canOpenInSlicer}>
