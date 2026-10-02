@@ -806,7 +806,9 @@ async def test_catalog_name_search_filters_before_paging_with_visibility(db, inc
         CatalogInput(
             source="standard",
             remote_account_id="search-standard",
-            profiles=[CatalogProfile(str(index), "process", f"Alpha {index:02}", {"value": index}) for index in range(30)]
+            profiles=[
+                CatalogProfile(str(index), "process", f"Alpha {index:02}", {"value": index}) for index in range(30)
+            ]
             + [
                 CatalogProfile("unicode", "process", "Österreich 100%_profile", {"value": "unicode"}),
                 CatalogProfile("wildcard-decoy", "process", "Österreich 100XYZprofile", {"value": "decoy"}),
@@ -826,7 +828,9 @@ async def test_catalog_name_search_filters_before_paging_with_visibility(db, inc
         result = await ingest_catalog(
             db,
             CatalogInput(
-                source="orca_cloud", remote_account_id=account, user_id=user_id,
+                source="orca_cloud",
+                remote_account_id=account,
+                user_id=user_id,
                 profiles=[CatalogProfile(account, "printer", name, {"value": account})],
             ),
         )
@@ -837,7 +841,9 @@ async def test_catalog_name_search_filters_before_paging_with_visibility(db, inc
         if active:
             await approve_review_batch(db, result.review_batch_id, user_id)
             await activate_revision(db, result.revision_ids[0], user_id)
-        if (shared or user_id == (owner.id if viewer == "owner" else outsider.id if viewer == "outsider" else None)) and (active or include_inactive):
+        if (
+            shared or user_id == (owner.id if viewer == "owner" else outsider.id if viewer == "outsider" else None)
+        ) and (active or include_inactive):
             expected.append(name)
     await db.commit()
     current_user = owner if viewer == "owner" else outsider if viewer == "outsider" else None
@@ -845,7 +851,9 @@ async def test_catalog_name_search_filters_before_paging_with_visibility(db, inc
     app.include_router(catalog_routes.router)
     app.dependency_overrides[catalog_routes.get_db] = lambda: db
     route = next(route for route in app.routes if route.path == "/slicer/catalog/profiles")
-    user_dependency = next(dependency.call for dependency in route.dependant.dependencies if dependency.name == "current_user")
+    user_dependency = next(
+        dependency.call for dependency in route.dependant.dependencies if dependency.name == "current_user"
+    )
     app.dependency_overrides[user_dependency] = lambda: current_user
     async with AsyncClient(transport=ASGITransport(app=app), base_url="http://fixture") as client:
         params = {"include_inactive": str(include_inactive).lower(), "limit": 25, "offset": 0}
@@ -862,8 +870,13 @@ async def test_catalog_name_search_filters_before_paging_with_visibility(db, inc
         cleared = await client.get("/slicer/catalog/profiles", params={**params, "search": "   "})
         assert cleared.json() == initial.json()
         unicode_match = await client.get("/slicer/catalog/profiles", params={**params, "search": "  öster  "})
-        assert [item["display_name"] for item in unicode_match.json()] == ["Österreich 100%_profile", "Österreich 100XYZprofile"]
-        unicode_page = await client.get("/slicer/catalog/profiles", params={**params, "search": "ÖSTER", "offset": 1, "limit": 1})
+        assert [item["display_name"] for item in unicode_match.json()] == [
+            "Österreich 100%_profile",
+            "Österreich 100XYZprofile",
+        ]
+        unicode_page = await client.get(
+            "/slicer/catalog/profiles", params={**params, "search": "ÖSTER", "offset": 1, "limit": 1}
+        )
         assert [item["display_name"] for item in unicode_page.json()] == ["Österreich 100XYZprofile"]
         literal = await client.get("/slicer/catalog/profiles", params={**params, "search": "100%_"})
         assert [item["display_name"] for item in literal.json()] == ["Österreich 100%_profile"]
