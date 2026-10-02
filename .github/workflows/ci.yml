@@ -120,7 +120,7 @@ jobs:
         run: uv pip install --system -r requirements.txt -r requirements-dev.txt
 
       - name: Verify camera token expiry against PostgreSQL clock
-        run: python -m pytest backend/tests/integration/test_postgres_camera_token_expiry.py --tb=short
+        run: python -m pytest backend/tests/integration/test_postgres_camera_token_expiry.py backend/tests/integration/test_postgres_archive_stats_dates.py --tb=short
 
   # ============================================================================
   # Frontend Checks
