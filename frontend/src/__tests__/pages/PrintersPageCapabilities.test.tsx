@@ -376,6 +376,47 @@ describe('Moonraker onboarding and guarded stop', () => {
     expect(await screen.findByText(/Moonraker rejected configured credentials/i)).toBeInTheDocument();
   });
 
+  it('saves a Moonraker model description and displays it on the printer card', async () => {
+    const item = { ...printer('moonraker'), model: '' };
+    let patchBody: Record<string, unknown> | undefined;
+    server.use(http.patch('/api/v1/printers/41', async ({ request }) => {
+      patchBody = await request.json() as Record<string, unknown>;
+      item.model = String(patchBody.model);
+      return HttpResponse.json(item);
+    }));
+    const user = await openMoonrakerEdit(item);
+    const model = screen.getByRole('textbox', { name: /^model$/i });
+    expect(model).toHaveAttribute('maxlength', '50');
+    expect(screen.queryByRole('option', { name: 'P1S' })).not.toBeInTheDocument();
+    await user.type(model, 'Voron 2.4');
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(patchBody?.model).toBe('Voron 2.4'));
+    expect(await screen.findByText('Voron 2.4', { exact: true })).toBeInTheDocument();
+    expect(screen.queryByText('Unknown Model')).not.toBeInTheDocument();
+  });
+
+  it('clears an optional Moonraker model description instead of retaining the old value', async () => {
+    const item = printer('moonraker');
+    let patchBody: Record<string, unknown> | undefined;
+    server.use(http.patch('/api/v1/printers/41', async ({ request }) => {
+      patchBody = await request.json() as Record<string, unknown>;
+      item.model = String(patchBody.model);
+      return HttpResponse.json(item);
+    }));
+    const user = await openMoonrakerEdit(item);
+    await user.clear(screen.getByRole('textbox', { name: /^model$/i }));
+    await user.click(screen.getByRole('button', { name: /save changes/i }));
+    await waitFor(() => expect(patchBody?.model).toBe(''));
+    expect(await screen.findByText('Unknown Model')).toBeInTheDocument();
+  });
+
+  it('retains the Bambu model picker when editing a Bambu printer', async () => {
+    await openMoonrakerEdit(printer('bambu'));
+    expect(screen.getByRole('option', { name: 'P1S' })).toHaveValue('P1S');
+    expect(screen.getByRole('option', { name: 'X1 Carbon' })).toHaveValue('X1C');
+    expect(screen.queryByRole('textbox', { name: /^model$/i })).not.toBeInTheDocument();
+  });
+
   it('keeps redacted edit secrets out of the DOM, retains blanks, and reports stored test results', async () => {
     let patchBody: Record<string, unknown> | undefined;
     let connectionFails = false;

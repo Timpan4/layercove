@@ -7605,7 +7605,7 @@ function EditPrinterModal({
     }
     const data: Partial<PrinterCreate> = {
       name: form.name,
-      model: form.model || undefined,
+      model: isMoonraker ? form.model.trim() : form.model || undefined,
       location: form.location || undefined,
       auto_archive: form.auto_archive,
       is_active: form.is_active,
@@ -7779,8 +7779,16 @@ function EditPrinterModal({
               />
             </div>}
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
-              <select
+              <label htmlFor="edit_printer_model" className="block text-sm text-bambu-gray mb-1">{t('printers.model')}</label>
+              {isMoonraker ? <input
+                id="edit_printer_model"
+                type="text"
+                maxLength={50}
+                className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                value={form.model}
+                onChange={(e) => setForm({ ...form, model: e.target.value })}
+              /> : <select
+                id="edit_printer_model"
                 className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                 value={form.model}
                 onChange={(e) => setForm({ ...form, model: e.target.value })}
@@ -7812,7 +7820,7 @@ function EditPrinterModal({
                 <optgroup label="X2 Series">
                   <option value="X2D">X2D</option>
                 </optgroup>
-              </select>
+              </select>}
             </div>
             <div>
               <label className="block text-sm text-bambu-gray mb-1">Location / Group</label>
