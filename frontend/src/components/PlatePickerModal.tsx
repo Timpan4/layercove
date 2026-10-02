@@ -8,9 +8,11 @@ interface PlatePickerModalProps {
   plates: PlateMetadata[];
   onSelect: (plateIndex: number) => void;
   onClose: () => void;
+  intent?: 'preview' | 'slice';
+  onSelectAll?: () => void;
 }
 
-export function PlatePickerModal({ plates, onSelect, onClose }: PlatePickerModalProps) {
+export function PlatePickerModal({ plates, onSelect, onClose, intent = 'preview', onSelectAll }: PlatePickerModalProps) {
   const { t } = useTranslation();
   return (
     <div
@@ -24,8 +26,12 @@ export function PlatePickerModal({ plates, onSelect, onClose }: PlatePickerModal
         {/* Header */}
         <div className="flex-shrink-0 flex items-start justify-between gap-3 px-4 pt-4 pb-3 border-b border-bambu-dark-tertiary/40">
           <div className="min-w-0">
-            <h3 className="text-white font-medium">{t('archives.platePicker.title')}</h3>
-            <p className="text-xs text-bambu-gray mt-1">{t('archives.platePicker.hint')}</p>
+            <h3 className="text-white font-medium">{intent === 'slice'
+              ? t('slice.platePickerTitle', { defaultValue: 'Select plates to slice' })
+              : t('archives.platePicker.title')}</h3>
+            <p className="text-xs text-bambu-gray mt-1">{intent === 'slice'
+              ? t('slice.platePickerHint', { defaultValue: 'Choose one plate or all plates, then configure the slice.' })
+              : t('archives.platePicker.hint')}</p>
           </div>
           <button
             onClick={onClose}
@@ -37,6 +43,12 @@ export function PlatePickerModal({ plates, onSelect, onClose }: PlatePickerModal
         </div>
         {/* Grid */}
         <div className="flex-1 overflow-y-auto p-4">
+          {intent === 'slice' && onSelectAll && (
+            <button type="button" onClick={onSelectAll}
+              className="w-full mb-2 p-2 rounded-lg border border-bambu-dark-tertiary bg-bambu-dark hover:border-bambu-gray text-sm text-white text-left">
+              {t('slice.actionAll', { count: plates.length })}
+            </button>
+          )}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
             {plates.map((plate) => (
               <button
