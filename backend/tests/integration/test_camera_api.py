@@ -319,6 +319,20 @@ class TestCameraAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_moonraker_diagnose_is_unavailable_when_bambu_probe_errors(self, async_client, printer_factory):
+        printer = await printer_factory(provider="moonraker", model="X1C")
+        with patch(
+            "backend.app.services.camera_diagnose.diagnose_camera",
+            new_callable=AsyncMock,
+            side_effect=RuntimeError("Bambu diagnostic cannot process Moonraker"),
+        ):
+            response = await async_client.post(f"/api/v1/printers/{printer.id}/camera/diagnose")
+
+        assert response.status_code == 501
+        assert response.json()["detail"] == "Moonraker camera diagnostics are unavailable"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_camera_diagnose_returns_structured_result(self, async_client: AsyncClient, printer_factory):
         """Endpoint returns the per-stage shape the frontend modal renders."""
         from backend.app.services.camera_diagnose import (
