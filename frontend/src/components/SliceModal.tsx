@@ -194,7 +194,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
     !!platesQuery.data?.is_multi_plate && (platesQuery.data?.plates?.length ?? 0) > 1;
   // Single-plate / non-3MF / fetch failure: skip the picker, default to plate 1
   // at submit time so the backend's existing default behaviour is preserved.
-  const needsPlatePicker = isMultiPlate && selectedPlate == null;
+  const needsPlatePicker = isMultiPlate && selectedPlate == null && !sliceAllPlates;
 
   // Per-plate filament requirements via the same endpoint the print/schedule
   // modal uses. Reusing it here keeps the SliceModal honest with whatever
@@ -226,7 +226,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       }
       return api.getArchiveFilamentRequirements(source.id, requirementsPlateId, previewRequestId);
     },
-    enabled: !needsPlatePicker,
+    enabled: !platesQuery.isLoading && !needsPlatePicker,
     staleTime: 60_000,
   });
 
@@ -314,7 +314,9 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
     return (
       <PlatePickerModal
         plates={platesQuery.data.plates}
+        intent="slice"
         onSelect={(plateIndex) => setSelectedPlate(plateIndex)}
+        onSelectAll={() => setSliceAllPlates(true)}
         onClose={onClose}
       />
     );
@@ -370,7 +372,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
             </div>
           )}
 
-          <>
+          {!platesQuery.isLoading && <>
               <CatalogSliceSelector
                 selection={catalogSelection}
                 filamentSlots={filamentSlots}
@@ -399,7 +401,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
                   sourceName={source.filename}
                 />
               )}
-            </>
+            </>}
 
           {errorMessage && (
             <div className="text-sm text-red-700 dark:text-red-400 bg-red-900/20 border border-red-900/40 rounded p-2" role="alert">

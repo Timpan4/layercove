@@ -60,6 +60,42 @@ test('Quick slice can be tapped outside the STL card without clipping', async ({
 });
 
 for (const width of [1280, 390]) {
+  for (const scope of ['one', 'all'] as const) {
+    test(`multi-plate quick slicing offers its full scope before the form at ${width}px (${scope})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 844 });
+      await page.route((url) => url.pathname.replace(/\/$/, '').endsWith('/library/files'), (route) => route.fulfill({ json: [{
+        id: 8, filename: 'project.3mf', file_type: '3mf', file_size: 1024, folder_id: null, thumbnail_path: null,
+        print_count: 0, duplicate_count: 0, created_at: '2026-10-01T00:00:00Z', tags: [],
+      }] }));
+      await page.route('**/api/v1/library/files/8/plates', (route) => route.fulfill({ json: {
+        file_id: 8, filename: 'project.3mf', is_multi_plate: true,
+        plates: Array.from({ length: 4 }, (_, index) => ({ index: index + 1, objects: [], filaments: [] })),
+      } }));
+      let enqueueCount = 0;
+      page.on('request', (request) => { if (request.method() === 'POST' && new URL(request.url()).pathname.endsWith('/slice')) enqueueCount++; });
+      await page.reload();
+      await page.getByRole('button', { name: 'List view', exact: true }).click();
+      await page.getByRole('button', { name: 'Quick slice', exact: true }).click();
+      await expect(page.getByRole('heading', { name: 'Select plates to slice', exact: true })).toBeVisible();
+      await expect(page.getByText('Choose one plate or all plates, then configure the slice.', { exact: true })).toBeVisible();
+      await expect(page.getByText(/Pick one to open in the GCode viewer/)).toHaveCount(0);
+      await expect(page.getByRole('combobox', { name: 'Physical printer', exact: true })).toHaveCount(0);
+      for (let index = 1; index <= 4; index++) await expect(page.getByRole('button', { name: new RegExp(`^Plate ${index} `) })).toBeVisible();
+      const allPlates = page.getByRole('button', { name: 'Slice all 4 plates', exact: true });
+      await expect(allPlates).toBeVisible();
+      await (scope === 'all' ? allPlates : page.getByRole('button', { name: /^Plate 2 / })).click();
+      await expect(page.getByRole('heading', { name: 'Slice model', exact: true })).toBeVisible();
+      const allToggle = page.getByRole('checkbox', { name: 'Slice all 4 plates', exact: true });
+      if (scope === 'all') await expect(allToggle).toBeChecked();
+      else {
+        await expect(allToggle).not.toBeChecked();
+        await expect(page.getByText('project.3mf • Plate 2', { exact: true })).toBeVisible();
+      }
+      expect(enqueueCount).toBe(0);
+      await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+    });
+  }
+
   for (const view of ['grid', 'list'] as const) {
     test(`File Manager offers explicit quick and editable slicing in ${view} view at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 844 });

@@ -30,6 +30,9 @@ describe('PlatePickerModal', () => {
     const plates = [makePlate({ index: 1 }), makePlate({ index: 2 }), makePlate({ index: 3 })];
     render(<PlatePickerModal plates={plates} onSelect={() => {}} onClose={() => {}} />);
 
+    expect(screen.getByRole('heading', { name: 'Select plate to preview' })).toBeInTheDocument();
+    expect(screen.getByText('This archive has multiple plates. Pick one to open in the GCode viewer.')).toBeInTheDocument();
+
     // Each plate index gets its own row — check all three are present.
     expect(screen.getByText(/plate 1/i)).toBeInTheDocument();
     expect(screen.getByText(/plate 2/i)).toBeInTheDocument();
