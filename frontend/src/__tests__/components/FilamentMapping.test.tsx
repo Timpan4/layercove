@@ -60,6 +60,20 @@ describe('FilamentMapping — FTS routing', () => {
     );
   });
 
+  it('shows unknown material without claiming a confirmed mismatch', async () => {
+    server.use(http.get('/api/v1/printers/:id/status', () => HttpResponse.json(createStatus({ ams: [], vt_tray: [] }))));
+    render(<FilamentMapping
+      printerId={1} filamentReqs={mockFilamentReqs} manualMappings={{}}
+      onManualMappingChange={() => {}} currencySymbol="$" defaultCostPerKg={0}
+      defaultExpanded externalSpool materialUnknown
+    />);
+    expect(await screen.findByText('PETG')).toBeInTheDocument();
+    expect(screen.queryByTitle('Filament type not loaded')).not.toBeInTheDocument();
+    expect(screen.getByTitle('Loaded material is not reported')).toBeInTheDocument();
+    expect(screen.queryByRole('combobox')).not.toBeInTheDocument();
+    expect(screen.queryByText('Click to change slot assignment')).not.toBeInTheDocument();
+  });
+
   it('shows all loaded slots in the dropdown when FTS is installed', async () => {
     server.use(
       http.get(

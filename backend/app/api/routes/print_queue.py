@@ -3,6 +3,7 @@
 import json
 import logging
 import zipfile
+from dataclasses import asdict
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -20,7 +21,7 @@ from backend.app.core.permissions import Permission
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile
 from backend.app.models.print_batch import PrintBatch
-from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.print_queue import PrintMaterialConfirmation, PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.project import Project
 from backend.app.models.user import User
@@ -37,6 +38,7 @@ from backend.app.schemas.print_queue import (
 )
 from backend.app.services.filament_deficit import compute_deficit_for_queue_item
 from backend.app.services.notification_service import notification_service
+from backend.app.services.print_material import check_print_material, source_path
 from backend.app.services.printer_types import PrinterProvider, artifact_matches_provider
 from backend.app.utils.printer_models import normalize_printer_model, normalize_printer_model_id
 from backend.app.utils.threemf_tools import (
@@ -184,6 +186,9 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
     # Create response with parsed ams_mapping
     item_dict = {
         "id": item.id,
+        "material_confirmation": item.material_confirmation_record.confirmation_key
+        if isinstance(item.material_confirmation_record, PrintMaterialConfirmation)
+        else None,
         "printer_id": item.printer_id,
         "target_model": item.target_model,
         "target_location": item.target_location,
@@ -398,7 +403,17 @@ async def add_to_queue(
     return await enqueue_print(data, db, caller)
 
 
-async def enqueue_print(data, db, caller, *, before_commit=None):
+@router.post("/material-check")
+async def material_check(
+    data: PrintQueueItemCreate,
+    db: AsyncSession = Depends(get_db),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.QUEUE_CREATE)),
+):
+    """Read-only requirements check using the queue's source access gates."""
+    return await enqueue_print(data, db, caller, check_only=True)
+
+
+async def enqueue_print(data, db, caller, *, before_commit=None, check_only=False):
     """Add an item to the print queue."""
     current_user = caller.user
     # Normalize target_model (e.g., "Bambu Lab X1E" / "C13" -> "X1E")
@@ -509,6 +524,26 @@ async def enqueue_print(data, db, caller, *, before_commit=None):
             if located:
                 validation_printers = located
         _require_artifact_target_compatible(source, validation_printers)
+
+    material_result = None
+    if check_only or data.material_confirmation is not None:
+        if not data.printer_id or not source:
+            raise HTTPException(400, "Select a printer and source before confirming material.")
+        material_result = await check_print_material(
+            target_printers[0],
+            source,
+            source_path(source, settings.base_dir),
+            data.plate_id,
+            data.ams_mapping,
+            data.use_ams,
+            data.nozzle_mapping,
+        )
+        if check_only:
+            return asdict(material_result)
+        if material_result.blocking:
+            raise HTTPException(409, " ".join(material_result.blocking))
+        if data.material_confirmation != material_result.confirmation_key:
+            raise HTTPException(409, "Printer or file requirements changed. Check and confirm them again.")
 
     # Extract filament types for model-based assignment (used by scheduler for validation)
     required_filament_types = None
@@ -689,6 +724,7 @@ async def enqueue_print(data, db, caller, *, before_commit=None):
             manual_start=data.manual_start,
             skip_filament_check=data.skip_filament_check,
             ams_mapping=ams_mapping_json,
+            nozzle_mapping=json.dumps(data.nozzle_mapping) if data.nozzle_mapping else None,
             plate_id=data.plate_id,
             bed_levelling=data.bed_levelling,
             flow_cali=data.flow_cali,
@@ -710,6 +746,13 @@ async def enqueue_print(data, db, caller, *, before_commit=None):
         )
         db.add(item)
         items.append(item)
+
+    if material_result and material_result.confirmation_key:
+        await db.flush()
+        for item in items:
+            item.material_confirmation_record = PrintMaterialConfirmation(
+                confirmation_key=material_result.confirmation_key
+            )
 
     if before_commit is not None:
         await db.flush()
@@ -1208,8 +1251,36 @@ async def update_queue_item(
             json.dumps(update_data["nozzle_mapping"]) if update_data["nozzle_mapping"] else None
         )
 
+    material_confirmation = update_data.pop("material_confirmation", None)
     for field, value in update_data.items():
         setattr(item, field, value)
+
+    if material_confirmation is not None:
+        printer = await db.get(Printer, item.printer_id) if item.printer_id else None
+        source = (
+            await db.get(PrintArchive, item.archive_id)
+            if item.archive_id
+            else await db.get(LibraryFile, item.library_file_id)
+        )
+        if not printer or not source:
+            raise HTTPException(400, "Select a printer and source before confirming material.")
+        check = await check_print_material(
+            printer,
+            source,
+            source_path(source, settings.base_dir),
+            item.plate_id,
+            json.loads(item.ams_mapping) if item.ams_mapping else None,
+            item.use_ams,
+            json.loads(item.nozzle_mapping) if item.nozzle_mapping else None,
+        )
+        if check.blocking or check.confirmation_key != material_confirmation:
+            raise HTTPException(
+                409, " ".join(check.blocking) or "Printer or file requirements changed. Confirm them again."
+            )
+        if item.material_confirmation_record:
+            item.material_confirmation_record.confirmation_key = material_confirmation
+        else:
+            item.material_confirmation_record = PrintMaterialConfirmation(confirmation_key=material_confirmation)
 
     await db.commit()
     await db.refresh(item, ["archive", "printer", "library_file", "created_by", "batch"])

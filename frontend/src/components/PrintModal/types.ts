@@ -207,6 +207,8 @@ export interface FilamentReqsData {
  * Props for the FilamentMapping component.
  */
 export interface FilamentMappingProps {
+  externalSpool?: boolean;
+  materialUnknown?: boolean;
   printerId: number;
   /** Pre-fetched filament requirements data */
   filamentReqs: FilamentReqsData | undefined;

@@ -16,6 +16,8 @@ UTCDatetime = Annotated[datetime | None, PlainSerializer(serialize_utc_datetime)
 
 
 class PrintQueueItemCreate(BaseModel):
+    material_confirmation: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
+    nozzle_mapping: list[int] | None = None
     printer_id: int | None = None  # None = unassigned, user assigns later
     target_model: str | None = None  # Target printer model (mutually exclusive with printer_id)
     target_location: str | None = None  # Target location filter (only used with target_model)
@@ -71,6 +73,7 @@ class PrintQueueItemCreate(BaseModel):
 
 
 class PrintQueueItemUpdate(BaseModel):
+    material_confirmation: str | None = Field(default=None, pattern=r"^[0-9a-f]{64}$")
     printer_id: int | None = None
     target_model: str | None = None  # Target printer model (mutually exclusive with printer_id)
     target_location: str | None = None  # Target location filter (only used with target_model)
@@ -110,6 +113,7 @@ class DispatchProgressResponse(BaseModel):
 
 
 class PrintQueueItemResponse(BaseModel):
+    material_confirmation: str | None = None
     dispatch_progress: DispatchProgressResponse | None = None
     id: int
     printer_id: int | None  # None = unassigned
