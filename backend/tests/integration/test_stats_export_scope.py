@@ -108,3 +108,41 @@ async def test_public_statistics_export_scope(async_client, export_scope_data, f
         assert all(params["date_from"] <= row[0] <= params["date_to"] for row in trend)
     else:
         assert int(metrics["Period (days)"]) == (30 if scope == "legacy-default" else 90)
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
+@pytest.mark.parametrize("scope", ["all-time", "all-time-user", "historical-user", "legacy-default", "legacy-days"])
+async def test_public_failure_analysis_period(async_client, export_scope_data, scope):
+    data = export_scope_data
+    params = {}
+    if scope == "all-time":
+        params["all_time"] = "true"
+        total, failed, period = 10, 5, None
+    elif scope == "all-time-user":
+        params.update(all_time="true", created_by_id=data["user"])
+        total, failed, period = 8, 3, None
+    elif scope == "historical-user":
+        params.update(
+            date_from="2020-01-05",
+            date_to="2020-01-12",
+            created_by_id=data["user"],
+            printer_id=data["printer"],
+            project_id=data["project"],
+        )
+        total, failed, period = 2, 1, 7
+    elif scope == "legacy-default":
+        total, failed, period = 1, 0, 30
+    else:
+        params["days"] = 90
+        total, failed, period = 2, 1, 90
+
+    response = await async_client.get("/api/v1/archives/analysis/failures", params=params)
+
+    assert response.status_code == 200
+    result = response.json()
+    assert result["total_prints"] == total
+    assert result["outcome_prints"] == total
+    assert result["failed_prints"] == failed
+    assert result["failure_rate"] == round(failed / total * 100, 1)
+    assert result["period_days"] == period

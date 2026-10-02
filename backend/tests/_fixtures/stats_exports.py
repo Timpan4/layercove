@@ -32,7 +32,13 @@ async def main():
         async with engine.begin() as connection:
             await connection.run_sync(Base.metadata.create_all)
         async with sessions() as db:
-            db.add_all([User(id=901, username="Fixture Alice"), User(id=902, username="Fixture Bob")])
+            db.add_all(
+                [
+                    User(id=901, username="Fixture Alice"),
+                    User(id=902, username="Fixture Bob"),
+                    User(id=903, username="Fixture Empty"),
+                ]
+            )
             await db.flush()
             now = datetime.now(timezone.utc)
             for created_at, status, user in [

@@ -454,6 +454,7 @@ export interface paths {
                     days?: number | null;
                     date_from?: string | null;
                     date_to?: string | null;
+                    all_time?: boolean;
                     printer_id?: number | null;
                     project_id?: number | null;
                     /** @description Filter by user who created the print (-1 for no user) */
