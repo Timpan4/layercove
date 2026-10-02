@@ -440,20 +440,16 @@ async def get_system_info(
 
     # Connected printers
     connected_printers = []
-    for printer_id, client in printer_manager._clients.items():
-        state = client.state
-        if state and state.connected:
-            # Get printer name and model from database
-            result = await db.execute(select(Printer.name, Printer.model).where(Printer.id == printer_id))
-            row = result.first()
-            name = row[0] if row else f"Printer {printer_id}"
-            model = row[1] if row else "unknown"
+    result = await db.execute(select(Printer.id, Printer.name, Printer.model))
+    for printer in result:
+        state = printer_manager.get_status(printer.id)
+        if state and printer_manager.is_connected(printer.id):
             connected_printers.append(
                 {
-                    "id": printer_id,
-                    "name": name,
+                    "id": printer.id,
+                    "name": printer.name,
                     "state": state.state,
-                    "model": model,
+                    "model": printer.model,
                 }
             )
 
