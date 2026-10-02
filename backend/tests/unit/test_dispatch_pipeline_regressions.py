@@ -18,12 +18,13 @@ import backend.app.models  # noqa: F401
 import backend.app.services.print_scheduler as scheduler_module
 from backend.app.core.database import Base
 from backend.app.models.archive import PrintArchive
-from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.print_queue import PrintMaterialConfirmation, PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.slice_job import SliceJobRecord  # noqa: F401
 from backend.app.services.bambu_backend import BambuBackend
 from backend.app.services.bambu_mqtt import BambuMQTTClient
 from backend.app.services.moonraker_backend import MoonrakerBackend
+from backend.app.services.print_material import check_print_material
 from backend.app.services.print_scheduler import PrintScheduler
 from backend.app.services.printer_manager import PrinterManager
 from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
@@ -97,8 +98,17 @@ async def pipeline(tmp_path, monkeypatch):
     manager._backends = {bambu.id: bambu_backend, klipper.id: klipper_backend}
     manager._clients = {bambu.id: bambu_backend.client}
     monkeypatch.setattr(scheduler_module, "printer_manager", manager)
+    monkeypatch.setattr("backend.app.services.print_material.printer_manager", manager)
     monkeypatch.setattr(scheduler_module, "async_session", sessions)
     monkeypatch.setattr(scheduler_module.settings, "base_dir", tmp_path)
+    async with sessions() as db:
+        for item_id in item_ids:
+            item = await db.get(PrintQueueItem, item_id)
+            printer = await db.get(Printer, item.printer_id)
+            archive = await db.get(PrintArchive, item.archive_id)
+            check = await check_print_material(printer, archive, tmp_path / archive.file_path, None, None, False)
+            db.add(PrintMaterialConfirmation(queue_item_id=item.id, confirmation_key=check.confirmation_key))
+        await db.commit()
     monkeypatch.setattr(manager, "set_awaiting_plate_clear", MagicMock())
     monkeypatch.setattr(scheduler_module, "delete_file_async", AsyncMock(return_value=True))
     monkeypatch.setattr(scheduler_module, "upload_file_async", AsyncMock(return_value=True))
@@ -424,6 +434,10 @@ async def test_unverified_3mf_fails_before_moonraker_io_but_other_printer_dispat
         archive.file_path = path.name
         archive.filename = path.name
         archive.extra_data = None  # Legacy archives did not record the output contract.
+        printer = await db.get(Printer, item.printer_id)
+        check = await check_print_material(printer, archive, path, item.plate_id, None, item.use_ams)
+        record = await db.get(PrintMaterialConfirmation, item.id)
+        record.confirmation_key = check.confirmation_key
         await db.commit()
     await pipeline.scheduler.check_queue()
     async with pipeline.sessions() as db:

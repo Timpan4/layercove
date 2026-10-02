@@ -28,7 +28,9 @@ class PrintMaterialCheck:
 
 def source_path(source: PrintArchive | LibraryFile, base_dir: Path) -> Path:
     path = Path(source.file_path)
-    return path if path.is_absolute() else base_dir / path
+    return (
+        path if path.is_absolute() else base_dir / path
+    )  # SEC-PATH-OK: database-owned source path, selected by authorized archive/library ID; absolute paths support external libraries
 
 
 def _file_hash(path: Path) -> str:
