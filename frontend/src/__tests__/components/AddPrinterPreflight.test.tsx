@@ -52,7 +52,7 @@ describe('AddPrinterModal pre-flight', () => {
     await user.click(submit);
 
     // The failed check surfaces a warning with a "save anyway" escape hatch.
-    expect(await screen.findByText(/Some connection checks failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/This printer may show as offline\. Review the checks below/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /save anyway/i })).toBeInTheDocument();
     expect(screen.getByText(/LAN Developer Mode/i)).toBeInTheDocument();
   });

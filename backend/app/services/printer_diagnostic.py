@@ -133,6 +133,9 @@ async def _run_moonraker_diagnostic(printer: Printer) -> PrinterDiagnosticResult
         except ValueError:
             # Configuration cannot be used. Never fall back to Bambu probes.
             api_check = DiagnosticCheck(id="moonraker_api", status="warn")
+        except RuntimeError:
+            # Unreadable stored credentials must not escape or log a traceback.
+            api_check = DiagnosticCheck(id="moonraker_api", status="fail", params={"reason": "credential_error"})
 
     snapshot = printer_manager.get_snapshot(printer.id)
     state_status = "warn"

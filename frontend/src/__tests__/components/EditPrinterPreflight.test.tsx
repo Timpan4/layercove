@@ -80,7 +80,7 @@ describe('EditPrinterModal pre-flight', () => {
     await openEditModal();
     await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
 
-    expect(await screen.findByText(/Some connection checks failed/i)).toBeInTheDocument();
+    expect(await screen.findByText(/This printer may show as offline\. Review the checks below/i)).toBeInTheDocument();
     expect(screen.getByRole('button', { name: /save anyway/i })).toBeInTheDocument();
   });
 

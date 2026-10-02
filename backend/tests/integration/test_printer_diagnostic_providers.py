@@ -6,8 +6,10 @@ from unittest.mock import AsyncMock
 
 import httpx
 import pytest
+from cryptography.fernet import Fernet
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
+from backend.app.core import encryption
 from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.services import moonraker_http, printer_diagnostic
 from backend.app.services.diagnostic_snapshot import collect_diagnostic_snapshot
@@ -19,12 +21,13 @@ from backend.app.services.printer_types import NormalizedPrinterState, PrinterPr
 @pytest.mark.integration
 @pytest.mark.parametrize("entry_point", ["saved_printer", "support_snapshot"])
 @pytest.mark.parametrize(
-    ("api_status", "snapshot_state", "api_check", "state_check", "overall"),
+    ("api_status", "snapshot_state", "api_check", "state_check", "overall", "credential_readable"),
     [
-        (200, NormalizedPrinterState.COMPLETED, "pass", "pass", "ok"),
-        (503, NormalizedPrinterState.COMPLETED, "fail", "pass", "problems"),
-        (200, None, "pass", "warn", "warnings"),
-        (200, NormalizedPrinterState.UNKNOWN, "pass", "warn", "warnings"),
+        (200, NormalizedPrinterState.COMPLETED, "pass", "pass", "ok", True),
+        (503, NormalizedPrinterState.COMPLETED, "fail", "pass", "problems", True),
+        (200, None, "pass", "warn", "warnings", True),
+        (200, NormalizedPrinterState.UNKNOWN, "pass", "warn", "warnings", True),
+        (200, NormalizedPrinterState.COMPLETED, "fail", "pass", "problems", False),
     ],
 )
 async def test_moonraker_diagnostic_reports_api_and_klipper_evidence(
@@ -32,12 +35,14 @@ async def test_moonraker_diagnostic_reports_api_and_klipper_evidence(
     printer_factory,
     test_engine,
     monkeypatch,
+    caplog,
     entry_point,
     api_status,
     snapshot_state,
     api_check,
     state_check,
     overall,
+    credential_readable,
 ):
     config = MoonrakerPrinterConfig(base_url="http://fixture-printer.lan:7125")
     config.api_key = "fictional-diagnostic-secret"
@@ -47,6 +52,9 @@ async def test_moonraker_diagnostic_reports_api_and_klipper_evidence(
         model="Voron",
         moonraker_config=config,
     )
+    if not credential_readable:
+        # A restored database can hold credentials encrypted under another key.
+        monkeypatch.setattr(encryption, "_fernet_instance", Fernet(Fernet.generate_key()))
     manager = PrinterManager()
     if snapshot_state is not None:
         snapshot = PrinterSnapshot(
@@ -108,6 +116,15 @@ async def test_moonraker_diagnostic_reports_api_and_klipper_evidence(
     assert checks["klipper_state"]["status"] == state_check
     assert result["overall"] == overall
     assert "fictional-diagnostic-secret" not in str(result)
+    if not credential_readable:
+        assert checks["moonraker_api"]["params"] == {"reason": "credential_error"}
+        assert not requests
+        assert not any(
+            record.exc_info
+            for record in caplog.records
+            if record.name in {printer_diagnostic.__name__, "backend.app.services.diagnostic_snapshot"}
+        )
+        return
     assert requests
     assert all(request.method == "GET" and request.url.path == "/server/info" for request in requests)
     assert all(request.headers.get("X-Api-Key") == "fictional-diagnostic-secret" for request in requests)
