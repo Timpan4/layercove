@@ -1209,11 +1209,7 @@ $(function () {
 
                 //updateDimensions(bsize); 
 
-                //Move zoom camera to new bounds.
-                var dist = Math.max(Math.abs(bsize.x), Math.abs(bsize.y)) / 2;
-                dist = Math.max(20, dist);//min distance to model.
-                //console.log(dist)
-                cameraControls.dollyTo(dist * 2.0, true);
+                resetCamera();
             }
 
             function addObject(layer, extruding) {
@@ -1870,11 +1866,39 @@ $(function () {
             if (!cameraControls)//Make sure controls exist. 
                 return;
 
+            var toolpathBounds = new THREE.Box3();
+            if (gcodeProxy) {
+                var toolpath = gcodeProxy.getObject();
+                toolpath.updateMatrixWorld(true);
+                toolpath.traverse(function (object) {
+                    if (!object.geometry) return;
+                    // Fat lines store their endpoints in instance attributes, not position.
+                    object.geometry.computeBoundingBox();
+                    if (object.geometry.boundingBox) {
+                        toolpathBounds.union(object.geometry.boundingBox.clone().applyMatrix4(object.matrixWorld));
+                    }
+                });
+            }
+            if (!toolpathBounds.isEmpty()) {
+                resizeCanvasToDisplaySize();
+                var sphere = toolpathBounds.getBoundingSphere(new THREE.Sphere());
+                var halfFov = THREE.Math.degToRad(camera.getEffectiveFOV()) / 2;
+                var horizontalHalfFov = Math.atan(Math.tan(halfFov) * camera.aspect);
+                // A bounding sphere fits at any orbit angle, including this Z-up view.
+                var distance = sphere.radius / Math.sin(Math.min(halfFov, horizontalHalfFov));
+                if (Number.isFinite(distance) && distance > 0) {
+                    cameraControls.setTarget(sphere.center.x, sphere.center.y, sphere.center.z, false);
+                    cameraControls.dollyTo(distance, false);
+                    return;
+                }
+            }
+
             if (bedVolume.origin == "lowerleft")
                 cameraControls.setTarget(bedVolume.width / 2, bedVolume.depth / 2, 0, false);
             else
                 cameraControls.setTarget(0, 0, 0, false);
         }
+        self.resetCamera = resetCamera;
 
         function updateGridMesh() {
             //console.log("updateGridMesh");

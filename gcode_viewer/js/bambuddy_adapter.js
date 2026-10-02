@@ -528,6 +528,10 @@
                 if (isPlaying) { stopPlayback(); startPlayback(); }
             });
         }
+        var resetBtn = document.getElementById('bb-reset-view');
+        if (resetBtn) {
+            resetBtn.addEventListener('click', function () { viewModel.resetCamera(); });
+        }
     }
 
     // -------------------------------------------------------------------------
