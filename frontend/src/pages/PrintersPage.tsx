@@ -3737,6 +3737,38 @@ function PrinterCard({
             )}
 
             {/* Temperatures */}
+            {!isBambu && viewMode === 'expanded' && (
+              <div className="mt-2 flex items-stretch gap-1.5 flex-wrap">
+                {[
+                  {
+                    kind: 'nozzle', label: t('printers.temperatures.nozzle'),
+                    value: status.temperatures?.nozzle, color: 'text-orange-400',
+                    heating: status.temperatures?.nozzle_heating,
+                    writable: capabilities.extruder_temperature,
+                  },
+                  {
+                    kind: 'bed', label: t('printers.temperatures.bed'),
+                    value: status.temperatures?.bed, color: 'text-blue-400',
+                    heating: status.temperatures?.bed_heating,
+                    writable: capabilities.bed_temperature,
+                  },
+                  ...(status.temperatures?.chamber !== undefined ? [{
+                    kind: 'chamber', label: t('printers.temperatures.chamber'),
+                    value: status.temperatures.chamber, color: 'text-green-400',
+                    heating: status.temperatures.chamber_heating,
+                    writable: capabilities.chamber_temperature,
+                  }] : []),
+                ].filter((sensor) => !sensor.writable).map((sensor) => (
+                  <div key={sensor.kind} className="text-center px-2 py-1.5 bg-bambu-dark rounded-lg flex-1 flex flex-col justify-center items-center">
+                    <HeaterThermometer className="w-3.5 h-3.5 mb-0.5" color={sensor.color} isHeating={sensor.heating ?? false} />
+                    <p className="text-xs text-bambu-gray-light">{sensor.label}</p>
+                    <p className="text-sm text-white">
+                      {typeof sensor.value === 'number' && Number.isFinite(sensor.value) ? `${Math.round(sensor.value)}°C` : '--'}
+                    </p>
+                  </div>
+                ))}
+              </div>
+            )}
             {status.temperatures && viewMode === 'expanded' && (
               capabilities.extruder_temperature || capabilities.bed_temperature || capabilities.chamber_temperature
             ) && (() => {
