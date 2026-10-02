@@ -495,6 +495,7 @@ export function ProjectDetailPage() {
       <div className="flex items-start justify-between">
         <div className="flex items-center gap-4">
           <button
+            aria-label={t('projectDetail.backToProjects')}
             onClick={() => navigate('/projects')}
             className="p-2 rounded-lg bg-bambu-card hover:bg-bambu-dark-tertiary transition-colors"
           >
