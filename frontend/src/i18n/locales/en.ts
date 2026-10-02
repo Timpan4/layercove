@@ -1523,7 +1523,8 @@ export default {
     noPrintDataLast30Days: 'No print data in the last 30 days',
     failureReasons: 'Failure Reasons',
     topFailureReasons: 'Top Failure Reasons',
-    failedPrintsCount: '{{failed}} / {{total}} prints failed',
+    failedPrintsCount: 'Failed: {{failed}} / {{total}} completed or failed prints',
+    failureRateExclusions: 'Cancelled, stopped and skipped prints are excluded.',
     lastWeekRate: 'Last week: {{rate}}%',
     // Actions
     resetLayout: 'Reset Layout',

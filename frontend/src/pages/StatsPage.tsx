@@ -778,7 +778,7 @@ function FailureAnalysisWidget({ size = 1, dateFrom, dateTo, createdById }: {
   return (
     <div className={`${size >= 2 ? 'flex gap-8' : 'space-y-4'}`}>
       {/* Summary */}
-      <div className={size >= 2 ? 'flex-shrink-0' : ''}>
+      <div className={size >= 2 ? 'min-w-0 flex-1' : ''}>
         <div className="flex items-center gap-4">
           <div className="flex items-center gap-2">
             <AlertTriangle className={`w-5 h-5 ${analysis.failure_rate > 20 ? 'text-status-error' : analysis.failure_rate > 10 ? 'text-status-warning' : 'text-status-ok'}`} />
@@ -786,8 +786,11 @@ function FailureAnalysisWidget({ size = 1, dateFrom, dateTo, createdById }: {
           </div>
         </div>
         <div className="text-sm text-bambu-gray mt-1">
-          {t('stats.failedPrintsCount', { failed: analysis.failed_prints, total: analysis.total_prints })}
+          {t('stats.failedPrintsCount', { failed: analysis.failed_prints, total: analysis.outcome_prints })}
         </div>
+        <p className="text-xs text-bambu-gray mt-1">
+          {t('stats.failureRateExclusions')}
+        </p>
         {/* Trend indicator */}
         {analysis.trend && analysis.trend.length >= 2 && (
           <div className={`${size >= 2 ? 'mt-4' : 'mt-2 pt-2 border-t border-bambu-dark-tertiary'}`}>

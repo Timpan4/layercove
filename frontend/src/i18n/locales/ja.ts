@@ -1506,7 +1506,8 @@ export default {
     noPrintDataLast30Days: '過去30日間の印刷データがありません',
     failureReasons: '失敗理由',
     topFailureReasons: '主な失敗理由',
-    failedPrintsCount: '{{failed}} / {{total}} 件の印刷が失敗',
+    failedPrintsCount: '失敗: 完了または失敗した印刷 {{total}} 件中 {{failed}} 件',
+    failureRateExclusions: 'キャンセル、停止、スキップされた印刷は除外されます。',
     lastWeekRate: '先週: {{rate}}%',
     // Actions
     resetLayout: 'レイアウトをリセット',
