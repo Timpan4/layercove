@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useEffect } from 'react';
+import { useMemo, useRef, useState, useEffect, useLayoutEffect } from 'react';
 
 import { localDateKey } from '../utils/date';
 
@@ -10,6 +10,8 @@ interface PrintCalendarProps {
 export function PrintCalendar({ printDates, months = 3 }: PrintCalendarProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [containerWidth, setContainerWidth] = useState(0);
+  const monthLabelRefs = useRef<(HTMLDivElement | null)[]>([]);
+  const [monthLabelLayout, setMonthLabelLayout] = useState<{ tops: number[]; height: number }>({ tops: [], height: 0 });
 
   // Measure container width
   useEffect(() => {
@@ -101,19 +103,46 @@ export function PrintCalendar({ printDates, months = 3 }: PrintCalendarProps) {
   const cellSize = Math.max(8, Math.min(20, calculatedCellSize));
   const fontSize = cellSize <= 10 ? 10 : 12;
 
+  useLayoutEffect(() => {
+    if (!containerWidth) return;
+    const labels = monthLabels.flatMap((_, i) => monthLabelRefs.current[i] ? [monthLabelRefs.current[i]!] : []);
+    if (labels.length !== monthLabels.length || !labels.length) return;
+
+    const positionLabels = () => {
+      const boxes = labels.map((label) => label.getBoundingClientRect());
+      const rowHeight = Math.max(...boxes.map((box) => box.height));
+      const rowEnds: number[] = [];
+      const tops = monthLabels.map(({ weekIndex }, i) => {
+        const left = weekIndex * (cellSize + gap);
+        let row = rowEnds.findIndex((right) => left >= right + gap);
+        if (row === -1) row = rowEnds.length;
+        rowEnds[row] = left + boxes[i].width;
+        return row * (rowHeight + gap);
+      });
+      setMonthLabelLayout({ tops, height: rowEnds.length * (rowHeight + gap) - gap });
+    };
+
+    positionLabels();
+    const observer = new ResizeObserver(positionLabels);
+    labels.forEach((label) => observer.observe(label));
+    return () => observer.disconnect();
+  }, [containerWidth, monthLabels, cellSize, fontSize, gap]);
+
   return (
     <div ref={containerRef} className="w-full flex justify-center">
       {containerWidth > 0 && (
         <div>
           {/* Month labels */}
-          <div className="flex mb-1" style={{ marginLeft: dayLabelWidth + 4 }}>
+          <div className="relative mb-1" style={{ marginLeft: dayLabelWidth + 4 + gap, width: numWeeks * (cellSize + gap) - gap, height: monthLabelLayout.height }}>
             {monthLabels.map(({ month, weekIndex }, i) => (
               <div
                 key={i}
-                className="text-bambu-gray"
+                ref={(label) => { monthLabelRefs.current[i] = label; }}
+                className="absolute whitespace-nowrap text-bambu-gray"
                 style={{
                   fontSize,
-                  marginLeft: i === 0 ? 0 : `${(weekIndex - (monthLabels[i - 1]?.weekIndex || 0)) * (cellSize + gap) - 24}px`,
+                  left: weekIndex * (cellSize + gap),
+                  top: monthLabelLayout.tops[i] || 0,
                 }}
               >
                 {month}
