@@ -225,6 +225,23 @@ describe('QueuePage', () => {
       });
     });
 
+    it.each([
+      ['completed', 'Completed'],
+      ['failed', 'Failed'],
+      ['skipped', 'Skipped'],
+      ['cancelled', 'Cancelled'],
+    ])('shows the %s terminal outcome as text in History', async (status, label) => {
+      server.use(http.get('/api/v1/queue/', () => HttpResponse.json([
+        { ...mockQueueItems[2], status },
+      ])));
+      const user = userEvent.setup();
+      render(<QueuePage />);
+
+      await user.click(await screen.findByRole('button', { name: /^History/ }));
+      expect(await screen.findByText('Completed Print')).toBeInTheDocument();
+      expect(screen.getByText(label, { selector: ':not(option)' })).toBeVisible();
+    });
+
     it('shows status badges', async () => {
       render(<QueuePage />);
 
