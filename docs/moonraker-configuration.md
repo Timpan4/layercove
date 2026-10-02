@@ -98,8 +98,9 @@ job, and confirm it changes exactly once. Repeat with a cancelled job and verify
 the bounded progress-scaled estimate is recorded. In external-owner mode, LayerCove
 must not change the spool.
 
-External Spoolman instances remain supported. An optional bundled deployment is
-tracked in [issue #31](https://github.com/Timpan4/layercove/issues/31).
+External Spoolman instances remain supported. To run the optional bundled
+Spoolman service instead, see
+[UPDATING.md](../UPDATING.md#optional-bundled-spoolman).
 
 ## Network policy
 
@@ -113,5 +114,3 @@ tracked in [issue #31](https://github.com/Timpan4/layercove/issues/31).
   all peer connection attempts, response headers, and the response body.
 - Response bodies are limited to 64 KiB.
 - LayerCove exposes no generic Moonraker proxy or arbitrary G-code endpoint.
-
-External wiki and UI onboarding documentation remain deferred to issue #17.

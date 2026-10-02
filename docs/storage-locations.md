@@ -1,44 +1,41 @@
-# Storage Locations (#1004)
+# Storage locations
 
-Structured storage locations let you manage physical shelves, drawers, and dryboxes as a catalog instead of free-text only.
+Storage locations are a catalog of physical places where spools live, such as shelves, drawers, and dry boxes.
 
-## Architecture
-
-- **`locations` table** — catalog of named storage spots (`name` + case-insensitive `name_key`).
-- **`spool.location_id`** — source of truth for structured assignment.
-- **`spool.storage_location`** — denormalized display string and Spoolman wire format; always derived on write via `location_service.resolve_spool_location_fields()`.
-- **Frontend** — spool form sends only `location_id`; backend fills `storage_location`.
-
-## Location vs Storage Location vs AMS Location
+## Terms
 
 | UI label | Meaning |
-|----------|---------|
-| **Location** (inventory table column) | AMS slot or printer assignment (e.g. `H2D-1 B4`) |
-| **Storage Location** | Physical shelf/drawer where the spool lives when not in AMS |
-| **Locations page** | Catalog of named storage spots with spool counts |
+|---|---|
+| **Location** (inventory table column) | AMS slot or printer assignment, for example `H2D-1 B4` |
+| **Storage Location** | Shelf, drawer, or box where the spool is kept when it is not loaded |
+| **Storage Locations** dialog | The catalog, with a spool count per location |
 
-## Managing locations
+## Use
 
-1. Open **Inventory → Locations**
-2. Click **Add Location** and enter a name (e.g. `Regal Etage 2`)
-3. Assign spools via the spool edit form **Storage Location** dropdown
-4. Click a location row to filter inventory by that shelf
+1. On the Inventory page, click **Locations**.
+2. Click **Add Location** and enter a name, for example `Shelf A`.
+3. In the spool form, pick the location from the **Storage Location** dropdown.
+4. Click a location row in the dialog to filter the inventory by that location.
+
+![Storage Locations dialog](screenshots/storage-locations/locations-page.png)
+
+![Storage Location field in the spool form](screenshots/storage-locations/spool-form-storage-location.png)
+
+![Inventory filtered by storage location](screenshots/storage-locations/inventory-location-filter.png)
 
 ## Spoolman mode
 
-Bambuddy keeps a local location catalog. When Spoolman integration is enabled:
+LayerCove keeps its own location catalog. With Spoolman enabled:
 
-- Assigning a location writes the location **name** to Spoolman's `location` field
-- Listing locations syncs distinct names from Spoolman into the catalog
-- Renaming a location bulk-renames spools in Spoolman via `PATCH /location/{old}`
+- Assigning a location writes the location name to the Spoolman spool's `location` field.
+- Loading the Spoolman spool list, or changing the Spoolman settings, adds location names already used in Spoolman to the catalog.
+- Renaming a location renames it on every Spoolman spool through `PATCH /location/{name}`, falling back to updating spools one by one.
 
-## Upgrade migration
+## Data model
 
-Existing free-text `storage_location` values are automatically imported into the location catalog and linked on upgrade (case-insensitive dedup via `name_key`).
+- The `locations` table holds each location's `name` and a case-insensitive `name_key`.
+- `spool.location_id` is the source of truth for a spool's location.
+- `spool.storage_location` is a derived display string and the value sent to Spoolman. `location_service.resolve_spool_location_fields()` sets it on every write.
+- The frontend spool form sends only `location_id`.
 
-## Testing before release
-
-1. `./test_frontend.sh` — i18n parity, lint, Vitest
-2. `./test_backend.sh` — Ruff, pytest (includes `test_locations_api.py`, `test_location_service.py`)
-3. Manual: assign a spool to a location → open **Locations** → spool count updates without reload
-4. Companion PR in [bambuddy-wiki](https://github.com/maziggy/bambuddy-wiki) (user-facing guide)
+Tests: `backend/tests/integration/test_locations_api.py` and `backend/tests/unit/test_location_service.py`.
