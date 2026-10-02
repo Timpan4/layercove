@@ -1319,7 +1319,7 @@ export function StatsPage() {
             </div>
           )}
           {/* Timeframe Selector */}
-          <div className="relative">
+          <div className="relative w-full sm:w-auto">
             <Button
               variant="secondary"
               onClick={() => setShowTimeframePicker(!showTimeframePicker)}
@@ -1335,7 +1335,7 @@ export function StatsPage() {
                   className="fixed inset-0 z-10"
                   onClick={() => setShowTimeframePicker(false)}
                 />
-                <div className="absolute right-0 top-full mt-1 w-64 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl z-20 p-2">
+                <div className="absolute left-0 sm:left-auto sm:right-0 top-full mt-1 w-64 max-w-full sm:max-w-none bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl z-20 p-2">
                   {TIMEFRAME_PRESETS.map((preset) => (
                     <button
                       key={preset}
@@ -1369,8 +1369,9 @@ export function StatsPage() {
                   {timeframe.preset === 'custom' && (
                     <div className="mt-2 px-1 pb-1 space-y-2">
                       <div>
-                        <label className="text-xs text-bambu-gray block mb-1">{t('stats.timeframe.from')}</label>
+                        <label htmlFor="stats-date-from" className="text-xs text-bambu-gray block mb-1">{t('stats.timeframe.from')}</label>
                         <input
+                          id="stats-date-from"
                           type="date"
                           value={timeframe.dateFrom || ''}
                           max={timeframe.dateTo || new Date().toISOString().split('T')[0]}
@@ -1379,8 +1380,9 @@ export function StatsPage() {
                         />
                       </div>
                       <div>
-                        <label className="text-xs text-bambu-gray block mb-1">{t('stats.timeframe.to')}</label>
+                        <label htmlFor="stats-date-to" className="text-xs text-bambu-gray block mb-1">{t('stats.timeframe.to')}</label>
                         <input
+                          id="stats-date-to"
                           type="date"
                           value={timeframe.dateTo || ''}
                           min={timeframe.dateFrom}
