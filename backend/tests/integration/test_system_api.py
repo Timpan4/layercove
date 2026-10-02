@@ -3,10 +3,14 @@
 Tests the full request/response cycle for /api/v1/system/ endpoints.
 """
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
 from httpx import AsyncClient
+
+from backend.app.services.printer_manager import PrinterManager
+from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
 
 class TestSystemAPI:
@@ -15,6 +19,49 @@ class TestSystemAPI:
     # ========================================================================
     # System Info Endpoint
     # ========================================================================
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("providers", [("bambu", "moonraker"), ("moonraker",)])
+    async def test_system_info_includes_connected_printers_from_all_providers(
+        self, async_client: AsyncClient, printer_factory, monkeypatch, providers
+    ):
+        """The public overview counts mixed and Moonraker-only fleets, excluding offline printers."""
+        manager = PrinterManager()
+        expected = []
+        for provider in providers:
+            for connected in (True, False):
+                printer = await printer_factory(
+                    name=f"{provider} {'online' if connected else 'offline'}",
+                    provider=provider,
+                    model="P1S" if provider == "bambu" else "Voron",
+                )
+                if provider == "bambu":
+                    state = SimpleNamespace(connected=connected, state="IDLE")
+                    manager._clients[printer.id] = SimpleNamespace(
+                        state=state, check_staleness=lambda state=state: state.connected
+                    )
+                else:
+                    state = PrinterSnapshot(
+                        provider=PrinterProvider.MOONRAKER,
+                        connected=connected,
+                        state=NormalizedPrinterState.COMPLETED if connected else NormalizedPrinterState.OFFLINE,
+                    )
+                    manager._backends[printer.id] = SimpleNamespace(snapshot=lambda state=state: state)
+                if connected:
+                    expected.append(
+                        {"id": printer.id, "name": printer.name, "model": printer.model, "state": state.state}
+                    )
+        monkeypatch.setattr("backend.app.api.routes.system.printer_manager", manager)
+
+        response = await async_client.get("/api/v1/system/info")
+
+        assert response.status_code == 200
+        info = response.json()
+        assert info["database"]["printers"] == len(providers) * 2
+        assert info["printers"]["total"] == len(providers) * 2
+        assert info["printers"]["connected"] == len(expected)
+        assert sorted(info["printers"]["connected_list"], key=lambda printer: printer["id"]) == expected
 
     @pytest.mark.asyncio
     @pytest.mark.integration
