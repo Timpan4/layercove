@@ -20,6 +20,8 @@ from backend.app.services.printer_backend import (
     StatusChanged,
 )
 from backend.app.services.printer_types import (
+    AMSUnitSnapshot,
+    FilamentTraySnapshot,
     NormalizedPrinterState,
     NozzleSnapshot,
     PrinterCapabilities,
@@ -38,6 +40,90 @@ _BAMBU_STATES = {
     "FAILED": NormalizedPrinterState.ERROR,
     "STOPPED": NormalizedPrinterState.CANCELLED,
 }
+
+
+def _sensor_value(value: object) -> float | None:
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _ams_has_filament(ams_data: dict) -> bool:
+    bits = ams_data.get("tray_exist_bits")
+    if isinstance(bits, str) and bits.strip():
+        try:
+            return int(bits, 16) > 0
+        except ValueError:
+            pass
+    trays = ams_data.get("tray")
+    return isinstance(trays, list) and any(
+        isinstance(tray, dict) and isinstance(tray.get("tray_type"), str) and tray["tray_type"].strip()
+        for tray in trays
+    )
+
+
+def _filament_trays(raw: object, default_id: int = 0) -> tuple[FilamentTraySnapshot, ...]:
+    if isinstance(raw, dict):
+        raw = [raw]
+    if not isinstance(raw, list):
+        return ()
+    trays = []
+    for tray in raw:
+        if not isinstance(tray, dict):
+            continue
+        try:
+            tray_id = int(tray.get("id", default_id))
+        except (TypeError, ValueError):
+            continue
+        trays.append(
+            FilamentTraySnapshot(
+                tray_id=tray_id,
+                material_type=tray.get("tray_type") if isinstance(tray.get("tray_type"), str) else "",
+                color=tray.get("tray_color") if isinstance(tray.get("tray_color"), str) else "",
+                profile_id=tray.get("tray_info_idx") if isinstance(tray.get("tray_info_idx"), str) else "",
+                remaining_percent=_sensor_value(tray.get("remain")),
+            )
+        )
+    return tuple(trays)
+
+
+def _ams_units(state: PrinterState) -> tuple[AMSUnitSnapshot, ...]:
+    raw = state.raw_data.get("ams")
+    if isinstance(raw, dict):
+        raw = raw.get("ams")
+    if not isinstance(raw, list):
+        return ()
+    units = []
+    extruders = state.ams_extruder_map if isinstance(state.ams_extruder_map, dict) else {}
+    for unit in raw:
+        if not isinstance(unit, dict):
+            continue
+        try:
+            ams_id = int(unit.get("id", 0))
+        except (TypeError, ValueError):
+            continue
+        humidity_raw = _sensor_value(unit.get("humidity_raw"))
+        units.append(
+            AMSUnitSnapshot(
+                ams_id=ams_id,
+                trays=_filament_trays(unit.get("tray")),
+                extruder_id=extruders.get(str(ams_id)),
+                humidity=humidity_raw if humidity_raw is not None else _sensor_value(unit.get("humidity")),
+                humidity_raw=humidity_raw,
+                temperature=_sensor_value(unit.get("temp")),
+                has_filament=_ams_has_filament(unit),
+            )
+        )
+    return tuple(units)
+
+
+def _external_spools(state: PrinterState) -> tuple[FilamentTraySnapshot, ...]:
+    from dataclasses import replace
+
+    trays = _filament_trays(state.raw_data.get("vt_tray"), default_id=254)
+    return tuple(replace(tray, extruder_id=255 - tray.tray_id if state.ams_extruder_map else None) for tray in trays)
 
 
 def _nozzle_snapshots(state: PrinterState) -> tuple[NozzleSnapshot, ...]:
@@ -198,6 +284,10 @@ class BambuBackend:
             temperatures=dict(state.temperatures),
             nozzles=_nozzle_snapshots(state),
             telemetry_stale=stale if isinstance(stale, bool) else False,
+            ams_units=_ams_units(state),
+            external_spools=_external_spools(state),
+            ams_filament_backup=state.ams_filament_backup if isinstance(state.ams_filament_backup, bool) else None,
+            filament_track_switch_installed=state.fila_switch.installed is True,
         )
 
     async def start(self, job: StartJob) -> StartResult:

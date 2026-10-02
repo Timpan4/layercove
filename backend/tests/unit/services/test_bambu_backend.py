@@ -4,8 +4,49 @@ from unittest.mock import MagicMock
 import pytest
 
 from backend.app.services.bambu_backend import BambuBackend
+from backend.app.services.bambu_mqtt import PrinterState
+from backend.app.services.print_scheduler import PrintScheduler
 from backend.app.services.printer_backend import JobLifecycle, ProviderEvent, StatusChanged
 from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider
+
+
+def test_snapshot_preserves_dual_tool_ams_and_external_inventory():
+    state = PrinterState(connected=True, state="IDLE")
+    state.ams_extruder_map = {"0": 1, "128": 0}
+    state.raw_data = {
+        "ams": [
+            {
+                "id": "0",
+                "tray": [
+                    {"id": "0", "tray_type": "PLA", "tray_color": "FF0000FF", "tray_info_idx": "GFA00", "remain": 50},
+                    {"id": "3", "tray_type": "PETG", "tray_color": "00FF00FF", "remain": 70},
+                ],
+            },
+            {"id": "128", "tray": [{"id": "0", "tray_type": "PA", "tray_color": "000000FF", "remain": 30}]},
+        ],
+        "vt_tray": [
+            {"id": "254", "tray_type": "TPU", "tray_color": "FFFFFF", "remain": 20},
+            {"id": "255", "tray_type": "PLA", "tray_color": "0000FF", "remain": 90},
+        ],
+    }
+    client = MagicMock(state=state)
+    client.is_stale.return_value = False
+    backend = BambuBackend(
+        SimpleNamespace(ip_address="192.168.1.2", serial_number="SERIAL", access_code="code", model="H2D"),
+        client_factory=lambda **kwargs: client,
+        emit=lambda event: None,
+    )
+    loaded = PrintScheduler()._build_loaded_filaments(backend.snapshot())
+    assert [(f["global_tray_id"], f["extruder_id"], f["remain"], f["is_external"]) for f in loaded] == [
+        (0, 1, 50, False),
+        (3, 1, 70, False),
+        (128, 0, 30, False),
+        (254, 1, 20, True),
+        (255, 0, 90, True),
+    ]
+    assert loaded[0]["tray_info_idx"] == "GFA00"
+    assert loaded[0]["color"] == "#FF0000"
+    assert loaded[2]["is_ht"] is True
 
 
 @pytest.mark.asyncio

@@ -95,6 +95,27 @@ class NozzleSnapshot:
 
 
 @dataclass(frozen=True)
+class FilamentTraySnapshot:
+    tray_id: int
+    material_type: str = ""
+    color: str = ""
+    profile_id: str = ""
+    remaining_percent: float | None = None
+    extruder_id: int | None = None
+
+
+@dataclass(frozen=True)
+class AMSUnitSnapshot:
+    ams_id: int
+    trays: tuple[FilamentTraySnapshot, ...] = ()
+    extruder_id: int | None = None
+    humidity: float | None = None
+    humidity_raw: float | None = None
+    temperature: float | None = None
+    has_filament: bool = False
+
+
+@dataclass(frozen=True)
 class PrinterSnapshot:
     provider: PrinterProvider
     connected: bool
@@ -111,3 +132,7 @@ class PrinterSnapshot:
     telemetry_stale: bool = False
     provider_detail: dict[str, Any] = field(default_factory=dict, repr=False)
     developer_mode: bool | None = None
+    ams_units: tuple[AMSUnitSnapshot, ...] = ()
+    external_spools: tuple[FilamentTraySnapshot, ...] = ()
+    ams_filament_backup: bool | None = None
+    filament_track_switch_installed: bool = False

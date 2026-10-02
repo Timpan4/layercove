@@ -46,7 +46,12 @@ from backend.app.services.printer_manager import (
     supports_drying,
     supports_drying_while_printing,
 )
-from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider
+from backend.app.services.printer_types import (
+    NormalizedPrinterState,
+    PrinterProvider,
+    PrinterSnapshot,
+    capabilities_for_provider,
+)
 from backend.app.services.smart_plug_manager import smart_plug_manager
 from backend.app.utils.filename import derive_moonraker_upload_filename, derive_remote_filename
 from backend.app.utils.printer_models import normalize_printer_model
@@ -1016,7 +1021,7 @@ class PrintScheduler:
             return None
 
         # Get printer status
-        status = printer_manager.get_status(printer_id)
+        status = printer_manager.get_snapshot(printer_id)
         if not status:
             logger.warning("Cannot compute AMS mapping: printer %s status unavailable", printer_id)
             return None
@@ -1027,7 +1032,7 @@ class PrintScheduler:
         # an AMS on the *other* nozzle, and the matcher falls through to a
         # same-type wrong-colour spool on the target nozzle — the H2C + FTS
         # wrong-filament bug (#2186). Mirrors the frontend skip added for #1162.
-        fts_installed = bool(getattr(getattr(status, "fila_switch", None), "installed", False))
+        fts_installed = status.filament_track_switch_installed
 
         # Get filament requirements from source file
         filament_reqs = await self._get_filament_requirements(db, item)
@@ -1161,34 +1166,30 @@ class PrintScheduler:
         filaments = extract_filament_requirements(file_path, plate_id=item.plate_id)
         return filaments if filaments else None
 
-    def _build_loaded_filaments(self, status) -> list[dict]:
-        """Build list of loaded filaments from printer status.
+    def _build_loaded_filaments(self, status: PrinterSnapshot) -> list[dict]:
+        """Build loaded filaments from normalized provider telemetry.
 
         Args:
-            status: PrinterState from printer_manager
+            status: PrinterSnapshot from printer_manager
 
         Returns:
             List of loaded filament dicts with type, color, ams_id, tray_id, global_tray_id
         """
         filaments = []
-
-        # Get ams_extruder_map for dual-nozzle printers (H2D, H2D Pro)
-        ams_extruder_map = status.raw_data.get("ams_extruder_map", {})
-
-        # Parse AMS units from raw_data
-        ams_data = status.raw_data.get("ams", [])
-        for ams_unit in ams_data:
-            ams_id = int(ams_unit.get("id", 0))
-            trays = ams_unit.get("tray", [])
+        if not capabilities_for_provider(status.provider).ams:
+            return filaments
+        for ams_unit in status.ams_units:
+            ams_id = ams_unit.ams_id
+            trays = ams_unit.trays
             is_ht = len(trays) == 1  # AMS-HT has single tray
 
             for tray in trays:
-                tray_type = tray.get("tray_type")
+                tray_type = tray.material_type
                 if tray_type:
-                    tray_id = int(tray.get("id", 0))
-                    tray_color = tray.get("tray_color", "")
+                    tray_id = tray.tray_id
+                    tray_color = tray.color
                     # tray_info_idx identifies the specific spool (e.g., "GFA00", "P4d64437")
-                    tray_info_idx = tray.get("tray_info_idx", "")
+                    tray_info_idx = tray.profile_id
                     # Normalize color: remove alpha, add hash
                     color = self._normalize_color(tray_color)
                     # Calculate global tray ID
@@ -1205,28 +1206,28 @@ class PrintScheduler:
                             "is_ht": is_ht,
                             "is_external": False,
                             "global_tray_id": global_tray_id,
-                            "extruder_id": ams_extruder_map.get(str(ams_id)),
-                            "remain": tray.get("remain", -1),
+                            "extruder_id": ams_unit.extruder_id,
+                            "remain": tray.remaining_percent if tray.remaining_percent is not None else -1,
                         }
                     )
 
         # Check external spool(s) (vt_tray is a list)
-        for idx, vt in enumerate(status.raw_data.get("vt_tray") or []):
-            if vt.get("tray_type"):
-                color = self._normalize_color(vt.get("tray_color", ""))
-                tray_id = int(vt.get("id", 254))
+        for idx, vt in enumerate(status.external_spools):
+            if vt.material_type:
+                color = self._normalize_color(vt.color)
+                tray_id = vt.tray_id
                 filaments.append(
                     {
-                        "type": vt["tray_type"],
+                        "type": vt.material_type,
                         "color": color,
-                        "tray_info_idx": vt.get("tray_info_idx", ""),
+                        "tray_info_idx": vt.profile_id,
                         "ams_id": -1,
                         "tray_id": idx,
                         "is_ht": False,
                         "is_external": True,
                         "global_tray_id": tray_id,
-                        "extruder_id": (255 - tray_id) if ams_extruder_map else None,
-                        "remain": vt.get("remain", -1),
+                        "extruder_id": vt.extruder_id,
+                        "remain": vt.remaining_percent if vt.remaining_percent is not None else -1,
                     }
                 )
 

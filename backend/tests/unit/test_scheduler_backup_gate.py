@@ -14,6 +14,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from backend.app.services.print_scheduler import PrintScheduler
+from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
 
 
 @pytest.fixture
@@ -22,11 +23,13 @@ def scheduler():
 
 
 def _patch_status(backup):
-    """Patch ``printer_manager.get_status`` to return a stub PrinterState whose
+    """Patch ``printer_manager.get_snapshot`` to return a snapshot whose
     ``ams_filament_backup`` is the requested tri-state value."""
     return patch(
-        "backend.app.services.print_scheduler.printer_manager.get_status",
-        return_value=SimpleNamespace(ams_filament_backup=backup, raw_data={}),
+        "backend.app.services.print_scheduler.printer_manager.get_snapshot",
+        return_value=PrinterSnapshot(
+            PrinterProvider.BAMBU, True, NormalizedPrinterState.IDLE, ams_filament_backup=backup
+        ),
     )
 
 
