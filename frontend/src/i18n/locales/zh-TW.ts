@@ -1330,6 +1330,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: '開啟{{archives}}，選擇檔案的{{print}}，然後選擇{{queue}}。',
+      noMatches: '沒有符合目前篩選條件的列印',
       title: '沒有排程的列印',
       description: '從歸檔頁面使用右鍵選單中的"排程"選項來排程列印，或拖放檔案開始。',
     },
