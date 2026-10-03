@@ -1473,7 +1473,7 @@ export function SettingsPage() {
               <div className={`space-y-3 p-4 rounded-lg border ${resolvedMode === 'dark' ? 'border-bambu-green bg-bambu-green/5' : 'border-bambu-dark-tertiary'}`}>
                 <h3 id="settings-dark-mode-heading" className="text-sm font-medium text-white flex items-center gap-2">
                   {t('settings.darkMode')}
-                  {resolvedMode === 'dark' && <span className="text-xs text-bambu-green">{t('settings.active')}</span>}
+                  {resolvedMode === 'dark' && <span aria-hidden="true" className="text-xs text-bambu-green">{t('settings.active')}</span>}
                 </h3>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
@@ -1531,7 +1531,7 @@ export function SettingsPage() {
               <div className={`space-y-3 p-4 rounded-lg border ${resolvedMode === 'light' ? 'border-bambu-green bg-bambu-green/5' : 'border-bambu-dark-tertiary'}`}>
                 <h3 id="settings-light-mode-heading" className="text-sm font-medium text-white flex items-center gap-2">
                   {t('settings.lightMode')}
-                  {resolvedMode === 'light' && <span className="text-xs text-bambu-green">{t('settings.active')}</span>}
+                  {resolvedMode === 'light' && <span aria-hidden="true" className="text-xs text-bambu-green">{t('settings.active')}</span>}
                 </h3>
                 <div className="grid grid-cols-3 gap-3">
                   <div>

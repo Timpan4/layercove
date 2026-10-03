@@ -81,8 +81,12 @@ for (const width of [1440, 390]) {
     const writes = await openFixture(page, width);
     await expectVisibleControlsHaveVisibleLabels(page.locator('main'));
     await expect(page.getByRole('textbox', { name: 'Search settings', exact: true })).toHaveAttribute('placeholder', 'Search settings…');
-    await expect(page.getByRole('combobox', { name: /Dark mode.*Background/i })).toHaveCount(1);
-    await expect(page.getByRole('combobox', { name: /Light mode.*Background/i })).toHaveCount(1);
+    for (const [mode, group] of [['Dark', 'Dark Mode'], ['Light', 'Light Mode']] as const) {
+      await page.getByRole('button', { name: mode, exact: true }).click();
+      for (const field of ['Background', 'Accent', 'Style']) {
+        await expect(page.getByRole('combobox', { name: `${group} ${field}`, exact: true })).toHaveCount(1);
+      }
+    }
     expect(writes).toEqual([]);
   });
 
@@ -129,13 +133,13 @@ for (const width of [1440, 390]) {
         await expect(form.getByRole('textbox', { name: 'Multiplier', exact: true })).toHaveCount(0);
       }
 
-      const powerAlerts = form.getByRole('checkbox').nth(0);
+      const powerAlerts = form.getByRole('checkbox', { name: 'Power Alerts', exact: true });
       if (!(await powerAlerts.isChecked())) {
         await form.getByText('Power Alerts', { exact: true }).click();
       }
       await expect(powerAlerts).toBeChecked();
       if (provider !== 'MQTT') {
-        const schedule = form.getByRole('checkbox').nth(1);
+        const schedule = form.getByRole('checkbox', { name: 'Daily Schedule', exact: true });
         if (!(await schedule.isChecked())) {
           await form.getByText('Daily Schedule', { exact: true }).click();
         }
