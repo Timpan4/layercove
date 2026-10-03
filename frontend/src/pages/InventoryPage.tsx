@@ -2064,7 +2064,7 @@ function InventoryPage() {
                   ? `${totalDisplayItems} ${totalDisplayItems !== 1 ? t('inventory.spools') : t('inventory.spool')}`
                   : <>{t('inventory.showing')} {safePageIndex * effectivePageSize + 1} {t('inventory.to')}{' '}
                     {Math.min((safePageIndex + 1) * effectivePageSize, totalDisplayItems)}{' '}
-                    {t('inventory.of')} {totalDisplayItems} {t('inventory.spools')}</>
+                    {t('inventory.of')} {totalDisplayItems} {totalDisplayItems !== 1 ? t('inventory.spools') : t('inventory.spool')}</>
                 }
               </span>
 
@@ -2292,7 +2292,7 @@ function PaginationBar({
           ? `${totalRows} ${totalRows !== 1 ? t('inventory.spools') : t('inventory.spool')}`
           : <>{t('inventory.showing')} {pageIndex * effectiveSize + 1} {t('inventory.to')}{' '}
               {Math.min((pageIndex + 1) * effectiveSize, totalRows)}{' '}
-              {t('inventory.of')} {totalRows} {t('inventory.spools')}</>
+              {t('inventory.of')} {totalRows} {totalRows !== 1 ? t('inventory.spools') : t('inventory.spool')}</>
         }
       </span>
       <div className="flex items-center gap-2">
