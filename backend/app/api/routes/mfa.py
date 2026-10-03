@@ -423,18 +423,18 @@ async def record_email_otp_send(db: AsyncSession, username: str) -> None:
 def _assert_totp_not_replayed(totp_obj: pyotp.TOTP, totp_record: UserTOTP, code: str) -> None:
     """Raise HTTP 400 if this TOTP code was already accepted in its time window.
 
-    M3 fix: store the counter of the *accepted* code rather than the current
-    wall-clock counter.  With valid_window=1, pyotp accepts codes from the
-    previous 30-second step.  Using timecode(now) would store the wrong counter
-    when the previous-window code is accepted, allowing immediate replay.
+    Store the counter of the accepted code rather than the current wall-clock
+    counter. With valid_window=1, pyotp accepts codes from the previous and
+    next 30-second steps as well as the current step.
     """
     # Determine which time-step the accepted code belongs to.
     now = datetime.now(timezone.utc)
     accepted_counter: int | None = None
-    for offset in (0, -1):  # current window first, then previous
+    for offset in (-1, 0, 1):  # Match PyOTP's valid_window=1 verification order.
         candidate_time = now.timestamp() + offset * totp_obj.interval
-        candidate_counter = totp_obj.timecode(datetime.fromtimestamp(candidate_time, tz=timezone.utc))
-        if totp_obj.at(candidate_counter) == code:
+        candidate_datetime = datetime.fromtimestamp(candidate_time, tz=timezone.utc)
+        candidate_counter = totp_obj.timecode(candidate_datetime)
+        if totp_obj.at(candidate_time) == code:
             accepted_counter = candidate_counter
             break
     if accepted_counter is None:

@@ -1302,12 +1302,50 @@ async def _setup_totp_user(client: AsyncClient, username: str, password: str) ->
 class TestTOTPReplay:
     """The same TOTP code must not be accepted twice within one 30-second window."""
 
+    @pytest.fixture
+    def fixed_totp_time(self, monkeypatch: pytest.MonkeyPatch) -> list[int]:
+        """Pin PyOTP verification and replay accounting without freezing JWT time."""
+        from backend.app.api.routes import mfa
+
+        timestamp = [1_800_000_000]
+        original_verify = pyotp.TOTP.verify
+
+        def verify_at_fixed_time(
+            totp: pyotp.TOTP,
+            code: str,
+            for_time: datetime | None = None,
+            valid_window: int = 0,
+        ) -> bool:
+            return original_verify(totp, code, for_time=timestamp[0], valid_window=valid_window)
+
+        class FixedDateTime(datetime):
+            @classmethod
+            def now(cls, tz: timezone | None = None) -> datetime:
+                value = datetime.fromtimestamp(timestamp[0], tz=timezone.utc)
+                return value.astimezone(tz) if tz else value.replace(tzinfo=None)
+
+        monkeypatch.setattr(pyotp.TOTP, "verify", verify_at_fixed_time)
+        monkeypatch.setattr(mfa, "datetime", FixedDateTime)
+        return timestamp
+
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_totp_replay_rejected_on_verify(self, async_client: AsyncClient):
+    @pytest.mark.parametrize("step_offset", [-1, 0, 1])
+    async def test_totp_replay_rejected_on_verify(
+        self, async_client: AsyncClient, fixed_totp_time: list[int], step_offset: int
+    ):
         """Replaying the same code on /2fa/verify must return 400."""
-        _token, secret = await _setup_totp_user(async_client, "replayverify", "replayverify1")
-        code = pyotp.TOTP(secret).now()
+        _token = await _setup_and_login(async_client, "replayverify", "replayverify1")
+        setup = await async_client.post("/api/v1/auth/2fa/totp/setup", headers=_auth_header(_token))
+        secret = setup.json()["secret"]
+        totp = pyotp.TOTP(secret)
+        code = totp.at(fixed_totp_time[0] + step_offset * totp.interval)
+        enable = await async_client.post(
+            "/api/v1/auth/2fa/totp/enable",
+            json={"code": code},
+            headers=_auth_header(_token),
+        )
+        assert enable.status_code == 200
 
         pre_auth = await _login_get_pre_auth_token(async_client, "replayverify", "replayverify1")
         first = await async_client.post(
@@ -1326,10 +1364,18 @@ class TestTOTPReplay:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_totp_replay_rejected_on_disable(self, async_client: AsyncClient):
+    async def test_totp_replay_rejected_on_disable(self, async_client: AsyncClient, fixed_totp_time: list[int]):
         """A code already used in verify_2fa must be rejected on /2fa/totp/disable."""
-        _setup_token, secret = await _setup_totp_user(async_client, "replaydisable", "replaydisable1")
-        code = pyotp.TOTP(secret).now()
+        _setup_token = await _setup_and_login(async_client, "replaydisable", "replaydisable1")
+        setup = await async_client.post("/api/v1/auth/2fa/totp/setup", headers=_auth_header(_setup_token))
+        secret = setup.json()["secret"]
+        code = pyotp.TOTP(secret).at(fixed_totp_time[0])
+        enable = await async_client.post(
+            "/api/v1/auth/2fa/totp/enable",
+            json={"code": code},
+            headers=_auth_header(_setup_token),
+        )
+        assert enable.status_code == 200
 
         # Use the code in verify_2fa — this sets last_totp_counter in DB
         pre_auth = await _login_get_pre_auth_token(async_client, "replaydisable", "replaydisable1")
@@ -1339,6 +1385,10 @@ class TestTOTPReplay:
         )
         assert verify_resp.status_code == 200
         authed_token = verify_resp.json()["access_token"]
+
+        # Cross into the next TOTP step while the previously accepted code is
+        # still valid as the previous-window code.
+        fixed_totp_time[0] += pyotp.TOTP(secret).interval
 
         # Replay the same code on disable — must be rejected (same 30-second window)
         disable_resp = await async_client.post(
