@@ -5539,12 +5539,12 @@ export function SettingsPage() {
                             </div>
                             <div className="flex items-center gap-1 ml-4">
                               {hasPermission('users:update') && (
-                                <Button size="sm" variant="ghost" onClick={() => startEditUser(userItem)}>
+                                <Button size="sm" variant="ghost" aria-label={t('common.edit') + ' ' + userItem.username} onClick={() => startEditUser(userItem)}>
                                   <Edit2 className="w-4 h-4" />
                                 </Button>
                               )}
                               {hasPermission('users:delete') && userItem.id !== user?.id && (
-                                <Button size="sm" variant="ghost" onClick={() => handleDeleteUserClick(userItem.id)}>
+                                <Button size="sm" variant="ghost" aria-label={t('common.delete') + ' ' + userItem.username} onClick={() => handleDeleteUserClick(userItem.id)}>
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
                               )}
@@ -5610,12 +5610,12 @@ export function SettingsPage() {
                               </div>
                               <div className="flex items-center gap-1">
                                 {hasPermission('groups:update') && (
-                                  <Button size="sm" variant="ghost" onClick={() => navigate(`/groups/${group.id}/edit`)}>
+                                  <Button size="sm" variant="ghost" aria-label={t('common.edit') + ' ' + group.name} onClick={() => navigate(`/groups/${group.id}/edit`)}>
                                     <Edit2 className="w-4 h-4" />
                                   </Button>
                                 )}
                                 {hasPermission('groups:delete') && !group.is_system && (
-                                  <Button size="sm" variant="ghost" onClick={() => setDeleteGroupId(group.id)}>
+                                  <Button size="sm" variant="ghost" aria-label={t('common.delete') + ' ' + group.name} onClick={() => setDeleteGroupId(group.id)}>
                                     <Trash2 className="w-4 h-4" />
                                   </Button>
                                 )}
@@ -5816,8 +5816,9 @@ export function SettingsPage() {
               <>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">{t('settings.username')}</label>
+                  <label htmlFor="settings-create-user-username" className="block text-sm font-medium text-white mb-2">{t('settings.username')}</label>
                   <input
+                    id="settings-create-user-username"
                     type="text"
                     value={userFormData.username}
                     onChange={(e) => setUserFormData({ ...userFormData, username: e.target.value })}
@@ -5827,8 +5828,9 @@ export function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">{t('settings.password')}</label>
+                  <label htmlFor="settings-create-user-password" className="block text-sm font-medium text-white mb-2">{t('settings.password')}</label>
                   <input
+                    id="settings-create-user-password"
                     type="password"
                     value={userFormData.password}
                     onChange={(e) => setUserFormData({ ...userFormData, password: e.target.value })}
@@ -5840,8 +5842,9 @@ export function SettingsPage() {
                   <p className="text-bambu-gray text-xs mt-1">{t('settings.passwordRequirements')}</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
+                  <label htmlFor="settings-create-user-confirm-password" className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
                   <input
+                    id="settings-create-user-confirm-password"
                     type="password"
                     value={userFormData.confirmPassword}
                     onChange={(e) => setUserFormData({ ...userFormData, confirmPassword: e.target.value })}
@@ -5977,10 +5980,11 @@ export function SettingsPage() {
               <div className="space-y-3">
                 {/* Username Field */}
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">
+                  <label htmlFor="settings-edit-user-username" className="block text-sm font-medium text-white mb-2">
                     {t('settings.username')} {advancedAuthStatus?.advanced_auth_enabled && <span className="text-red-700 dark:text-red-400">*</span>}
                   </label>
                   <input
+                    id="settings-edit-user-username"
                     type="text"
                     value={userFormData.username}
                     onChange={(e) => setUserFormData({ ...userFormData, username: e.target.value })}
@@ -5992,10 +5996,11 @@ export function SettingsPage() {
 
                 {/* Email Field */}
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">
+                  <label htmlFor="settings-edit-user-email" className="block text-sm font-medium text-white mb-2">
                     {t('users.form.email') || 'Email'} {advancedAuthStatus?.advanced_auth_enabled ? <span className="text-red-700 dark:text-red-400">*</span> : <span className="text-bambu-gray font-normal">({t('users.form.optional') || 'optional'})</span>}
                   </label>
                   <input
+                    id="settings-edit-user-email"
                     type="email"
                     value={userFormData.email}
                     onChange={(e) => setUserFormData({ ...userFormData, email: e.target.value })}
@@ -6009,10 +6014,11 @@ export function SettingsPage() {
                 {!advancedAuthStatus?.advanced_auth_enabled && (
                   <>
                     <div>
-                      <label className="block text-sm font-medium text-white mb-2">
+                      <label htmlFor="settings-edit-user-password" className="block text-sm font-medium text-white mb-2">
                         {t('users.form.password') || 'Password'} <span className="text-bambu-gray font-normal">({t('users.form.leaveBlankToKeep') || 'leave blank to keep current'})</span>
                       </label>
                       <input
+                        id="settings-edit-user-password"
                         type="password"
                         value={userFormData.password}
                         onChange={(e) => setUserFormData({ ...userFormData, password: e.target.value, confirmPassword: '' })}
@@ -6025,8 +6031,9 @@ export function SettingsPage() {
                     </div>
                     {userFormData.password && (
                       <div>
-                        <label className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
+                        <label htmlFor="settings-edit-user-confirm-password" className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
                         <input
+                          id="settings-edit-user-confirm-password"
                           type="password"
                           value={userFormData.confirmPassword}
                           onChange={(e) => setUserFormData({ ...userFormData, confirmPassword: e.target.value })}
