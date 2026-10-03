@@ -255,10 +255,11 @@ export function EmailSettings() {
             <div className="space-y-3">
               {/* Authentication - at the top */}
               <div>
-                <label className="block text-sm font-medium text-white mb-1">
+                <label htmlFor="smtp-auth-enabled" className="block text-sm font-medium text-white mb-1">
                   {t('settings.email.authentication') || 'Authentication'}
                 </label>
                 <select
+                  id="smtp-auth-enabled"
                   value={smtpSettings.smtp_auth_enabled ? 'true' : 'false'}
                   onChange={(e) => handleAuthChange(e.target.value === 'true')}
                   className={inputClasses}
@@ -271,10 +272,11 @@ export function EmailSettings() {
               {/* Username / Password - dimmed when auth disabled */}
               <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 transition-opacity ${!smtpSettings.smtp_auth_enabled ? 'opacity-40 pointer-events-none' : ''}`}>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-1">
+                  <label htmlFor="smtp-username" className="block text-sm font-medium text-white mb-1">
                     {t('settings.email.username') || 'Username'}
                   </label>
                   <input
+                    id="smtp-username"
                     type="text"
                     value={smtpSettings.smtp_username || ''}
                     onChange={(e) => setSMTPSettings({ ...smtpSettings, smtp_username: e.target.value })}
@@ -284,10 +286,11 @@ export function EmailSettings() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-1">
+                  <label htmlFor="smtp-password" className="block text-sm font-medium text-white mb-1">
                     {t('settings.email.password') || 'Password'}
                   </label>
                   <input
+                    id="smtp-password"
                     type="password"
                     value={smtpSettings.smtp_password || ''}
                     onChange={(e) => setSMTPSettings({ ...smtpSettings, smtp_password: e.target.value })}
@@ -301,10 +304,11 @@ export function EmailSettings() {
               {/* SMTP Server / Port */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-white mb-1">
+                  <label htmlFor="smtp-host" className="block text-sm font-medium text-white mb-1">
                     {t('settings.email.smtpHost') || 'SMTP Server'} *
                   </label>
                   <input
+                    id="smtp-host"
                     type="text"
                     value={smtpSettings.smtp_host}
                     onChange={(e) => setSMTPSettings({ ...smtpSettings, smtp_host: e.target.value })}
@@ -313,10 +317,11 @@ export function EmailSettings() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-1">
+                  <label htmlFor="smtp-port" className="block text-sm font-medium text-white mb-1">
                     {t('settings.email.smtpPort') || 'SMTP Port'}
                   </label>
                   <input
+                    id="smtp-port"
                     type="number"
                     value={smtpSettings.smtp_port}
                     onChange={(e) => handlePortChange(parseInt(e.target.value) || 587)}
@@ -328,10 +333,11 @@ export function EmailSettings() {
 
               {/* Security */}
               <div>
-                <label className="block text-sm font-medium text-white mb-1">
+                <label htmlFor="smtp-security" className="block text-sm font-medium text-white mb-1">
                   {t('settings.email.security') || 'Security'}
                 </label>
                 <select
+                  id="smtp-security"
                   value={smtpSettings.smtp_security}
                   onChange={(e) => handleSecurityChange(e.target.value as 'starttls' | 'ssl' | 'none')}
                   className={inputClasses}
@@ -345,10 +351,11 @@ export function EmailSettings() {
               {/* From Email / Name */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-sm font-medium text-white mb-1">
+                  <label htmlFor="smtp-from-email" className="block text-sm font-medium text-white mb-1">
                     {t('settings.email.fromEmail') || 'From Email'} *
                   </label>
                   <input
+                    id="smtp-from-email"
                     type="email"
                     value={smtpSettings.smtp_from_email}
                     onChange={(e) => setSMTPSettings({ ...smtpSettings, smtp_from_email: e.target.value })}
@@ -357,10 +364,11 @@ export function EmailSettings() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-1">
+                  <label htmlFor="smtp-from-name" className="block text-sm font-medium text-white mb-1">
                     {t('settings.email.fromName') || 'From Name'}
                   </label>
                   <input
+                    id="smtp-from-name"
                     type="text"
                     value={smtpSettings.smtp_from_name}
                     onChange={(e) => setSMTPSettings({ ...smtpSettings, smtp_from_name: e.target.value })}
@@ -402,10 +410,11 @@ export function EmailSettings() {
           <CardContent>
             <div className="space-y-3">
               <div>
-                <label className="block text-sm font-medium text-white mb-1">
+                <label htmlFor="smtp-test-recipient" className="block text-sm font-medium text-white mb-1">
                   {t('settings.email.testRecipient') || 'Test Recipient Email'}
                 </label>
                 <input
+                  id="smtp-test-recipient"
                   type="email"
                   value={testEmail}
                   onChange={(e) => setTestEmail(e.target.value)}
