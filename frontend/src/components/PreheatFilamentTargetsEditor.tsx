@@ -38,11 +38,16 @@ export function PreheatFilamentTargetsEditor({ value, onChange, disabled = false
           : key;
         return (
           <div key={key} className="flex items-center justify-between gap-2">
-            <span className={`text-xs ${key === 'default' ? 'text-bambu-gray italic' : 'text-bambu-gray'}`}>
+            <label
+              htmlFor={`preheat-target-${key}`}
+              className={`text-xs ${key === 'default' ? 'text-bambu-gray italic' : 'text-bambu-gray'}`}
+            >
               {label}
-            </span>
+              <span className="sr-only"> °C</span>
+            </label>
             <div className="flex items-center gap-1">
               <input
+                id={`preheat-target-${key}`}
                 type="number"
                 min={0}
                 max={60}
@@ -52,7 +57,7 @@ export function PreheatFilamentTargetsEditor({ value, onChange, disabled = false
                 disabled={disabled}
                 className="w-16 px-2 py-1 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-xs text-right focus:outline-none focus:border-bambu-green disabled:opacity-50"
               />
-              <span className="text-xs text-bambu-gray">°C</span>
+              <span aria-hidden="true" className="text-xs text-bambu-gray">°C</span>
             </div>
           </div>
         );
