@@ -65,8 +65,9 @@ export function VirtualPrinterAddDialog({ onClose }: VirtualPrinterAddDialogProp
 
           {/* Name */}
           <div>
-            <label className="text-sm text-white font-medium block mb-1">{t('virtualPrinter.addDialog.name')}</label>
+            <label htmlFor="virtual-printer-name" className="text-sm text-white font-medium block mb-1">{t('virtualPrinter.addDialog.name')}</label>
             <input
+              id="virtual-printer-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
