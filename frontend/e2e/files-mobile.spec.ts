@@ -25,6 +25,117 @@ test.beforeEach(async ({ page }) => {
   await expect(page.getByRole('button', { name: 'Actions: cube-8.stl', exact: true })).toBeVisible();
 });
 
+for (const width of [390, 1280]) {
+  test(`populated list rows stay readable and their actions remain reachable at ${width}px`, async ({ page }) => {
+    const files = [
+      {
+        id: 901, filename: 'Voron_Design_Cube_v8_PLA_25m0s.gcode', file_type: 'gcode', file_size: 1024,
+        folder_id: null, thumbnail_path: null, print_name: null, print_count: 0, duplicate_count: 0,
+        created_at: '2026-10-01T00:00:00Z', tags: [],
+      },
+      {
+        id: 902, filename: 'Voron_Design_Cube_v8.stl', file_type: 'stl', file_size: 2048,
+        folder_id: null, thumbnail_path: null, print_name: null, print_count: 0, duplicate_count: 0,
+        created_at: '2026-10-01T00:00:00Z', tags: [],
+      },
+    ];
+    const blockedWrites: string[] = [];
+    await page.setViewportSize({ width, height: 844 });
+    await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
+      const request = route.request();
+      const path = new URL(request.url()).pathname.replace(/\/$/, '');
+      if (request.method() !== 'GET') {
+        blockedWrites.push(`${request.method()} ${path}`);
+        return route.fulfill({ status: 405, json: { detail: 'Read-only File Manager fixture' } });
+      }
+      if (path.endsWith('/library/files')) return route.fulfill({ json: files });
+      if (path.endsWith('/library/stats')) return route.fulfill({ json: { total_files: files.length, total_folders: 0, total_size_bytes: 3072 } });
+      if (path.endsWith('/settings')) return route.fulfill({ json: { check_updates: false, use_slicer_api: true } });
+      if (path.endsWith('/slicer/capabilities')) return route.fulfill({ json: { capabilities: { process_schema: true } } });
+      return route.fallback();
+    });
+    await page.reload();
+    await page.getByRole('button', { name: 'List view', exact: true }).click();
+
+    const gcodeRow = page.locator('[class~="grid"][class~="cursor-pointer"]')
+      .filter({ has: page.getByText(files[0].filename, { exact: true }) });
+    const modelRow = page.locator('[class~="grid"][class~="cursor-pointer"]')
+      .filter({ has: page.getByText(files[1].filename, { exact: true }) });
+    const actions = [
+      [gcodeRow, ['Print', '3D Preview', 'Download', 'Rename', 'Delete']],
+      [modelRow, ['Quick slice', 'Edit in workbench', 'Run with pipeline', '3D Preview', 'Download', 'Rename', 'Delete']],
+    ] as const;
+    const rows = [[files[0].filename, gcodeRow], [files[1].filename, modelRow]] as const;
+    const pageMetrics = await page.evaluate(() => ({
+      viewport: document.documentElement.clientWidth,
+      page: document.documentElement.scrollWidth,
+      main: document.querySelector('main')?.scrollWidth,
+      mainClient: document.querySelector('main')?.clientWidth,
+    }));
+    const rowMetrics = await Promise.all(rows.map(async ([filename, row]) => ({
+      filename,
+      row: await row.evaluate((element) => ({
+        width: element.getBoundingClientRect().width,
+        grid: getComputedStyle(element).gridTemplateColumns,
+      })),
+      scroller: await row.locator('xpath=..').evaluate((element) => ({
+        width: element.getBoundingClientRect().width,
+        clientWidth: (element as HTMLElement).clientWidth,
+        scrollWidth: (element as HTMLElement).scrollWidth,
+      })),
+    })));
+    const initialRows = await Promise.all(rows.map(async ([filename, row]) => ({
+      filename,
+      nameWidth: await row.getByText(filename, { exact: true }).evaluate((element) => element.getBoundingClientRect().width),
+      actions: await Promise.all(actions.find(([candidate]) => candidate === row)![1].map(async (title) => ({
+        title,
+        x: await row.getByTitle(title, { exact: true }).evaluate((element) => element.getBoundingClientRect().x),
+      }))),
+    })));
+    console.log(`[file-list-layout] ${JSON.stringify({ ...pageMetrics, rowMetrics, initialRows })}`);
+    if (width === 1280) {
+      const scroller = gcodeRow.locator('xpath=..');
+      const header = scroller.locator(':scope > div').first();
+      const columns = async (grid: typeof header) => grid.evaluate((element) =>
+        Array.from(element.children).slice(2, 7).map((child) => child.getBoundingClientRect().left));
+      const desktopColumns = {
+        header: await columns(header),
+        gcode: await columns(gcodeRow),
+        model: await columns(modelRow),
+      };
+      console.log(`[file-list-columns] ${JSON.stringify(desktopColumns)}`);
+      for (const row of [desktopColumns.gcode, desktopColumns.model]) {
+        for (const [index, x] of row.entries()) expect(Math.abs(x - desktopColumns.header[index]!)).toBeLessThan(1);
+      }
+    }
+    expect.soft(pageMetrics.page).toBe(width);
+    expect.soft(pageMetrics.main).toBe(pageMetrics.mainClient);
+    for (const [filename, row] of rows) {
+      const name = row.getByText(filename, { exact: true });
+      const box = await name.boundingBox();
+      expect(box, `${filename} has a rendered box`).not.toBeNull();
+      expect.soft(box!.width, `${filename} must not collapse to zero width`).toBeGreaterThan(0);
+      await expect(name).toBeVisible();
+    }
+
+    const scroller = gcodeRow.locator('xpath=..');
+    await scroller.hover();
+    await page.mouse.wheel(1200, 0);
+    await expect.poll(() => scroller.evaluate((element) => (element as HTMLElement).scrollLeft)).toBeGreaterThan(0);
+    for (const [row, titles] of actions) {
+      for (const title of titles) {
+        const action = row.getByTitle(title, { exact: true });
+        await expect(action, `${title} remains available on its file row`).toBeVisible();
+        const box = await action.boundingBox();
+        expect(box, `${title} has a rendered box`).not.toBeNull();
+        expect(box!.x).toBeGreaterThanOrEqual(0);
+        expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+      }
+    }
+    expect(blockedWrites.filter((request) => /\/(?:print|slice|pipeline|delete)(?:\/|$)/.test(request))).toEqual([]);
+  });
+}
+
 test('Upload stays inside the mobile viewport', async ({ page }) => {
   const upload = page.getByRole('button', { name: 'Upload', exact: true });
   const box = await upload.boundingBox();
