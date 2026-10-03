@@ -10,7 +10,13 @@
  * Returns null when no wiki page applies (e.g. "Clean Carbon Rods" on an H2D),
  * which the caller renders as a task with no clickable help link.
  */
-export function getMaintenanceWikiUrl(typeName: string, printerModel: string | null): string | null {
+export function getMaintenanceWikiUrl(
+  typeName: string,
+  printerModel: string | null,
+  printerProvider: string | null | undefined,
+): string | null {
+  if (printerProvider !== 'bambu') return null;
+
   const model = (printerModel || '').toUpperCase().replace(/[- ]/g, '');
 
   const isX1 = model.includes('X1');
@@ -27,6 +33,7 @@ export function getMaintenanceWikiUrl(typeName: string, printerModel: string | n
   // so its maintenance routes use the P2S wiki pages until dedicated
   // X2D pages are published by Bambu Lab.
   const isSteelRod = isP2S || isX2D;
+  if (!(isX1 || isP1 || isA1Mini || isA1 || isH2 || isSteelRod)) return null;
 
   switch (typeName) {
     case 'Lubricate Steel Rods':
@@ -48,7 +55,7 @@ export function getMaintenanceWikiUrl(typeName: string, printerModel: string | n
       if (isA1Mini || isA1) return 'https://wiki.bambulab.com/en/a1-mini/troubleshooting/nozzle-clog';
       if (isH2) return 'https://wiki.bambulab.com/en/h2/maintenance/nozzl-cold-pull-maintenance-and-cleaning';
       if (isSteelRod) return 'https://wiki.bambulab.com/en/p2s/maintenance/cold-pull-maintenance-hotend';
-      return 'https://wiki.bambulab.com/en/x1/troubleshooting/nozzle-clog';
+      return null;
 
     case 'Check Belt Tension':
       if (isX1) return 'https://wiki.bambulab.com/en/x1/maintenance/belt-tension';
@@ -59,7 +66,7 @@ export function getMaintenanceWikiUrl(typeName: string, printerModel: string | n
       if (isH2C) return 'https://wiki.bambulab.com/en/h2c/maintenance/belt-tension';
       if (isH2S) return 'https://wiki.bambulab.com/en/h2s/maintenance/belt-tension';
       if (isSteelRod) return 'https://wiki.bambulab.com/en/p2s/maintenance/belt-tension';
-      return 'https://wiki.bambulab.com/en/x1/maintenance/belt-tension';
+      return null;
 
     case 'Clean Carbon Rods':
       if (isX1 || isP1) return 'https://wiki.bambulab.com/en/general/carbon-rods-clearance';
@@ -81,7 +88,7 @@ export function getMaintenanceWikiUrl(typeName: string, printerModel: string | n
       if (isH2S) return 'https://wiki.bambulab.com/en/h2s/maintenance/replace-ptfe-tube-on-h2s-printer';
       if (isH2C) return 'https://wiki.bambulab.com/en/h2/maintenance/replace-ptfe-tube-on-h2d-printer'; // H2C uses H2D guide
       if (isSteelRod) return 'https://wiki.bambulab.com/en/x1/maintenance/replace-ptfe-tube'; // P2S/X2D use similar PTFE
-      return 'https://wiki.bambulab.com/en/x1/maintenance/replace-ptfe-tube';
+      return null;
 
     case 'Replace HEPA Filter':
     case 'HEPA Filter':

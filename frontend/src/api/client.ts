@@ -3457,6 +3457,7 @@ export interface MaintenanceStatus {
   printer_id: number;
   printer_name: string;
   printer_model: string | null;
+  printer_provider: string;
   maintenance_type_id: number;
   maintenance_type_name: string;
   maintenance_type_icon: string | null;
@@ -3478,6 +3479,7 @@ export interface PrinterMaintenanceOverview {
   printer_id: number;
   printer_name: string;
   printer_model: string | null;
+  printer_provider: string;
   total_print_hours: number;
   maintenance_items: MaintenanceStatus[];
   due_count: number;
