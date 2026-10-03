@@ -4548,7 +4548,7 @@ export function SettingsPage() {
               </p>
               <div className="flex items-center justify-between">
                 <div>
-                  <label className="block text-sm text-white">
+                  <label htmlFor="queue-drying-enabled" className="block text-sm text-white">
                     {t('settings.queueDryingEnabled')}
                   </label>
                   <p className="text-xs text-bambu-gray mt-0.5">
@@ -4558,6 +4558,7 @@ export function SettingsPage() {
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
                     type="checkbox"
+                    id="queue-drying-enabled"
                     checked={localSettings.queue_drying_enabled ?? false}
                     onChange={(e) => updateSetting('queue_drying_enabled', e.target.checked)}
                     className="sr-only peer"
@@ -4568,7 +4569,7 @@ export function SettingsPage() {
               {localSettings.queue_drying_enabled && (
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="block text-sm text-white">
+                    <label htmlFor="queue-drying-block" className="block text-sm text-white">
                       {t('settings.queueDryingBlock')}
                     </label>
                     <p className="text-xs text-bambu-gray mt-0.5">
@@ -4578,6 +4579,7 @@ export function SettingsPage() {
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
+                      id="queue-drying-block"
                       checked={localSettings.queue_drying_block ?? false}
                       onChange={(e) => updateSetting('queue_drying_block', e.target.checked)}
                       className="sr-only peer"
@@ -4588,7 +4590,7 @@ export function SettingsPage() {
               )}
               <div className="flex items-center justify-between">
                 <div>
-                  <label className="block text-sm text-white">
+                  <label htmlFor="ambient-drying-enabled" className="block text-sm text-white">
                     {t('settings.ambientDryingEnabled')}
                   </label>
                   <p className="text-xs text-bambu-gray mt-0.5">
@@ -4598,6 +4600,7 @@ export function SettingsPage() {
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
                     type="checkbox"
+                    id="ambient-drying-enabled"
                     checked={localSettings.ambient_drying_enabled ?? false}
                     onChange={(e) => updateSetting('ambient_drying_enabled', e.target.checked)}
                     className="sr-only peer"
@@ -4607,7 +4610,7 @@ export function SettingsPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <label className="block text-sm text-white">
+                  <label htmlFor="print-drying-enabled" className="block text-sm text-white">
                     {t('settings.printDryingEnabled')}
                   </label>
                   <p className="text-xs text-bambu-gray mt-0.5">
@@ -4617,6 +4620,7 @@ export function SettingsPage() {
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
                     type="checkbox"
+                    id="print-drying-enabled"
                     checked={localSettings.print_drying_enabled ?? false}
                     onChange={(e) => updateSetting('print_drying_enabled', e.target.checked)}
                     className="sr-only peer"
@@ -4632,9 +4636,16 @@ export function SettingsPage() {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-bambu-gray border-b border-bambu-dark-tertiary">
-                        <th className="text-left py-1.5">{t('settings.dryingFilament')}</th>
-                        <th className="text-center py-1.5" colSpan={2}>AMS 2 Pro</th>
-                        <th className="text-center py-1.5" colSpan={2}>AMS-HT</th>
+                        <th className="text-left py-1.5" scope="col">{t('settings.dryingFilament')}</th>
+                        <th id="drying-ams-2-pro" className="text-center py-1.5" colSpan={2} scope="colgroup">AMS 2 Pro</th>
+                        <th id="drying-ams-ht" className="text-center py-1.5" colSpan={2} scope="colgroup">AMS-HT</th>
+                      </tr>
+                      <tr className="sr-only">
+                        <th scope="col">{t('settings.dryingFilament')}</th>
+                        <th id="drying-pro-temperature" scope="col">{t('printers.drying.temperature')} (°C)</th>
+                        <th id="drying-pro-duration" scope="col">{t('printers.drying.duration')} (h)</th>
+                        <th id="drying-ht-temperature" scope="col">{t('printers.drying.temperature')} (°C)</th>
+                        <th id="drying-ht-duration" scope="col">{t('printers.drying.duration')} (h)</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4664,12 +4675,14 @@ export function SettingsPage() {
                           updateSetting('drying_presets', JSON.stringify(updated));
                         };
 
-                        return Object.entries(presets).map(([fil, preset]) => (
+                        return Object.entries(presets).map(([fil, preset]) => {
+                          const filamentHeaderId = `drying-filament-${encodeURIComponent(fil)}`;
+                          return (
                           <tr key={fil} className="border-b border-bambu-dark-tertiary/50">
-                            <td className="py-1.5 pr-2 text-white font-medium">{fil}</td>
+                            <th id={filamentHeaderId} scope="row" className="py-1.5 pr-2 text-left text-white font-medium">{fil}</th>
                             <td className="py-1 px-1">
                               <div className="flex items-center justify-end gap-1">
-                                <input type="number" min={30} max={65} value={preset.n3f}
+                                <input type="number" min={30} max={65} value={preset.n3f} aria-labelledby={`${filamentHeaderId} drying-ams-2-pro drying-pro-temperature`}
                                   onChange={e => updatePreset(fil, 'n3f', Math.max(1, parseInt(e.target.value) || 0))}
                                   className="w-14 px-1.5 py-1 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-center text-xs focus:border-amber-500/50 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 />
@@ -4678,7 +4691,7 @@ export function SettingsPage() {
                             </td>
                             <td className="py-1 px-1">
                               <div className="flex items-center gap-1">
-                                <input type="number" min={1} max={24} value={preset.n3f_hours}
+                                <input type="number" min={1} max={24} value={preset.n3f_hours} aria-labelledby={`${filamentHeaderId} drying-ams-2-pro drying-pro-duration`}
                                   onChange={e => updatePreset(fil, 'n3f_hours', Math.max(1, parseInt(e.target.value) || 0))}
                                   className="w-14 px-1.5 py-1 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-center text-xs focus:border-amber-500/50 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 />
@@ -4687,7 +4700,7 @@ export function SettingsPage() {
                             </td>
                             <td className="py-1 px-1">
                               <div className="flex items-center justify-end gap-1">
-                                <input type="number" min={30} max={85} value={preset.n3s}
+                                <input type="number" min={30} max={85} value={preset.n3s} aria-labelledby={`${filamentHeaderId} drying-ams-ht drying-ht-temperature`}
                                   onChange={e => updatePreset(fil, 'n3s', Math.max(1, parseInt(e.target.value) || 0))}
                                   className="w-14 px-1.5 py-1 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-center text-xs focus:border-amber-500/50 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 />
@@ -4696,7 +4709,7 @@ export function SettingsPage() {
                             </td>
                             <td className="py-1 px-1">
                               <div className="flex items-center gap-1">
-                                <input type="number" min={1} max={24} value={preset.n3s_hours}
+                                <input type="number" min={1} max={24} value={preset.n3s_hours} aria-labelledby={`${filamentHeaderId} drying-ams-ht drying-ht-duration`}
                                   onChange={e => updatePreset(fil, 'n3s_hours', Math.max(1, parseInt(e.target.value) || 0))}
                                   className="w-14 px-1.5 py-1 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-center text-xs focus:border-amber-500/50 focus:outline-none [appearance:textfield] [&::-webkit-outer-spin-button]:appearance-none [&::-webkit-inner-spin-button]:appearance-none"
                                 />
@@ -4704,7 +4717,8 @@ export function SettingsPage() {
                               </div>
                             </td>
                           </tr>
-                        ));
+                          );
+                        });
                       })()}
                     </tbody>
                   </table>
@@ -4718,8 +4732,8 @@ export function SettingsPage() {
                   <table className="w-full text-xs">
                     <thead>
                       <tr className="text-bambu-gray border-b border-bambu-dark-tertiary">
-                        <th className="text-left py-1.5">{t('settings.dryingFilament')}</th>
-                        <th className="text-right py-1.5 pr-2">{t('settings.humidityThresholdCol')}</th>
+                        <th className="text-left py-1.5" scope="col">{t('settings.dryingFilament')}</th>
+                        <th id="humidity-threshold-column" className="text-right py-1.5 pr-2" scope="col">{t('settings.humidityThresholdCol')}</th>
                       </tr>
                     </thead>
                     <tbody>
@@ -4777,7 +4791,7 @@ export function SettingsPage() {
                           const displayValue = draft !== undefined ? draft : String(row.value);
                           return (
                             <tr key={row.key} className="border-b border-bambu-dark-tertiary/50">
-                              <td className={`py-1.5 pr-2 font-medium ${row.isDefault ? 'text-bambu-gray italic' : 'text-white'}`}>{row.label}</td>
+                              <th id={`humidity-filament-${row.key}`} scope="row" className={`py-1.5 pr-2 text-left font-medium ${row.isDefault ? 'text-bambu-gray italic' : 'text-white'}`}>{row.label}</th>
                               <td className="py-1 pr-2">
                                 <div className="flex items-center justify-end gap-1">
                                   <input
@@ -4785,6 +4799,7 @@ export function SettingsPage() {
                                     min={5}
                                     max={95}
                                     value={displayValue}
+                                    aria-labelledby={`humidity-filament-${row.key} humidity-threshold-column`}
                                     onChange={(e) => setHumidityDrafts((prev) => ({ ...prev, [row.key]: e.target.value }))}
                                     onBlur={(e) => {
                                       commitThreshold(row.key, e.target.value);
