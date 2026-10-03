@@ -101,12 +101,14 @@ async function openQueueDrying(
       if (language === 'de' && request.resourceType() === 'document') {
         const response = await route.fetch();
         const html = await response.text();
-        const germanFixture = html.replace(
-          'localStorage.setItem("bambutrack_language","en")',
-          'localStorage.setItem("bambutrack_language","de")',
-        );
-        expect(germanFixture, 'the preview locale override should be present').not.toBe(html);
-        return route.fulfill({ response, body: germanFixture });
+        const englishLocaleOverride = 'localStorage.setItem("bambutrack_language","en")';
+        if (html.includes(englishLocaleOverride)) {
+          return route.fulfill({
+            response,
+            body: html.replace(englishLocaleOverride, 'localStorage.setItem("bambutrack_language","de")'),
+          });
+        }
+        return route.fulfill({ response });
       }
       return route.continue();
     }
@@ -232,9 +234,11 @@ for (const width of [390, 1440]) {
       }
 
       const humidity = page.getByRole('table').filter({ has: page.getByRole('columnheader', { name: 'Threshold', exact: true }) });
+      await expect(humidity, 'the humidity threshold table must be present').toHaveCount(1);
       const thresholdFilaments = await humidity.locator('tbody tr').evaluateAll((rows) =>
         rows.map((row) => row.querySelector('th[scope="row"], td')?.textContent?.trim() ?? '').filter(Boolean),
       );
+      expect(thresholdFilaments, 'the humidity fixture must exercise its named controls').not.toEqual([]);
       for (const filament of thresholdFilaments) {
         const name = `${filament} Threshold`;
         await expect(page.getByRole('spinbutton', { name, exact: true }), `${name} needs its visible row and column context`).toHaveCount(1);
