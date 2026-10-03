@@ -4056,11 +4056,11 @@ export function SettingsPage() {
                 } as const;
                 const rowLabel = t(`settings.${labelKeyMap[category.key]}`, fallbackLabels[category.key]);
                 return (
-                  <div key={category.key}>
+                  <div key={category.key} role="group" aria-label={rowLabel}>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-sm text-white">
+                      <span className="text-sm text-white">
                         {rowLabel} <span className="text-bambu-gray text-xs">({unitLabel} · {category.lo}–{category.hi})</span>
-                      </label>
+                      </span>
                       <button
                         type="button"
                         onClick={() => updateSetting(category.key, '')}
@@ -4072,21 +4072,23 @@ export function SettingsPage() {
                     </div>
                     <div className="flex gap-2">
                       {[0, 1, 2].map(idx => (
-                        <input
-                          key={idx}
-                          type="number"
-                          min={category.lo}
-                          max={category.hi}
-                          value={triple[idx]}
-                          onChange={(e) => {
-                            const next: [number, number, number] = [triple[0], triple[1], triple[2]];
-                            const parsedValue = parseInt(e.target.value, 10);
-                            const clamped = Math.max(category.lo, Math.min(category.hi, Number.isFinite(parsedValue) ? parsedValue : category.lo));
-                            next[idx] = clamped;
-                            updateSetting(category.key, JSON.stringify(next));
-                          }}
-                          className="flex-1 px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
-                        />
+                        <label key={idx} className="flex-1 min-w-0">
+                          <span className="sr-only">{rowLabel} {idx + 1}</span>
+                          <input
+                            type="number"
+                            min={category.lo}
+                            max={category.hi}
+                            value={triple[idx]}
+                            onChange={(e) => {
+                              const next: [number, number, number] = [triple[0], triple[1], triple[2]];
+                              const parsedValue = parseInt(e.target.value, 10);
+                              const clamped = Math.max(category.lo, Math.min(category.hi, Number.isFinite(parsedValue) ? parsedValue : category.lo));
+                              next[idx] = clamped;
+                              updateSetting(category.key, JSON.stringify(next));
+                            }}
+                            className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
+                          />
+                        </label>
                       ))}
                     </div>
                   </div>
@@ -4109,10 +4111,11 @@ export function SettingsPage() {
               </p>
               <div className="flex gap-4">
                 <div className="flex-1">
-                  <label className="block text-xs text-bambu-gray mb-1">
+                  <label htmlFor="workflow-stagger-group-size" className="block text-xs text-bambu-gray mb-1">
                     {t('settings.staggerGroupSize', 'Group size')}
                   </label>
                   <input
+                    id="workflow-stagger-group-size"
                     type="number"
                     min={1}
                     max={50}
@@ -4125,10 +4128,11 @@ export function SettingsPage() {
                   </p>
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs text-bambu-gray mb-1">
+                  <label htmlFor="workflow-stagger-interval" className="block text-xs text-bambu-gray mb-1">
                     {t('settings.staggerInterval', 'Interval (minutes)')}
                   </label>
                   <input
+                    id="workflow-stagger-interval"
                     type="number"
                     min={1}
                     max={60}
