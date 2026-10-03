@@ -16,7 +16,7 @@ class ArchiveComparisonService:
         ("nozzle_temperature", "Nozzle Temperature", "°C"),
         ("filament_type", "Filament Type", None),
         ("filament_used_grams", "Filament Used", "g"),
-        ("print_time_seconds", "Print Time", "s"),
+        ("print_time_seconds", "Print Time", None),
         ("total_layers", "Total Layers", None),
         ("status", "Status", None),
     ]
@@ -76,6 +76,8 @@ class ArchiveComparisonService:
             for v in values:
                 if v is None:
                     formatted_values.append(None)
+                elif field_name == "print_time_seconds" and 0 < v < 60:
+                    formatted_values.append(f"{int(v)}s")
                 elif field_name == "print_time_seconds":
                     # Format as human-readable time
                     hours = int(v) // 3600

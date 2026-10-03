@@ -351,6 +351,7 @@ export function formatETA(
  */
 export function formatDuration(seconds: number | null | undefined): string {
   if (seconds == null || seconds < 0) return '--';
+  if (seconds > 0 && seconds < 60) return `${Math.floor(seconds)}s`;
 
   const hours = Math.floor(seconds / 3600);
   const minutes = Math.floor((seconds % 3600) / 60);

@@ -342,6 +342,10 @@ describe('formatETA', () => {
 });
 
 describe('formatDuration', () => {
+  it('preserves positive subminute durations in seconds', () => {
+    expect(formatDuration(45)).toBe('45s');
+  });
+
   it('returns "--" for null/undefined', () => {
     expect(formatDuration(null)).toBe('--');
     expect(formatDuration(undefined)).toBe('--');
