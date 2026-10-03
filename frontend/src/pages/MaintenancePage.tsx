@@ -224,7 +224,7 @@ function MaintenanceCard({
             {/* Wiki link - next to name */}
             {(() => {
               // Use custom wiki_url from type if available, otherwise use computed URL
-              const wikiUrl = item.maintenance_type_wiki_url || getMaintenanceWikiUrl(item.maintenance_type_name, item.printer_model);
+              const wikiUrl = item.maintenance_type_wiki_url || getMaintenanceWikiUrl(item.maintenance_type_name, item.printer_model, item.printer_provider);
               return wikiUrl ? (
                 <a
                   href={wikiUrl}

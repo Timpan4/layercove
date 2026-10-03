@@ -108,18 +108,16 @@ _ROD_TYPE_REQUIREMENTS: dict[str, str] = {
 }
 
 
-def _should_apply_to_printer(type_name: str, printer_model: str | None) -> bool:
-    """Check if a system maintenance type should apply to a given printer model."""
+def _should_apply_to_printer(type_name: str, printer_model: str | None, printer_provider: str) -> bool:
+    """Apply hardware-specific defaults only to known Bambu printer hardware."""
     rod_requirement = _ROD_TYPE_REQUIREMENTS.get(type_name)
     if rod_requirement is None:
         return True  # Not model-specific, applies to all
 
-    rod_type = get_rod_type(printer_model)
-    if rod_type is None:
-        # Unknown model — default to carbon rods (legacy behavior)
-        return rod_requirement == "carbon"
+    if printer_provider != "bambu":
+        return False
 
-    return rod_type == rod_requirement
+    return get_rod_type(printer_model) == rod_requirement
 
 
 async def get_printer_total_hours(db: AsyncSession, printer_id: int) -> float:
@@ -320,7 +318,7 @@ async def _get_printer_maintenance_internal(
     for maint_type in all_types:
         # Skip system types that don't apply to this printer model
         # (e.g., "Clean Carbon Rods" for H2D which has steel rods)
-        if maint_type.is_system and not _should_apply_to_printer(maint_type.name, printer.model):
+        if maint_type.is_system and not _should_apply_to_printer(maint_type.name, printer.model, printer.provider):
             continue
 
         item = existing_items.get(maint_type.id)
@@ -404,6 +402,7 @@ async def _get_printer_maintenance_internal(
                 printer_id=printer_id,
                 printer_name=printer.name,
                 printer_model=printer.model,
+                printer_provider=printer.provider,
                 maintenance_type_id=maint_type.id,
                 maintenance_type_name=maint_type.name,
                 maintenance_type_icon=maint_type.icon,
@@ -429,6 +428,7 @@ async def _get_printer_maintenance_internal(
         printer_id=printer_id,
         printer_name=printer.name,
         printer_model=printer.model,
+        printer_provider=printer.provider,
         total_print_hours=total_hours,
         maintenance_items=maintenance_items,
         due_count=due_count,
@@ -636,6 +636,7 @@ async def perform_maintenance(
         printer_id=item.printer_id,
         printer_name=printer.name,
         printer_model=printer.model,
+        printer_provider=printer.provider,
         maintenance_type_id=item.maintenance_type_id,
         maintenance_type_name=item.maintenance_type.name,
         maintenance_type_icon=item.maintenance_type.icon,
