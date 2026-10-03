@@ -4056,11 +4056,11 @@ export function SettingsPage() {
                 } as const;
                 const rowLabel = t(`settings.${labelKeyMap[category.key]}`, fallbackLabels[category.key]);
                 return (
-                  <div key={category.key}>
+                  <div key={category.key} role="group" aria-label={rowLabel}>
                     <div className="flex items-center justify-between mb-1">
-                      <label className="text-sm text-white">
+                      <span className="text-sm text-white">
                         {rowLabel} <span className="text-bambu-gray text-xs">({unitLabel} · {category.lo}–{category.hi})</span>
-                      </label>
+                      </span>
                       <button
                         type="button"
                         onClick={() => updateSetting(category.key, '')}
@@ -4072,21 +4072,23 @@ export function SettingsPage() {
                     </div>
                     <div className="flex gap-2">
                       {[0, 1, 2].map(idx => (
-                        <input
-                          key={idx}
-                          type="number"
-                          min={category.lo}
-                          max={category.hi}
-                          value={triple[idx]}
-                          onChange={(e) => {
-                            const next: [number, number, number] = [triple[0], triple[1], triple[2]];
-                            const parsedValue = parseInt(e.target.value, 10);
-                            const clamped = Math.max(category.lo, Math.min(category.hi, Number.isFinite(parsedValue) ? parsedValue : category.lo));
-                            next[idx] = clamped;
-                            updateSetting(category.key, JSON.stringify(next));
-                          }}
-                          className="flex-1 px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
-                        />
+                        <label key={idx} className="flex-1 min-w-0">
+                          <span className="sr-only">{rowLabel} {idx + 1}</span>
+                          <input
+                            type="number"
+                            min={category.lo}
+                            max={category.hi}
+                            value={triple[idx]}
+                            onChange={(e) => {
+                              const next: [number, number, number] = [triple[0], triple[1], triple[2]];
+                              const parsedValue = parseInt(e.target.value, 10);
+                              const clamped = Math.max(category.lo, Math.min(category.hi, Number.isFinite(parsedValue) ? parsedValue : category.lo));
+                              next[idx] = clamped;
+                              updateSetting(category.key, JSON.stringify(next));
+                            }}
+                            className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
+                          />
+                        </label>
                       ))}
                     </div>
                   </div>
@@ -4109,10 +4111,11 @@ export function SettingsPage() {
               </p>
               <div className="flex gap-4">
                 <div className="flex-1">
-                  <label className="block text-xs text-bambu-gray mb-1">
+                  <label htmlFor="workflow-stagger-group-size" className="block text-xs text-bambu-gray mb-1">
                     {t('settings.staggerGroupSize', 'Group size')}
                   </label>
                   <input
+                    id="workflow-stagger-group-size"
                     type="number"
                     min={1}
                     max={50}
@@ -4125,10 +4128,11 @@ export function SettingsPage() {
                   </p>
                 </div>
                 <div className="flex-1">
-                  <label className="block text-xs text-bambu-gray mb-1">
+                  <label htmlFor="workflow-stagger-interval" className="block text-xs text-bambu-gray mb-1">
                     {t('settings.staggerInterval', 'Interval (minutes)')}
                   </label>
                   <input
+                    id="workflow-stagger-interval"
                     type="number"
                     min={1}
                     max={60}
@@ -4158,15 +4162,16 @@ export function SettingsPage() {
               </p>
               <div className="flex items-center justify-between">
                 <div className="flex-1 mr-4">
-                  <p className="text-sm text-white">
+                  <label htmlFor="preheat-enabled" className="text-sm text-white">
                     {t('settings.preheatEnabled', 'Enable preheat & soak')}
-                  </p>
+                  </label>
                   <p className="text-xs text-bambu-gray mt-0.5">
                     {t('settings.preheatEnabledDesc', 'When off, queued prints dispatch immediately.')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="preheat-enabled"
                     type="checkbox"
                     checked={localSettings.preheat_enabled ?? false}
                     onChange={(e) => updateSetting('preheat_enabled', e.target.checked)}
@@ -4177,10 +4182,11 @@ export function SettingsPage() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 <div>
-                  <label className="block text-xs text-bambu-gray mb-1">
+                  <label htmlFor="preheat-max-wait-seconds" className="block text-xs text-bambu-gray mb-1">
                     {t('settings.preheatMaxWait', 'Max wait (seconds)')}
                   </label>
                   <input
+                    id="preheat-max-wait-seconds"
                     type="number"
                     min={60}
                     max={3600}
@@ -4194,10 +4200,11 @@ export function SettingsPage() {
                   </p>
                 </div>
                 <div>
-                  <label className="block text-xs text-bambu-gray mb-1">
+                  <label htmlFor="preheat-soak-seconds" className="block text-xs text-bambu-gray mb-1">
                     {t('settings.preheatSoak', 'Soak (seconds)')}
                   </label>
                   <input
+                    id="preheat-soak-seconds"
                     type="number"
                     min={0}
                     max={1800}
@@ -5555,12 +5562,12 @@ export function SettingsPage() {
                             </div>
                             <div className="flex items-center gap-1 ml-4">
                               {hasPermission('users:update') && (
-                                <Button size="sm" variant="ghost" onClick={() => startEditUser(userItem)}>
+                                <Button size="sm" variant="ghost" aria-label={t('common.edit') + ' ' + userItem.username} onClick={() => startEditUser(userItem)}>
                                   <Edit2 className="w-4 h-4" />
                                 </Button>
                               )}
                               {hasPermission('users:delete') && userItem.id !== user?.id && (
-                                <Button size="sm" variant="ghost" onClick={() => handleDeleteUserClick(userItem.id)}>
+                                <Button size="sm" variant="ghost" aria-label={t('common.delete') + ' ' + userItem.username} onClick={() => handleDeleteUserClick(userItem.id)}>
                                   <Trash2 className="w-4 h-4" />
                                 </Button>
                               )}
@@ -5626,12 +5633,12 @@ export function SettingsPage() {
                               </div>
                               <div className="flex items-center gap-1">
                                 {hasPermission('groups:update') && (
-                                  <Button size="sm" variant="ghost" onClick={() => navigate(`/groups/${group.id}/edit`)}>
+                                  <Button size="sm" variant="ghost" aria-label={t('common.edit') + ' ' + group.name} onClick={() => navigate(`/groups/${group.id}/edit`)}>
                                     <Edit2 className="w-4 h-4" />
                                   </Button>
                                 )}
                                 {hasPermission('groups:delete') && !group.is_system && (
-                                  <Button size="sm" variant="ghost" onClick={() => setDeleteGroupId(group.id)}>
+                                  <Button size="sm" variant="ghost" aria-label={t('common.delete') + ' ' + group.name} onClick={() => setDeleteGroupId(group.id)}>
                                     <Trash2 className="w-4 h-4" />
                                   </Button>
                                 )}
@@ -5832,8 +5839,9 @@ export function SettingsPage() {
               <>
               <div className="space-y-3">
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">{t('settings.username')}</label>
+                  <label htmlFor="settings-create-user-username" className="block text-sm font-medium text-white mb-2">{t('settings.username')}</label>
                   <input
+                    id="settings-create-user-username"
                     type="text"
                     value={userFormData.username}
                     onChange={(e) => setUserFormData({ ...userFormData, username: e.target.value })}
@@ -5843,8 +5851,9 @@ export function SettingsPage() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">{t('settings.password')}</label>
+                  <label htmlFor="settings-create-user-password" className="block text-sm font-medium text-white mb-2">{t('settings.password')}</label>
                   <input
+                    id="settings-create-user-password"
                     type="password"
                     value={userFormData.password}
                     onChange={(e) => setUserFormData({ ...userFormData, password: e.target.value })}
@@ -5856,8 +5865,9 @@ export function SettingsPage() {
                   <p className="text-bambu-gray text-xs mt-1">{t('settings.passwordRequirements')}</p>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
+                  <label htmlFor="settings-create-user-confirm-password" className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
                   <input
+                    id="settings-create-user-confirm-password"
                     type="password"
                     value={userFormData.confirmPassword}
                     onChange={(e) => setUserFormData({ ...userFormData, confirmPassword: e.target.value })}
@@ -5993,10 +6003,11 @@ export function SettingsPage() {
               <div className="space-y-3">
                 {/* Username Field */}
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">
+                  <label htmlFor="settings-edit-user-username" className="block text-sm font-medium text-white mb-2">
                     {t('settings.username')} {advancedAuthStatus?.advanced_auth_enabled && <span className="text-red-700 dark:text-red-400">*</span>}
                   </label>
                   <input
+                    id="settings-edit-user-username"
                     type="text"
                     value={userFormData.username}
                     onChange={(e) => setUserFormData({ ...userFormData, username: e.target.value })}
@@ -6008,10 +6019,11 @@ export function SettingsPage() {
 
                 {/* Email Field */}
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">
+                  <label htmlFor="settings-edit-user-email" className="block text-sm font-medium text-white mb-2">
                     {t('users.form.email') || 'Email'} {advancedAuthStatus?.advanced_auth_enabled ? <span className="text-red-700 dark:text-red-400">*</span> : <span className="text-bambu-gray font-normal">({t('users.form.optional') || 'optional'})</span>}
                   </label>
                   <input
+                    id="settings-edit-user-email"
                     type="email"
                     value={userFormData.email}
                     onChange={(e) => setUserFormData({ ...userFormData, email: e.target.value })}
@@ -6025,10 +6037,11 @@ export function SettingsPage() {
                 {!advancedAuthStatus?.advanced_auth_enabled && (
                   <>
                     <div>
-                      <label className="block text-sm font-medium text-white mb-2">
+                      <label htmlFor="settings-edit-user-password" className="block text-sm font-medium text-white mb-2">
                         {t('users.form.password') || 'Password'} <span className="text-bambu-gray font-normal">({t('users.form.leaveBlankToKeep') || 'leave blank to keep current'})</span>
                       </label>
                       <input
+                        id="settings-edit-user-password"
                         type="password"
                         value={userFormData.password}
                         onChange={(e) => setUserFormData({ ...userFormData, password: e.target.value, confirmPassword: '' })}
@@ -6041,8 +6054,9 @@ export function SettingsPage() {
                     </div>
                     {userFormData.password && (
                       <div>
-                        <label className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
+                        <label htmlFor="settings-edit-user-confirm-password" className="block text-sm font-medium text-white mb-2">{t('settings.confirmPassword')}</label>
                         <input
+                          id="settings-edit-user-confirm-password"
                           type="password"
                           value={userFormData.confirmPassword}
                           onChange={(e) => setUserFormData({ ...userFormData, confirmPassword: e.target.value })}
