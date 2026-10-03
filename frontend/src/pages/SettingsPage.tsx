@@ -5197,7 +5197,7 @@ export function SettingsPage() {
       {activeTab === 'users' && (
         <div className="space-y-3">
           {/* Sub-tab Navigation */}
-          <div className="flex gap-1 border-b border-bambu-dark-tertiary">
+          <div className="flex flex-wrap gap-1 border-b border-bambu-dark-tertiary">
             <button
               onClick={() => setUsersSubTab('users')}
               className={`px-4 py-2 text-sm font-medium transition-colors border-b-2 -mb-px lg:border-b-0 lg:border-l-2 lg:-ml-px lg:mb-0 lg:justify-start flex items-center gap-2 ${
