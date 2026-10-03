@@ -139,11 +139,12 @@ export function FailureDetectionSettings() {
           </CardHeader>
           <CardContent className="space-y-4">
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">
+              <label htmlFor="obico-ml-url" className="block text-sm text-bambu-gray mb-1">
                 {t('failureDetection.mlUrl')}
               </label>
               <div className="flex gap-2">
                 <input
+                  id="obico-ml-url"
                   type="text"
                   value={mlUrl}
                   onChange={(e) => setMlUrl(e.target.value)}
@@ -173,10 +174,11 @@ export function FailureDetectionSettings() {
             </div>
 
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">
+              <label htmlFor="obico-sensitivity" className="block text-sm text-bambu-gray mb-1">
                 {t('failureDetection.sensitivity')}
               </label>
               <select
+                id="obico-sensitivity"
                 value={sensitivity}
                 onChange={(e) => setSensitivity(e.target.value as 'low' | 'medium' | 'high')}
                 disabled={!enabled}
@@ -190,10 +192,11 @@ export function FailureDetectionSettings() {
             </div>
 
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">
+              <label htmlFor="obico-action" className="block text-sm text-bambu-gray mb-1">
                 {t('failureDetection.action')}
               </label>
               <select
+                id="obico-action"
                 value={action}
                 onChange={(e) => setAction(e.target.value as 'notify' | 'pause' | 'pause_and_off')}
                 disabled={!enabled}
@@ -206,10 +209,11 @@ export function FailureDetectionSettings() {
             </div>
 
             <div>
-              <label className="block text-sm text-bambu-gray mb-1">
+              <label htmlFor="obico-poll-interval" className="block text-sm text-bambu-gray mb-1">
                 {t('failureDetection.pollInterval')}
               </label>
               <input
+                id="obico-poll-interval"
                 type="number"
                 value={pollInterval}
                 onChange={(e) => setPollInterval(Math.max(5, Math.min(120, Number(e.target.value) || 10)))}
