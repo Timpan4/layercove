@@ -1,4 +1,4 @@
-import { useState, useRef, type DragEvent } from 'react';
+import { useState, useRef, useEffect, type DragEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Upload, X, FileText, Loader2, CheckCircle, XCircle, MinusCircle, Wand2, AlertTriangle, Copy } from 'lucide-react';
 import { api, type CsvImportPreview, type CsvImportRow } from '../api/client';
@@ -25,6 +25,48 @@ export function SpoolCsvImportModal({ onClose, onImported }: SpoolCsvImportModal
   const [importing, setImporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
+
+  useEffect(() => {
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const getFocusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []).filter((element) => element.getClientRects().length > 0);
+    (getFocusable()[0] ?? dialog)?.focus();
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        dialog?.focus();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog?.addEventListener('keydown', handleKeyDown);
+    return () => {
+      dialog?.removeEventListener('keydown', handleKeyDown);
+      previousFocusRef.current?.focus();
+    };
+  }, []);
 
   const loadPreview = async (selected: File) => {
     setFile(selected);
@@ -76,10 +118,17 @@ export function SpoolCsvImportModal({ onClose, onImported }: SpoolCsvImportModal
 
   return (
     <div className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4">
-      <div className="bg-bambu-dark-secondary rounded-lg w-full max-w-3xl border border-bambu-dark-tertiary flex flex-col max-h-[90vh]">
+      <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="spool-csv-import-title"
+        tabIndex={-1}
+        className="bg-bambu-dark-secondary rounded-lg w-full max-w-3xl border border-bambu-dark-tertiary flex flex-col max-h-[90vh]"
+      >
         <div className="p-4 border-b border-bambu-dark-tertiary flex items-center justify-between">
-          <h2 className="text-lg font-semibold text-white">{t('inventory.csv.modalTitle', 'Import spools from CSV')}</h2>
-          <button onClick={onClose} className="p-1 hover:bg-bambu-dark rounded">
+          <h2 id="spool-csv-import-title" className="text-lg font-semibold text-white">{t('inventory.csv.modalTitle', 'Import spools from CSV')}</h2>
+          <button onClick={onClose} aria-label={t('common.close', 'Close')} className="p-1 hover:bg-bambu-dark rounded">
             <X className="w-5 h-5 text-bambu-gray" />
           </button>
         </div>
@@ -97,6 +146,15 @@ export function SpoolCsvImportModal({ onClose, onImported }: SpoolCsvImportModal
             }}
             onDrop={handleDrop}
             onClick={() => fileInputRef.current?.click()}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                fileInputRef.current?.click();
+              }
+            }}
+            role="button"
+            tabIndex={0}
+            aria-label={t('inventory.csv.selectFile', 'Choose a CSV file or drag it here')}
             className={`border-2 border-dashed rounded-lg p-6 text-center cursor-pointer transition-colors ${
               isDragging
                 ? 'border-bambu-green bg-bambu-green/10'
