@@ -1046,10 +1046,11 @@ export function Layout() {
                   tabIndex={-1}
                 />
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">
+                  <label htmlFor="change-password-current" className="block text-sm font-medium text-white mb-2">
                     {t('changePassword.currentPassword')}
                   </label>
                   <input
+                    id="change-password-current"
                     type="password"
                     value={changePasswordData.currentPassword}
                     onChange={(e) => setChangePasswordData({ ...changePasswordData, currentPassword: e.target.value })}
@@ -1059,10 +1060,11 @@ export function Layout() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">
+                  <label htmlFor="change-password-new" className="block text-sm font-medium text-white mb-2">
                     {t('changePassword.newPassword')}
                   </label>
                   <input
+                    id="change-password-new"
                     type="password"
                     value={changePasswordData.newPassword}
                     onChange={(e) => setChangePasswordData({ ...changePasswordData, newPassword: e.target.value })}
@@ -1073,10 +1075,11 @@ export function Layout() {
                   />
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-white mb-2">
+                  <label htmlFor="change-password-confirm" className="block text-sm font-medium text-white mb-2">
                     {t('changePassword.confirmPassword')}
                   </label>
                   <input
+                    id="change-password-confirm"
                     type="password"
                     value={changePasswordData.confirmPassword}
                     onChange={(e) => setChangePasswordData({ ...changePasswordData, confirmPassword: e.target.value })}
