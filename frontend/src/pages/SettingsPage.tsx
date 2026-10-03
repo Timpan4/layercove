@@ -3559,8 +3559,9 @@ export function SettingsPage() {
                 </CardHeader>
                 <CardContent className="space-y-3">
                   <div>
-                    <label className="block text-sm text-bambu-gray mb-1">{t('settings.keyName')}</label>
+                    <label htmlFor="api-key-name" className="block text-sm text-bambu-gray mb-1">{t('settings.keyName')}</label>
                     <input
+                      id="api-key-name"
                       type="text"
                       value={newAPIKeyName}
                       onChange={(e) => setNewAPIKeyName(e.target.value)}
