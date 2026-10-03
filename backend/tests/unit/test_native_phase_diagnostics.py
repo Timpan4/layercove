@@ -31,8 +31,7 @@ def _run_controlled_pytest(tmp_path, arguments, repository, test_source, control
         "    connection.sendall((event + '\\n').encode())\n"
         "    if wait:\n"
         "        connection.recv(1)\n"
-        "    connection.close()\n"
-        + hook
+        "    connection.close()\n" + hook
     )
     environment = {
         **os.environ,
@@ -179,22 +178,14 @@ def test_phase_record_is_visible_before_blocked_call_is_released(tmp_path):
         "    if report.when == 'setup' and not os.environ.get('PYTEST_XDIST_WORKER'):\n"
         "        _notify('setup-report-processed')\n"
     )
-    source = (
-        "from conftest import _notify\n"
-        "def test_waits_for_release():\n"
-        "    _notify('call-blocked', wait=True)\n"
-    )
+    source = "from conftest import _notify\ndef test_waits_for_release():\n    _notify('call-blocked', wait=True)\n"
     result = _run_controlled_pytest(tmp_path, [], repository, source, controller_hook)
     assert result[0] == 0, result[1].decode(errors="replace")
 
 
 def test_worker_crash_preserves_pytest_tests_failed_exit(tmp_path):
     repository = Path(os.environ.get("TEST_REPOSITORY_ROOT", Path(__file__).resolve().parents[3]))
-    source = (
-        "import os, pytest\n"
-        "def test_worker_crash():\n"
-        "    os._exit(pytest.ExitCode.TESTS_FAILED)\n"
-    )
+    source = "import os, pytest\ndef test_worker_crash():\n    os._exit(pytest.ExitCode.TESTS_FAILED)\n"
     code, output = _run_controlled_pytest(tmp_path, [], repository, source, synchronize=False)
     rendered = output.decode(errors="replace")
     assert code == pytest.ExitCode.TESTS_FAILED, rendered
