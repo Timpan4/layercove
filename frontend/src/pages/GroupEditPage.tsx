@@ -164,6 +164,7 @@ export function GroupEditPage() {
       {/* Header */}
       <div className="flex items-center gap-3">
         <button
+          aria-label={t('common.back')}
           onClick={() => navigate('/settings?tab=users')}
           className="p-2 rounded-lg hover:bg-bambu-dark-tertiary text-bambu-gray hover:text-white transition-colors"
         >
@@ -185,8 +186,9 @@ export function GroupEditPage() {
       {/* Name + Description */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div>
-          <label className="block text-sm font-medium text-white mb-2">{t('groups.form.groupName')}</label>
+          <label htmlFor="group-name" className="block text-sm font-medium text-white mb-2">{t('groups.form.groupName')}</label>
           <input
+            id="group-name"
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
@@ -196,8 +198,9 @@ export function GroupEditPage() {
           />
         </div>
         <div>
-          <label className="block text-sm font-medium text-white mb-2">{t('groups.form.description')}</label>
+          <label htmlFor="group-description" className="block text-sm font-medium text-white mb-2">{t('groups.form.description')}</label>
           <input
+            id="group-description"
             type="text"
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -226,6 +229,7 @@ export function GroupEditPage() {
             type="text"
             value={search}
             onChange={(e) => setSearch(e.target.value)}
+            aria-label={t('groups.editor.search')}
             placeholder={t('groups.editor.search')}
             className="pl-9 pr-4 py-2 text-sm bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg text-white placeholder-bambu-gray focus:outline-none focus:ring-2 focus:ring-bambu-green/50 focus:border-bambu-green transition-colors w-64"
           />
@@ -253,6 +257,9 @@ export function GroupEditPage() {
                   <div className="flex items-center gap-3">
                     <button
                       type="button"
+                      role="checkbox"
+                      aria-label={category.name}
+                      aria-checked={fullySelected ? true : partiallySelected ? 'mixed' : false}
                       onClick={() => toggleCategoryPermissions(fullCategory, !fullySelected)}
                       className={`w-5 h-5 rounded border flex items-center justify-center transition-colors shrink-0 ${
                         fullySelected
