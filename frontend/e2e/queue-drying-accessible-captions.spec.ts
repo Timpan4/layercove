@@ -222,6 +222,7 @@ for (const width of [390, 1440]) {
       const dryingFilaments = await presets.locator('tbody tr').evaluateAll((rows) =>
         rows.map((row) => row.querySelector('th[scope="row"], td')?.textContent?.trim() ?? '').filter(Boolean),
       );
+      expect(dryingFilaments, 'the drying preset table must render filament rows').not.toEqual([]);
       for (const filament of dryingFilaments) {
         for (const name of [
           `${filament} AMS 2 Pro Temperature (°C)`,
