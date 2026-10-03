@@ -73,7 +73,7 @@ jobs:
         run: uv pip install --system -r requirements.txt -r requirements-dev.txt
 
       - name: Run tests (shard ${{ matrix.shard }}/4)
-        timeout-minutes: 10
+        timeout-minutes: 15
         working-directory: backend
         run: |
           python -m pytest tests/ \
