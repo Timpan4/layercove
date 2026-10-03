@@ -6,6 +6,7 @@ import { api } from '../api/client';
 import { parseUTCDate, formatTimeOnly, formatDateTime, type TimeFormat } from '../utils/date';
 import type { NotificationLogEntry } from '../api/client';
 import { Button } from './Button';
+import { ConfirmModal } from './ConfirmModal';
 import { useToast } from '../contexts/ToastContext';
 
 const EVENT_COLORS: Record<string, string> = {
@@ -32,6 +33,7 @@ export function NotificationLogViewer({ onClose }: NotificationLogViewerProps) {
   const [days, setDays] = useState(7);
   const [expandedId, setExpandedId] = useState<number | null>(null);
   const [showFailedOnly, setShowFailedOnly] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
 
   const { data: settings } = useQuery({
     queryKey: ['settings'],
@@ -57,6 +59,7 @@ export function NotificationLogViewer({ onClose }: NotificationLogViewerProps) {
   const clearMutation = useMutation({
     mutationFn: () => api.clearNotificationLogs(30),
     onSuccess: (data) => {
+      setShowClearConfirm(false);
       showToast(data.message, 'success');
       queryClient.invalidateQueries({ queryKey: ['notification-logs'] });
       queryClient.invalidateQueries({ queryKey: ['notification-log-stats'] });
@@ -101,7 +104,7 @@ export function NotificationLogViewer({ onClose }: NotificationLogViewerProps) {
           <div className="px-4 py-3 border-b border-bambu-dark-tertiary bg-bambu-dark/50">
             <div className="flex items-center gap-6 text-sm">
               <span className="text-bambu-gray">
-                {t('notifications.statsSummary', { days })} <span className="text-white font-medium">{stats.total}</span> {t('notifications.statsNotifications')}
+                {days === 1 ? t('notifications.last24Hours') : t('notifications.statsSummary', { days })} <span className="text-white font-medium">{stats.total}</span> {t('notifications.statsNotifications')}
               </span>
               <span className="flex items-center gap-1 text-bambu-green">
                 <CheckCircle className="w-4 h-4" />
@@ -118,7 +121,7 @@ export function NotificationLogViewer({ onClose }: NotificationLogViewerProps) {
         )}
 
         {/* Filters */}
-        <div className="px-4 py-3 border-b border-bambu-dark-tertiary flex items-center gap-4">
+        <div className="px-4 py-3 border-b border-bambu-dark-tertiary flex flex-wrap items-center gap-4">
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
@@ -159,7 +162,7 @@ export function NotificationLogViewer({ onClose }: NotificationLogViewerProps) {
           <Button
             size="sm"
             variant="secondary"
-            onClick={() => clearMutation.mutate()}
+            onClick={() => setShowClearConfirm(true)}
             disabled={clearMutation.isPending}
             className="text-red-700 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
           >
@@ -201,6 +204,17 @@ export function NotificationLogViewer({ onClose }: NotificationLogViewerProps) {
           )}
         </div>
       </div>
+      {showClearConfirm && (
+        <ConfirmModal
+          title={t('settings.clearNotificationLogs')}
+          message={t('settings.clearLogsMessage')}
+          confirmText={t('settings.clearLogs')}
+          variant="danger"
+          isLoading={clearMutation.isPending}
+          onConfirm={() => clearMutation.mutate()}
+          onCancel={() => setShowClearConfirm(false)}
+        />
+      )}
     </div>
   );
 }
