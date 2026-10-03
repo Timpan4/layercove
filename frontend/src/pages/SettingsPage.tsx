@@ -3188,10 +3188,11 @@ export function SettingsPage() {
               <CardContent className="py-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-white text-sm font-medium">{t('settings.notificationLanguage')}</p>
+                    <label htmlFor="notification-language" className="text-white text-sm font-medium">{t('settings.notificationLanguage')}</label>
                     <p className="text-xs text-bambu-gray">{t('settings.notificationLanguageDescription')}</p>
                   </div>
                   <select
+                    id="notification-language"
                     value={localSettings.notification_language || 'en'}
                     onChange={(e) => updateSetting('notification_language', e.target.value)}
                     className="px-2 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-bambu-green"
@@ -3211,12 +3212,13 @@ export function SettingsPage() {
               <CardContent className="py-3">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="text-white text-sm font-medium">{t('settings.bedCooledThreshold')}</p>
+                    <label htmlFor="bed-cooled-threshold" className="text-white text-sm font-medium">{t('settings.bedCooledThreshold')}</label>
                     <p className="text-xs text-bambu-gray">{t('settings.bedCooledThresholdDescription')}</p>
                   </div>
                   <div className="flex items-center gap-1">
                     <input
                       type="number"
+                      id="bed-cooled-threshold"
                       min={20}
                       max={80}
                       step={1}
@@ -3245,6 +3247,7 @@ export function SettingsPage() {
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
+                      aria-label={t('settings.userNotificationsEnabled')}
                       className="sr-only peer"
                       checked={localSettings.user_notifications_enabled ?? true}
                       disabled={!advancedAuthStatus?.advanced_auth_enabled}
@@ -3352,6 +3355,7 @@ export function SettingsPage() {
                 value={templateFilter}
                 onChange={(e) => setTemplateFilter(e.target.value)}
                 placeholder={t('settings.filterTemplates', 'Filter templates…')}
+                aria-label={t('settings.filterTemplates', 'Filter templates…')}
                 className="w-full pl-9 pr-8 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
               />
               {templateFilter && (
@@ -3403,6 +3407,7 @@ export function SettingsPage() {
                           </p>
                         </div>
                         <button
+                          aria-label={t('notifications.editTemplate', { name: template.name })}
                           className="p-1.5 hover:bg-bambu-dark-tertiary rounded transition-colors shrink-0 ml-2"
                           onClick={(e) => {
                             e.stopPropagation();

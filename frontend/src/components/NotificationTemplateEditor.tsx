@@ -127,6 +127,7 @@ export function NotificationTemplateEditor({ template, onClose }: NotificationTe
           </h2>
           <button
             onClick={onClose}
+            aria-label={t('common.close')}
             className="p-1 hover:bg-bambu-dark-tertiary rounded transition-colors"
           >
             <X className="w-5 h-5 text-bambu-gray" />
@@ -143,11 +144,12 @@ export function NotificationTemplateEditor({ template, onClose }: NotificationTe
 
           {/* Title */}
           <div>
-            <label className="block text-sm font-medium text-bambu-gray mb-1">
+            <label htmlFor="notification-template-title" className="block text-sm font-medium text-bambu-gray mb-1">
               {t('notifications.titleLabel')}
             </label>
             <input
               type="text"
+              id="notification-template-title"
               value={titleTemplate}
               onChange={(e) => setTitleTemplate(e.target.value)}
               className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white focus:outline-none focus:ring-1 focus:ring-bambu-green"
@@ -157,11 +159,12 @@ export function NotificationTemplateEditor({ template, onClose }: NotificationTe
 
           {/* Body */}
           <div>
-            <label className="block text-sm font-medium text-bambu-gray mb-1">
+            <label htmlFor="notification-template-body" className="block text-sm font-medium text-bambu-gray mb-1">
               {t('notifications.bodyLabel')}
             </label>
             <textarea
               ref={bodyRef}
+              id="notification-template-body"
               value={bodyTemplate}
               onChange={(e) => setBodyTemplate(e.target.value)}
               rows={4}

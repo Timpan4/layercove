@@ -93,6 +93,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
               )}
               <Toggle
                 checked={provider.enabled}
+                ariaLabel={`${t('notifications.enabled')}: ${provider.name}`}
                 onChange={(checked) => updateMutation.mutate({ enabled: checked })}
               />
             </div>
@@ -253,6 +254,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                 </div>
                 <Toggle
                   checked={provider.enabled}
+                  ariaLabel={`${t('notifications.enabled')}: ${provider.name}`}
                   onChange={(checked) => updateMutation.mutate({ enabled: checked })}
                 />
               </div>
@@ -265,6 +267,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   <p className="text-sm text-white">{t('notifications.printStarted')}</p>
                   <Toggle
                     checked={provider.on_print_start}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.printStarted')}`}
                     onChange={(checked) => updateMutation.mutate({ on_print_start: checked })}
                   />
                 </div>
@@ -276,6 +279,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_plate_not_empty ?? true}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.plateNotEmpty')}`}
                     onChange={(checked) => updateMutation.mutate({ on_plate_not_empty: checked })}
                   />
                 </div>
@@ -284,6 +288,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   <p className="text-sm text-white">{t('notifications.printCompleted')}</p>
                   <Toggle
                     checked={provider.on_print_complete}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.printCompleted')}`}
                     onChange={(checked) => updateMutation.mutate({ on_print_complete: checked })}
                   />
                 </div>
@@ -295,6 +300,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_bed_cooled ?? false}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.bedCooledLabel')}`}
                     onChange={(checked) => updateMutation.mutate({ on_bed_cooled: checked })}
                   />
                 </div>
@@ -306,6 +312,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_first_layer_complete ?? false}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.firstLayerCompleteLabel')}`}
                     onChange={(checked) => updateMutation.mutate({ on_first_layer_complete: checked })}
                   />
                 </div>
@@ -317,6 +324,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_print_missing_spool_assignment ?? false}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.missingSpoolAssignmentLabel')}`}
                     onChange={(checked) => updateMutation.mutate({ on_print_missing_spool_assignment: checked })}
                   />
                 </div>
@@ -325,6 +333,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   <p className="text-sm text-white">{t('notifications.printFailed')}</p>
                   <Toggle
                     checked={provider.on_print_failed}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.printFailed')}`}
                     onChange={(checked) => updateMutation.mutate({ on_print_failed: checked })}
                   />
                 </div>
@@ -333,6 +342,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   <p className="text-sm text-white">{t('notifications.printStopped')}</p>
                   <Toggle
                     checked={provider.on_print_stopped}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.printStopped')}`}
                     onChange={(checked) => updateMutation.mutate({ on_print_stopped: checked })}
                   />
                 </div>
@@ -344,6 +354,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_print_progress}
+                    ariaLabel={`${t('notifications.printEvents')}: ${t('notifications.progressMilestones')}`}
                     onChange={(checked) => updateMutation.mutate({ on_print_progress: checked })}
                   />
                 </div>
@@ -357,6 +368,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   <p className="text-sm text-white">{t('notifications.printerOffline')}</p>
                   <Toggle
                     checked={provider.on_printer_offline}
+                    ariaLabel={`${t('notifications.printerStatus')}: ${t('notifications.printerOffline')}`}
                     onChange={(checked) => updateMutation.mutate({ on_printer_offline: checked })}
                   />
                 </div>
@@ -365,6 +377,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   <p className="text-sm text-white">{t('notifications.printerError')}</p>
                   <Toggle
                     checked={provider.on_printer_error}
+                    ariaLabel={`${t('notifications.printerStatus')}: ${t('notifications.printerError')}`}
                     onChange={(checked) => updateMutation.mutate({ on_printer_error: checked })}
                   />
                 </div>
@@ -376,6 +389,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_ai_failure_detection ?? false}
+                    ariaLabel={`${t('notifications.printerStatus')}: ${t('notifications.aiFailureDetection')}`}
                     onChange={(checked) => updateMutation.mutate({ on_ai_failure_detection: checked })}
                   />
                 </div>
@@ -384,6 +398,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   <p className="text-sm text-white">{t('notifications.lowFilamentLabel')}</p>
 <Toggle
                     checked={provider.on_filament_low}
+                    ariaLabel={`${t('notifications.printerStatus')}: ${t('notifications.lowFilamentLabel')}`}
                     onChange={(checked) => updateMutation.mutate({ on_filament_low: checked })}
                   />
                 </div>
@@ -395,6 +410,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_maintenance_due ?? false}
+                    ariaLabel={`${t('notifications.printerStatus')}: ${t('notifications.maintenanceDue')}`}
                     onChange={(checked) => updateMutation.mutate({ on_maintenance_due: checked })}
                   />
                 </div>
@@ -411,6 +427,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_ams_humidity_high ?? false}
+                    ariaLabel={`${t('notifications.amsAlarms')}: ${t('notifications.amsHumidityHigh')}`}
                     onChange={(checked) => updateMutation.mutate({ on_ams_humidity_high: checked })}
                   />
                 </div>
@@ -422,6 +439,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_ams_temperature_high ?? false}
+                    ariaLabel={`${t('notifications.amsAlarms')}: ${t('notifications.amsTemperatureHigh')}`}
                     onChange={(checked) => updateMutation.mutate({ on_ams_temperature_high: checked })}
                   />
                 </div>
@@ -438,6 +456,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_ams_ht_humidity_high ?? false}
+                    ariaLabel={`${t('notifications.amsHtAlarms')}: ${t('notifications.amsHtHumidityHigh')}`}
                     onChange={(checked) => updateMutation.mutate({ on_ams_ht_humidity_high: checked })}
                   />
                 </div>
@@ -449,6 +468,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_ams_ht_temperature_high ?? false}
+                    ariaLabel={`${t('notifications.amsHtAlarms')}: ${t('notifications.amsHtTemperatureHigh')}`}
                     onChange={(checked) => updateMutation.mutate({ on_ams_ht_temperature_high: checked })}
                   />
                 </div>
@@ -465,6 +485,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_stock_reorder_alert ?? false}
+                    ariaLabel={`${t('notifications.inventoryAlerts')}: ${t('notifications.stockReorderAlert')}`}
                     onChange={(checked) => updateMutation.mutate({ on_stock_reorder_alert: checked })}
                   />
                 </div>
@@ -476,6 +497,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_stock_break_alert ?? false}
+                    ariaLabel={`${t('notifications.inventoryAlerts')}: ${t('notifications.stockBreakAlert')}`}
                     onChange={(checked) => updateMutation.mutate({ on_stock_break_alert: checked })}
                   />
                 </div>
@@ -492,6 +514,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_queue_job_added ?? false}
+                    ariaLabel={`${t('notifications.printQueue')}: ${t('notifications.jobAdded')}`}
                     onChange={(checked) => updateMutation.mutate({ on_queue_job_added: checked })}
                   />
                 </div>
@@ -503,6 +526,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_queue_job_assigned ?? false}
+                    ariaLabel={`${t('notifications.printQueue')}: ${t('notifications.jobAssigned')}`}
                     onChange={(checked) => updateMutation.mutate({ on_queue_job_assigned: checked })}
                   />
                 </div>
@@ -514,6 +538,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_queue_job_started ?? false}
+                    ariaLabel={`${t('notifications.printQueue')}: ${t('notifications.jobStarted')}`}
                     onChange={(checked) => updateMutation.mutate({ on_queue_job_started: checked })}
                   />
                 </div>
@@ -525,6 +550,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_queue_job_waiting ?? true}
+                    ariaLabel={`${t('notifications.printQueue')}: ${t('notifications.jobWaiting')}`}
                     onChange={(checked) => updateMutation.mutate({ on_queue_job_waiting: checked })}
                   />
                 </div>
@@ -536,6 +562,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_queue_job_skipped ?? true}
+                    ariaLabel={`${t('notifications.printQueue')}: ${t('notifications.jobSkipped')}`}
                     onChange={(checked) => updateMutation.mutate({ on_queue_job_skipped: checked })}
                   />
                 </div>
@@ -547,6 +574,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_queue_job_failed ?? true}
+                    ariaLabel={`${t('notifications.printQueue')}: ${t('notifications.jobFailed')}`}
                     onChange={(checked) => updateMutation.mutate({ on_queue_job_failed: checked })}
                   />
                 </div>
@@ -558,6 +586,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.on_queue_completed ?? false}
+                    ariaLabel={`${t('notifications.printQueue')}: ${t('notifications.queueComplete')}`}
                     onChange={(checked) => updateMutation.mutate({ on_queue_completed: checked })}
                   />
                 </div>
@@ -572,6 +601,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.quiet_hours_enabled}
+                    ariaLabel={`${provider.name}: ${t('notifications.quietHours')}`}
                     onChange={(checked) => updateMutation.mutate({ quiet_hours_enabled: checked })}
                   />
                 </div>
@@ -599,6 +629,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   </div>
                   <Toggle
                     checked={provider.daily_digest_enabled}
+                    ariaLabel={`${provider.name}: ${t('notifications.dailyDigest')}`}
                     onChange={(checked) => updateMutation.mutate({ daily_digest_enabled: checked })}
                   />
                 </div>
@@ -632,6 +663,7 @@ export function NotificationProviderCard({ provider, onEdit }: NotificationProvi
                   size="sm"
                   variant="secondary"
                   onClick={() => setShowDeleteConfirm(true)}
+                  aria-label={`${t('notifications.deleteProvider')}: ${provider.name}`}
                   className="text-red-700 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300"
                 >
                   <Trash2 className="w-4 h-4" />
