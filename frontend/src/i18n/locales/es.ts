@@ -1219,8 +1219,9 @@ export default {
     printingInProgress: 'Impresión en curso...',
     viewArchive: 'Ver archivo',
     viewInFileManager: 'Ver en el gestor de archivos',
-    itemCount: '{{count}} elemento',
-    itemCount_plural: '{{count}} elementos',
+    itemCount_one: '{{count}} elemento',
+    itemCount_other: '{{count}} elementos',
+    itemCount_many: '{{count}} elementos',
     dragToReorder: 'Arrastre para reordenar (solo elementos «lo antes posible»)',
     reorderHint: 'La posición solo afecta a los elementos «lo antes posible». Los elementos programados se ejecutan a su hora establecida.',
     sjf: {

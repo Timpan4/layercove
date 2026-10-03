@@ -1219,8 +1219,9 @@ export default {
     printingInProgress: 'Stampa in corso...',
     viewArchive: 'Vedi archivio',
     viewInFileManager: 'Vedi nel Gestore file',
-    itemCount: '{{count}} elemento',
-    itemCount_plural: '{{count}} elementi',
+    itemCount_one: '{{count}} elemento',
+    itemCount_other: '{{count}} elementi',
+    itemCount_many: '{{count}} elementi',
     dragToReorder: 'Trascina per riordinare (solo ASAP)',
     reorderHint: 'La posizione influisce solo sugli elementi ASAP. Quelli programmati partono all\'orario.',
     sjf: {

@@ -1228,8 +1228,9 @@ export default {
     printingInProgress: 'Printing in progress...',
     viewArchive: 'View archive',
     viewInFileManager: 'View in File Manager',
-    itemCount: '{{count}} item',
-    itemCount_plural: '{{count}} items',
+    itemCount_one: '{{count}} item',
+    itemCount_other: '{{count}} items',
+    itemCount_many: '{{count}} items',
     dragToReorder: 'Drag to reorder (ASAP only)',
     reorderHint: 'Position only affects ASAP items. Scheduled items run at their set time.',
     sjf: {

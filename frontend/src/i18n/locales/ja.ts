@@ -1218,8 +1218,9 @@ export default {
     printingInProgress: '印刷中...',
     viewArchive: 'アーカイブを表示',
     viewInFileManager: 'ファイルマネージャーで表示',
-    itemCount: '{{count}}件',
-    itemCount_plural: '{{count}}件のアイテム',
+    itemCount_one: '{{count}}件',
+    itemCount_other: '{{count}}件',
+    itemCount_many: '{{count}}件',
     dragToReorder: 'ドラッグして並べ替え（ASAPのみ）',
     reorderHint: '順番はASAPアイテムのみに影響します。スケジュール済みアイテムは設定時刻に実行されます。',
     sjf: {
