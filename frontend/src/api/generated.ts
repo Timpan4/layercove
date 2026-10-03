@@ -40683,6 +40683,8 @@ export interface components {
             printer_model: string | null;
             /** Printer Name */
             printer_name: string;
+            /** Printer Provider */
+            printer_provider: string;
         };
         /** MaintenanceTypeCreate */
         MaintenanceTypeCreate: {
@@ -43201,6 +43203,8 @@ export interface components {
             printer_model: string | null;
             /** Printer Name */
             printer_name: string;
+            /** Printer Provider */
+            printer_provider: string;
             /** Total Print Hours */
             total_print_hours: number;
             /** Warning Count */
