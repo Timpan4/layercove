@@ -644,7 +644,7 @@ export function AddSmartPlugModal({ plug, onClose }: AddSmartPlugModalProps) {
                               setIsEntityDropdownOpen(true);
                               setHaEntitySearch('');
                             }}
-                            placeholder={t('smartPlugs.addSmartPlug.placeholders.searchEntities')}
+                            placeholder={t('smartPlugs.addSmartPlug.searchEntities')}
                             className="w-full pl-9 pr-8 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white placeholder-bambu-gray focus:border-bambu-green focus:outline-none"
                           />
                           {haEntityId && !isEntityDropdownOpen && (
