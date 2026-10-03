@@ -1164,12 +1164,13 @@ function ArchiveCard({
                 variant="primary"
                 size="sm"
                 className="flex-1 min-w-0 overflow-hidden"
+                aria-label={t('common.print')}
                 onClick={() => setShowReprint(true)}
                 disabled={!archive.file_path || !hasPermission('queue:create') || !archiveAction('reprint').allowed}
                 title={!archive.file_path ? t('archives.card.noFileForReprint') : !hasPermission('queue:create') ? t('archives.permission.noAddToQueue') : !archiveAction('reprint').allowed ? t('archives.card.noPermissionReprint') : undefined}
               >
                 <Printer className="w-3 h-3 flex-shrink-0" />
-                <span className="hidden xl:inline truncate">{t('common.print')}</span>
+                <span className="truncate">{t('common.print')}</span>
               </Button>
               <Button
                 variant="secondary"
@@ -2084,7 +2085,7 @@ function ArchiveListRow({
     <>
       <div
         data-archive-id={archive.id}
-        className={`grid grid-cols-12 gap-4 px-4 py-3 items-center hover:bg-bambu-dark-tertiary/30 ${
+        className={`grid grid-cols-[auto_minmax(0,1fr)] md:grid-cols-12 gap-3 md:gap-4 px-4 py-3 items-center hover:bg-bambu-dark-tertiary/30 ${
           isSelected ? 'bg-bambu-green/10' : ''
         }`}
         style={isHighlighted ? { outline: '4px solid #facc15', outlineOffset: '-4px' } : undefined}
@@ -2112,9 +2113,9 @@ function ArchiveListRow({
             </div>
           )}
         </div>
-        <div className="col-span-4">
-          <div className="flex items-center gap-2">
-            <p className="text-white text-sm truncate">{archive.print_name || archive.filename}</p>
+        <div className="min-w-0 md:col-span-4">
+          <div className="flex flex-wrap md:flex-nowrap items-center gap-2">
+            <p className="min-w-0 text-white text-sm break-words md:truncate">{archive.print_name || archive.filename}</p>
             {(archive.status === 'failed' || archive.status === 'aborted') && (
               <span className="px-1.5 py-0.5 rounded text-[10px] leading-tight bg-status-error/80 text-white flex-shrink-0">
                 {archive.status === 'aborted' ? t('archives.card.cancelled') : t('archives.card.failed')}
@@ -2159,7 +2160,7 @@ function ArchiveListRow({
             )}
           </div>
           {(archive.filament_type || archive.sliced_for_model) && (
-            <div className="flex items-center gap-1.5 mt-0.5">
+            <div className="flex flex-wrap md:flex-nowrap items-center gap-1.5 mt-0.5">
               {archive.sliced_for_model && (
                 <span className="text-xs text-bambu-gray flex items-center gap-1" title={t('archives.card.slicedFor', { model: archive.sliced_for_model })}>
                   <Printer className="w-2.5 h-2.5" />
@@ -2193,10 +2194,10 @@ function ArchiveListRow({
             </div>
           )}
         </div>
-        <div className="col-span-2 text-sm text-bambu-gray truncate">
+        <div className="col-start-2 md:col-start-auto md:col-span-2 text-sm text-bambu-gray break-words md:truncate">
           {printerName}
         </div>
-        <div className="col-span-2 text-sm text-bambu-gray">
+        <div className="col-start-2 md:col-start-auto md:col-span-2 text-sm text-bambu-gray">
           <div>{formatDateOnly(archive.created_at)}</div>
           {archive.created_by_username && (
             <div className="flex items-center gap-1 text-xs opacity-75" title={t('archives.card.uploadedBy', { name: archive.created_by_username })}>
@@ -2205,10 +2206,10 @@ function ArchiveListRow({
             </div>
           )}
         </div>
-        <div className="col-span-1 text-sm text-bambu-gray">
+        <div className="col-start-2 md:col-start-auto md:col-span-1 text-sm text-bambu-gray">
           {formatFileSize(archive.file_size)}
         </div>
-        <div className="col-span-2 flex justify-end gap-1">
+        <div className="col-span-2 flex flex-wrap md:flex-nowrap justify-start md:justify-end gap-1">
           {isSlicedFile(archive) && (
             <Button
               variant="ghost"
@@ -3762,7 +3763,7 @@ export function ArchivesPage() {
           <Card>
             <div className="divide-y divide-bambu-dark-tertiary">
               {/* List Header */}
-              <div className="grid grid-cols-12 gap-4 px-4 py-3 text-xs text-bambu-gray font-medium">
+              <div className="hidden md:grid grid-cols-12 gap-4 px-4 py-3 text-xs text-bambu-gray font-medium">
                 <div className="col-span-1"></div>
                 <div className="col-span-4">Name</div>
                 <div className="col-span-2">Printer</div>
