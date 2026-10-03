@@ -57,7 +57,7 @@ async function state(page: Page, url: string) {
   return (await (await page.request.get(url + '/health')).json());
 }
 
-async function installFixture(page: Page, url: string, width: number) {
+async function installFixture(page: Page, url: string, width: number, failFirstCleanup = false) {
   const writes: string[] = [];
   await expect.poll(async () => {
     try { return (await page.request.get(url + '/health')).ok(); }
@@ -76,7 +76,13 @@ async function installFixture(page: Page, url: string, width: number) {
     if (request.method() !== 'GET') {
       if (request.method() === 'POST' && ['/api/v1/auth/ws-token', '/api/v1/printers/camera/stream-token'].includes(path)) return route.fulfill({ json: { token: 'fictional-token' } });
       writes.push(request.method() + ' ' + path);
-      if (request.method() === 'DELETE' && path === '/api/v1/notifications/logs') return route.fulfill({ response: await page.request.delete(url + path + address.search) });
+      if (request.method() === 'DELETE' && path === '/api/v1/notifications/logs') {
+        if (failFirstCleanup) {
+          failFirstCleanup = false;
+          return route.fulfill({ status: 503, json: { detail: 'Fictional cleanup unavailable' } });
+        }
+        return route.fulfill({ response: await page.request.delete(url + path + address.search) });
+      }
       return route.fulfill({ status: 405, json: { detail: 'Fictional cleanup only' } });
     }
     if (path === '/api/v1/notifications/logs' || path === '/api/v1/notifications/logs/stats') return route.fulfill({ response: await page.request.get(url + path + address.search) });
@@ -154,15 +160,7 @@ for (const width of [1440, 390]) {
   });
 
   test(`failed fictional cleanup stays retryable without losing rows at ${width}px`, async ({ page, notificationFixture }) => {
-    await installFixture(page, notificationFixture, width);
-    let fail = true;
-    await page.route('**/api/v1/notifications/logs?older_than_days=*', async route => {
-      if (route.request().method() === 'DELETE' && fail) {
-        fail = false;
-        return route.fulfill({ status: 503, json: { detail: 'Fictional cleanup unavailable' } });
-      }
-      return route.fallback();
-    });
+    await installFixture(page, notificationFixture, width, true);
     const confirm = await openCleanup(page);
     await expect(confirm).toBeVisible();
     await confirm.getByRole('button', { name: 'Clear Logs', exact: true }).click();
