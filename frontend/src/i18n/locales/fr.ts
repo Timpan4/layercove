@@ -1219,8 +1219,9 @@ export default {
     printingInProgress: 'Impression en cours...',
     viewArchive: 'Voir l\'archive',
     viewInFileManager: 'Voir dans le gestionnaire',
-    itemCount: '{{count}} élément',
-    itemCount_plural: '{{count}} éléments',
+    itemCount_one: '{{count}} élément',
+    itemCount_other: '{{count}} éléments',
+    itemCount_many: '{{count}} éléments',
     dragToReorder: 'Glisser pour réordonner (ASAP uniquement)',
     reorderHint: 'La position n\'affecte que les éléments ASAP.',
     sjf: {

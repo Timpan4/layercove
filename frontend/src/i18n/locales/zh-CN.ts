@@ -1219,8 +1219,9 @@ export default {
     printingInProgress: '打印进行中...',
     viewArchive: '查看归档',
     viewInFileManager: '在文件管理器中查看',
-    itemCount: '{{count}} 个项目',
-    itemCount_plural: '{{count}} 个项目',
+    itemCount_one: '{{count}} 个项目',
+    itemCount_other: '{{count}} 个项目',
+    itemCount_many: '{{count}} 个项目',
     dragToReorder: '拖动以重新排序（仅限尽快）',
     reorderHint: '位置仅影响"尽快"项目。排程项目按设定时间运行。',
     sjf: {

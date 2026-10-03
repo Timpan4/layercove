@@ -1219,8 +1219,9 @@ export default {
     printingInProgress: '列印進行中...',
     viewArchive: '檢視歸檔',
     viewInFileManager: '在檔案管理器中檢視',
-    itemCount: '{{count}} 個項目',
-    itemCount_plural: '{{count}} 個項目',
+    itemCount_one: '{{count}} 個項目',
+    itemCount_other: '{{count}} 個項目',
+    itemCount_many: '{{count}} 個項目',
     dragToReorder: '拖曳以重新排序（僅限盡快）',
     reorderHint: '位置僅影響"儘快"項目。排程項目按設定時間執行。',
     sjf: {

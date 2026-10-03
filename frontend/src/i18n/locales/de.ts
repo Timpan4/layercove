@@ -1219,8 +1219,9 @@ export default {
     printingInProgress: 'Druck läuft...',
     viewArchive: 'Archiv anzeigen',
     viewInFileManager: 'Im Dateimanager anzeigen',
-    itemCount: '{{count}} Element',
-    itemCount_plural: '{{count}} Elemente',
+    itemCount_one: '{{count}} Element',
+    itemCount_other: '{{count}} Elemente',
+    itemCount_many: '{{count}} Elemente',
     dragToReorder: 'Ziehen zum Neuordnen (nur Sofort)',
     reorderHint: 'Position betrifft nur Sofort-Elemente. Geplante Elemente werden zur festgelegten Zeit ausgeführt.',
     sjf: {
