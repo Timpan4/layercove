@@ -116,7 +116,7 @@ async def main():
                 yield db
 
         sock = socket.socket()
-        sock.bind(("0.0.0.0", 0))
+        sock.bind((os.environ.get("MAINTENANCE_PROVIDER_BIND_HOST", "127.0.0.1"), 0))
         sock.listen()
         port = sock.getsockname()[1]
         writes = []
@@ -141,7 +141,7 @@ async def main():
 
         @app.get("/health")
         async def health():
-            return {"fixture": "read-only provider maintenance", "writes": writes}
+            return {"fixture": "read-only provider maintenance", "writes": writes, "bind_host": sock.getsockname()[0]}
 
         server = uvicorn.Server(uvicorn.Config(app, log_level="error", access_log=False))
 

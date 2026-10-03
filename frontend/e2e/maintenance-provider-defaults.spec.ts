@@ -12,12 +12,12 @@ const test = base.extend<object, { providerFixture: string }>({
       host = execFileSync('wsl.exe', ['--exec', 'hostname', '-I'], { encoding: 'utf8' }).trim().split(/\s+/)[0];
       const wslRoot = '/mnt/' + root[0].toLowerCase() + root.slice(2).replaceAll('\\', '/');
       const command = 'cd ' + "'" + wslRoot.replaceAll("'", "'\\''") + "'" + ' && exec uv run --no-project --with-requirements requirements.txt --with-requirements requirements-dev.txt python -m backend.tests._fixtures.maintenance_provider';
-      child = spawn('wsl.exe', ['--exec', 'sh', '-lc', command], { stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn('wsl.exe', ['--exec', 'env', 'MAINTENANCE_PROVIDER_BIND_HOST=' + host, 'sh', '-lc', command], { stdio: ['pipe', 'pipe', 'pipe'] });
     } else if (process.env.CI) {
       host = execFileSync('docker', ['inspect', '-f', '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}', 'layercove-integration-test'], { encoding: 'utf8' }).trim();
-      child = spawn('docker', ['exec', '-i', 'layercove-integration-test', 'python', '-m', 'backend.tests._fixtures.maintenance_provider'], { stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn('docker', ['exec', '-i', '-e', 'MAINTENANCE_PROVIDER_BIND_HOST=' + host, 'layercove-integration-test', 'python', '-m', 'backend.tests._fixtures.maintenance_provider'], { stdio: ['pipe', 'pipe', 'pipe'] });
     } else {
-      child = spawn('uv', ['run', '--no-project', '--with-requirements', 'requirements.txt', '--with-requirements', 'requirements-dev.txt', 'python', '-m', 'backend.tests._fixtures.maintenance_provider'], { cwd: root, stdio: ['pipe', 'pipe', 'pipe'] });
+      child = spawn('uv', ['run', '--no-project', '--with-requirements', 'requirements.txt', '--with-requirements', 'requirements-dev.txt', 'python', '-m', 'backend.tests._fixtures.maintenance_provider'], { cwd: root, env: { ...process.env, MAINTENANCE_PROVIDER_BIND_HOST: host }, stdio: ['pipe', 'pipe', 'pipe'] });
     }
     let output = '';
     const ready = new Promise<number>((resolvePort, reject) => {
@@ -32,6 +32,8 @@ const test = base.extend<object, { providerFixture: string }>({
     });
     try {
       const port = await ready;
+      const health = await fetch('http://' + host + ':' + port + '/health');
+      expect((await health.json()).bind_host).toBe(host);
       await provideFixture('http://' + host + ':' + port);
     } finally {
       const exited = new Promise<void>((done) => {
