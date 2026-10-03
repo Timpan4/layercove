@@ -43,7 +43,16 @@ def test_native_ci_shards_use_recorded_duration_nodeids(tmp_path):
         del arguments[worker_option : worker_option + 2]
         arguments = [argument for argument in arguments if not argument.startswith("--timeout")]
         result = subprocess.run(
-            [sys.executable, "-m", "pytest", "-p", "pytest_split.plugin", *arguments, "--collect-only", "--verbosity=-1"],
+            [
+                sys.executable,
+                "-m",
+                "pytest",
+                "-p",
+                "pytest_split.plugin",
+                *arguments,
+                "--collect-only",
+                "--verbosity=-1",
+            ],
             cwd=backend,
             env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": ""},
             capture_output=True,
