@@ -126,10 +126,10 @@ async def test_set_progress_can_clear_to_none(async_client):
     await started.wait()
 
     dispatcher.set_progress(job.id, {"stage": "x", "total_percent": 50})
-    await asyncio.sleep(0.05)
+    await asyncio.gather(*dispatcher._progress_tasks)
     assert (await dispatcher.get(job.id)).progress is not None
     dispatcher.set_progress(job.id, None)
-    await asyncio.sleep(0.05)
+    await asyncio.gather(*dispatcher._progress_tasks)
     assert (await dispatcher.get(job.id)).progress is None
 
     release.set()
