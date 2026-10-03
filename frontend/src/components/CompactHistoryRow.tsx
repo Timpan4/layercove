@@ -73,7 +73,7 @@ export function CompactHistoryRow({
   return (
     <div className={`px-3 py-2 bg-bambu-dark-secondary rounded-lg border border-bambu-dark-tertiary border-l-[3px] ${config.border}`}>
       {/* Top row — status / thumb / name / time / actions */}
-      <div className="flex items-center gap-2 sm:gap-3">
+      <div className="flex flex-wrap items-center gap-2 sm:gap-3">
         <StatusIcon className={`w-4 h-4 shrink-0 ${config.color}`} />
 
         <div className="relative shrink-0 history-thumb-hover">
@@ -101,9 +101,11 @@ export function CompactHistoryRow({
           )}
         </div>
 
-        <span className="text-sm text-white font-medium truncate min-w-0 flex-1">
-          {displayName}
-        </span>
+        <details className="group min-w-0 flex-1 open:order-last open:basis-full">
+          <summary className="list-item list-inside cursor-pointer text-sm text-white font-medium truncate group-open:whitespace-normal group-open:overflow-visible group-open:text-clip [overflow-wrap:anywhere] rounded focus-visible:outline-2 focus-visible:outline-bambu-green">
+            {displayName}
+          </summary>
+        </details>
 
         <span
           className="text-xs text-bambu-gray shrink-0"
