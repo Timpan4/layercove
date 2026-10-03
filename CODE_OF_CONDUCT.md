@@ -1,46 +1,30 @@
-# Code of Conduct
+# Code of conduct
 
-## Our Commitment
+This code applies to all LayerCove community spaces, including issues, pull requests, and any other project channels.
 
-The Bambuddy community is dedicated to providing a welcoming and supportive environment for everyone. We value respectful collaboration and constructive dialogue.
+## Expected behavior
 
-## Expected Behavior
+- **Be respectful.** Disagree with ideas, not people. No personal attacks.
+- **Be inclusive.** Welcome people of every background and experience level.
+- **Be constructive.** Give feedback that helps the work move forward.
+- **Be patient.** Contributors have different experience and availability.
 
-- **Be Respectful**: Treat others with kindness and consideration. Disagreements are fine; personal attacks are not.
-- **Be Inclusive**: Welcome people of all backgrounds and experience levels. Avoid exclusionary language or behavior.
-- **Be Constructive**: Offer helpful feedback. Focus on ideas, not individuals.
-- **Be Patient**: Remember that contributors have varying levels of experience and availability.
-
-## Unacceptable Behavior
+## Unacceptable behavior
 
 - Harassment, insults, or discriminatory remarks
 - Personal attacks or inflammatory comments
-- Publishing others' private information without consent
+- Publishing someone's private information without consent
 - Trolling or deliberately disruptive behavior
 - Any conduct that would be inappropriate in a professional setting
 
-## Reporting Issues
+## Reporting
 
-If you experience or witness unacceptable behavior:
-
-1. **Contact the maintainers** via email or GitHub
-2. **Provide details** about what happened and when
-3. **All reports will be handled confidentially**
-
-We will review and respond to all reports promptly.
+If you experience or witness unacceptable behavior, contact the maintainers through GitHub with what happened and when. Reports are handled confidentially.
 
 ## Enforcement
 
-Maintainers may take any action they deem appropriate, including:
+Maintainers may take any action they consider appropriate, including:
 
-- Requesting a change in behavior
-- Temporary or permanent bans from community spaces
-- Removal of contributions that violate this code
-
-## Scope
-
-This code of conduct applies to all Bambuddy community spaces, including GitHub issues, pull requests, discussions, and any other communication channels.
-
----
-
-Thank you for helping make Bambuddy a welcoming community!
+- asking for a change in behavior;
+- temporary or permanent bans from project spaces;
+- removing contributions that violate this code.

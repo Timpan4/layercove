@@ -1,5 +1,7 @@
 # Migration: Virtual Printer Port Changes
 
+> Historical upstream Bambuddy guide, kept because `CHANGELOG.md` links to it. It applies only to installs from before the port change; LayerCove deployments already bind port 990 directly.
+
 ## FTP Port Change (9990 → 990)
 
 The Virtual Printer FTP server now binds **directly to port 990** instead of port 9990.

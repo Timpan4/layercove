@@ -2,7 +2,9 @@
 
 LayerCove supports Docker Compose as its production deployment path. Take a backup first through **Settings → Backup → Create Backup** and record the image currently running.
 
-LayerCove does not import inherited `bambutrack.db` or `bambuddy.db` databases implicitly. Export old data before starting LayerCove, or configure an explicit external `DATABASE_URL`. The default SQLite database is `layercove.db`.
+LayerCove does not open Bambuddy or BambuTrack databases implicitly. If `bambuddy.db` or `bambutrack.db` is in the data directory and `DATABASE_URL` is unset, LayerCove refuses to start. Export the old data and move the file out, or set `DATABASE_URL` to a new database. Backup restore also rejects archives that contain either file. The default SQLite database is `layercove.db`.
+
+LayerCove starts only from its current schema and has no historical migration chain. Keep the pre-update backup until the new version is confirmed working; restoring it is the rollback path.
 
 ## Existing LayerCove deployment
 
@@ -45,7 +47,7 @@ docker compose --profile spoolman up -d
 docker compose --profile spoolman ps
 ```
 
-It publishes `127.0.0.1:7912` only, so it is not reachable from the LAN or Internet. After `docker compose --profile spoolman ps` reports healthy, configure **Settings → Spoolman** with `http://127.0.0.1:7912` on Linux when LayerCove uses the default host networking. On Docker Desktop, where the Compose instructions require bridge networking, use the private Compose service address `http://spoolman:8000` instead. Spoolman itself has no built-in authentication; retain the loopback binding, or put it behind an authenticated reverse proxy if deliberately exposing it. Do not change an existing external URL unless migrating its data separately.
+It publishes `127.0.0.1:7912` only, so it is not reachable from the LAN or Internet. After `docker compose --profile spoolman ps` reports healthy, open **Settings → Filament → Filament Tracking**, choose Spoolman, and set **Spoolman URL** to `http://127.0.0.1:7912` on Linux when LayerCove uses the default host networking. On Docker Desktop, where the Compose instructions require bridge networking, use the private Compose service address `http://spoolman:8000` instead. Spoolman itself has no built-in authentication; retain the loopback binding, or put it behind an authenticated reverse proxy if deliberately exposing it. Do not change an existing external URL unless migrating its data separately.
 
 ### Spoolman backup, restore, upgrade, and rollback
 

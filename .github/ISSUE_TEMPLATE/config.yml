@@ -1,11 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Printer won't connect or won't print?
-    url: https://wiki.bambuddy.cool/reference/troubleshooting/
-    about: Most connection and printing problems are setup issues. Check the troubleshooting guide and run the in-app Connection Diagnostic (printer card or System page) before opening an issue.
   - name: Documentation
-    url: https://wiki.bambuddy.cool/
-    about: Setup guides, feature documentation, and reference.
-  - name: Community Forum
-    url: https://forum.bambuddy.cool
-    about: Ask questions and share ideas with the community.
+    url: https://github.com/Timpan4/layercove/tree/main/docs
+    about: Setup, configuration, and feature documentation. Run the in-app Connection Diagnostic (printer card or System page) before reporting a connection problem.
+  - name: Report a security vulnerability
+    url: https://github.com/Timpan4/layercove/security/advisories/new
+    about: Report vulnerabilities privately, not in a public issue.
