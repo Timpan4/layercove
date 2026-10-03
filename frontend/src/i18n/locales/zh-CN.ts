@@ -1331,6 +1331,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: '打开{{archives}}，选择文件的{{print}}，然后选择{{queue}}。',
+      noMatches: '没有符合当前筛选条件的打印',
       title: '没有排程的打印',
       description: '从归档页面使用右键菜单中的"排程"选项来排程打印，或拖放文件开始。',
     },

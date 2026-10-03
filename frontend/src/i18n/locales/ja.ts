@@ -1330,6 +1330,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: '{{archives}}を開き、ファイルの{{print}}を選択してから{{queue}}を選択してください。',
+      noMatches: '現在のフィルターに一致する印刷はありません',
       title: 'スケジュールされた印刷はありません',
       description: 'アーカイブページのコンテキストメニューから「スケジュール」オプションを使用するか、ファイルをドラッグ＆ドロップして始めましょう。',
     },

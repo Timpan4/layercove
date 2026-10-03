@@ -1331,6 +1331,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: 'Abra {{archives}}, escolha {{print}} para um arquivo e selecione {{queue}}.',
+      noMatches: 'Nenhuma impressão corresponde aos filtros atuais',
       title: 'Nenhuma impressão agendada',
       description: 'Agende uma impressão a partir da página de Arquivos usando a opção "Agendar" no menu de contexto, ou arraste e solte arquivos para começar.',
     },

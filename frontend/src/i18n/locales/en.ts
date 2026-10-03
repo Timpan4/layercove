@@ -1346,6 +1346,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: 'Open {{archives}}, choose {{print}} for a file, then select {{queue}}.',
+      noMatches: 'No prints match the current filters',
       title: 'No prints scheduled',
       description: 'Schedule a print from the Archives page using the "Schedule" option in the context menu, or drag and drop files to get started.',
     },

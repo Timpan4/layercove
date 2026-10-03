@@ -1266,6 +1266,8 @@ export default {
       gcodeInjection: 'G코드'
     },
     empty: {
+      activeDescription: '{{archives}}에서 파일의 {{print}}를 선택한 다음 {{queue}}를 선택하세요.',
+      noMatches: '현재 필터와 일치하는 인쇄가 없습니다',
       title: '예약된 인쇄 없음',
       description: '아카이브 페이지의 컨텍스트 메뉴에서 "예약" 옵션을 사용하거나 파일을 드래그 앤 드롭하여 시작하세요.'
     },

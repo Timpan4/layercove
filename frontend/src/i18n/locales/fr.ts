@@ -1331,6 +1331,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: 'Ouvrez {{archives}}, choisissez {{print}} pour un fichier, puis sélectionnez {{queue}}.',
+      noMatches: 'Aucune impression ne correspond aux filtres actuels',
       title: 'Aucune impression prévue',
       description: 'Planifiez depuis les Archives ou glissez des fichiers ici.',
     },

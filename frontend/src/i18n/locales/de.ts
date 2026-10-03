@@ -1331,6 +1331,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: 'Öffnen Sie {{archives}}, wählen Sie {{print}} für eine Datei und anschließend {{queue}}.',
+      noMatches: 'Keine Drucke entsprechen den aktuellen Filtern',
       title: 'Keine Drucke geplant',
       description: 'Planen Sie einen Druck von der Archivseite über die Option "Planen" im Kontextmenü oder ziehen Sie Dateien hierher.',
     },
