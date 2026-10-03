@@ -136,10 +136,11 @@ export function CreateUserAdvancedAuthModal({
           <div className="space-y-4">
             {/* Username Field */}
             <div>
-              <label className="block text-sm font-medium text-white mb-2">
+              <label htmlFor="create-user-advanced-username" className="block text-sm font-medium text-white mb-2">
                 {t('users.form.username')} <span className="text-red-600 dark:text-red-400">*</span>
               </label>
               <input
+                id="create-user-advanced-username"
                 type="text"
                 value={formData.username}
                 onChange={(e) => setFormData({ ...formData, username: e.target.value })}
@@ -152,10 +153,11 @@ export function CreateUserAdvancedAuthModal({
 
             {/* Email Field */}
             <div>
-              <label className="block text-sm font-medium text-white mb-2">
+              <label htmlFor="create-user-advanced-email" className="block text-sm font-medium text-white mb-2">
                 {t('users.form.email') || 'Email'} <span className="text-red-600 dark:text-red-400">*</span>
               </label>
               <input
+                id="create-user-advanced-email"
                 type="email"
                 value={formData.email}
                 onChange={(e) => setFormData({ ...formData, email: e.target.value })}
