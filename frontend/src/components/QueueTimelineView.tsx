@@ -331,20 +331,26 @@ export function QueueTimelineView({
           <p className="text-sm">{t('queue.timeline.noData')}</p>
         </div>
       ) : (
-        <div className="bg-bambu-dark-secondary rounded-xl border border-bambu-dark-tertiary overflow-hidden">
+        <div className="bg-bambu-dark-secondary rounded-xl border border-bambu-dark-tertiary overflow-x-auto">
+          <div className="min-w-max">
           {/* Hour axis */}
           <div className="flex border-b border-bambu-dark-tertiary">
-            <div className="w-32 sm:w-40 shrink-0 px-3 py-2 text-xs font-medium text-bambu-gray border-r border-bambu-dark-tertiary">
+            <div className="sticky left-0 z-30 bg-bambu-dark-secondary w-32 sm:w-40 shrink-0 px-3 py-2 text-xs font-medium text-bambu-gray border-r border-bambu-dark-tertiary">
               {t('queue.timeline.printerColumnHeader')}
             </div>
-            <div className="relative flex-1 h-9">
-              {hourTicks.map((tick) => (
+            {/* Intrinsic label widths keep equal time cells readable. The final
+                cell reserves room for both its start and the range endpoint. */}
+            <div
+              className="relative flex-1 h-9 grid"
+              style={{ gridTemplateColumns: `repeat(${hourTicks.length - 1}, minmax(max-content, 1fr))` }}
+            >
+              {hourTicks.slice(0, -1).map((tick, index) => (
                 <div
                   key={tick.ms}
-                  className="absolute top-0 bottom-0 border-l border-bambu-dark-tertiary/40 text-[10px] sm:text-xs text-bambu-gray pl-1 flex items-center"
-                  style={{ left: `${tick.pct}%` }}
+                  className="border-l border-bambu-dark-tertiary/40 text-[10px] sm:text-xs text-bambu-gray px-1 flex items-center justify-between gap-1 whitespace-nowrap"
                 >
-                  {tick.label}
+                  <span>{tick.label}</span>
+                  {index === hourTicks.length - 2 && <span>{hourTicks[hourTicks.length - 1].label}</span>}
                 </div>
               ))}
             </div>
@@ -356,7 +362,7 @@ export function QueueTimelineView({
               const laneEvents = eventsByLane.get(lane.key) ?? [];
               return (
                 <div key={lane.key} className="flex border-b border-bambu-dark-tertiary/40 last:border-b-0">
-                  <div className="w-32 sm:w-40 shrink-0 px-3 py-3 border-r border-bambu-dark-tertiary flex items-center gap-2">
+                  <div className="sticky left-0 z-30 bg-bambu-dark-secondary w-32 sm:w-40 shrink-0 px-3 py-3 border-r border-bambu-dark-tertiary flex items-center gap-2">
                     <PrinterIcon className={`w-3.5 h-3.5 shrink-0 ${
                       lane.printerId == null && lane.targetModel == null
                         ? 'text-orange-600 dark:text-orange-400'
@@ -481,6 +487,7 @@ export function QueueTimelineView({
                 </div>
               </div>
             )}
+          </div>
           </div>
         </div>
       )}
