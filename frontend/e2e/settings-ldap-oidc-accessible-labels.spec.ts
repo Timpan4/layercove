@@ -1,13 +1,32 @@
 import type {
+  APIKey,
+  ArchivePurgeSettings,
   AdvancedAuthStatus,
   AppSettings,
   AuthStatus,
+  CloudAuthStatus,
+  DebugLoggingState,
   EncryptionStatus,
+  ExternalLink,
+  GitHubBackupStatus,
   Group,
   LDAPStatus,
+  LibraryTrashSettings,
+  MQTTStatus,
+  NotificationProvider,
+  NotificationTemplate,
+  ObicoStatus,
   OIDCProvider,
+  Printer,
+  PrintQueueItem,
+  SmartPlug,
+  SpoolBuddyDevice,
+  SponsorPromptCheckResponse,
   TwoFAStatus,
+  UpdateCheckResult,
   UserResponse,
+  VersionInfo,
+  VirtualPrinterSettings,
 } from '../src/api/client';
 import type { Page } from '@playwright/test';
 import { test, expect } from './test';
@@ -94,6 +113,78 @@ const encryptionStatus: EncryptionStatus = {
 
 const oidcProviders: OIDCProvider[] = [];
 const authStatus: AuthStatus = { auth_enabled: true, requires_setup: false };
+const apiKeys: APIKey[] = [];
+const cloudAuthStatus: CloudAuthStatus = { is_authenticated: false, email: null, region: null };
+const debugLoggingState: DebugLoggingState = { enabled: false, enabled_at: null, duration_seconds: null };
+const externalLinks: ExternalLink[] = [];
+const githubBackupStatus: GitHubBackupStatus = {
+  configured: false,
+  enabled: false,
+  is_running: false,
+  progress: null,
+  last_backup_at: null,
+  last_backup_status: null,
+  next_scheduled_run: null,
+};
+const notificationProviders: NotificationProvider[] = [];
+const notificationTemplates: NotificationTemplate[] = [];
+const obicoStatus: ObicoStatus = {
+  is_running: false,
+  last_error: null,
+  per_printer: {},
+  thresholds: { low: 0, high: 0 },
+  history: [],
+  enabled: false,
+  ml_url: '',
+  sensitivity: 'medium',
+  action: 'notify',
+  poll_interval: 30,
+  external_url_configured: false,
+};
+const printers: Printer[] = [];
+const printQueue: PrintQueueItem[] = [];
+const smartPlugs: SmartPlug[] = [];
+const spoolBuddyDevices: SpoolBuddyDevice[] = [];
+const sponsorPromptCheck: SponsorPromptCheckResponse = { show: false };
+const mqttStatus: MQTTStatus = { enabled: false, connected: false, broker: '', port: 1883, topic_prefix: '' };
+const libraryTrashSettings: LibraryTrashSettings = {
+  retention_days: 0,
+  auto_purge_enabled: false,
+  auto_purge_days: 0,
+  auto_purge_include_never_printed: false,
+};
+const archivePurgeSettings: ArchivePurgeSettings = { enabled: false, days: 0, purge_stats: false };
+const updateCheck: UpdateCheckResult = {
+  update_available: false,
+  current_version: '0.0.0',
+  latest_version: null,
+};
+const versionInfo: VersionInfo = { version: '0.0.0', repo: 'fictional-directory-fixture' };
+const virtualPrinterSettings: VirtualPrinterSettings = {
+  enabled: false,
+  access_code_set: false,
+  mode: 'archive',
+  model: '',
+  target_printer_id: null,
+  remote_interface_ip: null,
+  tailscale_disabled: false,
+  archive_name_source: 'metadata',
+  status: {
+    enabled: false,
+    running: false,
+    mode: 'archive',
+    name: '',
+    serial: '',
+    model: '',
+    model_name: '',
+    pending_files: 0,
+  },
+};
+const ffmpegStatus: { available: boolean; version: string | null } = { available: false, version: null };
+const defaultSidebarOrder: { default_sidebar_order: string } = { default_sidebar_order: '{}' };
+const developerModeWarnings: Array<{ printer_id: number; name: string }> = [];
+const pendingUploadsCount: { count: number } = { count: 0 };
+const colorNameMap: { colors: Record<string, string> } = { colors: {} };
 
 type BlockedRequest = { method: string; path: string; status: number };
 type ReadOnlyFixture = {
@@ -103,7 +194,11 @@ type ReadOnlyFixture = {
   unmatchedReads: string[];
 };
 
-async function openReadOnlyAuthenticationSettings(page: Page, width: number): Promise<ReadOnlyFixture> {
+async function openReadOnlyAuthenticationSettings(
+  page: Page,
+  width: number,
+  section: 'ldap' | 'oidc',
+): Promise<ReadOnlyFixture> {
   const blockedRequests: BlockedRequest[] = [];
   const blockedWebSockets: string[] = [];
   const externalReads: string[] = [];
@@ -129,6 +224,31 @@ async function openReadOnlyAuthenticationSettings(page: Page, width: number): Pr
       scan_errors: 0,
     }],
     ['/api/v1/system/appliance', { locale: null }],
+    ['/api/v1/smart-plugs', smartPlugs],
+    ['/api/v1/notifications', notificationProviders],
+    ['/api/v1/api-keys', apiKeys],
+    ['/api/v1/printers', printers],
+    ['/api/v1/notification-templates', notificationTemplates],
+    ['/api/v1/settings/virtual-printer', virtualPrinterSettings],
+    ['/api/v1/spoolbuddy/devices', spoolBuddyDevices],
+    ['/api/v1/obico/status', obicoStatus],
+    ['/api/v1/settings/check-ffmpeg', ffmpegStatus],
+    ['/api/v1/updates/version', versionInfo],
+    ['/api/v1/library/trash/settings', libraryTrashSettings],
+    ['/api/v1/archives/purge/settings', archivePurgeSettings],
+    ['/api/v1/updates/check', updateCheck],
+    ['/api/v1/settings/mqtt/status', mqttStatus],
+    ['/api/v1/github-backup/status', githubBackupStatus],
+    ['/api/v1/cloud/status', cloudAuthStatus],
+    ['/api/v1/users', [] as UserResponse[]],
+    ['/api/v1/sponsor-prompt/check', sponsorPromptCheck],
+    ['/api/v1/settings/default-sidebar-order', defaultSidebarOrder],
+    ['/api/v1/external-links', externalLinks],
+    ['/api/v1/support/debug-logging', debugLoggingState],
+    ['/api/v1/printers/developer-mode-warnings', developerModeWarnings],
+    ['/api/v1/queue', printQueue],
+    ['/api/v1/pending-uploads/count', pendingUploadsCount],
+    ['/api/v1/inventory/colors/map', colorNameMap],
   ]);
 
   await page.setViewportSize({ width, height: width === 1440 ? 1000 : 844 });
@@ -166,8 +286,18 @@ async function openReadOnlyAuthenticationSettings(page: Page, width: number): Pr
     return true;
   }, (socket) => socket.close());
 
-  await page.goto('/e2e/fixtures/auth-directory-labels.html');
-  await expect(page.locator('#card-ldap-server')).toBeVisible();
+  await page.goto('/settings');
+  await expect(page.getByRole('heading', { name: 'General', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Authentication', exact: true }).first().click();
+  await expect(page.getByRole('button', { name: 'Email Authentication', exact: true })).toBeVisible();
+
+  if (section === 'ldap') {
+    await page.getByRole('button', { name: 'LDAP', exact: true }).click();
+    await expect(page.locator('#card-ldap-server')).toBeVisible();
+  } else {
+    await page.getByRole('button', { name: 'SSO / OIDC', exact: true }).click();
+    await expect(page.getByRole('heading', { name: 'SSO / OIDC Providers', exact: true })).toBeVisible();
+  }
 
   return { blockedRequests, blockedWebSockets, externalReads, unmatchedReads };
 }
@@ -203,7 +333,7 @@ function expectReadOnly(fixture: ReadOnlyFixture) {
 
 for (const width of [390, 1440]) {
   test('LDAP directory, provisioning, and group captions resolve to controls at ' + width + 'px', async ({ page }) => {
-    const fixture = await openReadOnlyAuthenticationSettings(page, width);
+    const fixture = await openReadOnlyAuthenticationSettings(page, width, 'ldap');
 
     try {
       await expect(page.locator('#card-ldap-server')).toBeVisible();
@@ -230,7 +360,7 @@ for (const width of [390, 1440]) {
   });
 
   test('blank New Provider captions resolve to controls at ' + width + 'px', async ({ page }) => {
-    const fixture = await openReadOnlyAuthenticationSettings(page, width);
+    const fixture = await openReadOnlyAuthenticationSettings(page, width, 'oidc');
 
     try {
       await expect(page.getByRole('heading', { name: 'SSO / OIDC Providers', exact: true })).toBeVisible();

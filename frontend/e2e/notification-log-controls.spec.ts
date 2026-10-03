@@ -264,7 +264,11 @@ for (const width of [1440, 390]) {
   });
 
   test(`failed fictional cleanup stays retryable without losing rows at ${width}px`, async ({ page, notificationFixture }) => {
-    await installFixture(page, notificationFixture, width, true);
+    const { panel } = await installFixture(page, notificationFixture, width, true);
+    await panel.getByRole('combobox').selectOption('90');
+    await expect(panel.getByText('Last 90 days: 5 notifications', { exact: true })).toBeVisible();
+    await checkRows(page, names);
+
     const confirm = await openCleanup(page);
     await expect(confirm).toBeVisible();
     await confirm.getByRole('button', { name: 'Clear Logs', exact: true }).click();
@@ -272,8 +276,13 @@ for (const width of [1440, 390]) {
     await expect(confirm).toBeVisible();
     await expect(confirm.getByRole('button', { name: 'Clear Logs', exact: true })).toBeEnabled();
     expect((await state(page, notificationFixture)).record_ids).toEqual([1, 2, 3, 4, 5]);
+    await checkRows(page, names);
+    await expect(panel.getByText('Last 90 days: 5 notifications', { exact: true })).toBeVisible();
+
     await confirm.getByRole('button', { name: 'Clear Logs', exact: true }).click();
     await expect(confirm).toHaveCount(0);
+    await checkRows(page, names.slice(0, 3));
+    await expect(panel.getByText('Last 90 days: 3 notifications', { exact: true })).toBeVisible();
     expect((await state(page, notificationFixture)).record_ids).toEqual([1, 2, 3]);
   });
 
