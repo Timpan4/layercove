@@ -1,7 +1,7 @@
 import type { Page } from '@playwright/test';
 import { test, expect } from './test';
 
-test.use({ serviceWorkers: 'block' });
+test.use({ serviceWorkers: 'block', locale: 'en-US' });
 
 async function openInventory(page: Page) {
   const writes: string[] = [];
