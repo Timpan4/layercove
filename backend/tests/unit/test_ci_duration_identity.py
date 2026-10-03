@@ -54,7 +54,12 @@ def test_native_ci_shards_use_recorded_duration_nodeids(tmp_path):
                 "--verbosity=-1",
             ],
             cwd=backend,
-            env={**os.environ, "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1", "PYTEST_ADDOPTS": ""},
+            env={
+                **os.environ,
+                "PYTHONPATH": os.pathsep.join(filter(None, [str(repository / "backend"), os.environ.get("PYTHONPATH")])),
+                "PYTEST_DISABLE_PLUGIN_AUTOLOAD": "1",
+                "PYTEST_ADDOPTS": "",
+            },
             capture_output=True,
             text=True,
             check=False,
