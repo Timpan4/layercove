@@ -3978,11 +3978,12 @@ export function SettingsPage() {
               .map(({ key, label, desc, fallback }) => (
                 <div key={key} className="flex items-center justify-between">
                   <div className="flex-1 mr-4">
-                    <p className="text-sm text-white">{label}</p>
+                    <label htmlFor={`default-${key}`} className="block text-sm text-white">{label}</label>
                     <p className="text-xs text-bambu-gray mt-0.5">{desc}</p>
                   </div>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
+                      id={`default-${key}`}
                       type="checkbox"
                       checked={localSettings[key] ?? fallback}
                       onChange={(e) => updateSetting(key, e.target.checked)}
@@ -4006,15 +4007,16 @@ export function SettingsPage() {
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between">
                 <div className="flex-1 mr-4">
-                  <p className="text-sm text-white">
+                  <label htmlFor="require-plate-clear" className="block text-sm text-white">
                     {t('settings.requirePlateClear', 'Require plate-clear confirmation')}
-                  </p>
+                  </label>
                   <p className="text-xs text-bambu-gray mt-1">
                     {t('settings.requirePlateClearDescription', 'When enabled, the scheduler waits for per-printer plate-clear confirmation before starting queued prints on printers with finished jobs. Disabling this also hides the plate status badge and the "Mark plate as cleared" button on printer cards.')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="require-plate-clear"
                     type="checkbox"
                     checked={localSettings.require_plate_clear ?? false}
                     onChange={(e) => updateSetting('require_plate_clear', e.target.checked)}
@@ -4323,10 +4325,11 @@ export function SettingsPage() {
                     >
                       <div className="space-y-2">
                         <div>
-                          <label className="block text-xs text-bambu-gray mb-1">
+                          <label htmlFor={`gcode-start-${model}`} className="block text-xs text-bambu-gray mb-1">
                             {t('settings.gcodeStartLabel', 'Start G-code')}
                           </label>
                           <textarea
+                            id={`gcode-start-${model}`}
                             value={snippet.start_gcode}
                             onChange={(e) => updateSnippet(model, 'start_gcode', e.target.value)}
                             onBlur={saveGcodeSnippets}
@@ -4336,10 +4339,11 @@ export function SettingsPage() {
                           />
                         </div>
                         <div>
-                          <label className="block text-xs text-bambu-gray mb-1">
+                          <label htmlFor={`gcode-end-${model}`} className="block text-xs text-bambu-gray mb-1">
                             {t('settings.gcodeEndLabel', 'End G-code')}
                           </label>
                           <textarea
+                            id={`gcode-end-${model}`}
                             value={snippet.end_gcode}
                             onChange={(e) => updateSnippet(model, 'end_gcode', e.target.value)}
                             onBlur={saveGcodeSnippets}
@@ -4410,11 +4414,12 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="preferred-slicer" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.preferredSlicer')}
                 </label>
                 <div className="relative">
                   <select
+                    id="preferred-slicer"
                     value={localSettings.preferred_slicer ?? 'bambu_studio'}
                     onChange={(e) => updateSetting('preferred_slicer', e.target.value as 'bambu_studio' | 'orcaslicer')}
                     className="w-full px-3 py-2 pr-10 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"
@@ -4451,11 +4456,12 @@ export function SettingsPage() {
                   API slicer so a user can slice via the Bambu Studio sidecar
                   but open files locally in OrcaSlicer, or vice versa. */}
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="open-in-slicer" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.openInSlicerLabel', 'Open in Slicer')}
                 </label>
                 <div className="relative">
                   <select
+                    id="open-in-slicer"
                     value={localSettings.open_in_slicer ?? ''}
                     onChange={(e) =>
                       updateSetting(
@@ -4480,13 +4486,14 @@ export function SettingsPage() {
               </div>
               <div className="flex items-center justify-between gap-3">
                 <div className="min-w-0">
-                  <p className="text-white">{t('settings.useSlicerApi')}</p>
+                  <label htmlFor="use-slicer-api" className="block text-white">{t('settings.useSlicerApi')}</label>
                   <p className="text-sm text-bambu-gray">
                     {t('settings.useSlicerApiDescription')}
                   </p>
                 </div>
                 <label className="flex items-center cursor-pointer shrink-0">
                   <input
+                    id="use-slicer-api"
                     type="checkbox"
                     checked={localSettings.use_slicer_api ?? false}
                     onChange={(e) => updateSetting('use_slicer_api', e.target.checked)}
