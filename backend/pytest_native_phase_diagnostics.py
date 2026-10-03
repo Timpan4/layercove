@@ -17,6 +17,8 @@ def pytest_configure(config):
 def pytest_runtest_logreport(report):
     if os.environ.get("PYTEST_XDIST_WORKER"):
         return
+    if report.when not in {"setup", "call", "teardown"}:
+        return
 
     terminal_reporter = _config.pluginmanager.getplugin("terminalreporter")
     worker = getattr(report, "worker_id", None)
@@ -31,3 +33,4 @@ def pytest_runtest_logreport(report):
         "worker": worker,
     }
     terminal_reporter.write_line(f"NATIVE_PHASE {json.dumps(record, separators=(',', ':'))}")
+    terminal_reporter.flush()
