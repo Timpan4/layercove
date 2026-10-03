@@ -3885,8 +3885,9 @@ export function SettingsPage() {
             {/* API Key Input for Testing */}
             <Card className="mb-4">
               <CardContent className="py-3">
-                <label className="block text-sm text-bambu-gray mb-2">{t('settings.apiKeyForTesting')}</label>
+                <label htmlFor="api-browser-testing-key" className="block text-sm text-bambu-gray mb-2">{t('settings.apiKeyForTesting')}</label>
                 <input
+                  id="api-browser-testing-key"
                   type="text"
                   value={testApiKey}
                   onChange={(e) => setTestApiKey(e.target.value)}

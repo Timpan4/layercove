@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId } from 'react';
 import { ChevronDown, ChevronRight, Play, Copy, Loader2, ExternalLink, AlertCircle, CheckCircle } from 'lucide-react';
 import { Card, CardContent } from './Card';
 import { Button } from './Button';
@@ -142,6 +142,7 @@ interface EndpointItemProps {
 }
 
 function EndpointItem({ path, method, spec, schema, apiKey }: EndpointItemProps) {
+  const parameterId = useId();
   const [expanded, setExpanded] = useState(false);
   const [params, setParams] = useState<Record<string, string>>({});
   const [bodyText, setBodyText] = useState('');
@@ -338,11 +339,12 @@ function EndpointItem({ path, method, spec, schema, apiKey }: EndpointItemProps)
               <div className="space-y-2">
                 {pathParams.map(param => (
                   <div key={param.name} className="flex items-center gap-2">
-                    <label className="text-sm text-bambu-gray w-32 flex-shrink-0">
+                    <label htmlFor={`${parameterId}-path-${param.name}`} className="text-sm text-bambu-gray w-32 flex-shrink-0">
                       {param.name}
                       {param.required && <span className="text-red-700 dark:text-red-400 ml-1">*</span>}
                     </label>
                     <input
+                      id={`${parameterId}-path-${param.name}`}
                       type="text"
                       value={params[param.name] || ''}
                       onChange={(e) => setParams(p => ({ ...p, [param.name]: e.target.value }))}
@@ -575,6 +577,7 @@ export function APIBrowser({ apiKey = '' }: APIBrowserProps) {
         <div className="flex-1">
           <input
             type="text"
+            aria-label="Search endpoints"
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="Search endpoints..."

@@ -1,7 +1,67 @@
 import { test as base, expect } from './test';
 import { spawn, execFileSync } from 'node:child_process';
 import { resolve } from 'node:path';
-import type { Page } from '@playwright/test';
+import type { Page, Request, Route } from '@playwright/test';
+const notificationRouteRequestIds = new WeakMap<Request, string>();
+const notificationRouteEventRequests = new WeakSet<Request>();
+let notificationRouteRequestSequence = 0;
+let notificationRouteEventSequence = 0;
+
+function notificationRouteEvent(event: string, details: Record<string, unknown> = {}) {
+  console.error('[notification-log-route-lifecycle]', JSON.stringify({
+    event,
+    eventSequence: ++notificationRouteEventSequence,
+    wallTime: new Date().toISOString(),
+    monotonicNs: process.hrtime.bigint().toString(),
+    ...details,
+  }));
+}
+
+function notificationRouteRequestId(request: Request) {
+  let id = notificationRouteRequestIds.get(request);
+  if (!id) {
+    id = 'notification-request-' + (++notificationRouteRequestSequence);
+    notificationRouteRequestIds.set(request, id);
+  }
+  return id;
+}
+
+function isNotificationLogRequest(request: Request) {
+  const path = new URL(request.url()).pathname;
+  const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
+  return normalizedPath === '/api/v1/notifications/logs' || normalizedPath === '/api/v1/notifications/logs/stats';
+}
+
+function notificationRequestDetails(request: Request) {
+  return {
+    requestId: notificationRouteRequestId(request),
+    method: request.method(),
+    url: request.url(),
+    failure: request.failure()?.errorText ?? null,
+  };
+}
+
+async function fulfillNotificationRoute(
+  route: Route,
+  phase: string,
+  details: Record<string, unknown>,
+  options: Parameters<Route['fulfill']>[0],
+) {
+  const request = route.request();
+  notificationRouteEvent('route-fulfill-before', { ...details, phase, ...notificationRequestDetails(request) });
+  try {
+    await route.fulfill(options);
+    notificationRouteEvent('route-fulfill-success', { ...details, phase, ...notificationRequestDetails(request) });
+  } catch (error) {
+    notificationRouteEvent('route-fulfill-error', {
+      ...details,
+      phase,
+      ...notificationRequestDetails(request),
+      error: error instanceof Error ? { name: error.name, message: error.message } : String(error),
+    });
+    throw error;
+  }
+}
 
 const test = base.extend<{ notificationFixture: string; emptyLogs: boolean }>({
   emptyLogs: [false, { option: true }],
@@ -48,7 +108,12 @@ const test = base.extend<{ notificationFixture: string; emptyLogs: boolean }>({
 });
 
 test.use({ serviceWorkers: 'block' });
-test.afterEach(async ({ page }) => { await page.unrouteAll({ behavior: 'wait' }); });
+test.afterEach(async ({ page }, testInfo) => {
+  const details = { title: testInfo.title, project: testInfo.project.name };
+  notificationRouteEvent('test-teardown-start', details);
+  await page.unrouteAll({ behavior: 'wait' });
+  notificationRouteEvent('test-teardown-unrouteAll-complete', details);
+});
 
 const names = ['Recent', 'Six-day failed', 'Twenty-day', 'Forty-day failed', 'Eighty-day'];
 const confirmationText = 'This will permanently delete all notification logs older than 30 days. This action cannot be undone.';
@@ -65,6 +130,30 @@ async function installFixture(page: Page, url: string, width: number, failFirstC
   }).toBe(true);
   await page.routeWebSocket((url) => url.pathname.startsWith('/api/'), (socket) => socket.close());
   await page.setViewportSize({ width, height: 844 });
+  const context = page.context();
+  const logLifecycle = (event: string, request: Request) => {
+    if (!isNotificationLogRequest(request)) return;
+    const details = notificationRequestDetails(request);
+    notificationRouteEvent(event, {
+      ...details,
+      requestEventSeen: notificationRouteEventRequests.has(request),
+      width,
+    });
+    if (event === 'request') notificationRouteEventRequests.add(request);
+  };
+  page.on('request', request => logLifecycle('request', request));
+  page.on('response', response => {
+    const request = response.request();
+    if (isNotificationLogRequest(request)) notificationRouteEvent('response', {
+      ...notificationRequestDetails(request),
+      status: response.status(),
+      width,
+    });
+  });
+  page.on('requestfinished', request => logLifecycle('requestfinished', request));
+  page.on('requestfailed', request => logLifecycle('requestfailed', request));
+  page.on('close', () => notificationRouteEvent('page-close', { width }));
+  context.on('close', () => notificationRouteEvent('context-close', { width }));
   await page.addInitScript(() => {
     localStorage.setItem('i18nextLng', 'en');
     localStorage.setItem('auth_token', 'fictional-notification-token');
@@ -73,19 +162,34 @@ async function installFixture(page: Page, url: string, width: number, failFirstC
     const request = route.request();
     const address = new URL(request.url());
     const path = address.pathname.replace(/\/$/, '');
+    const isNotificationLogPath = path === '/api/v1/notifications/logs' || path === '/api/v1/notifications/logs/stats';
+    const notificationId = isNotificationLogPath ? notificationRouteRequestId(request) : undefined;
+    if (notificationId) notificationRouteEvent('route-entry', {
+      requestId: notificationId,
+      requestEventSeen: notificationRouteEventRequests.has(request),
+      method: request.method(),
+      url: request.url(),
+      failure: request.failure()?.errorText ?? null,
+      width,
+    });
     if (request.method() !== 'GET') {
       if (request.method() === 'POST' && ['/api/v1/auth/ws-token', '/api/v1/printers/camera/stream-token'].includes(path)) return route.fulfill({ json: { token: 'fictional-token' } });
       writes.push(request.method() + ' ' + path);
       if (request.method() === 'DELETE' && path === '/api/v1/notifications/logs') {
         if (failFirstCleanup) {
           failFirstCleanup = false;
-          return route.fulfill({ status: 503, json: { detail: 'Fictional cleanup unavailable' } });
+          return fulfillNotificationRoute(route, 'first-cleanup-503', { width }, { status: 503, json: { detail: 'Fictional cleanup unavailable' } });
         }
-        return route.fulfill({ response: await page.request.delete(url + path + address.search) });
+        const response = await page.request.delete(url + path + address.search);
+        return fulfillNotificationRoute(route, 'fixture-cleanup', { width, fixtureStatus: response.status() }, { response });
       }
+      if (isNotificationLogPath) return fulfillNotificationRoute(route, 'unexpected-write-405', { width }, { status: 405, json: { detail: 'Fictional cleanup only' } });
       return route.fulfill({ status: 405, json: { detail: 'Fictional cleanup only' } });
     }
-    if (path === '/api/v1/notifications/logs' || path === '/api/v1/notifications/logs/stats') return route.fulfill({ response: await page.request.get(url + path + address.search) });
+    if (isNotificationLogPath) {
+      const response = await page.request.get(url + path + address.search);
+      return fulfillNotificationRoute(route, 'fixture-read', { width, fixtureStatus: response.status() }, { response });
+    }
     let body: unknown = [];
     if (path.endsWith('/auth/status')) body = { auth_enabled: false, requires_setup: false };
     if (path.endsWith('/settings')) body = { check_updates: false };

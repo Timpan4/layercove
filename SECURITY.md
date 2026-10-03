@@ -1,255 +1,129 @@
-# Security Policy
+# Security policy
 
-## Reporting a Vulnerability
+## Reporting a vulnerability
 
-The Bambuddy team takes security seriously. We appreciate your efforts to responsibly disclose your findings.
+Do not report vulnerabilities in public issues, pull requests, or discussions.
 
-### How to Report
+Report them privately through GitHub: open the repository's [Security tab](https://github.com/Timpan4/layercove/security) and choose **Report a vulnerability**. Include:
 
-**Please DO NOT report security vulnerabilities through public GitHub.**
+- a description of the vulnerability and its impact;
+- steps to reproduce;
+- the affected LayerCove version or commit;
+- a suggested fix, if you have one.
 
-Instead, please report them via email to:
+Reports are handled on a best-effort basis with no guaranteed response time. Reporters are credited in the fix's release notes unless they ask not to be.
 
-**security@bambuddy.cool**
+## Supported versions
 
-### What to Include
-
-Please include the following information in your report:
-
-- **Description** of the vulnerability
-- **Steps to reproduce** the issue
-- **Affected versions** of Bambuddy
-- **Potential impact** of the vulnerability
-- **Any suggested fixes** (if you have them)
-
-### What to Expect
-
-- **Acknowledgment**: We will acknowledge receipt of your report within 48 hours
-- **Assessment**: We will investigate and validate the issue within 7 days
-- **Updates**: We will keep you informed of our progress
-- **Resolution**: We aim to release a fix within 30 days for critical issues
-- **Credit**: We will credit you in our release notes (unless you prefer to remain anonymous)
-
-## Supported Versions
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-| 0.2.x   | :white_check_mark: |
-
-## Security Considerations
-
-### Network Security
-
-Bambuddy communicates with Bambu printers over your local network using:
-
-- **MQTT over TLS** (port 8883) - Encrypted printer communication
-- **FTPS** (port 990) - Encrypted file transfers
-
-LayerCove's Moonraker support is designed for an administrator-configured,
-trusted printer origin. It makes backend HTTP and WebSocket connections to that
-origin, so adding a Moonraker printer grants the application access to that
-printer's control API. Only administrators should create or edit printer
-connections.
-
-Moonraker connections enforce the following boundaries:
-
-- Only credential-free `http://` or `https://` origins are accepted. API keys
-  and authorization values are stored separately and encrypted at rest.
-- DNS is resolved for each connection and the socket is pinned to an approved
-  result. Loopback, link-local, multicast, unspecified, and known cloud metadata
-  addresses are rejected. Private LAN and VPN addresses are intentionally
-  allowed because they are the supported deployment topology.
-- HTTP and WebSocket redirects are rejected rather than followed. Configure the
-  final Moonraker origin directly.
-- Environment proxy variables are ignored for printer traffic. Connections have
-  bounded timeouts and response/message sizes; uploads accept safe `.gcode`
-  names and remain size-bounded.
-- TLS certificate verification is enabled by default per printer. For a private
-  certificate authority, install its CA certificate in the LayerCove host or
-  container trust store. Disabling verification is an explicit per-printer
-  fallback for a trusted network, not a global setting and not suitable across
-  an untrusted network.
-- Moonraker credentials are omitted from printer API responses and scrubbed
-  from log and support-bundle output. Operators must still redact exported
-  diagnostics before publishing them.
-- Upload/start, pause, resume, cancel, and emergency stop require printer
-  permissions. Emergency stop also requires an explicit confirmation payload.
-  LayerCove does not expose a generic G-code console, shell, or arbitrary URL
-  proxy.
-
-### Remote access and reverse proxies
-
-LayerCove and Moonraker should remain on a trusted LAN or private overlay such
-as Tailscale. If remote browser access is required, place LayerCove behind an
-authenticated HTTPS boundary such as a correctly configured reverse proxy or
-Cloudflare Access/Tunnel. Do not publish Moonraker directly, and do not treat a
-tunnel by itself as application authorization.
-
-Authentication must be enabled in LayerCove before it is reachable by untrusted
-clients. Grant printer-control and printer-file permissions only to users who
-may move, heat, start, or stop physical hardware. Keep Moonraker API keys and
-long-lived LayerCove tokens out of URLs, browser-visible configuration, proxy
-logs, and support tickets.
-
-Forwarded client-address headers are ignored unless `TRUSTED_PROXY_IPS` lists
-the direct proxy peers. Set it to the proxy addresses that actually connect to
-LayerCove, not to client networks and not to a broad subnet. The application
-then evaluates `X-Forwarded-For` from right to left and uses the first address
-that is not a trusted proxy. Configure the proxy to replace or append forwarded
-headers consistently and prevent clients from reaching LayerCove around the
-proxy.
-
-A public reverse proxy does not make printer protocols internet-safe. Keep
-LayerCove-to-printer traffic on the trusted LAN/VPN, restrict network routes and
-firewall rules to required destinations, and protect backups because they
-contain encrypted credentials and application data. DNS rebinding defenses
-validate and pin resolved peers for each connection, but administrators remain
-responsible for controlling the configured DNS zone and network path.
-
-### Recommendations
-
-1. **Run on a trusted network**: Keep LayerCove and printer protocols on a trusted LAN or private VPN
-2. **Authenticate remote access**: Enable LayerCove authentication and use an authenticated HTTPS reverse proxy or access gateway
-3. **Do not expose Moonraker directly**: Configure its private origin in LayerCove and restrict it with network policy
-4. **Keep updated**: Always run the latest version for security patches
-5. **Secure credentials**: Treat LayerCove and Moonraker API keys like passwords; do not put them in URLs or public diagnostics
-6. **Verify TLS**: Prefer a trusted private CA; disable per-printer verification only on a controlled network
-7. **Developer Mode**: Use your Bambu printer's Developer Mode access code; don't share it
-
-### Known Security Features
-
-- API key and role-based authentication for external access
-- No default credentials
-- Local and private-network deployment by default (no cloud dependency)
-- TLS support for printer communication
-- Per-request Moonraker DNS validation and connection pinning
-- Redirect, proxy-environment, response-size, timeout, filename, and command boundaries
-- Stored-secret redaction in API, log, and support-bundle paths
+Only the latest published image (`ghcr.io/timpan4/layercove:latest`) and the `main` branch receive security fixes. Update before reporting an issue you found on an older build.
 
 ## Scope
 
-The following are **in scope** for security reports:
+In scope:
 
-- Authentication/authorization bypasses
-- Remote code execution
-- SQL injection
-- Cross-site scripting (XSS)
-- Cross-site request forgery (CSRF)
-- Sensitive data exposure
-- Insecure direct object references
+- authentication or authorization bypass;
+- remote code execution;
+- SQL injection;
+- cross-site scripting (XSS) and cross-site request forgery (CSRF);
+- sensitive data exposure;
+- insecure direct object references.
 
-The following are **out of scope**:
+Out of scope:
 
-- Issues in dependencies (report to the upstream project)
-- Social engineering attacks
-- Physical attacks
-- Denial of service (DoS) attacks
-- Issues requiring physical access to the server
+- vulnerabilities in dependencies (report them to that project);
+- social engineering;
+- denial of service;
+- attacks that need physical access to the server or printers.
 
-## Bambuddy Security Stance
+## Deployment guidance
 
-The following rules apply to every PR that touches authentication,
-authorization, permission gating, secret handling, or any code that
-decides whether to allow or deny an action. They are not aspirational —
-each one is enforced by a CI test that fails the build on violation.
+### Network
 
-### 1. Default-deny, allowlist over denylist
+LayerCove talks to Bambu printers on the local network over MQTT over TLS (port 8883) and FTPS (port 990).
 
-At any security boundary, the safe default is to deny and the
-exceptions are listed explicitly. Denylists fail open on growth — every
-new resource added to the codebase is implicitly granted access until
-someone remembers to deny it. Allowlists fail closed: an unmapped new
-resource gets a 403, which is loud and recoverable.
+Moonraker support assumes an administrator-configured, trusted printer origin. LayerCove makes backend HTTP and WebSocket connections to that origin, so adding a Moonraker printer grants LayerCove access to that printer's control API. Only administrators should create or edit printer connections.
 
-Concretely:
+Moonraker connections enforce these boundaries:
 
-- `_APIKEY_SCOPE_BY_PERMISSION` in `backend/app/core/auth.py` is the
-  load-bearing API-key authorization map. Every `Permission` enum value
-  must be either present here with a scope flag, or present in
-  `_APIKEY_DENIED_PERMISSIONS`. Unmapped permissions return 403.
-- Route auth dependencies are explicit, not implicit. A route without a
-  `Depends(require_*)` decorator must be listed in the route-audit
-  `PUBLIC_ROUTES` allowlist with a justification comment, or CI fails.
+- Only credential-free `http://` or `https://` origins are accepted. API keys and authorization values are stored separately and encrypted at rest. Over `http://`, the API key or authorization header crosses the network in cleartext; use `https://` when you configure credentials.
+- DNS is resolved for each connection and the socket is pinned to an approved result. Loopback, link-local, multicast, unspecified, and known cloud metadata addresses are rejected. Private LAN and VPN addresses are allowed because they are the supported deployment topology.
+- HTTP and WebSocket redirects are rejected. Configure the final Moonraker origin directly.
+- Proxy environment variables are ignored for printer traffic. Connections have bounded timeouts and response sizes. Uploads accept only safe `.gcode` names and are size-bounded.
+- TLS certificate verification is on by default for each printer. For a private certificate authority, install its CA certificate in the LayerCove host or container trust store. Disabling verification is a per-printer fallback for a trusted network only.
+- Moonraker credentials are omitted from printer API responses and scrubbed from logs and support bundles. Redact exported diagnostics before publishing them anyway.
+- Upload/start, pause, resume, cancel, and emergency stop require printer permissions. Emergency stop also requires an explicit confirmation payload. LayerCove exposes no generic G-code console, shell, or URL proxy.
 
-### 2. Fail-closed in auth code
+See [docs/moonraker-configuration.md](docs/moonraker-configuration.md) for the full connection policy.
 
-No `except Exception:` (or bare `except:`) in authentication,
-authorization, or permission code may return a permissive value
-(`None`, `True`, an admin user, an empty filter that lets everything
-through, etc.). The catch-all either re-raises or returns a denial.
-This is CWE-636 "Not Failing Securely" — see
-<https://cwe.mitre.org/data/definitions/636.html>.
+### Remote access and reverse proxies
 
-The lint scope is `backend/app/core/auth.py`,
-`backend/app/core/permissions.py`,
-`backend/app/api/routes/auth*.py`. Any `except Exception:` block in
-those files must be tagged `# SEC-AUTH-EXC: <reason>` on the same
-line; CI fails otherwise. (We use a standalone marker rather than
-`# noqa: ...` because ruff reserves the latter syntax for its own
-error codes.)
+Keep LayerCove and Moonraker on a trusted LAN or a private overlay such as Tailscale. For remote browser access, put LayerCove behind an authenticated HTTPS boundary such as a reverse proxy with authentication or Cloudflare Access. Never publish Moonraker directly. A tunnel alone is not application authorization.
+
+Enable LayerCove authentication before any untrusted client can reach it. Grant printer-control and printer-file permissions only to users allowed to move, heat, start, or stop hardware. Keep Moonraker API keys and long-lived LayerCove tokens out of URLs, browser-visible configuration, proxy logs, and support tickets.
+
+LayerCove ignores forwarded client-address headers unless `TRUSTED_PROXY_IPS` lists the direct proxy peers. Set it to the proxy addresses that actually connect to LayerCove, not to client networks or a broad subnet. LayerCove then reads `X-Forwarded-For` from right to left and uses the first address that is not a trusted proxy. Configure the proxy to set forwarded headers consistently, and make sure clients cannot bypass the proxy.
+
+A public reverse proxy does not make printer protocols safe on the internet. Keep LayerCove-to-printer traffic on the trusted LAN or VPN, restrict routes and firewall rules to the required destinations, and protect backups, which contain encrypted credentials and application data. Connections validate and pin resolved peers to defend against DNS rebinding, but administrators still control the DNS zone and network path.
+
+### Checklist
+
+1. Keep LayerCove and printer protocols on a trusted LAN or private VPN.
+2. Enable authentication and put remote access behind an authenticated HTTPS proxy or access gateway.
+3. Never expose Moonraker directly.
+4. Run the latest image.
+5. Treat LayerCove and Moonraker API keys like passwords. Keep them out of URLs and public diagnostics.
+6. Prefer a trusted private CA. Disable per-printer TLS verification only on a controlled network.
+7. Do not share your Bambu printer's Developer Mode access code.
+
+## Security rules for contributors
+
+These rules apply to every pull request that touches authentication, authorization, permission checks, secret handling, or any code that decides whether to allow an action. CI enforces each rule except rule 4.
+
+### 1. Default-deny allowlists
+
+At a security boundary, deny by default and list exceptions explicitly. A denylist grants access to every new resource until someone remembers to deny it. An allowlist returns 403 for an unmapped resource, which is loud and recoverable.
+
+- `_APIKEY_SCOPE_BY_PERMISSION` in `backend/app/core/auth.py` is the API-key authorization map. Every `Permission` value must appear there with a scope flag or in `_APIKEY_DENIED_PERMISSIONS`. Unmapped permissions return 403.
+- Every route declares its auth dependency. A route without one must be in the route-audit `_PUBLIC_ROUTES` allowlist with a justification comment.
+
+### 2. Fail closed in auth code
+
+An `except Exception:` or bare `except:` in authentication, authorization, or permission code must re-raise or deny. It must never return a permissive value such as `None`, `True`, an admin user, or an empty filter ([CWE-636](https://cwe.mitre.org/data/definitions/636.html)).
+
+The check covers `backend/app/core/auth.py`, `backend/app/core/permissions.py`, and `backend/app/api/routes/auth*.py`. Every `except Exception:` in those files needs a `# SEC-AUTH-EXC: <reason>` marker on the same line. The project uses its own marker because Ruff reserves `# noqa:` for its rule codes.
 
 ### 3. No hardcoded fallback secrets
 
-Production secrets (JWT signing keys, encryption keys, OAuth client
-secrets, API tokens) have no string-literal fallback in source. The
-codebase reads them from env vars or generates them on first run; if a
-secret is missing AND cannot be generated, the app refuses to start
-rather than booting with a known value. CI greps the source for
-`-change-in-production`-shaped strings and fails on any hit.
+JWT signing keys, encryption keys, OAuth client secrets, and API tokens have no string-literal fallback in source. They come from environment variables, a file in the data directory, or are generated on first run. CI fails on any `-change-in-production`-style string and on a hardcoded JWT secret fallback.
 
-### 4. Negative-path tests required for any auth change
+If a generated secret cannot be saved to the data directory, LayerCove keeps running: the JWT secret is regenerated on every restart, which invalidates sessions, and TOTP keys and OIDC client secrets are stored in plaintext. Set `JWT_SECRET_KEY` and `LAYERCOVE_SECRET_ENCRYPTION_KEY` (legacy alias `MFA_ENCRYPTION_KEY`), or fix the data directory's permissions, to avoid both.
 
-Any PR that adds or modifies an auth dependency, permission check, or
-scope flag includes tests for the negative paths:
+### 4. Negative-path tests for auth changes
 
-- "No credentials → 401"
-- "Wrong credentials → 401"
-- "Right credentials, wrong scope → 403"
-- "Expired / revoked credentials → 401"
+A pull request that adds or changes an auth dependency, permission check, or scope flag includes tests for:
 
-A test asserting the happy path passes is necessary but not sufficient.
-The failure modes are where the vulnerabilities live. The structural
-backstops above catch *categories* of regression; the negative-path
-tests catch *specific* regressions in the new code.
+- no credentials → 401;
+- wrong credentials → 401;
+- valid credentials with the wrong scope → 403;
+- expired or revoked credentials → 401.
 
-### 5. Path joins under a trusted parent use the safe-join helper
+A happy-path test alone is not enough. Reviewers enforce this rule.
 
-Anywhere a Bambuddy code path joins a string from outside the function's
-scope (request body, query/path param, `UploadFile.filename`, ZIP
-`namelist()` entry, tarfile member, **printer FTP-listing entry**) under
-a trusted directory, the join must route through
-`backend.app.utils.safe_path.safe_join_under(parent, *parts)`. The helper
-resolves the joined path and asserts it is a descendant of the parent —
-defeating both absolute-path collapse (`Path("/a") / "/b"` → `Path("/b")`)
-and `..` traversal.
+### 5. Safe joins under a trusted directory
 
-Sites that have an inline guard (an explicit resolve + `is_relative_to`,
-a basename-stripping helper like `_safe_filename`, or a pre-validated
-alphanumeric filter) carry a `# SEC-PATH-OK: <reason>` marker on the
-same line. CI walks **both** `backend/app/api/routes/` and
-`backend/app/services/` and fails the build on any
-``<dir-like> / <variable>`` join without either the helper or the
-marker. The services layer is in scope because it receives values from
-the routes verbatim and from external sources Bambuddy has no control
-over (the compromised-printer threat model: a malicious printer can
-serve crafted FTP-listing entries that flow straight into a path join).
+Any path built from outside input, such as a request body, query or path parameter, `UploadFile.filename`, ZIP or tar member, or printer FTP listing entry, must be joined with `backend.app.utils.safe_path.safe_join_under(parent, *parts)`. The helper resolves the result and confirms it stays under the parent, which blocks absolute-path collapse and `..` traversal.
 
-### Where these rules live in the codebase
+A site with its own guard, such as an explicit resolve plus `is_relative_to` or a basename-only helper, carries a `# SEC-PATH-OK: <reason>` marker on the same line. CI scans `backend/app/api/routes/` and `backend/app/services/` for unguarded joins. Services are included because a compromised printer can serve crafted FTP listing entries that reach a path join.
 
-| Rule | Enforcement | Location |
-|------|-------------|----------|
-| 1. Allowlist over denylist (Permission) | `test_every_permission_has_a_classification` | `backend/tests/integration/test_auth_apikey_rbac.py` |
-| 1. Allowlist over denylist (routes) | `test_routes_have_explicit_auth_deps` | `backend/tests/unit/test_route_auth_coverage.py` |
-| 2. Fail-closed in auth code | `test_no_fail_open_in_auth_modules` | `backend/tests/unit/test_no_fail_open_in_auth.py` |
-| 3. No hardcoded fallback secrets | `test_no_hardcoded_secrets` | `backend/tests/unit/test_no_hardcoded_secrets.py` |
-| 4. Negative-path tests required | Reviewer responsibility (no automated CI gate yet) | PR review |
-| 5. Safe-join under trusted parent | `test_route_path_arithmetic_is_safe_joined_or_marked` | `backend/tests/unit/test_no_unsafe_path_joins.py` |
+### Enforcement
 
-If you are adding a CI rule, update this table. If you are removing a
-CI rule, you are removing a security backstop and the PR description
-must explain why.
+| Rule | Test | Location |
+|---|---|---|
+| 1. Allowlist (permissions) | `test_every_permission_has_a_classification` | `backend/tests/integration/test_auth_apikey_rbac.py` |
+| 1. Allowlist (routes) | `test_routes_have_explicit_auth_deps` | `backend/tests/unit/test_route_auth_coverage.py` |
+| 2. Fail closed | `test_no_fail_open_in_auth_modules` | `backend/tests/unit/test_no_fail_open_in_auth.py` |
+| 3. No fallback secrets | `test_no_hardcoded_secrets_in_production_source`, `test_jwt_secret_loader_has_no_hardcoded_fallback` | `backend/tests/unit/test_no_hardcoded_secrets.py` |
+| 4. Negative-path tests | Pull request review | — |
+| 5. Safe joins | `test_route_path_arithmetic_is_safe_joined_or_marked` | `backend/tests/unit/test_no_unsafe_path_joins.py` |
 
----
-
-Thank you for helping keep Bambuddy and its users safe!
+Update this table when you add a CI rule. A pull request that removes one must explain why.

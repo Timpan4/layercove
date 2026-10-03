@@ -11,19 +11,15 @@ Fixes #
 
 <!--
 If this PR changes user-visible behavior, config keys, ports, CLI flags,
-URLs, or installation steps, link matching PRs in the docs repos below.
+URLs, or installation steps, update the matching docs in this repository.
 Internal refactors, bug fixes with no observable change, and test-only
 changes are exempt — just check the "not required" box and say why.
 
-See CONTRIBUTING.md → Documentation Requirements for the full rules.
+See CONTRIBUTING.md → Documentation for the full rules.
 -->
 
-**Companion docs PRs** (delete lines that don't apply):
-- Wiki: maziggy/bambuddy-wiki#___
-- Website: maziggy/bambuddy-website#___
-
 **Pick one**:
-- [ ] Docs PR(s) linked above
+- [ ] Docs updated in this PR
 - [ ] No docs update required — reason: ___
 
 ## Type of Change
