@@ -1330,6 +1330,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: 'Apri {{archives}}, scegli {{print}} per un file, poi seleziona {{queue}}.',
+      noMatches: 'Nessuna stampa corrisponde ai filtri attuali',
       title: 'Nessuna stampa programmata',
       description: 'Programma una stampa dalla pagina Archivi usando l\'opzione "Programma" nel menu contestuale, o trascina i file per iniziare.',
     },

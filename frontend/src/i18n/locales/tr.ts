@@ -1330,6 +1330,8 @@ export default {
     },
     // Boş durum
     empty: {
+      activeDescription: '{{archives}} bölümünü açın, bir dosya için {{print}} seçin, ardından {{queue}} seçin.',
+      noMatches: 'Geçerli filtrelerle eşleşen baskı yok',
       title: 'Zamanlanmış baskı yok',
       description: 'Bağlam menüsündeki "Zamanla" seçeneğini kullanarak Arşivler sayfasından bir baskı zamanlayın veya başlamak için dosyaları sürükleyip bırakın.',
     },

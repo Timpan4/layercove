@@ -1330,6 +1330,8 @@ export default {
     },
     // Empty state
     empty: {
+      activeDescription: 'Abra {{archives}}, elija {{print}} para un archivo y seleccione {{queue}}.',
+      noMatches: 'Ninguna impresión coincide con los filtros actuales',
       title: 'No hay impresiones programadas',
       description: 'Programe una impresión desde la página de Archivos con la opción «Programar» del menú contextual, o arrastre y suelte archivos para empezar.',
     },

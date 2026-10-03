@@ -1323,7 +1323,7 @@ export function QueuePage() {
 
   const timeFormat: TimeFormat = settings?.time_format || 'system';
 
-  const { data: queue, isLoading } = useQuery({
+  const { data: queue, isLoading, isError, refetch } = useQuery({
     queryKey: ['queue', filterPrinter, filterStatus],
     queryFn: () => api.getQueue(filterPrinter || undefined, filterStatus || undefined),
     refetchInterval: 5000,
@@ -2126,6 +2126,34 @@ export function QueuePage() {
         <PipelineRunsView />
       ) : isLoading ? (
         <div className="text-center py-12 text-bambu-gray">{t('common.loading')}</div>
+      ) : activeTab === 'queue' && isError ? (
+        <Card className="p-6 sm:p-12 text-center border-dashed">
+          <p role="alert" className="text-bambu-gray mb-4">{t('common.errorLoading')}</p>
+          <Button variant="secondary" onClick={() => refetch()}>{t('common.retry')}</Button>
+        </Card>
+      ) : activeTab === 'queue' && queue && activeItems.length + pendingItems.length === 0 ? (
+        <Card className="p-6 sm:p-12 text-center border-dashed">
+          <Calendar className="w-16 h-16 text-bambu-gray mx-auto mb-4 opacity-50" />
+          <h3 className="text-xl font-medium text-white mb-2">
+            {t(filterPrinter || filterStatus || filterLocation ? 'queue.empty.noMatches' : 'queue.empty.title')}
+          </h3>
+          {filterPrinter || filterStatus || filterLocation ? (
+            <Button variant="secondary" onClick={() => {
+              setFilterPrinter(null);
+              setFilterStatus('');
+              setFilterLocation('');
+            }}>{t('fileManager.clearFilters')}</Button>
+          ) : (
+            <>
+              <p className="text-bambu-gray max-w-md mx-auto mb-4">
+                {t('queue.empty.activeDescription', {
+                  archives: t('nav.archives'), print: t('common.print'), queue: t('printModal.queue'),
+                })}
+              </p>
+              <Link to="/archives" className="text-bambu-green hover:underline">{t('nav.archives')}</Link>
+            </>
+          )}
+        </Card>
       ) : queue?.length === 0 ? (
         <Card className="p-12 text-center border-dashed">
           <Calendar className="w-16 h-16 text-bambu-gray mx-auto mb-4 opacity-50" />
