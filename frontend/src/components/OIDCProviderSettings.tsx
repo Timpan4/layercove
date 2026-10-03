@@ -1,4 +1,4 @@
-import { useState, type ReactNode } from 'react';
+import { useState, useId, type ReactNode } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { Plus, Edit2, Trash2, Globe, Check, X, RefreshCw, ExternalLink, ImageOff } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -43,6 +43,7 @@ function ProviderForm({
   isPending: boolean;
 }) {
   const { t } = useTranslation();
+  const formId = useId();
   const [form, setForm] = useState<OIDCProviderCreate>(initial);
   const [secretChanged, setSecretChanged] = useState(false);
   const set = (key: keyof OIDCProviderCreate, value: unknown) =>
@@ -77,24 +78,25 @@ function ProviderForm({
     <div className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         <div>
-          <label className={labelCls}>{t('settings.oidc.form.name')} <span className="text-red-700 dark:text-red-400">*</span></label>
-          <input className={inputCls} value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Google" />
+          <label htmlFor={`${formId}-name`} className={labelCls}>{t('settings.oidc.form.name')} <span className="text-red-700 dark:text-red-400">*</span></label>
+          <input id={`${formId}-name`} className={inputCls} value={form.name} onChange={(e) => set('name', e.target.value)} placeholder="Google" />
         </div>
         <div>
-          <label className={labelCls}>{t('settings.oidc.form.issuerUrl')} <span className="text-red-700 dark:text-red-400">*</span></label>
-          <input className={inputCls} value={form.issuer_url} onChange={(e) => set('issuer_url', e.target.value)} placeholder="https://accounts.google.com" />
+          <label htmlFor={`${formId}-issuer-url`} className={labelCls}>{t('settings.oidc.form.issuerUrl')} <span className="text-red-700 dark:text-red-400">*</span></label>
+          <input id={`${formId}-issuer-url`} className={inputCls} value={form.issuer_url} onChange={(e) => set('issuer_url', e.target.value)} placeholder="https://accounts.google.com" />
         </div>
         <div>
-          <label className={labelCls}>{t('settings.oidc.form.clientId')} <span className="text-red-700 dark:text-red-400">*</span></label>
-          <input className={inputCls} value={form.client_id} onChange={(e) => set('client_id', e.target.value)} placeholder="your-client-id" />
+          <label htmlFor={`${formId}-client-id`} className={labelCls}>{t('settings.oidc.form.clientId')} <span className="text-red-700 dark:text-red-400">*</span></label>
+          <input id={`${formId}-client-id`} className={inputCls} value={form.client_id} onChange={(e) => set('client_id', e.target.value)} placeholder="your-client-id" />
         </div>
         <div>
-          <label className={labelCls}>
+          <label htmlFor={`${formId}-client-secret`} className={labelCls}>
             {t('settings.oidc.form.clientSecret')}
             {!isEdit && <span className="text-red-700 dark:text-red-400"> *</span>}
             {isEdit && <span className="text-bambu-gray text-xs ml-1">({t('settings.oidc.form.secretHint')})</span>}
           </label>
           <input
+            id={`${formId}-client-secret`}
             className={inputCls}
             type="password"
             value={secretChanged ? form.client_secret : ''}
@@ -106,12 +108,13 @@ function ProviderForm({
           />
         </div>
         <div>
-          <label className={labelCls}>{t('settings.oidc.form.scopes')}</label>
-          <input className={inputCls} value={form.scopes} onChange={(e) => set('scopes', e.target.value)} placeholder="openid email profile" />
+          <label htmlFor={`${formId}-scopes`} className={labelCls}>{t('settings.oidc.form.scopes')}</label>
+          <input id={`${formId}-scopes`} className={inputCls} value={form.scopes} onChange={(e) => set('scopes', e.target.value)} placeholder="openid email profile" />
         </div>
         <div>
-          <label className={labelCls}>{t('settings.oidc.form.iconUrl')}</label>
+          <label htmlFor={`${formId}-icon-url`} className={labelCls}>{t('settings.oidc.form.iconUrl')}</label>
           <input
+            id={`${formId}-icon-url`}
             className={inputCls}
             value={form.icon_url ?? ''}
             onChange={(e) => set('icon_url', e.target.value === '' ? null : e.target.value)}
@@ -160,8 +163,9 @@ function ProviderForm({
       </div>
 
       <div>
-        <label className={labelCls}>{t('settings.oidc.form.emailClaim')}</label>
+        <label htmlFor={`${formId}-email-claim`} className={labelCls}>{t('settings.oidc.form.emailClaim')}</label>
         <input
+          id={`${formId}-email-claim`}
           className={inputCls}
           value={form.email_claim}
           onChange={(e) => set('email_claim', e.target.value || 'email')}
@@ -174,8 +178,9 @@ function ProviderForm({
       </div>
 
       <div>
-        <label className={labelCls}>{t('settings.oidc.form.defaultGroup')}</label>
+        <label htmlFor={`${formId}-default-group`} className={labelCls}>{t('settings.oidc.form.defaultGroup')}</label>
         <select
+          id={`${formId}-default-group`}
           className={inputCls}
           value={form.default_group_id ?? ''}
           onChange={(e) => set('default_group_id', e.target.value ? Number(e.target.value) : null)}
