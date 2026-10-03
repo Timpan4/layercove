@@ -4164,15 +4164,16 @@ export function SettingsPage() {
               </p>
               <div className="flex items-center justify-between">
                 <div className="flex-1 mr-4">
-                  <p className="text-sm text-white">
+                  <label htmlFor="preheat-enabled" className="text-sm text-white">
                     {t('settings.preheatEnabled', 'Enable preheat & soak')}
-                  </p>
+                  </label>
                   <p className="text-xs text-bambu-gray mt-0.5">
                     {t('settings.preheatEnabledDesc', 'When off, queued prints dispatch immediately.')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="preheat-enabled"
                     type="checkbox"
                     checked={localSettings.preheat_enabled ?? false}
                     onChange={(e) => updateSetting('preheat_enabled', e.target.checked)}
@@ -4183,10 +4184,11 @@ export function SettingsPage() {
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
                 <div>
-                  <label className="block text-xs text-bambu-gray mb-1">
+                  <label htmlFor="preheat-max-wait-seconds" className="block text-xs text-bambu-gray mb-1">
                     {t('settings.preheatMaxWait', 'Max wait (seconds)')}
                   </label>
                   <input
+                    id="preheat-max-wait-seconds"
                     type="number"
                     min={60}
                     max={3600}
@@ -4200,10 +4202,11 @@ export function SettingsPage() {
                   </p>
                 </div>
                 <div>
-                  <label className="block text-xs text-bambu-gray mb-1">
+                  <label htmlFor="preheat-soak-seconds" className="block text-xs text-bambu-gray mb-1">
                     {t('settings.preheatSoak', 'Soak (seconds)')}
                   </label>
                   <input
+                    id="preheat-soak-seconds"
                     type="number"
                     min={0}
                     max={1800}
