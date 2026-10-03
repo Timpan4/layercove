@@ -1398,6 +1398,56 @@ class TestTOTPReplay:
         )
         assert disable_resp.status_code == 400
 
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_future_window_replacement_does_not_replay_new_secret(
+        self, async_client: AsyncClient, fixed_totp_time: list[int], monkeypatch: pytest.MonkeyPatch
+    ):
+        """Replacing a secret must not carry its replay counter into the new secret."""
+        secrets_to_issue = iter(["JBSWY3DPEHPK3PXP", "KRUGS4ZANFZSAYJA"])
+        monkeypatch.setattr(pyotp, "random_base32", lambda: next(secrets_to_issue))
+        token = await _setup_and_login(async_client, "replayreplace", "replayreplace1")
+        setup = await async_client.post("/api/v1/auth/2fa/totp/setup", headers=_auth_header(token))
+        assert setup.status_code == 200
+        old_totp = pyotp.TOTP(setup.json()["secret"])
+        enable = await async_client.post(
+            "/api/v1/auth/2fa/totp/enable",
+            json={"code": old_totp.at(fixed_totp_time[0])},
+            headers=_auth_header(token),
+        )
+        assert enable.status_code == 200
+
+        future_time = fixed_totp_time[0] + old_totp.interval
+        replacement = await async_client.post(
+            "/api/v1/auth/2fa/totp/setup",
+            json={"code": old_totp.at(future_time)},
+            headers=_auth_header(token),
+        )
+        assert replacement.status_code == 200
+        new_totp = pyotp.TOTP(replacement.json()["secret"])
+        new_code = new_totp.at(future_time)
+        assert new_code != old_totp.at(future_time)
+        enable_new = await async_client.post(
+            "/api/v1/auth/2fa/totp/enable",
+            json={"code": new_code},
+            headers=_auth_header(token),
+        )
+        assert enable_new.status_code == 200
+        fixed_totp_time[0] = future_time
+
+        pre_auth = await _login_get_pre_auth_token(async_client, "replayreplace", "replayreplace1")
+        first = await async_client.post(
+            "/api/v1/auth/2fa/verify",
+            json={"pre_auth_token": pre_auth, "method": "totp", "code": new_code},
+        )
+        assert first.status_code == 200
+        pre_auth_again = await _login_get_pre_auth_token(async_client, "replayreplace", "replayreplace1")
+        replay = await async_client.post(
+            "/api/v1/auth/2fa/verify",
+            json={"pre_auth_token": pre_auth_again, "method": "totp", "code": new_code},
+        )
+        assert replay.status_code == 400
+
 
 # ===========================================================================
 # Rate limiting on disable_totp and regenerate_backup_codes (I10)

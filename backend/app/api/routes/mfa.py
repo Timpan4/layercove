@@ -705,6 +705,7 @@ async def setup_totp(
 
     if existing:
         existing.secret = secret
+        existing.last_totp_counter = None
         existing.is_enabled = False
         existing.backup_code_hashes = []
     else:
