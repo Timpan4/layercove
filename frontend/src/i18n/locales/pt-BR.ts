@@ -1219,8 +1219,9 @@ export default {
     printingInProgress: 'Impressão em andamento...',
     viewArchive: 'Ver Arquivo',
     viewInFileManager: 'Ver no Gerenciador de Arquivos',
-    itemCount: '{{count}} item',
-    itemCount_plural: '{{count}} itens',
+    itemCount_one: '{{count}} item',
+    itemCount_other: '{{count}} itens',
+    itemCount_many: '{{count}} itens',
     dragToReorder: 'Arraste para reordenar (apenas ASAP)',
     reorderHint: 'A posição afeta apenas itens ASAP. Itens agendados são executados no horário definido.',
     sjf: {

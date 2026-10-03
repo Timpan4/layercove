@@ -1219,8 +1219,9 @@ export default {
     printingInProgress: 'Baskı devam ediyor...',
     viewArchive: 'Arşivi görüntüle',
     viewInFileManager: 'Dosya Yöneticisinde görüntüle',
-    itemCount: '{{count}} öğe',
-    itemCount_plural: '{{count}} öğe',
+    itemCount_one: '{{count}} öğe',
+    itemCount_other: '{{count}} öğe',
+    itemCount_many: '{{count}} öğe',
     dragToReorder: 'Yeniden sıralamak için sürükleyin (yalnızca ASAP)',
     reorderHint: 'Konum yalnızca ASAP öğelerini etkiler. Zamanlanmış öğeler belirlenen zamanlarında çalışır.',
     sjf: {
