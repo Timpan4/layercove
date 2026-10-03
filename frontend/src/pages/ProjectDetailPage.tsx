@@ -1037,22 +1037,30 @@ export function ProjectDetailPage() {
                   autoFocus
                 />
                 <div className="flex gap-2">
-                  <input
-                    type="number"
-                    value={newBomQty}
-                    onChange={(e) => setNewBomQty(parseInt(e.target.value) || 1)}
-                    className="w-20 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-bambu-green"
-                    min="1"
-                    placeholder={t('projectDetail.bom.qty')}
-                  />
-                  <input
-                    type="number"
-                    step="0.01"
-                    value={newBomPrice}
-                    onChange={(e) => setNewBomPrice(e.target.value)}
-                    className="flex-1 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
-                    placeholder={t('projectDetail.bom.price', { currency })}
-                  />
+                  <label htmlFor="project-bom-quantity" className="flex flex-col gap-1 text-xs text-bambu-gray">
+                    <span>{t('projectDetail.bom.qty')}</span>
+                    <input
+                      id="project-bom-quantity"
+                      type="number"
+                      value={newBomQty}
+                      onChange={(e) => setNewBomQty(parseInt(e.target.value) || 1)}
+                      className="w-20 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white focus:outline-none focus:border-bambu-green"
+                      min="1"
+                      placeholder={t('projectDetail.bom.qty')}
+                    />
+                  </label>
+                  <label htmlFor="project-bom-price" className="flex flex-1 min-w-0 flex-col gap-1 text-xs text-bambu-gray">
+                    <span>{t('projectDetail.bom.price', { currency })}</span>
+                    <input
+                      id="project-bom-price"
+                      type="number"
+                      step="0.01"
+                      value={newBomPrice}
+                      onChange={(e) => setNewBomPrice(e.target.value)}
+                      className="flex-1 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded px-3 py-2 text-sm text-white placeholder-bambu-gray focus:outline-none focus:border-bambu-green"
+                      placeholder={t('projectDetail.bom.price', { currency })}
+                    />
+                  </label>
                 </div>
               </div>
               <input
