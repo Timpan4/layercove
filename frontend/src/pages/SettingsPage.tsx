@@ -1105,6 +1105,7 @@ export function SettingsPage() {
             value={settingsSearch}
             onChange={(e) => setSettingsSearch(e.target.value)}
             placeholder={t('settings.searchPlaceholder', 'Search settings…')}
+            aria-label={t('settings.searchLabel', 'Search settings')}
             className="w-full pl-9 pr-8 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white text-sm focus:outline-none focus:border-bambu-green"
           />
           {settingsSearch && (
@@ -1317,12 +1318,13 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-language" className="block text-sm text-bambu-gray mb-1">
                   <Globe className="w-4 h-4 inline mr-1" />
                   {t('settings.language')}
                 </label>
                 <div className="relative">
                   <select
+                    id="settings-language"
                     value={i18n.language}
                     onChange={(e) => {
                       const newLang = e.target.value;
@@ -1351,11 +1353,12 @@ export function SettingsPage() {
                 </p>
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-default-view" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.defaultView')}
                 </label>
                 <div className="relative">
                   <select
+                    id="settings-default-view"
                     value={defaultView}
                     onChange={(e) => handleDefaultViewChange(e.target.value)}
                     className="w-full px-3 py-2 pr-10 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"
@@ -1374,11 +1377,12 @@ export function SettingsPage() {
               </div>
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm text-bambu-gray mb-1">
+                  <label htmlFor="settings-date-format" className="block text-sm text-bambu-gray mb-1">
                     {t('settings.dateFormat')}
                   </label>
                   <div className="relative">
                     <select
+                      id="settings-date-format"
                       value={localSettings.date_format || 'system'}
                       onChange={(e) => updateSetting('date_format', e.target.value as 'system' | 'us' | 'eu' | 'iso')}
                       className="w-full px-3 py-2 pr-10 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"
@@ -1392,11 +1396,12 @@ export function SettingsPage() {
                   </div>
                 </div>
                 <div>
-                  <label className="block text-sm text-bambu-gray mb-1">
+                  <label htmlFor="settings-time-format" className="block text-sm text-bambu-gray mb-1">
                     {t('settings.timeFormat')}
                   </label>
                   <div className="relative">
                     <select
+                      id="settings-time-format"
                       value={localSettings.time_format || 'system'}
                       onChange={(e) => updateSetting('time_format', e.target.value as 'system' | '12h' | '24h')}
                       className="w-full px-3 py-2 pr-10 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"
@@ -1410,11 +1415,12 @@ export function SettingsPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-default-printer" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.defaultPrinter')}
                 </label>
                 <div className="relative">
                   <select
+                    id="settings-default-printer"
                     value={localSettings.default_printer_id ?? ''}
                     onChange={(e) => updateSetting('default_printer_id', e.target.value ? Number(e.target.value) : null)}
                     className="w-full px-3 py-2 pr-10 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none appearance-none cursor-pointer"
@@ -1465,14 +1471,16 @@ export function SettingsPage() {
 
               {/* Dark Mode Settings */}
               <div className={`space-y-3 p-4 rounded-lg border ${resolvedMode === 'dark' ? 'border-bambu-green bg-bambu-green/5' : 'border-bambu-dark-tertiary'}`}>
-                <h3 className="text-sm font-medium text-white flex items-center gap-2">
+                <h3 id="settings-dark-mode-heading" className="text-sm font-medium text-white flex items-center gap-2">
                   {t('settings.darkMode')}
-                  {resolvedMode === 'dark' && <span className="text-xs text-bambu-green">{t('settings.active')}</span>}
+                  {resolvedMode === 'dark' && <span aria-hidden="true" className="text-xs text-bambu-green">{t('settings.active')}</span>}
                 </h3>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-xs text-bambu-gray mb-1">{t('settings.background')}</label>
+                    <label id="settings-dark-background-label" htmlFor="settings-dark-background" className="block text-xs text-bambu-gray mb-1">{t('settings.background')}</label>
                     <select
+                      id="settings-dark-background"
+                      aria-labelledby="settings-dark-mode-heading settings-dark-background-label"
                       value={darkBackground}
                       onChange={(e) => { setDarkBackground(e.target.value as DarkBackground); showToast(t('settings.toast.settingsSaved'), 'success'); }}
                       className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1486,8 +1494,10 @@ export function SettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs text-bambu-gray mb-1">{t('settings.accent')}</label>
+                    <label id="settings-dark-accent-label" htmlFor="settings-dark-accent" className="block text-xs text-bambu-gray mb-1">{t('settings.accent')}</label>
                     <select
+                      id="settings-dark-accent"
+                      aria-labelledby="settings-dark-mode-heading settings-dark-accent-label"
                       value={darkAccent}
                       onChange={(e) => { setDarkAccent(e.target.value as ThemeAccent); showToast(t('settings.toast.settingsSaved'), 'success'); }}
                       className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1501,8 +1511,10 @@ export function SettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs text-bambu-gray mb-1">{t('settings.style')}</label>
+                    <label id="settings-dark-style-label" htmlFor="settings-dark-style" className="block text-xs text-bambu-gray mb-1">{t('settings.style')}</label>
                     <select
+                      id="settings-dark-style"
+                      aria-labelledby="settings-dark-mode-heading settings-dark-style-label"
                       value={darkStyle}
                       onChange={(e) => { setDarkStyle(e.target.value as ThemeStyle); showToast(t('settings.toast.settingsSaved'), 'success'); }}
                       className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1517,14 +1529,16 @@ export function SettingsPage() {
 
               {/* Light Mode Settings */}
               <div className={`space-y-3 p-4 rounded-lg border ${resolvedMode === 'light' ? 'border-bambu-green bg-bambu-green/5' : 'border-bambu-dark-tertiary'}`}>
-                <h3 className="text-sm font-medium text-white flex items-center gap-2">
+                <h3 id="settings-light-mode-heading" className="text-sm font-medium text-white flex items-center gap-2">
                   {t('settings.lightMode')}
-                  {resolvedMode === 'light' && <span className="text-xs text-bambu-green">{t('settings.active')}</span>}
+                  {resolvedMode === 'light' && <span aria-hidden="true" className="text-xs text-bambu-green">{t('settings.active')}</span>}
                 </h3>
                 <div className="grid grid-cols-3 gap-3">
                   <div>
-                    <label className="block text-xs text-bambu-gray mb-1">{t('settings.background')}</label>
+                    <label id="settings-light-background-label" htmlFor="settings-light-background" className="block text-xs text-bambu-gray mb-1">{t('settings.background')}</label>
                     <select
+                      id="settings-light-background"
+                      aria-labelledby="settings-light-mode-heading settings-light-background-label"
                       value={lightBackground}
                       onChange={(e) => { setLightBackground(e.target.value as LightBackground); showToast(t('settings.toast.settingsSaved'), 'success'); }}
                       className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1535,8 +1549,10 @@ export function SettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs text-bambu-gray mb-1">{t('settings.accent')}</label>
+                    <label id="settings-light-accent-label" htmlFor="settings-light-accent" className="block text-xs text-bambu-gray mb-1">{t('settings.accent')}</label>
                     <select
+                      id="settings-light-accent"
+                      aria-labelledby="settings-light-mode-heading settings-light-accent-label"
                       value={lightAccent}
                       onChange={(e) => { setLightAccent(e.target.value as ThemeAccent); showToast(t('settings.toast.settingsSaved'), 'success'); }}
                       className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1550,8 +1566,10 @@ export function SettingsPage() {
                     </select>
                   </div>
                   <div>
-                    <label className="block text-xs text-bambu-gray mb-1">{t('settings.style')}</label>
+                    <label id="settings-light-style-label" htmlFor="settings-light-style" className="block text-xs text-bambu-gray mb-1">{t('settings.style')}</label>
                     <select
+                      id="settings-light-style"
+                      aria-labelledby="settings-light-mode-heading settings-light-style-label"
                       value={lightStyle}
                       onChange={(e) => { setLightStyle(e.target.value as ThemeStyle); showToast(t('settings.toast.settingsSaved'), 'success'); }}
                       className="w-full px-2 py-1.5 text-sm bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1577,13 +1595,14 @@ export function SettingsPage() {
             <CardContent className="space-y-3">
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-white">{t('settings.autoArchivePrints')}</p>
+                  <label htmlFor="settings-auto-archive" className="text-white">{t('settings.autoArchivePrints')}</label>
                   <p className="text-sm text-bambu-gray">
                     {t('settings.autoArchiveDescription')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="settings-auto-archive"
                     type="checkbox"
                     checked={localSettings.auto_archive}
                     onChange={(e) => updateSetting('auto_archive', e.target.checked)}
@@ -1594,13 +1613,14 @@ export function SettingsPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-white">{t('settings.saveThumbnails')}</p>
+                  <label htmlFor="settings-save-thumbnails" className="text-white">{t('settings.saveThumbnails')}</label>
                   <p className="text-sm text-bambu-gray">
                     {t('settings.saveThumbnailsDescription')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="settings-save-thumbnails"
                     type="checkbox"
                     checked={localSettings.save_thumbnails}
                     onChange={(e) => updateSetting('save_thumbnails', e.target.checked)}
@@ -1611,13 +1631,14 @@ export function SettingsPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-white">{t('settings.captureFinishPhoto')}</p>
+                  <label htmlFor="settings-capture-finish-photo" className="text-white">{t('settings.captureFinishPhoto')}</label>
                   <p className="text-sm text-bambu-gray">
                     {t('settings.captureFinishPhotoDescription')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="settings-capture-finish-photo"
                     type="checkbox"
                     checked={localSettings.capture_finish_photo}
                     onChange={(e) => updateSetting('capture_finish_photo', e.target.checked)}
@@ -1645,11 +1666,12 @@ export function SettingsPage() {
                 <div className="border-t border-bambu-dark-tertiary pt-3 mt-3 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-white">{t('archiveAutoPurge.enableLabel')}</p>
+                      <label htmlFor="settings-archive-auto-purge" className="text-white">{t('archiveAutoPurge.enableLabel')}</label>
                       <p className="text-sm text-bambu-gray">{t('archiveAutoPurge.enableDescription')}</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
+                        id="settings-archive-auto-purge"
                         type="checkbox"
                         checked={archivePurgeSettings.enabled}
                         onChange={(e) => saveArchivePurgeSettings({ enabled: e.target.checked })}
@@ -1660,11 +1682,12 @@ export function SettingsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm text-bambu-gray mb-1">
+                    <label htmlFor="settings-archive-auto-purge-days" className="block text-sm text-bambu-gray mb-1">
                       {t('archiveAutoPurge.ageLabel')}
                     </label>
                     <div className="flex items-center gap-2">
                       <input
+                        id="settings-archive-auto-purge-days"
                         type="number"
                         min={7}
                         max={3650}
@@ -1719,10 +1742,11 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-camera-view-mode" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.cameraViewMode')}
                 </label>
                 <select
+                  id="settings-camera-view-mode"
                   value={localSettings.camera_view_mode ?? 'window'}
                   onChange={(e) => updateSetting('camera_view_mode', e.target.value as 'window' | 'embedded')}
                   className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1873,8 +1897,9 @@ export function SettingsPage() {
             </CardHeader>
             <CardContent className="space-y-3">
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('settings.currency')}</label>
+                <label htmlFor="settings-currency" className="block text-sm text-bambu-gray mb-1">{t('settings.currency')}</label>
                 <select
+                  id="settings-currency"
                   value={localSettings.currency}
                   onChange={(e) => updateSetting('currency', e.target.value)}
                   className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1885,7 +1910,7 @@ export function SettingsPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-default-filament-cost" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.defaultFilamentCost')}
                 </label>
                 <div className="relative">
@@ -1893,6 +1918,7 @@ export function SettingsPage() {
                     {getCurrencySymbol(localSettings.currency)}
                   </span>
                   <input
+                    id="settings-default-filament-cost"
                     type="number"
                     step="0.01"
                     min="0"
@@ -1906,7 +1932,7 @@ export function SettingsPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-electricity-cost" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.electricityCost')}
                 </label>
                 <div className="relative">
@@ -1914,6 +1940,7 @@ export function SettingsPage() {
                     {getCurrencySymbol(localSettings.currency)}
                   </span>
                   <input
+                    id="settings-electricity-cost"
                     type="number"
                     step="0.001"
                     min="0"
@@ -1927,10 +1954,11 @@ export function SettingsPage() {
                 </div>
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-energy-display-mode" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.energyDisplayMode')}
                 </label>
                 <select
+                  id="settings-energy-display-mode"
                   value={localSettings.energy_tracking_mode || 'total'}
                   onChange={(e) => updateSetting('energy_tracking_mode', e.target.value as 'print' | 'total')}
                   className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1958,10 +1986,11 @@ export function SettingsPage() {
             <CardContent className="space-y-3">
               {/* Archive Mode */}
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-create-archive-entry" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.createArchiveEntry')}
                 </label>
                 <select
+                  id="settings-create-archive-entry"
                   value={localSettings.library_archive_mode ?? 'ask'}
                   onChange={(e) => updateSetting('library_archive_mode', e.target.value as 'always' | 'never' | 'ask')}
                   className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
@@ -1977,11 +2006,12 @@ export function SettingsPage() {
 
               {/* Disk Space Warning Threshold */}
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">
+                <label htmlFor="settings-low-disk-space-warning" className="block text-sm text-bambu-gray mb-1">
                   {t('settings.lowDiskSpaceWarning')}
                 </label>
                 <div className="flex items-center gap-2">
                   <input
+                    id="settings-low-disk-space-warning"
                     type="number"
                     min="0.5"
                     max="100"
@@ -2004,11 +2034,12 @@ export function SettingsPage() {
                 <div className="border-t border-bambu-dark-tertiary pt-3 mt-3 space-y-3">
                   <div className="flex items-center justify-between">
                     <div>
-                      <p className="text-white">{t('libraryAutoPurge.enableLabel')}</p>
+                      <label htmlFor="settings-library-auto-purge" className="text-white">{t('libraryAutoPurge.enableLabel')}</label>
                       <p className="text-sm text-bambu-gray">{t('libraryAutoPurge.enableDescription')}</p>
                     </div>
                     <label className="relative inline-flex items-center cursor-pointer">
                       <input
+                        id="settings-library-auto-purge"
                         type="checkbox"
                         checked={trashSettings.auto_purge_enabled}
                         onChange={(e) => saveTrashSettings({ auto_purge_enabled: e.target.checked })}
@@ -2019,11 +2050,12 @@ export function SettingsPage() {
                   </div>
 
                   <div>
-                    <label className="block text-sm text-bambu-gray mb-1">
+                    <label htmlFor="settings-library-auto-purge-days" className="block text-sm text-bambu-gray mb-1">
                       {t('libraryAutoPurge.ageLabel')}
                     </label>
                     <div className="flex items-center gap-2">
                       <input
+                        id="settings-library-auto-purge-days"
                         type="number"
                         min={7}
                         max={3650}
@@ -2227,13 +2259,14 @@ export function SettingsPage() {
               <p className="text-xs font-medium text-bambu-gray uppercase tracking-wider">{t('settings.printerFirmware')}</p>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-white">{t('settings.checkPrinterFirmware')}</p>
+                  <label htmlFor="settings-check-printer-firmware" className="text-white">{t('settings.checkPrinterFirmware')}</label>
                   <p className="text-sm text-bambu-gray">
                     {t('settings.checkFirmwareDescription')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="settings-check-printer-firmware"
                     type="checkbox"
                     checked={localSettings.check_printer_firmware ?? true}
                     onChange={(e) => updateSetting('check_printer_firmware', e.target.checked)}
@@ -2247,13 +2280,14 @@ export function SettingsPage() {
               </div>
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="text-white">{t('settings.checkForUpdatesLabel')}</p>
+                  <label htmlFor="settings-check-for-updates" className="text-white">{t('settings.checkForUpdatesLabel')}</label>
                   <p className="text-sm text-bambu-gray">
                     {t('settings.autoCheckDescription')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="settings-check-for-updates"
                     type="checkbox"
                     checked={localSettings.check_updates}
                     onChange={(e) => updateSetting('check_updates', e.target.checked)}
@@ -2264,13 +2298,14 @@ export function SettingsPage() {
               </div>
               <div className={`flex items-center justify-between ${!localSettings.check_updates ? 'opacity-50' : ''}`}>
                 <div>
-                  <p className="text-white">{t('settings.includeBetaUpdates')}</p>
+                  <label htmlFor="settings-include-beta-updates" className="text-white">{t('settings.includeBetaUpdates')}</label>
                   <p className="text-sm text-bambu-gray">
                     {t('settings.includeBetaUpdatesDesc')}
                   </p>
                 </div>
                 <label className="relative inline-flex items-center cursor-pointer">
                   <input
+                    id="settings-include-beta-updates"
                     type="checkbox"
                     checked={localSettings.include_beta_updates ?? false}
                     onChange={(e) => updateSetting('include_beta_updates', e.target.checked)}
