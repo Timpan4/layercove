@@ -93,6 +93,7 @@ export function NotificationLogViewer({ onClose }: NotificationLogViewerProps) {
           </div>
           <button
             onClick={onClose}
+            aria-label={t('common.close')}
             className="text-bambu-gray hover:text-white transition-colors"
           >
             &times;
@@ -125,6 +126,7 @@ export function NotificationLogViewer({ onClose }: NotificationLogViewerProps) {
           <select
             value={days}
             onChange={(e) => setDays(Number(e.target.value))}
+            aria-label={t('common.time')}
             className="px-3 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-sm focus:outline-none focus:ring-1 focus:ring-bambu-green"
           >
             <option value={1}>{t('notifications.last24Hours')}</option>
