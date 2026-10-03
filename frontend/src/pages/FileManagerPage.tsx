@@ -2340,14 +2340,14 @@ export function FileManagerPage() {
                   right edge. The previous `overflow-hidden` was there for the
                   rounded corners but also swallowed any content the actions
                   column couldn't fit (#1325 follow-up reported in chat). */}
-              <div className="bg-bambu-dark-secondary rounded-lg border border-bambu-dark-tertiary overflow-x-auto">
+              <div className={`grid gap-x-4 bg-bambu-dark-secondary rounded-lg border border-bambu-dark-tertiary overflow-x-auto ${authEnabled ? 'grid-cols-[auto_minmax(max-content,1fr)_120px_100px_100px_100px_minmax(0,200px)_220px]' : 'grid-cols-[auto_minmax(max-content,1fr)_100px_100px_100px_minmax(0,200px)_220px]'}`}>
                 {/* List header - hidden on mobile, show simplified on small screens.
                     Trailing actions column is fixed at 220px (sliced 3MF = 7 icons
                     ~220px). It used to be `min-content`, but header + body are sibling
                     grids that compute `min-content` independently — the header's empty
                     trailing div resolved to 0px, leaving body columns shifted left of
                     their headers. Fixed width keeps header and body in lockstep. */}
-                <div className={`hidden sm:grid ${authEnabled ? 'grid-cols-[auto_1fr_120px_100px_100px_100px_minmax(0,200px)_220px]' : 'grid-cols-[auto_1fr_100px_100px_100px_minmax(0,200px)_220px]'} gap-4 px-4 py-2 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary text-xs text-bambu-gray font-medium`}>
+                <div className="hidden sm:grid grid-cols-subgrid col-span-full gap-x-4 px-4 py-2 bg-bambu-dark-secondary border-b border-bambu-dark-tertiary text-xs text-bambu-gray font-medium">
                   <div className="w-6" />
                   <div>{t('common.name')}</div>
                   {authEnabled && <div>{t('fileManager.uploadedBy', { defaultValue: 'Uploaded By' })}</div>}
@@ -2361,7 +2361,7 @@ export function FileManagerPage() {
                 {filteredAndSortedFiles.map((file) => (
                   <div
                     key={file.id}
-                    className={`grid ${authEnabled ? 'grid-cols-[auto_1fr_120px_100px_100px_100px_minmax(0,200px)_220px]' : 'grid-cols-[auto_1fr_100px_100px_100px_minmax(0,200px)_220px]'} gap-4 px-4 py-3 items-center border-b border-bambu-dark-tertiary last:border-b-0 cursor-pointer hover:bg-bambu-dark/50 transition-colors ${
+                    className={`grid grid-cols-subgrid col-span-full gap-x-4 px-4 py-3 items-center border-b border-bambu-dark-tertiary last:border-b-0 cursor-pointer hover:bg-bambu-dark/50 transition-colors ${
                       selectedFiles.includes(file.id) ? 'bg-bambu-green/10' : ''
                     }`}
                     onClick={() => handleFileSelect(file.id)}
