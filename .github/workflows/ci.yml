@@ -78,6 +78,7 @@ jobs:
         run: |
           sha256sum .test_durations
           python -m pytest tests/ \
+            -p pytest_native_phase_diagnostics \
             --rootdir=tests \
             -vv \
             --tb=short \
