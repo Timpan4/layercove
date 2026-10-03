@@ -2,7 +2,7 @@ import { test, expect } from './test';
 
 test.use({ serviceWorkers: 'block' });
 
-for (const width of [1440, 390]) {
+for (const width of [1440, 390, 640, 768]) {
   test(`Every archive selection action fits and is reachable at ${width}px without changing archives`, async ({ page }) => {
     await page.setViewportSize({ width, height: width === 390 ? 844 : 1000 });
     const writes: string[] = [];

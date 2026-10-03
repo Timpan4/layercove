@@ -3226,7 +3226,7 @@ export function ArchivesPage() {
 
       {/* Selection Toolbar */}
       {selectionMode && (
-        <div className="fixed bottom-20 sm:bottom-6 left-4 right-4 sm:left-1/2 sm:right-auto sm:-translate-x-1/2 z-40 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl px-4 py-3 flex flex-wrap sm:flex-nowrap items-center gap-2 sm:gap-4">
+        <div className="fixed bottom-20 md:bottom-6 left-4 right-4 md:left-1/2 md:right-auto md:-translate-x-1/2 z-40 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg shadow-xl px-4 py-3 flex flex-wrap md:flex-nowrap items-center gap-2 md:gap-4">
           <Button variant="secondary" size="sm" onClick={clearSelection}>
             <X className="w-4 h-4" />
             Close
