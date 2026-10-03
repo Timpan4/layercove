@@ -256,3 +256,123 @@ class TestPrinterHoursAPI:
         """Verify 404 for non-existent printer."""
         response = await async_client.patch("/api/v1/maintenance/printers/9999/hours", params={"total_hours": 100.0})
         assert response.status_code == 404
+
+
+class TestProviderMaintenanceDefaults:
+    """Provider and known hardware control inherited defaults, without losing data."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        "provider,model,hardware",
+        [
+            ("moonraker", "Voron 2.4", set()),
+            ("moonraker", "X1C", set()),
+            ("bambu", "UNKNOWN", set()),
+            ("bambu", None, set()),
+            ("bambu", "X1C", {"Clean Carbon Rods"}),
+            ("bambu", "P2S", {"Lubricate Steel Rods", "Clean Steel Rods"}),
+            ("bambu", "A1 Mini", {"Lubricate Linear Rails", "Clean Linear Rails"}),
+            ("bambu", "H2D", {"Lubricate Linear Rails", "Clean Linear Rails"}),
+        ],
+    )
+    async def test_defaults_match_provider_and_known_hardware(
+        self, async_client, printer_factory, provider, model, hardware
+    ):
+        printer = await printer_factory(provider=provider, model=model)
+        response = await async_client.get(f"/api/v1/maintenance/printers/{printer.id}")
+        assert response.status_code == 200
+        overview = response.json()
+        universal = {"Clean Nozzle/Hotend", "Check Belt Tension", "Clean Build Plate", "Check PTFE Tube"}
+        assert {item["maintenance_type_name"] for item in overview["maintenance_items"]} == universal | hardware
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_provider_is_public_in_overview_and_each_status(self, async_client, printer_factory):
+        printer = await printer_factory(provider="moonraker", model="Voron 2.4")
+        response = await async_client.get("/api/v1/maintenance/overview")
+        assert response.status_code == 200
+        overview = next(row for row in response.json() if row["printer_id"] == printer.id)
+        assert overview["printer_provider"] == "moonraker"
+        assert all(item["printer_provider"] == "moonraker" for item in overview["maintenance_items"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_existing_rows_custom_overrides_history_and_baseline_are_preserved(
+        self, async_client, printer_factory, db_session
+    ):
+        from datetime import datetime
+
+        from sqlalchemy import select
+
+        from backend.app.models.maintenance import MaintenanceHistory, MaintenanceType, PrinterMaintenance
+
+        printer = await printer_factory(
+            provider="moonraker", model="Voron 2.4", runtime_seconds=7200, print_hours_offset=121.5
+        )
+        types = (await async_client.get("/api/v1/maintenance/types")).json()
+        carbon_id = next(row["id"] for row in types if row["name"] == "Clean Carbon Rods")
+        custom_type = MaintenanceType(
+            name="Clean Carbon Rods",
+            is_system=False,
+            default_interval_hours=80,
+            interval_type="hours",
+            icon="Wrench",
+            wiki_url="https://example.invalid/voron-guide",
+        )
+        db_session.add(custom_type)
+        await db_session.flush()
+        rows = [
+            PrinterMaintenance(
+                printer_id=printer.id,
+                maintenance_type_id=carbon_id,
+                enabled=False,
+                custom_interval_hours=71,
+                custom_interval_type="days",
+                last_performed_hours=17.5,
+                last_performed_at=datetime(2026, 1, 2),
+            ),
+            PrinterMaintenance(
+                printer_id=printer.id,
+                maintenance_type_id=custom_type.id,
+                enabled=False,
+                custom_interval_hours=37,
+                custom_interval_type="days",
+                last_performed_hours=21.5,
+                last_performed_at=datetime(2026, 2, 3),
+            ),
+        ]
+        db_session.add_all(rows)
+        await db_session.flush()
+        history = MaintenanceHistory(
+            printer_maintenance_id=rows[0].id,
+            hours_at_maintenance=17.5,
+            performed_at=datetime(2026, 1, 2),
+            notes="Fictional saved operator history",
+        )
+        db_session.add(history)
+        await db_session.commit()
+
+        def values(row):
+            return {column.name: getattr(row, column.name) for column in row.__table__.columns}
+
+        before = [values(row) for row in [*rows, history, custom_type, printer]]
+        response = await async_client.get(f"/api/v1/maintenance/printers/{printer.id}")
+        assert response.status_code == 200
+        # Verify persisted values before checking visibility so a visibility failure
+        # cannot mask a data-preservation regression.
+        for row in [*rows, history, custom_type, printer]:
+            await db_session.refresh(row)
+        assert [values(row) for row in [*rows, history, custom_type, printer]] == before
+        overview = response.json()
+        assert overview["total_print_hours"] == 123.5
+        assert rows[0].id not in {item["id"] for item in overview["maintenance_items"]}
+        custom = next(item for item in overview["maintenance_items"] if item["id"] == rows[1].id)
+        assert custom["maintenance_type_wiki_url"] == "https://example.invalid/voron-guide"
+        assert custom["interval_type"] == "days"
+        assert custom["interval_hours"] == 37
+        assert custom["enabled"] is False
+        stored = (
+            await db_session.execute(select(PrinterMaintenance).where(PrinterMaintenance.id == rows[0].id))
+        ).scalar_one()
+        assert stored.last_performed_hours == 17.5
