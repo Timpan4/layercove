@@ -1739,3 +1739,43 @@ class TestUploadSourceThreeMF:
         assert "outside the data directory" in response.json()["detail"]
         # Did not write anything under the bogus /tmp/source/ either.
         assert not (Path("/tmp") / "source").exists() or not (Path("/tmp") / "source" / "totally_outside.3mf").exists()  # nosec B108
+
+
+class TestArchiveComparisonDurations:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("seconds, expected", [(1440, "24m"), (7380, "2h 3m"), (45, "45s"), (0, "0m")])
+    async def test_comparison_duration_has_one_unit(
+        self, async_client, printer_factory, archive_factory, seconds, expected
+    ):
+        printer = await printer_factory(provider="moonraker", model="Voron 2.4", ip_address=None, access_code=None)
+        values = {
+            "with_run": False,
+            "layer_height": 0.2,
+            "nozzle_diameter": 0.4,
+            "bed_temperature": 60,
+            "nozzle_temperature": 210,
+            "filament_used_grams": 12.5,
+        }
+        target = await archive_factory(printer.id, print_time_seconds=seconds, **values)
+        reference = await archive_factory(printer.id, print_time_seconds=1800, **values)
+        response = await async_client.get(
+            "/api/v1/archives/compare", params={"archive_ids": f"{target.id},{reference.id}"}
+        )
+        assert response.status_code == 200
+        result = response.json()
+        fields = {field["field"]: field for field in result["comparison"]}
+        duration = fields["print_time_seconds"]
+        assert duration["values"] == [expected, "30m"]
+        assert duration["unit"] is None
+        assert duration["raw_values"] == [seconds, 1800]
+        assert duration["has_difference"] is True
+        assert next(field for field in result["differences"] if field["field"] == "print_time_seconds") == duration
+        for name, unit, value in [
+            ("layer_height", "mm", 0.2),
+            ("nozzle_diameter", "mm", 0.4),
+            ("bed_temperature", "°C", 60),
+            ("nozzle_temperature", "°C", 210),
+            ("filament_used_grams", "g", 12.5),
+        ]:
+            assert fields[name]["unit"] == unit
+            assert fields[name]["values"] == [value, value]
