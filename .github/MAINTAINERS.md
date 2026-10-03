@@ -1,158 +1,66 @@
-# Maintainer Guide
+# Maintainer guide
 
-This document provides setup instructions for repository maintainers.
+## CI
 
-## Branch Protection Setup
+`.github/workflows/ci.yml` runs on pull requests to `main`, pushes to `main`, and manual dispatch. Check names as they appear on a pull request:
 
-To protect the `main` branch, go to **Settings > Rules > Rulesets > New ruleset > New branch ruleset**.
+| Check | Purpose |
+|---|---|
+| `Backend Lint` | `ruff check` and `ruff format --check` |
+| `Backend Tests (shard N/4)` | pytest, four shards |
+| `PostgreSQL Camera Token Expiry` | camera token expiry against PostgreSQL |
+| `Frontend Checks` | CI workflow regression test, Oxlint, TypeScript, build, Vitest |
+| `Docker Backend Tests (shard N/4)` | pytest in the test image, four shards |
+| `Docker Build` | production image, health/API/static smoke tests, Playwright E2E |
+| `Rust service` | `cargo fmt`, `clippy`, tests, and image smoke tests |
 
-### Step 1: Basic Settings
+`codeql.yml` (CodeQL) and `security.yml` (Security Audit) run separately.
 
-| Field | Value |
-|-------|-------|
-| Ruleset name | `Protect main` |
-| Enforcement status | `Active` |
+### Fixing common failures
 
-### Step 2: Bypass List (optional)
-
-Add yourself (`@maziggy`) to bypass if you want to push directly in emergencies.
-Set "Always" or "Pull requests only" based on preference.
-
-### Step 3: Target Branches
-
-Click **Add target** > **Include by pattern** and enter: `main`
-
-### Step 4: Branch Rules
-
-Enable these rules:
-
-**Restrict deletions** - Prevents branch deletion
-
-**Require a pull request before merging**
-- Required approvals: `1`
-- [x] Dismiss stale pull request approvals when new commits are pushed
-- [ ] Require review from Code Owners (optional)
-- [x] Require approval of the most recent reviewable push
-
-**Require status checks to pass**
-- [x] Require branches to be up to date before merging
-- Add these status checks (they appear after CI runs once):
-  - `Backend Lint`
-  - `Backend Tests`
-  - `Frontend Lint`
-  - `Frontend Type Check`
-  - `Frontend Tests`
-  - `Frontend Build`
-  - `Docker Build`
-
-**Block force pushes** - Prevents history rewriting
-
-### Optional (stricter)
-
-- [ ] Require conversation resolution before merging
-- [ ] Require signed commits
-- [ ] Require linear history
-
-## CI Workflow
-
-The CI workflow (`.github/workflows/ci.yml`) runs on:
-- All pull requests to `main`
-- All pushes to `main`
-
-### Jobs
-
-| Job | Purpose | Required for PR |
-|-----|---------|-----------------|
-| `backend-lint` | Ruff linting + format check | Yes |
-| `backend-tests` | Unit tests | Yes |
-| `frontend-lint` | ESLint | Yes |
-| `frontend-typecheck` | TypeScript compilation | Yes |
-| `frontend-tests` | Vitest unit tests | Yes |
-| `frontend-build` | Vite production build | Yes |
-| `docker-build` | Docker image builds | Yes |
-
-### Fixing CI Failures
-
-**Backend lint failures:**
 ```bash
-ruff check --fix backend/
-ruff format backend/
-```
+# Backend Lint
+uv run --with-requirements requirements-dev.txt ruff check --fix backend/
+uv run --with-requirements requirements-dev.txt ruff format backend/
 
-**Frontend lint failures:**
-```bash
+# Frontend Checks
 cd frontend
-npm run lint -- --fix
+bun run lint
+bun x tsc -b
+bun run test:run
 ```
 
-**Frontend type errors:**
-```bash
-cd frontend
-npx tsc --noEmit
-# Fix the errors shown
-```
+## Branch protection
 
-**Frontend test failures:**
-```bash
-cd frontend
-npm run test:run
-# Fix failing tests
-```
+`main` currently has no branch protection or ruleset. To add one, go to **Settings → Rules → Rulesets → New branch ruleset**:
 
-## CODEOWNERS
+1. Name it `Protect main`, set enforcement to **Active**, and target `main`.
+2. Enable **Restrict deletions** and **Block force pushes**.
+3. Enable **Require a pull request before merging**.
+4. Enable **Require status checks to pass** and add the CI checks above after they have run once. Sharded jobs report one check per shard.
 
-The `CODEOWNERS` file automatically requests reviews from `@maziggy` for all changes.
+## Releases
 
-To add more code owners:
-1. Edit `.github/CODEOWNERS`
-2. Add GitHub usernames with `@` prefix
-3. Assign specific paths to specific owners
+`publish-container.yml` builds `ghcr.io/timpan4/layercove` for `linux/amd64` and `linux/arm64` when a push to `main` changes the backend, frontend, deploy files, `gcode_viewer/`, `spoolbuddy/`, `Dockerfile`, or `requirements.txt`. Pushes to `main` get the `latest` tag.
 
-Example:
-```
-/backend/ @maziggy @backend-contributor
-/frontend/ @maziggy @frontend-contributor
-```
+A `v*` tag publishes semver tags (`X.Y.Z` and `X.Y`). No LayerCove release has been tagged yet. To cut one:
 
-## Release Process
+1. Set `APP_VERSION` in `backend/app/core/config.py`. The in-app update check compares this value with GitHub releases.
+2. Merge that change through a pull request.
+3. Tag the merge commit `vX.Y.Z` and push the tag.
+4. Publish a GitHub release for the tag. The update check reads releases, not bare tags.
 
-1. Update version in `pyproject.toml`
-2. Update `CHANGELOG.md`
-3. Create a PR with these changes
-4. After merge, tag the release:
-   ```bash
-   git tag v0.1.x
-   git push origin v0.1.x
-   ```
-5. Run `docker-publish.sh` to publish Docker image
+`publish-rust.yml` publishes `ghcr.io/timpan4/layercove-rs` after CI succeeds on a push to `main`; see [rust/README.md](../rust/README.md).
 
-## Dependabot (Optional)
+`docker-publish.sh` and the other `docker-publish-*.sh` scripts are inherited from upstream and publish upstream `maziggy/bambuddy` images. Do not use them for LayerCove.
 
-To enable automated dependency updates, create `.github/dependabot.yml`:
+## Database upgrades
 
-```yaml
-version: 2
-updates:
-  - package-ecosystem: "pip"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-    groups:
-      python-dependencies:
-        patterns:
-          - "*"
+LayerCove starts only from its current schema. `run_migrations` in `backend/app/core/database.py` applies runtime invariants; historical schema upgrades are intentionally unsupported. To roll back, restore the backup taken before the update, as described in [UPDATING.md](../UPDATING.md#rollback). Upstream migrations brought in by a sync must follow [docs/upstream-sync.md](../docs/upstream-sync.md#migration-comparison). [ADR 0002](../docs/decisions/0002-python-rust-coexistence.md) keeps database access and schema migrations in Python during the Rust pilot. A future forward-compatible upgrade policy and its owner are undecided; see #105.
 
-  - package-ecosystem: "npm"
-    directory: "/frontend"
-    schedule:
-      interval: "weekly"
-    groups:
-      npm-dependencies:
-        patterns:
-          - "*"
+## Inherited repository settings
 
-  - package-ecosystem: "github-actions"
-    directory: "/"
-    schedule:
-      interval: "weekly"
-```
+These files still name the upstream maintainer and need a LayerCove decision:
+
+- `.github/CODEOWNERS` assigns every path to `@maziggy`.
+- `cleanup-ghcr.yml` and `repo-stats.yml` target upstream resources (#92).

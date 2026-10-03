@@ -75,24 +75,25 @@ Expected hotspots include:
 - frontend API clients, printer cards, print/slice dialogs, locale files, and generated `static/` output;
 - README, manifest, Compose, installers/updaters, Docker/CI, and release destinations.
 
-For functional conflicts, preserve upstream fixes and adapt them through LayerCove’s provider boundary rather than restoring Bambu-only assumptions. For identity conflicts, keep user-facing LayerCove names and repository/image/support destinations while retaining the compatibility interfaces classified in [`rebranding.md`](rebranding.md): database and migration identifiers, `bambuddy.db`, service/container/volume names, storage/API/event names, backup formats, virtual-printer certificates/discovery, on-wire identifiers, and upstream attribution.
+For functional conflicts, preserve upstream fixes and adapt them through LayerCove’s provider boundary rather than restoring Bambu-only assumptions. For identity conflicts, keep LayerCove names, deployment names, and repository/image/support destinations, and keep the retained identifiers listed in [`rebranding.md`](rebranding.md): package and table names, storage/API/event names, virtual-printer certificates and discovery, on-wire identifiers, and upstream attribution.
 
 Do not globally replace “Bambuddy.” Historical changelogs, inherited source comments, citations, license notices, compatibility variables, and upstream links may be correct.
 
 ## Migration comparison
 
+LayerCove has no historical migration chain. At startup, `Base.metadata.create_all` creates missing tables but does not alter existing ones, and `run_migrations` in `backend/app/core/database.py` only applies runtime invariants such as SQLite full-text triggers. Upstream startup migrations therefore do not carry over.
+
 Before resolving any persistence conflict:
 
-1. List new upstream startup migrations and compare their ordering with LayerCove provider migrations.
-2. Compare column/table names, defaults, nullability, indexes, dialect branches, and idempotency guards.
-3. Never renumber, delete, or repurpose a migration that may have run in an existing installation.
-4. Test a copy of an older Bambu database and a current multi-provider LayerCove database. Verify downgrade/rollback expectations explicitly; startup migrations are generally forward-only, so an application rollback may require restoring the pre-upgrade backup.
+1. List every upstream schema change in the range: tables, columns, defaults, nullability, indexes, and dialect branches.
+2. New tables reach existing databases through `create_all`. Changes to existing tables do not. Record each one in the pull request. No upgrade path for existing tables has been accepted: [ADR 0002](decisions/0002-python-rust-coexistence.md) keeps schema migrations in Python, and the migration owner and policy are open in #105. Each such change needs an owner decision before merge.
+3. Test a fresh database and a copy of a current LayerCove database, on SQLite and, where the change touches it, PostgreSQL. Rolling back an image may require restoring the pre-update backup.
 
 ## Generated frontend and deployment artifacts
 
 Resolve source files first. Rebuild `static/` only through the repository frontend build; do not hand-edit hashed assets. Review manifest/icon references after generation.
 
-Keep fresh deployment destinations on `Timpan4/layercove` and `ghcr.io/timpan4/layercove`. Preserve existing Compose service/container/volume names and native service labels so replacing a Compose file or checkout does not strand operator data. Compare installer URLs, update remotes, image tags, and CI publishing permissions during every sync that touches deployment files.
+Keep fresh deployment destinations on `Timpan4/layercove` and `ghcr.io/timpan4/layercove`. Preserve the current Compose service, container, and volume names so replacing a Compose file does not strand operator data. Compare installer URLs, update remotes, image tags, and CI publishing permissions during every sync that touches deployment files.
 
 ## Verification matrix
 
