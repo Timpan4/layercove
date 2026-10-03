@@ -77,6 +77,7 @@ jobs:
         working-directory: backend
         run: |
           python -m pytest tests/ \
+            --rootdir=tests \
             --tb=short \
             --timeout=60 --timeout-method=thread \
             -n auto \
