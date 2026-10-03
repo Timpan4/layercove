@@ -632,10 +632,11 @@ export function GitHubBackupSettings() {
 
                 {/* Repository URL */}
                 <div>
-                  <label className="block text-sm text-bambu-gray mb-1">
+                  <label htmlFor="github-backup-repository-url" className="block text-sm text-bambu-gray mb-1">
                     {t('backup.repositoryUrl')}
                   </label>
                   <input
+                    id="github-backup-repository-url"
                     type="text"
                     value={repoUrl}
                     onChange={(e) => { setRepoUrl(e.target.value); setTestResult(null); setSaveError(null); }}
@@ -658,10 +659,11 @@ export function GitHubBackupSettings() {
 
                 {/* Access Token */}
                 <div>
-                  <label className="block text-sm text-bambu-gray mb-1">
+                  <label htmlFor="github-backup-access-token" className="block text-sm text-bambu-gray mb-1">
                     {t('backup.personalAccessToken')} {config?.has_token && <span className="text-green-700 dark:text-green-400">{t('backup.tokenSaved')}</span>}
                   </label>
                   <input
+                    id="github-backup-access-token"
                     type="password"
                     value={accessToken}
                     onChange={(e) => { setAccessToken(e.target.value); setTestResult(null); setSaveError(null); }}
@@ -676,8 +678,9 @@ export function GitHubBackupSettings() {
             {/* Branch - inline with schedule */}
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('backup.branch')}</label>
+                <label htmlFor="github-backup-branch" className="block text-sm text-bambu-gray mb-1">{t('backup.branch')}</label>
                 <input
+                  id="github-backup-branch"
                   type="text"
                   value={branch}
                   onChange={(e) => setBranch(e.target.value)}
@@ -686,8 +689,9 @@ export function GitHubBackupSettings() {
                 />
               </div>
               <div>
-                <label className="block text-sm text-bambu-gray mb-1">{t('backup.autoBackup')}</label>
+                <label htmlFor="github-backup-auto-schedule" className="block text-sm text-bambu-gray mb-1">{t('backup.autoBackup')}</label>
                 <select
+                  id="github-backup-auto-schedule"
                   value={scheduleEnabled ? scheduleType : 'disabled'}
                   onChange={(e) => {
                     if (e.target.value === 'disabled') {
