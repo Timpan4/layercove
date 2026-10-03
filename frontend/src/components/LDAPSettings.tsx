@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Shield, Lock, Unlock, AlertTriangle, CheckCircle, Loader2, Send } from 'lucide-react';
@@ -32,6 +32,8 @@ export function LDAPSettings() {
   const { showToast } = useToast();
   const queryClient = useQueryClient();
   const { authEnabled } = useAuth();
+  const idPrefix = useId();
+  const inputId = (name: string) => `${idPrefix}-${name}`;
 
   const [form, setForm] = useState<LDAPFormState>({
     ldap_server_url: '',
@@ -250,10 +252,11 @@ export function LDAPSettings() {
             {/* Server URL + Security (side by side) */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
               <div className="md:col-span-2">
-                <label className="block text-sm font-medium text-bambu-gray mb-1">
+                <label htmlFor={inputId('server-url')} className="block text-sm font-medium text-bambu-gray mb-1">
                   {t('settings.ldap.serverUrl') || 'Server URL'}
                 </label>
                 <input
+                  id={inputId('server-url')}
                   type="text"
                   className={inputClasses}
                   placeholder="ldaps://ldap.example.com:636"
@@ -265,10 +268,10 @@ export function LDAPSettings() {
                 </p>
               </div>
               <div>
-                <label className="block text-sm font-medium text-bambu-gray mb-1">
+                <span id={inputId('security-label')} className="block text-sm font-medium text-bambu-gray mb-1">
                   {t('settings.ldap.security') || 'Security'}
-                </label>
-                <div className="flex gap-2">
+                </span>
+                <div role="group" aria-labelledby={inputId('security-label')} className="flex gap-2">
                   {(['starttls', 'ldaps'] as const).map(sec => (
                     <button
                       key={sec}
@@ -292,10 +295,11 @@ export function LDAPSettings() {
             {/* Bind DN + Password (side by side) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-bambu-gray mb-1">
+                <label htmlFor={inputId('bind-dn')} className="block text-sm font-medium text-bambu-gray mb-1">
                   {t('settings.ldap.bindDn') || 'Bind DN (Service Account)'}
                 </label>
                 <input
+                  id={inputId('bind-dn')}
                   type="text"
                   className={inputClasses}
                   placeholder="cn=service-account,ou=service,dc=example,dc=com"
@@ -304,10 +308,11 @@ export function LDAPSettings() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-bambu-gray mb-1">
+                <label htmlFor={inputId('bind-password')} className="block text-sm font-medium text-bambu-gray mb-1">
                   {t('settings.ldap.bindPassword') || 'Bind Password'}
                 </label>
                 <input
+                  id={inputId('bind-password')}
                   type="password"
                   className={inputClasses}
                   placeholder={settings?.ldap_bind_dn ? '••••••••' : ''}
@@ -320,10 +325,11 @@ export function LDAPSettings() {
             {/* Search Base + User Filter (side by side) */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
               <div>
-                <label className="block text-sm font-medium text-bambu-gray mb-1">
+                <label htmlFor={inputId('search-base')} className="block text-sm font-medium text-bambu-gray mb-1">
                   {t('settings.ldap.searchBase') || 'Search Base DN'}
                 </label>
                 <input
+                  id={inputId('search-base')}
                   type="text"
                   className={inputClasses}
                   placeholder="ou=users,dc=example,dc=com"
@@ -332,10 +338,11 @@ export function LDAPSettings() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-bambu-gray mb-1">
+                <label htmlFor={inputId('user-filter')} className="block text-sm font-medium text-bambu-gray mb-1">
                   {t('settings.ldap.userFilter') || 'User Search Filter'}
                 </label>
                 <input
+                  id={inputId('user-filter')}
                   type="text"
                   className={inputClasses}
                   placeholder="(sAMAccountName={username})"
@@ -359,7 +366,7 @@ export function LDAPSettings() {
                 {/* Auto Provision */}
                 <div className="flex items-center justify-between">
                   <div>
-                    <label className="block text-sm font-medium text-white">
+                    <label htmlFor={inputId('auto-provision')} className="block text-sm font-medium text-white">
                       {t('settings.ldap.autoProvision') || 'Auto-provision users'}
                     </label>
                     <p className="text-xs text-bambu-gray mt-0.5">
@@ -367,6 +374,7 @@ export function LDAPSettings() {
                     </p>
                   </div>
                   <button
+                    id={inputId('auto-provision')}
                     onClick={() => setForm({ ...form, ldap_auto_provision: !form.ldap_auto_provision })}
                     className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors flex-shrink-0 ${
                       form.ldap_auto_provision ? 'bg-bambu-green' : 'bg-bambu-dark-tertiary'
@@ -382,10 +390,11 @@ export function LDAPSettings() {
 
                 {/* Default Group (fallback for users with no mapped groups) */}
                 <div>
-                  <label className="block text-sm font-medium text-bambu-gray mb-1">
+                  <label htmlFor={inputId('default-group')} className="block text-sm font-medium text-bambu-gray mb-1">
                     {t('settings.ldap.defaultGroup') || 'Default group'}
                   </label>
                   <select
+                    id={inputId('default-group')}
                     className={inputClasses}
                     value={form.ldap_default_group}
                     onChange={e => setForm({ ...form, ldap_default_group: e.target.value })}
@@ -402,10 +411,11 @@ export function LDAPSettings() {
 
                 {/* Group Mapping */}
                 <div>
-                  <label className="block text-sm font-medium text-bambu-gray mb-1">
+                  <label htmlFor={inputId('group-mapping')} className="block text-sm font-medium text-bambu-gray mb-1">
                     {t('settings.ldap.groupMapping') || 'Group Mapping (JSON)'}
                   </label>
                   <textarea
+                    id={inputId('group-mapping')}
                     className={`${inputClasses} font-mono text-sm`}
                     rows={4}
                     placeholder={'{\n  "CN=PrintFarm_Admins,OU=Groups,DC=example,DC=com": "Administrators",\n  "CN=PrintFarm_Users,OU=Groups,DC=example,DC=com": "Operators"\n}'}
