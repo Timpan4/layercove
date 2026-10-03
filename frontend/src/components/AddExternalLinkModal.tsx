@@ -178,6 +178,7 @@ export function AddExternalLinkModal({ link, onClose }: AddExternalLinkModalProp
           </div>
           <button
             onClick={onClose}
+            aria-label={t('common.close')}
             className="text-bambu-gray hover:text-white transition-colors"
           >
             <X className="w-5 h-5" />
@@ -194,8 +195,9 @@ export function AddExternalLinkModal({ link, onClose }: AddExternalLinkModalProp
 
           {/* Name */}
           <div>
-            <label className="block text-sm text-bambu-gray mb-1">Name *</label>
+            <label htmlFor="external-link-name" className="block text-sm text-bambu-gray mb-1">Name *</label>
             <input
+              id="external-link-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -207,8 +209,9 @@ export function AddExternalLinkModal({ link, onClose }: AddExternalLinkModalProp
 
           {/* URL */}
           <div>
-            <label className="block text-sm text-bambu-gray mb-1">URL *</label>
+            <label htmlFor="external-link-url" className="block text-sm text-bambu-gray mb-1">URL *</label>
             <input
+              id="external-link-url"
               type="text"
               value={url}
               onChange={(e) => setUrl(e.target.value)}
@@ -219,9 +222,12 @@ export function AddExternalLinkModal({ link, onClose }: AddExternalLinkModalProp
 
           {/* Open in New Tab */}
           <div className="flex items-center justify-between">
-            <label className="text-sm text-bambu-gray">{t('externalLinks.openInNewTab')}</label>
+            <span id="external-link-open-in-new-tab-label" className="text-sm text-bambu-gray">{t('externalLinks.openInNewTab')}</span>
             <button
               type="button"
+              role="switch"
+              aria-checked={openInNewTab}
+              aria-labelledby="external-link-open-in-new-tab-label"
               onClick={() => setOpenInNewTab(!openInNewTab)}
               className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${
                 openInNewTab ? 'bg-bambu-green' : 'bg-bambu-dark-tertiary'
