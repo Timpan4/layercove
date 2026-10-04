@@ -107,6 +107,7 @@ async function openCommandDeck(page: Page, width: number) {
 
   await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Command deck', exact: true })).toBeVisible();
+  await page.getByRole('button', { name: 'Inspect Fixture Voron', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Inspect Fixture Voron', exact: true })).toHaveAttribute('aria-current', 'true');
   return blockedWrites;
 }
@@ -279,7 +280,7 @@ for (const width of [390, 1440]) {
     await expect(page.locator('html')).toHaveClass(/\bdark\b/);
     await expect.poll(() => page.evaluate(() => getComputedStyle(document.body).backgroundColor)).not.toBe(lightTokens.page);
     await expect(page.getByRole('button', { name: 'Inspect Fixture Bambu', exact: true })).toHaveAttribute('aria-current', 'true');
-    expect(await captureDarkAppearance(page)).toEqual(darkAppearance);
+    await expect.poll(() => captureDarkAppearance(page)).toEqual(darkAppearance);
     expect(blockedWrites).toEqual([]);
   });
 }
