@@ -98,7 +98,7 @@ for (const width of [390, 1440]) {
 
     try {
       await page.goto('/archives');
-      const printerFilter = page.getByRole('combobox').first();
+      const printerFilter = page.getByRole('combobox').filter({ has: page.getByRole('option', { name: 'All Printers', exact: true }) });
       await expect(printerFilter).toBeVisible();
       await printerFilter.selectOption({ label: 'Tim Voron' });
       await page.getByRole('button', { name: 'Calendar view', exact: true }).click();
