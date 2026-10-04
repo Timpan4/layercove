@@ -967,7 +967,7 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
       {/* Native selection control stays visible and independent of file actions. */}
       <input
         type="checkbox"
-        aria-label={file.filename}
+        aria-label={file.print_name || file.filename}
         checked={isSelected}
         onChange={() => onSelect(file.id)}
         onClick={(event) => event.stopPropagation()}
