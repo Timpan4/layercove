@@ -964,14 +964,15 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
         )}
       </div>
 
-      {/* Selection checkbox - always visible on mobile, hover on desktop */}
-      <div className={`absolute top-2 left-2 w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${
-        isSelected
-          ? 'bg-bambu-green border-bambu-green'
-          : `border-white/30 bg-black/30 ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`
-      }`}>
-        {isSelected && <div className="w-2 h-2 bg-white rounded-sm" />}
-      </div>
+      {/* Native selection control stays visible and independent of file actions. */}
+      <input
+        type="checkbox"
+        aria-label={file.filename}
+        checked={isSelected}
+        onChange={() => onSelect(file.id)}
+        onClick={(event) => event.stopPropagation()}
+        className="absolute top-2 left-2 w-5 h-5 rounded border-2 border-white/30 bg-bambu-dark text-bambu-green cursor-pointer focus:ring-bambu-green"
+      />
     </div>
   );
 }
