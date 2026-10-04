@@ -105,7 +105,7 @@ async function openCommandDeck(page: Page, width: number) {
     return route.fulfill({ json: body });
   });
 
-  await page.goto('/printers');
+  await page.goto('/');
   await expect(page.getByRole('heading', { name: 'Command deck', exact: true })).toBeVisible();
   await expect(page.getByRole('button', { name: 'Inspect Fixture Voron', exact: true })).toHaveAttribute('aria-current', 'true');
   return blockedWrites;
@@ -152,6 +152,16 @@ async function captureDarkAppearance(page: Page) {
       if (!element) throw new Error(`Missing theme surface: ${selector}`);
       return colors(element);
     };
+    const contentText = [];
+    for (const surface of document.querySelectorAll('article[aria-label="Inspect Fixture Bambu"], section.lc-glass')) {
+      const walker = document.createTreeWalker(surface, NodeFilter.SHOW_TEXT);
+      while (walker.nextNode()) {
+        const node = walker.currentNode;
+        if (node.textContent?.trim() && node.parentElement) {
+          contentText.push({ text: node.textContent, ...colors(node.parentElement) });
+        }
+      }
+    }
     return {
       filter: read('main > div.lc-glass'),
       card: read('article[aria-label="Inspect Fixture Bambu"]'),
@@ -162,6 +172,7 @@ async function captureDarkAppearance(page: Page) {
       readyChip: read('article[aria-label="Inspect Fixture Bambu"] h2 + span'),
       primaryAction: read('section.lc-glass header button'),
       filterControls: Array.from(document.querySelectorAll('main > div.lc-glass select, main > div.lc-glass button'), colors),
+      contentText,
     };
   });
 }
@@ -206,6 +217,19 @@ for (const width of [390, 1440]) {
     }
 
     const card = page.getByRole('button', { name: 'Inspect Fixture Bambu', exact: true });
+    for (const text of ['Nozzle', 'Bed', 'Filament']) {
+      const caption = card.getByText(text, { exact: true });
+      await expect(caption).toBeVisible();
+      expect.soft(await caption.evaluate((element) => getComputedStyle(element).color))
+        .toBe(rgbFromHex(lightTokens.mutedText));
+    }
+    // These job and telemetry values come from the fictional idle printer.
+    for (const text of ['No active job', '28°C', '23°C', 'External']) {
+      const content = card.getByText(text, { exact: true });
+      await expect(content).toBeVisible();
+      expect.soft(await content.evaluate((element) => getComputedStyle(element).color))
+        .toBe(rgbFromHex(lightTokens.primaryText));
+    }
     expect.soft(await card.getByRole('heading', { name: 'Fixture Bambu', exact: true }).evaluate((element) => getComputedStyle(element).color))
       .toBe(rgbFromHex(lightTokens.primaryText));
     await expect(card.getByText('Ready for next job', { exact: true })).toBeVisible();
@@ -221,6 +245,22 @@ for (const width of [390, 1440]) {
       .toBe(rgbFromHex(lightTokens.accent));
 
     const detail = page.locator('section.lc-glass');
+    const detailState = detail.locator('header').getByText('Ready', { exact: true });
+    await expect(detailState).toBeVisible();
+    expect.soft([rgbFromHex(lightTokens.primaryText), rgbFromHex(lightTokens.mutedText)])
+      .toContain(await detailState.evaluate((element) => getComputedStyle(element).color));
+    const detailProgress = detail.getByText('0%', { exact: true });
+    await expect(detailProgress).toBeVisible();
+    expect.soft(await detailProgress.evaluate((element) => getComputedStyle(element).color))
+      .toBe(rgbFromHex(lightTokens.primaryText));
+    for (const text of ['No active job', '28°', '23°', 'Online', 'Choose a file to print', 'No action needed']) {
+      const content = detail.getByText(text, { exact: true });
+      await expect(content).toBeVisible();
+      expect.soft(await content.evaluate((element) => getComputedStyle(element).color))
+        .toBe(rgbFromHex(lightTokens.primaryText));
+    }
+    expect.soft(await detail.getByText('Next best action', { exact: true }).evaluate((element) => getComputedStyle(element).color))
+      .toBe(rgbFromHex(lightTokens.mutedText));
     await expect(detail.getByRole('heading', { name: 'Fixture Bambu', exact: true })).toBeVisible();
     await expect(detail.getByRole('button', { name: 'Open controls', exact: true })).toBeVisible();
     expect.soft(await detail.getByRole('heading', { name: 'Fixture Bambu', exact: true }).evaluate((element) => getComputedStyle(element).color))
