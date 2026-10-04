@@ -486,12 +486,12 @@ export function SpoolBuddyDashboard() {
         <div className="w-px h-5 bg-zinc-700" />
         <div className="flex items-center gap-2">
           <span className="text-xl font-bold text-zinc-100">{materials}</span>
-          <span className="text-sm text-zinc-500">{t('spoolbuddy.spool.material', 'Materials')}</span>
+          <span className="text-sm text-zinc-500">{t('spoolbuddy.inventory.materials', { count: materials })}</span>
         </div>
         <div className="w-px h-5 bg-zinc-700" />
         <div className="flex items-center gap-2">
           <span className="text-xl font-bold text-zinc-100">{brands}</span>
-          <span className="text-sm text-zinc-500">{t('spoolbuddy.spool.brand', 'Brands')}</span>
+          <span className="text-sm text-zinc-500">{t('spoolbuddy.inventory.brands', { count: brands })}</span>
         </div>
       </div>
 

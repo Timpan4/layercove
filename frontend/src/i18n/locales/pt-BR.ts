@@ -6234,6 +6234,10 @@ export default {
       empty: 'Nenhum carretel no inventário',
       noResults: 'Nenhum carretel correspondente',
       spools: 'carretéis',
+      materials_one: 'Material',
+      materials_other: 'Materiais',
+      brands_one: 'Marca',
+      brands_other: 'Marcas',
       addSpool: 'Adicionar carretel',
     },
     settings: {

@@ -6254,6 +6254,10 @@ export default {
       empty: 'No hay bobinas en el inventario',
       noResults: 'No hay bobinas coincidentes',
       spools: 'bobinas',
+      materials_one: 'Material',
+      materials_other: 'Materiales',
+      brands_one: 'Marca',
+      brands_other: 'Marcas',
       addSpool: 'Añadir bobina',
     },
     settings: {

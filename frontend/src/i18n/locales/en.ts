@@ -6289,6 +6289,10 @@ export default {
       empty: 'No spools in inventory',
       noResults: 'No matching spools',
       spools: 'spools',
+      materials_one: 'Material',
+      materials_other: 'Materials',
+      brands_one: 'Brand',
+      brands_other: 'Brands',
       addSpool: 'Add Spool',
     },
     settings: {
