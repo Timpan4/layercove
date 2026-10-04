@@ -6,7 +6,7 @@ type Fixture = {
 };
 
 const test = base.extend<Fixture>({
-  blockedWrites: async ({ page }, use, testInfo) => {
+  blockedWrites: async ({ page }, provide, testInfo) => {
     const blockedWrites: string[] = [];
     const appOrigin = new URL(testInfo.project.use.baseURL!).origin;
 
@@ -19,12 +19,13 @@ const test = base.extend<Fixture>({
 
         const writes: string[] = [];
         Object.defineProperty(window, '__statsMetricStorageWrites', { value: writes });
+        Object.defineProperty(window, '__statsMetricStorageGuardArmed', { value: false, writable: true });
         for (const method of ['setItem', 'removeItem', 'clear'] as const) {
           Storage.prototype[method] = function (...args: string[]) {
-            // StatsPage syncs its default all-time range on mount. Keep that fixture-only
-            // initialization from changing local storage while rejecting other writes.
-            if (method === 'setItem' && this === localStorage && args[0] === 'bambusy-stats-timeframe' && args[1] === '{"preset":"all-time"}') return;
-            writes.push(`${method} ${args.join(' ')}`);
+            // Block persistence throughout setup, then record writes during metric interactions.
+            if ((window as Window & { __statsMetricStorageGuardArmed: boolean }).__statsMetricStorageGuardArmed) {
+              writes.push(`${method} ${args.join(' ')}`);
+            }
           };
         }
       });
@@ -50,7 +51,7 @@ const test = base.extend<Fixture>({
         return route.fulfill({ status: 200, json: body });
       });
 
-      await use(blockedWrites);
+      await provide(blockedWrites);
     } finally {
       const storageWrites = await page.evaluate(() =>
         (window as Window & { __statsMetricStorageWrites?: string[] }).__statsMetricStorageWrites ?? [],
@@ -165,6 +166,9 @@ async function openStats(page: Page, width: number) {
   for (const chart of charts) {
     await expect(page.getByRole('heading', { name: chart.name, exact: true })).toBeVisible();
   }
+  await page.evaluate(() => {
+    (window as Window & { __statsMetricStorageGuardArmed: boolean }).__statsMetricStorageGuardArmed = true;
+  });
 }
 
 for (const width of [390, 1440]) {
