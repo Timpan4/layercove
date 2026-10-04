@@ -31,7 +31,7 @@ for (const width of [390, 1440]) {
           }
           return route.continue();
         });
-        await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
+        await page.route((url) => url.origin === appOrigin && url.pathname.startsWith('/api/'), async (route) => {
           const request = route.request();
           const path = new URL(request.url()).pathname.replace(/\/+$/, '');
           if (request.method() !== 'GET') {
