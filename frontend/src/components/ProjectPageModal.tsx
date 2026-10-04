@@ -29,6 +29,8 @@ export function ProjectPageModal({ archiveId, archiveName, onClose, returnFocusT
   const { t } = useTranslation();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
+  const lightboxCloseRef = useRef<HTMLButtonElement>(null);
+  const galleryOpenerRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
     const opener = returnFocusTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
@@ -41,6 +43,16 @@ export function ProjectPageModal({ archiveId, archiveName, onClose, returnFocusT
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
+  const isLightboxOpen = selectedImageIndex !== null;
+
+  useEffect(() => {
+    if (!isLightboxOpen) return;
+    lightboxCloseRef.current?.focus();
+    const opener = galleryOpenerRef.current;
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [isLightboxOpen]);
   const [editData, setEditData] = useState<{
     title?: string;
     description?: string;
@@ -392,7 +404,10 @@ export function ProjectPageModal({ archiveId, archiveName, onClose, returnFocusT
                     {allImages.map((img, index) => (
                       <button
                         key={img.path}
-                        onClick={() => setSelectedImageIndex(index)}
+                        onClick={(e) => {
+                          galleryOpenerRef.current = e.currentTarget;
+                          setSelectedImageIndex(index);
+                        }}
                         className="aspect-square rounded-lg overflow-hidden border border-bambu-dark-tertiary hover:border-bambu-green transition-colors"
                       >
                         <img
@@ -430,6 +445,19 @@ export function ProjectPageModal({ archiveId, archiveName, onClose, returnFocusT
         <div
           className="fixed inset-0 bg-black/90 flex items-center justify-center z-60"
           onClick={() => setSelectedImageIndex(null)}
+          onKeyDown={(e) => {
+            if (e.key !== 'Tab') return;
+            const controls = Array.from(e.currentTarget.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'));
+            const first = controls[0];
+            const last = controls[controls.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+              e.preventDefault();
+              last?.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+              e.preventDefault();
+              first?.focus();
+            }
+          }}
         >
           <button
             onClick={(e) => {
@@ -461,6 +489,7 @@ export function ProjectPageModal({ archiveId, archiveName, onClose, returnFocusT
           </button>
 
           <button
+            ref={lightboxCloseRef}
             onClick={() => setSelectedImageIndex(null)}
             className="absolute top-4 right-4 p-2 bg-bambu-dark-secondary rounded-full hover:bg-bambu-dark-tertiary"
           >
