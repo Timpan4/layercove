@@ -71,7 +71,8 @@ const statuses: Record<number, Record<string, unknown>> = {
 };
 
 function rgbFromHex(token: string) {
-  const match = token.match(/^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
+  const hex = token.replace(/^#([\da-f])([\da-f])([\da-f])$/i, '#$1$1$2$2$3$3');
+  const match = hex.match(/^#([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i);
   if (!match) throw new Error(`Expected a six-digit theme color token, received ${token}`);
   return `rgb(${match.slice(1).map((channel) => Number.parseInt(channel, 16)).join(', ')})`;
 }
@@ -197,7 +198,7 @@ for (const width of [390, 1440]) {
       accent: getComputedStyle(document.documentElement).getPropertyValue('--accent').trim(),
     }));
     expect(lightTokens.page).toBe('rgb(245, 245, 245)');
-    expect(lightTokens.surface).toBe('#ffffff');
+    expect(rgbFromHex(lightTokens.surface)).toBe('rgb(255, 255, 255)');
     expect(lightTokens.primaryText).toBe('#1a1a1a');
     expect(lightTokens.mutedText).toBe('#6b6b6b');
     expect(lightTokens.accent).toBe('#00ae42');
