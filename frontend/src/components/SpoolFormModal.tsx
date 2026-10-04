@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { X, Loader2, Save, Beaker, Palette, Zap, Tag, Unlink } from 'lucide-react';
@@ -59,6 +59,9 @@ export function SpoolFormModal({
   const { showToast } = useToast();
   const inventory = inventoryData(source);
   const spoolmanMode = source === 'spoolman';
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const onCloseRef = useRef(onClose);
+  onCloseRef.current = onClose;
 
   const refreshSpoolQueries = () => invalidateInventory(queryClient, source);
 
@@ -685,15 +688,36 @@ export function SpoolFormModal({
     return true;
   };
 
-  // Close on Escape key
+  // Keep keyboard focus in the editor and restore the opener on dismissal.
   useEffect(() => {
     if (!isOpen) return;
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    const focusableElements = () => Array.from(dialog.querySelectorAll<HTMLElement>(
+      'button, input, select, textarea, a[href], [tabindex]',
+    )).filter((element) => element.tabIndex >= 0 && !element.matches(':disabled') && element.getClientRects().length > 0);
+    (focusableElements()[0] ?? dialog).focus();
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onCloseRef.current();
+      } else if (e.key === 'Tab') {
+        const elements = focusableElements();
+        const first = elements[0] ?? dialog;
+        const last = elements[elements.length - 1] ?? dialog;
+        if (!dialog.contains(document.activeElement) || document.activeElement === (e.shiftKey ? first : last)) {
+          e.preventDefault();
+          (e.shiftKey ? last : first).focus();
+        }
+      }
     };
     document.addEventListener('keydown', handleKeyDown);
-    return () => document.removeEventListener('keydown', handleKeyDown);
-  }, [isOpen, onClose]);
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [isOpen]);
 
   if (!isOpen) return null;
 
@@ -761,7 +785,7 @@ export function SpoolFormModal({
         onClick={onClose}
       />
 
-      <div role="dialog" aria-labelledby="spool-form-title" className="relative w-full max-w-xl mx-4 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-xl shadow-2xl max-h-[90vh] flex flex-col">
+      <div ref={dialogRef} role="dialog" aria-modal="true" aria-labelledby="spool-form-title" tabIndex={-1} className="relative w-full max-w-xl mx-4 bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-xl shadow-2xl max-h-[90vh] flex flex-col">
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-bambu-dark-tertiary flex-shrink-0">
           <h2 id="spool-form-title" className="text-lg font-semibold text-white flex items-baseline gap-2">

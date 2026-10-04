@@ -2398,6 +2398,15 @@ function SpoolCard({
             <p className="text-sm text-bambu-gray">{spool.brand || '-'}</p>
           </div>
           <div className="flex items-center gap-1">
+            <button
+              type="button"
+              onClick={(e) => { e.stopPropagation(); onClick(); }}
+              className="p-1 text-bambu-gray hover:text-white rounded transition-colors"
+              title={t('common.edit')}
+              aria-label={t('common.edit')}
+            >
+              <Edit2 className="w-4 h-4" />
+            </button>
             {onPrintLabel && (
               <button
                 onClick={(e) => { e.stopPropagation(); onPrintLabel(); }}
