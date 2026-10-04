@@ -6190,6 +6190,10 @@ export default {
       empty: 'Envanterde makara yok',
       noResults: 'Eşleşen makara yok',
       spools: 'makara',
+      materials_one: 'Malzeme',
+      materials_other: 'Malzeme',
+      brands_one: 'Marka',
+      brands_other: 'Marka',
       addSpool: 'Makara Ekle',
     },
     settings: {

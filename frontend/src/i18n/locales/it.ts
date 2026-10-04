@@ -6234,6 +6234,10 @@ export default {
       empty: 'Nessuna bobina nell\'inventario',
       noResults: 'Nessuna bobina corrispondente',
       spools: 'bobine',
+      materials_one: 'Materiale',
+      materials_other: 'Materiali',
+      brands_one: 'Marca',
+      brands_other: 'Marche',
       addSpool: 'Aggiungi bobina',
     },
     settings: {

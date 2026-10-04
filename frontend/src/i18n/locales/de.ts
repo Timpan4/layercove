@@ -6245,6 +6245,10 @@ export default {
       empty: 'Keine Spulen im Inventar',
       noResults: 'Keine passenden Spulen',
       spools: 'Spulen',
+      materials_one: 'Material',
+      materials_other: 'Materialien',
+      brands_one: 'Marke',
+      brands_other: 'Marken',
       addSpool: 'Spule hinzufügen',
     },
     settings: {

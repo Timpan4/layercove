@@ -5894,6 +5894,10 @@ export default {
       empty: '재고에 스풀 없음',
       noResults: '일치하는 스풀 없음',
       spools: '스풀',
+      materials_one: '재료',
+      materials_other: '재료',
+      brands_one: '브랜드',
+      brands_other: '브랜드',
       addSpool: '스풀 추가'
     },
     settings: {
