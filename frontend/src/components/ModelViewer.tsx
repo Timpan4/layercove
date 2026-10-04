@@ -944,13 +944,13 @@ export function ModelViewer({
 
       {!loading && !error && (
         <div className="absolute bottom-4 right-4 flex gap-2">
-          <Button variant="secondary" size="sm" onClick={() => zoom(0.8)}>
+          <Button variant="secondary" size="sm" onClick={() => zoom(0.8)} aria-label={t('modelViewer.zoomIn')}>
             <ZoomIn className="w-4 h-4" />
           </Button>
-          <Button variant="secondary" size="sm" onClick={() => zoom(1.25)}>
+          <Button variant="secondary" size="sm" onClick={() => zoom(1.25)} aria-label={t('modelViewer.zoomOut')}>
             <ZoomOut className="w-4 h-4" />
           </Button>
-          <Button variant="secondary" size="sm" onClick={resetView}>
+          <Button variant="secondary" size="sm" onClick={resetView} aria-label={t('modelViewer.resetView')}>
             <RotateCcw className="w-4 h-4" />
           </Button>
         </div>

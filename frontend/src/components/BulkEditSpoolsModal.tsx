@@ -214,6 +214,22 @@ export function BulkEditSpoolsModal({
   onClose, onApply,
 }: BulkEditSpoolsModalProps) {
   const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const firstFieldRef = useRef<HTMLInputElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (isOpen) {
+      const activeElement = document.activeElement;
+      returnFocusRef.current = activeElement instanceof HTMLElement && activeElement !== document.body
+        ? activeElement
+        : null;
+      firstFieldRef.current?.focus();
+      return;
+    }
+
+    returnFocusRef.current?.focus();
+  }, [isOpen]);
 
   // Slicer preset sources — match the per-spool form (cloud Bambu + cloud Orca
   // + local + built-in). Gated on `isOpen` so closed modal doesn't fetch.
@@ -443,12 +459,39 @@ export function BulkEditSpoolsModal({
       onClick={isPending ? undefined : onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="bulk-edit-spools-title"
         className="w-full max-w-3xl bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg max-h-[90vh] flex flex-col"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            event.preventDefault();
+            if (!isPending) onClose();
+            return;
+          }
+          if (event.key !== 'Tab') return;
+          const dialog = dialogRef.current;
+          if (!dialog) return;
+          const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+            'button:not([disabled]), input:not([disabled]), textarea:not([disabled]), select:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (!first || !last) return;
+          if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
       >
         <div className="flex items-center justify-between p-5 border-b border-bambu-dark-tertiary">
           <div>
-            <h2 className="text-lg font-semibold text-white">
+            <h2 id="bulk-edit-spools-title" className="text-lg font-semibold text-white">
               {t('inventory.bulk.editTitle')}
             </h2>
             <p className="text-sm text-bambu-gray mt-0.5">
@@ -469,12 +512,13 @@ export function BulkEditSpoolsModal({
           {t('inventory.bulk.editHint')}
         </p>
         <div className="flex-1 overflow-y-auto p-5 space-y-3">
-          {FIELDS.map((f) => {
+          {FIELDS.map((f, index) => {
             const enabled = values[f.id] !== undefined;
             return (
               <div key={f.id} className={`flex items-start gap-3 rounded-md p-2 transition-colors ${enabled ? 'bg-bambu-green/5 border border-bambu-green/30' : 'border border-transparent'}`}>
                 <div className="pt-2">
                   <input
+                    ref={index === 0 ? firstFieldRef : undefined}
                     type="checkbox"
                     className="h-4 w-4 cursor-pointer"
                     checked={enabled}

@@ -23,6 +23,8 @@ export function ColumnConfigModal({ isOpen, onClose, columns, defaultColumns, on
   const [localColumns, setLocalColumns] = useState<ColumnConfig[]>(columns);
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const draggedIndexRef = useRef<number | null>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const returnFocusRef = useRef<HTMLElement | null>(null);
 
   useEffect(() => {
     if (isOpen) {
@@ -31,9 +33,46 @@ export function ColumnConfigModal({ isOpen, onClose, columns, defaultColumns, on
   }, [isOpen, columns]);
 
   useEffect(() => {
+    if (!isOpen) {
+      returnFocusRef.current?.focus();
+      returnFocusRef.current = null;
+      return;
+    }
+    returnFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const firstFocusable = dialogRef.current?.querySelector<HTMLElement>(
+      'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+    );
+    firstFocusable?.focus();
+  }, [isOpen]);
+
+  useEffect(() => {
     if (!isOpen) return;
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => element.getClientRects().length > 0);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+
+      if (!first) {
+        e.preventDefault();
+        dialog.focus();
+      } else if (e.shiftKey && (active === first || !dialog.contains(active))) {
+        e.preventDefault();
+        last?.focus();
+      } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -95,11 +134,19 @@ export function ColumnConfigModal({ isOpen, onClose, columns, defaultColumns, on
   const visibleCount = localColumns.filter((c) => c.visible).length;
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
+    <div
+      ref={dialogRef}
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="column-config-title"
+      tabIndex={-1}
+      className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"
+      onClick={onClose}
+    >
       <Card className="w-full max-w-md max-h-[80vh] flex flex-col" onClick={(e: React.MouseEvent) => e.stopPropagation()}>
         <CardContent className="p-6 flex flex-col min-h-0">
           {/* Header */}
-          <h3 className="text-lg font-semibold text-white mb-2">{t('inventory.configureColumns')}</h3>
+          <h3 id="column-config-title" className="text-lg font-semibold text-white mb-2">{t('inventory.configureColumns')}</h3>
           <p className="text-sm text-bambu-gray mb-4">
             {t('inventory.configureColumnsDesc')}
             <span className="ml-2 text-bambu-gray/60">

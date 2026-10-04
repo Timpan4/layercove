@@ -5263,6 +5263,10 @@ export default {
   // Model Görüntüleyici
   modelViewer: {
     openInSlicer: 'Dilimleyicide Aç',
+    closePreview: 'Önizlemeyi kapat',
+    zoomIn: 'Yakınlaştır',
+    zoomOut: 'Uzaklaştır',
+    resetView: 'Görünümü sıfırla',
     tabs: {
       model: '3B Model',
       gcode: 'G-kod Önizleme',

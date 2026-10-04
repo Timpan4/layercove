@@ -5034,6 +5034,10 @@ export default {
   },
   modelViewer: {
     openInSlicer: '슬라이서에서 열기',
+    closePreview: '미리보기 닫기',
+    zoomIn: '확대',
+    zoomOut: '축소',
+    resetView: '보기 초기화',
     tabs: {
       model: '3D 모델',
       gcode: 'G-code 미리보기'

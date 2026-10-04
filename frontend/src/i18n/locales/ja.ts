@@ -5299,6 +5299,10 @@ export default {
   // Model Viewer
   modelViewer: {
     openInSlicer: 'スライサーで開く',
+    closePreview: 'プレビューを閉じる',
+    zoomIn: 'ズームイン',
+    zoomOut: 'ズームアウト',
+    resetView: '表示をリセット',
     tabs: {
       model: '3Dモデル',
       gcode: 'G-codeプレビュー',

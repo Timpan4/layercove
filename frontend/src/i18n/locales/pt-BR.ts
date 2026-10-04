@@ -5287,6 +5287,10 @@ export default {
   // Model Viewer
   modelViewer: {
     openInSlicer: 'Abrir no Slicer',
+    closePreview: 'Fechar pré-visualização',
+    zoomIn: 'Aumentar zoom',
+    zoomOut: 'Reduzir zoom',
+    resetView: 'Redefinir visualização',
     tabs: {
       model: 'Modelo 3D',
       gcode: 'Pré-visualização G-code',

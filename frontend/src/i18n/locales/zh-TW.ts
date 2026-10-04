@@ -5287,6 +5287,10 @@ export default {
   // Model Viewer
   modelViewer: {
     openInSlicer: '在切片軟體中開啟',
+    closePreview: '關閉預覽',
+    zoomIn: '放大',
+    zoomOut: '縮小',
+    resetView: '重設視圖',
     tabs: {
       model: '3D 模型',
       gcode: 'G-code 預覽',
