@@ -8,7 +8,7 @@ const spools = [
 ];
 
 for (const width of [390, 1440]) {
-  for (const closeWith of ['Escape', 'Cancel'] as const) {
+  for (const closeWith of ['Escape', 'Cancel', 'Dropdown Escape', 'Dropdown selection'] as const) {
     test('Bulk spool edit contains keyboard focus and restores it after ' + closeWith + ' at ' + width + 'px', async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       const writes: string[] = [];
@@ -56,6 +56,30 @@ for (const width of [390, 1440]) {
       const dialog = page.getByRole('dialog', { name: 'Bulk edit spools' });
       await expect(dialog).toBeVisible();
       await firstField.check();
+      if (closeWith === 'Dropdown Escape' || closeWith === 'Dropdown selection') {
+        const material = dialog.getByRole('textbox').first();
+        await material.focus();
+        const option = dialog.getByRole('button', { name: 'PLA', exact: true });
+        await expect(option).toBeVisible();
+        if (closeWith === 'Dropdown Escape') {
+          await page.keyboard.press('Escape');
+          await expect.soft(dialog).toBeVisible();
+          await expect.soft(option).toHaveCount(0);
+          await expect.soft(material).toBeFocused();
+        } else {
+          await option.focus();
+          await page.keyboard.press('Enter');
+          await expect(material).toHaveValue('PLA');
+          await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+          await page.keyboard.press('Tab');
+          await expect.poll(() => dialog.evaluate((element) => element.contains(document.activeElement))).toBe(true);
+        }
+        await page.keyboard.press('Escape');
+        await expect(dialog).toHaveCount(0);
+        await expect(trigger).toBeFocused();
+        expect(writes.filter((request) => /\/inventory\/|assignment|label|preference/i.test(request))).toEqual([]);
+        return;
+      }
       await dialog.getByRole('textbox').first().fill('Draft only');
 
       const lastFocusable = dialog.getByRole('button', { name: 'Apply to 2 spools', exact: true });
