@@ -22,6 +22,12 @@
   backdrop-filter: blur(24px) saturate(145%);
 }
 
+html:not(.dark) .lc-glass {
+  background: linear-gradient(145deg,
+    color-mix(in srgb, var(--bg-secondary) 82%, transparent),
+    color-mix(in srgb, var(--bg-tertiary) 76%, transparent));
+}
+
 .lc-pressable {
   transition: transform 120ms ease-out, border-color 160ms ease, background-color 160ms ease, color 160ms ease, opacity 160ms ease;
   -webkit-tap-highlight-color: transparent;
@@ -78,6 +84,11 @@
 }
 
 @media (prefers-reduced-transparency: reduce) {
+  html:not(.dark) .lc-glass,
+  html:not(.dark) .lc-switcher {
+    background: var(--bg-secondary);
+  }
+
   .lc-glass,
   .lc-switcher {
     background: #1b191f;
@@ -87,6 +98,12 @@
 }
 
 @media (prefers-contrast: more) {
+  html:not(.dark) .lc-glass,
+  html:not(.dark) .lc-switcher {
+    background: var(--bg-secondary);
+    border-color: var(--border-color);
+  }
+
   .lc-glass,
   .lc-switcher {
     background: #111;

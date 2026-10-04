@@ -66,12 +66,12 @@ const variants: Array<{ key: PrototypeVariant; name: string }> = [
 ];
 
 const stateMeta: Record<PrinterState, { label: string; dot: string; chip: string }> = {
-  printing: { label: 'Printing', dot: 'bg-bambu-green', chip: 'border-bambu-green/30 bg-bambu-green/10 text-bambu-green' },
-  paused: { label: 'Paused', dot: 'bg-amber-400', chip: 'border-amber-400/30 bg-amber-400/10 text-amber-300' },
-  finished: { label: 'Finished', dot: 'bg-blue-400', chip: 'border-blue-400/30 bg-blue-400/10 text-blue-300' },
-  idle: { label: 'Ready', dot: 'bg-emerald-400', chip: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-300' },
-  offline: { label: 'Offline', dot: 'bg-zinc-500', chip: 'border-white/10 bg-white/5 text-zinc-400' },
-  problem: { label: 'Needs attention', dot: 'bg-red-400', chip: 'border-red-400/30 bg-red-400/10 text-red-300' },
+  printing: { label: 'Printing', dot: 'bg-bambu-green', chip: 'border-bambu-green/30 bg-bambu-green/10 text-bambu-gray dark:text-bambu-green' },
+  paused: { label: 'Paused', dot: 'bg-amber-400', chip: 'border-amber-400/30 bg-amber-400/10 text-bambu-gray dark:text-amber-300' },
+  finished: { label: 'Finished', dot: 'bg-blue-400', chip: 'border-blue-400/30 bg-blue-400/10 text-bambu-gray dark:text-blue-300' },
+  idle: { label: 'Ready', dot: 'bg-emerald-400', chip: 'border-emerald-400/30 bg-emerald-400/10 text-bambu-gray dark:text-emerald-300' },
+  offline: { label: 'Offline', dot: 'bg-zinc-500', chip: 'border-white/10 bg-white/5 text-bambu-gray dark:text-zinc-400' },
+  problem: { label: 'Needs attention', dot: 'bg-red-400', chip: 'border-red-400/30 bg-red-400/10 text-bambu-gray dark:text-red-300' },
 };
 
 function getState(status?: PrinterStatus, supportsHms = true): PrinterState {
@@ -112,7 +112,7 @@ function SearchField({ value, onChange, className = '' }: { value: string; onCha
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder="Search printers"
-        className="h-10 w-full rounded-xl border border-white/10 bg-black/25 pl-9 pr-3 text-sm text-white outline-none transition placeholder:text-bambu-gray/70 focus:border-bambu-green/70 focus:ring-2 focus:ring-bambu-green/15"
+        className="h-10 w-full rounded-xl border border-white/10 bg-bambu-dark-tertiary/25 dark:bg-black/25 pl-9 pr-3 text-sm text-white outline-none transition placeholder:text-bambu-gray/70 focus:border-bambu-green/70 focus:ring-2 focus:ring-bambu-green/15"
       />
     </label>
   );
@@ -135,7 +135,7 @@ function FilterSelect({
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="h-10 appearance-none rounded-xl border border-white/10 bg-black/25 py-0 pl-3 pr-8 text-sm font-medium text-white outline-none transition focus:border-bambu-green/70 focus:ring-2 focus:ring-bambu-green/15"
+        className="h-10 appearance-none rounded-xl border border-white/10 bg-bambu-dark-tertiary/25 dark:bg-black/25 py-0 pl-3 pr-8 text-sm font-medium text-white outline-none transition focus:border-bambu-green/70 focus:ring-2 focus:ring-bambu-green/15"
       >
         {children}
       </select>
@@ -173,7 +173,7 @@ function FilterCluster(props: PrintersPagePrototypeProps) {
         type="button"
         aria-pressed={props.hideOffline}
         onClick={props.onHideOfflineChange}
-        className={`lc-pressable h-10 rounded-xl border px-3 text-sm font-medium ${props.hideOffline ? 'border-bambu-green/50 bg-bambu-green/15 text-bambu-green' : 'border-white/10 bg-black/25 text-white'}`}
+        className={`lc-pressable h-10 rounded-xl border px-3 text-sm font-medium ${props.hideOffline ? 'border-bambu-green/50 bg-bambu-green/15 text-bambu-green' : 'border-white/10 bg-bambu-dark-tertiary/25 dark:bg-black/25 text-white'}`}
       >
         {props.hideOffline ? 'Offline hidden' : 'Hide offline'}
       </button>
@@ -214,7 +214,7 @@ function Summary({ printers }: { printers: PrototypePrinter[] }) {
 
 function Metric({ icon, label, value }: { icon: React.ReactNode; label: string; value: string }) {
   return (
-    <div className="rounded-xl bg-black/25 px-3 py-2.5">
+    <div className="rounded-xl bg-bambu-dark-tertiary/25 dark:bg-black/25 px-3 py-2.5">
       <div className="mb-1 flex items-center gap-1.5 text-[0.6875rem] font-medium text-bambu-gray">{icon}{label}</div>
       <div className="text-sm font-semibold tabular-nums text-white">{value}</div>
     </div>
@@ -258,7 +258,7 @@ function PrinterSnapshotCard({
       className={`lc-printer-card lc-glass group flex flex-col overflow-hidden rounded-[1.375rem] border p-4 shadow-[0_24px_60px_rgba(0,0,0,0.24)] ${portrait ? 'min-h-[32rem]' : 'min-h-[25rem]'} ${onInspect ? 'cursor-pointer text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-bambu-green focus-visible:ring-offset-2 focus-visible:ring-offset-bambu-dark' : ''} ${selected ? 'border-bambu-green/60 ring-2 ring-bambu-green/15' : 'border-white/10'}`}
     >
       <div className="flex items-start gap-3">
-        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-black/30 p-2 ring-1 ring-white/5">
+        <div className="flex h-16 w-16 shrink-0 items-center justify-center rounded-2xl bg-bambu-dark-tertiary/30 dark:bg-black/30 p-2 ring-1 ring-white/5">
           <img src={getPrinterImage(printer.model)} alt="" className="h-full w-full object-contain transition-transform duration-300 group-hover:scale-[1.04]" />
         </div>
         <div className="min-w-0 flex-1 pt-0.5">
@@ -271,7 +271,7 @@ function PrinterSnapshotCard({
         </div>
       </div>
 
-      <div className="mt-4 rounded-2xl border border-white/5 bg-black/30 p-3.5">
+      <div className="mt-4 rounded-2xl border border-white/5 bg-bambu-dark-tertiary/30 dark:bg-black/30 p-3.5">
         <div className="flex items-start gap-3">
           <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl bg-white/[0.06] text-bambu-gray"><Box className="h-5 w-5" /></div>
           <div className="min-w-0 flex-1">
@@ -394,7 +394,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
     <section className={`lc-glass overflow-hidden rounded-[1.75rem] border border-white/10 shadow-[0_30px_80px_rgba(0,0,0,0.3)] ${compact ? '' : 'min-h-[42rem]'}`}>
       <header className="flex flex-col gap-5 border-b border-white/[0.07] p-5 sm:flex-row sm:items-center sm:justify-between md:p-7">
         <div className="flex min-w-0 items-center gap-4">
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-[1.25rem] bg-black/30 p-2 ring-1 ring-white/5">
+          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-[1.25rem] bg-bambu-dark-tertiary/30 dark:bg-black/30 p-2 ring-1 ring-white/5">
             <img src={getPrinterImage(printer.model)} alt="" className="h-full w-full object-contain" />
           </div>
           <div className="min-w-0">
@@ -410,7 +410,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
 
       <div className={`grid gap-4 p-5 md:p-7 ${compact ? '' : 'md:grid-cols-[minmax(0,1.4fr)_minmax(16rem,0.6fr)]'}`}>
         <div className="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,0.95fr)_minmax(0,1.05fr)]">
-          <div className="overflow-hidden rounded-[1.375rem] border border-white/[0.07] bg-black/30 p-3">
+          <div className="overflow-hidden rounded-[1.375rem] border border-white/[0.07] bg-bambu-dark-tertiary/30 dark:bg-black/30 p-3">
             <div className="mb-3 flex items-center justify-between gap-3 px-1">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray">Camera</p>
               <span className="inline-flex items-center gap-1.5 text-xs text-bambu-gray">
@@ -429,7 +429,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
                 connected={status?.connected ?? false}
               />
             ) : (
-              <div className="flex aspect-video items-center justify-center rounded-xl border border-white/[0.07] bg-black/50 text-bambu-gray">
+              <div className="flex aspect-video items-center justify-center rounded-xl border border-white/[0.07] bg-bambu-dark-tertiary/50 dark:bg-black/50 text-bambu-gray">
                 <div className="text-center">
                   <VideoOff className="mx-auto h-8 w-8 opacity-70" aria-hidden="true" />
                   <p className="mt-2 text-sm">No camera configured</p>
@@ -438,7 +438,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
             )}
           </div>
 
-          <div className="rounded-[1.375rem] border border-white/[0.07] bg-black/30 p-5">
+          <div className="rounded-[1.375rem] border border-white/[0.07] bg-bambu-dark-tertiary/30 dark:bg-black/30 p-5">
           <div className="flex items-start justify-between gap-3">
             <div className="min-w-0">
               <p className="text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray">Current job</p>
@@ -461,7 +461,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
         </div>
 
         <aside className="flex flex-col gap-3">
-          <div className="rounded-[1.375rem] border border-white/[0.07] bg-black/25 p-5">
+          <div className="rounded-[1.375rem] border border-white/[0.07] bg-bambu-dark-tertiary/25 dark:bg-black/25 p-5">
             <p className="text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray">Next best action</p>
             <p className="mt-3 text-base font-medium text-white">{state === 'finished' || (state === 'idle' && status?.awaiting_plate_clear) ? 'Clear plate and prepare next job' : active ? 'Monitor this print' : state === 'offline' ? 'Check printer connection' : 'Choose a file to print'}</p>
             <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
@@ -470,7 +470,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
             </div>
           </div>
 
-          <div className="rounded-[1.375rem] border border-white/[0.07] bg-black/25 p-5">
+          <div className="rounded-[1.375rem] border border-white/[0.07] bg-bambu-dark-tertiary/25 dark:bg-black/25 p-5">
             <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray">Filament</p><span className="text-xs text-bambu-gray">{filamentSlots.filter((slot) => slot.name !== 'Empty').length} loaded</span></div>
             {filamentSlots.length ? (
               <div className="mt-3 grid grid-cols-2 gap-2">
@@ -482,7 +482,7 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
             ) : <p className="mt-3 text-sm text-bambu-gray">External spool or no AMS telemetry.</p>}
           </div>
 
-          <div className={`rounded-[1.375rem] border p-4 ${notices.length ? 'border-amber-400/20 bg-amber-400/[0.07]' : 'border-white/[0.07] bg-black/25'}`}>
+          <div className={`rounded-[1.375rem] border p-4 ${notices.length ? 'border-amber-400/20 bg-amber-400/[0.07]' : 'border-white/[0.07] bg-bambu-dark-tertiary/25 dark:bg-black/25'}`}>
             <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray"><AlertTriangle className={`h-4 w-4 ${notices.length ? 'text-amber-300' : 'text-emerald-300'}`} />Machine state</p>
             <p className="mt-2 text-sm font-medium text-white">{notices.length ? notices.join(' · ') : 'No action needed'}</p>
           </div>
