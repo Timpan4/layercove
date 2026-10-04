@@ -128,11 +128,20 @@ async function expectLightSurface(surface: Locator) {
   const result = await surface.evaluate((element) => {
     const style = getComputedStyle(element);
     const root = getComputedStyle(document.documentElement);
-    const colors = [style.backgroundColor, ...style.backgroundImage.matchAll(/rgba?\([^)]*\)/g)].map((value) => typeof value === 'string' ? value : value[0]);
+    const gradientColors = Array.from(style.backgroundImage.matchAll(/rgba?\([^)]*\)|color\(srgb [^)]*\)/g), (match) => match[0]);
+    if (style.backgroundImage !== 'none' && gradientColors.length === 0) {
+      throw new Error(`Unrecognized computed gradient paint: ${style.backgroundImage}`);
+    }
+    const colors = [style.backgroundColor, ...gradientColors];
     const paints = colors.flatMap((value) => {
-      const channels = value.match(/[\d.]+/g)?.map(Number) ?? [];
-      if (channels.length < 3 || channels[3] === 0) return [];
-      return [`rgb(${channels.slice(0, 3).join(', ')})`];
+      const channels = value.match(/[+-]?(?:\d*\.)?\d+(?:e[+-]?\d+)?/gi)?.map(Number) ?? [];
+      if (!/^(?:rgba?\(|color\(srgb )/.test(value) || channels.length < 3) {
+        throw new Error(`Unrecognized computed surface paint: ${value}`);
+      }
+      if (channels[3] === 0) return [];
+      // color(srgb) uses normalized channels; theme hex tokens use 8-bit channels.
+      const rgb = channels.slice(0, 3).map((channel) => Math.round(value.startsWith('color(') ? channel * 255 : channel));
+      return [`rgb(${rgb.join(', ')})`];
     });
     return {
       paints,
