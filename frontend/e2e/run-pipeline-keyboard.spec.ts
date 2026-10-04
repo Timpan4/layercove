@@ -94,7 +94,7 @@ async function openPipelinePicker(page: Page) {
   const actionsTrigger = page.getByRole('button', { name: `Actions: ${filename}`, exact: true });
   await expect(actionsTrigger).toBeVisible();
   await actionsTrigger.click();
-  await page.getByRole('button', { name: 'Run with pipeline', exact: true }).click();
+  await page.getByRole('button', { name: 'Run with pipeline', exact: true }).press('Enter');
   const dialog = page.getByRole('dialog', { name: 'Run with pipeline', exact: true });
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: pipelineName, exact: false })).toBeVisible();
