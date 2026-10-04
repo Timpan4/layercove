@@ -68,7 +68,7 @@ async function openBulkTags(page: Page, language: 'en' | 'de', width: number, co
   // The known broken title must not prevent independent keyboard baselines.
   const dialog = page.getByRole('dialog');
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole('checkbox', { name: 'Fictional tag', exact: true })).toBeVisible();
+  await expect(dialog.getByText('Fictional tag', { exact: true })).toBeVisible();
   return { dialog, tag, writes };
 }
 
