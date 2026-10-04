@@ -6246,8 +6246,10 @@ export default {
       empty: 'インベントリにスプールがありません',
       noResults: '一致するスプールがありません',
       spools: 'スプール',
-      materials: '素材',
-      brands: 'ブランド',
+      materials_one: '素材',
+      materials_other: '素材',
+      brands_one: 'ブランド',
+      brands_other: 'ブランド',
       addSpool: 'スプール追加',
     },
     settings: {

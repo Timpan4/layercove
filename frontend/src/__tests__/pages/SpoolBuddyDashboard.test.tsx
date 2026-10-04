@@ -44,18 +44,23 @@ vi.mock('../../api/client', () => ({
   },
 }));
 
-vi.mock('react-i18next', () => ({
-  useTranslation: () => ({
-    // Mirrors i18next's (key, defaultValue, options) signature with simple
-    // {{var}} interpolation so tests can assert on the rendered text.
-    t: (key: string, fallback?: string, options?: Record<string, unknown>) => {
-      const text = fallback ?? key;
-      if (!options) return text;
-      return text.replace(/\{\{(\w+)\}\}/g, (_m, k) => String(options[k] ?? ''));
-    },
-    i18n: { language: 'en', changeLanguage: vi.fn() },
-  }),
-}));
+vi.mock('react-i18next', async () => {
+  const { createInstance } = await import('i18next');
+  const { default: en } = await import('../../i18n/locales/en');
+  const translation = createInstance();
+  await translation.init({ lng: 'en', resources: { en: { translation: en } } });
+  return {
+    useTranslation: () => ({
+      // Keep existing fallback assertions; use real translations for options-only calls.
+      t: (key: string, fallback?: string | Record<string, unknown>, options?: Record<string, unknown>) => {
+        if (typeof fallback !== 'string') return translation.t(key, fallback);
+        if (!options) return fallback;
+        return fallback.replace(/\{\{(\w+)\}\}/g, (_m, k) => String(options[k] ?? ''));
+      },
+      i18n: { language: 'en', changeLanguage: vi.fn() },
+    }),
+  };
+});
 
 const mockOutletContext = {
   selectedPrinterId: null,

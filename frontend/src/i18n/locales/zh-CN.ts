@@ -6233,8 +6233,10 @@ export default {
       empty: '库存中没有耗材',
       noResults: '没有匹配的耗材',
       spools: '个耗材',
-      materials: '材料',
-      brands: '品牌',
+      materials_one: '材料',
+      materials_other: '材料',
+      brands_one: '品牌',
+      brands_other: '品牌',
       addSpool: '添加耗材',
     },
     settings: {
