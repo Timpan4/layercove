@@ -99,8 +99,16 @@ interface SearchableSelectProps {
 function SearchableSelect({ value, onChange, options, allowCustom, placeholderKey, disabled }: SearchableSelectProps) {
   const { t } = useTranslation();
   const ref = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const skipOpenOnFocus = useRef(false);
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState('');
+
+  const returnFocusToInput = () => {
+    if (document.activeElement === inputRef.current) return;
+    skipOpenOnFocus.current = true;
+    requestAnimationFrame(() => inputRef.current?.focus());
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -140,8 +148,21 @@ function SearchableSelect({ value, onChange, options, allowCustom, placeholderKe
   const noOptionMatch = open && search.trim() && !options.some((o) => o.value.toLowerCase() === search.trim().toLowerCase());
 
   return (
-    <div className="relative" ref={ref}>
+    <div
+      className="relative"
+      ref={ref}
+      onKeyDown={(event) => {
+        if (event.key === 'Escape' && open) {
+          event.preventDefault();
+          event.stopPropagation();
+          setOpen(false);
+          setSearch('');
+          returnFocusToInput();
+        }
+      }}
+    >
       <input
+        ref={inputRef}
         type="text"
         disabled={disabled}
         value={displayValue}
@@ -151,6 +172,10 @@ function SearchableSelect({ value, onChange, options, allowCustom, placeholderKe
           if (allowCustom) onChange(e.target.value);
         }}
         onFocus={() => {
+          if (skipOpenOnFocus.current) {
+            skipOpenOnFocus.current = false;
+            return;
+          }
           setOpen(true);
           setSearch('');
         }}
@@ -174,6 +199,7 @@ function SearchableSelect({ value, onChange, options, allowCustom, placeholderKe
                 onChange(opt.value);
                 setOpen(false);
                 setSearch('');
+                returnFocusToInput();
               }}
             >
               {opt.label}
@@ -187,6 +213,7 @@ function SearchableSelect({ value, onChange, options, allowCustom, placeholderKe
                 onChange(search.trim());
                 setOpen(false);
                 setSearch('');
+                returnFocusToInput();
               }}
             >
               {t('inventory.bulk.useCustom', { value: search.trim() })}
