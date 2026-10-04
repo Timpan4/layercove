@@ -47,6 +47,7 @@ export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, on
   const [selectedPlateId, setSelectedPlateId] = useState<number | null>(null);
   const [platePage, setPlatePage] = useState(0);
   const [isFullscreen, setIsFullscreen] = useState(false);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const [platePanelHeight, setPlatePanelHeight] = useState<number | null>(null);
   const [isDraggingDivider, setIsDraggingDivider] = useState(false);
   const [hasCustomSplit, setHasCustomSplit] = useState(false);
@@ -65,6 +66,16 @@ export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, on
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
+
+  useEffect(() => {
+    const opener = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const dialog = dialogRef.current;
+    const firstFocusable = dialog?.querySelector<HTMLElement>(
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    );
+    firstFocusable?.focus();
+    return () => opener?.focus();
+  }, []);
 
   useEffect(() => {
     setLoading(true);
@@ -325,6 +336,31 @@ export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, on
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="model-viewer-title"
+        tabIndex={-1}
+        onKeyDown={(event) => {
+          if (event.key !== 'Tab') return;
+          const dialog = dialogRef.current;
+          if (!dialog) return;
+          const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+            'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+          )).filter((element) => element.getClientRects().length > 0);
+          const first = focusable[0];
+          const last = focusable[focusable.length - 1];
+          if (!first || !last) {
+            event.preventDefault();
+            dialog.focus();
+          } else if (event.shiftKey && (document.activeElement === first || !dialog.contains(document.activeElement))) {
+            event.preventDefault();
+            last.focus();
+          } else if (!event.shiftKey && (document.activeElement === last || !dialog.contains(document.activeElement))) {
+            event.preventDefault();
+            first.focus();
+          }
+        }}
         className={`bg-bambu-dark-secondary border border-bambu-dark-tertiary w-full flex flex-col ${
           isFullscreen ? 'h-full max-w-none rounded-none' : 'h-[80vh] max-w-4xl rounded-xl'
         }`}
@@ -333,7 +369,7 @@ export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, on
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-bambu-dark-tertiary">
           <div className="flex items-center gap-3 min-w-0 flex-1 mr-4">
-            <h2 className="text-lg font-semibold text-white truncate">{title}</h2>
+            <h2 id="model-viewer-title" className="text-lg font-semibold text-white truncate">{title}</h2>
             {hasObjectCount && (
               <span className="text-xs text-bambu-gray bg-bambu-dark-tertiary/70 px-2 py-1 rounded whitespace-nowrap">
                 {objectCountLabel}: {t('modelViewer.objectCount', { count: selectedObjectCount })}
@@ -360,7 +396,7 @@ export function ModelViewerModal({ archiveId, libraryFileId, title, fileType, on
             >
               {isFullscreen ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
             </Button>
-            <Button variant="ghost" size="sm" onClick={onClose}>
+            <Button variant="ghost" size="sm" onClick={onClose} aria-label={t('modelViewer.closePreview')}>
               <X className="w-5 h-5" />
             </Button>
           </div>
