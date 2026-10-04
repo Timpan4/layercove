@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AlertTriangle, Cog, Loader2, Play, Printer as PrinterIcon, X } from 'lucide-react';
@@ -21,13 +21,14 @@ export type RunPipelineSource =
 export interface RunWithPipelineModalProps {
   source: RunPipelineSource;
   onClose: () => void;
+  returnFocusTo?: HTMLElement | null;
 }
 
 // Two-step modal. Step 1: pick a pipeline. Step 2: confirm eligibility
 // (skipped when ok=true) and run. Lives in two views in the same modal so
 // the user keeps context — most production runs hit the green path and
 // never see step 2.
-export function RunWithPipelineModal({ source, onClose }: RunWithPipelineModalProps) {
+export function RunWithPipelineModal({ source, onClose, returnFocusTo }: RunWithPipelineModalProps) {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
@@ -36,6 +37,7 @@ export function RunWithPipelineModal({ source, onClose }: RunWithPipelineModalPr
   const [report, setReport] = useState<PipelineEligibilityReport | null>(null);
   const [copies, setCopies] = useState<number>(1);
   const { trackJob } = useSliceJobTracker();
+  const dialogRef = useRef<HTMLDivElement>(null);
 
   const { data: list, isLoading: pipelinesLoading } = useQuery({
     queryKey: ['slicer-pipelines'],
@@ -119,10 +121,53 @@ export function RunWithPipelineModal({ source, onClose }: RunWithPipelineModalPr
     setReport(null);
   };
 
+  const busy = checkMutation.isPending || runMutation.isPending;
+
+  useEffect(() => {
+    const previous = returnFocusTo ?? (document.activeElement instanceof HTMLElement
+      ? document.activeElement : null);
+    dialogRef.current?.querySelector<HTMLElement>('button:not(:disabled)')?.focus();
+    return () => {
+      if (previous?.isConnected) previous.focus();
+    };
+  }, [returnFocusTo]);
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (!busy) onClose();
+      }
+      if (event.key !== 'Tab') return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const focusable = Array.from(dialog.querySelectorAll<HTMLElement>(
+        'button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex="-1"])'
+      )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      const active = document.activeElement;
+      if (!first || !last) {
+        event.preventDefault();
+        dialog.focus();
+      } else if (event.shiftKey && (active === first || !dialog.contains(active))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (active === last || !dialog.contains(active))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [busy, onClose]);
+
   return (
     <div
       className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
-      onClick={onClose}
+      ref={dialogRef}
+      tabIndex={-1}
+      onClick={() => { if (!busy) onClose(); }}
       role="dialog"
       aria-modal="true"
       aria-label={t('library.runWithPipeline.modalTitle', 'Run with pipeline')}
@@ -140,7 +185,8 @@ export function RunWithPipelineModal({ source, onClose }: RunWithPipelineModalPr
           </h3>
           <button
             type="button"
-            onClick={onClose}
+            onClick={() => { if (!busy) onClose(); }}
+            disabled={busy}
             aria-label={t('common.close', 'Close')}
             className="text-bambu-gray hover:text-white"
           >
