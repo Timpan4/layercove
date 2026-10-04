@@ -200,7 +200,7 @@ for (const width of [390, 1440]) {
     const fixture = await openCameraDiagnosis(page, width);
 
     await fixture.modalPanel.locator('button').first().focus();
-    const backdrop = fixture.heading.locator('xpath=../../../../');
+    const backdrop = fixture.heading.locator('xpath=../../../..');
     await backdrop.click({ position: { x: 1, y: 1 } });
     await expect(fixture.heading).toBeHidden();
     await expect(fixture.opener).toBeFocused();
