@@ -5,12 +5,13 @@ export type Metric = 'weight' | 'prints' | 'time';
 const METRICS: Metric[] = ['weight', 'prints', 'time'];
 
 interface MetricToggleProps {
+  label: string;
   value: Metric;
   onChange: (metric: Metric) => void;
   exclude?: Metric[];
 }
 
-export function MetricToggle({ value, onChange, exclude }: MetricToggleProps) {
+export function MetricToggle({ label, value, onChange, exclude }: MetricToggleProps) {
   const { t } = useTranslation();
 
   const labels: Record<Metric, string> = {
@@ -22,10 +23,11 @@ export function MetricToggle({ value, onChange, exclude }: MetricToggleProps) {
   const metrics = exclude ? METRICS.filter(m => !exclude.includes(m)) : METRICS;
 
   return (
-    <div className="flex gap-0.5 bg-bambu-dark rounded-lg p-0.5">
+    <div role="group" aria-label={label} className="flex gap-0.5 bg-bambu-dark rounded-lg p-0.5">
       {metrics.map(m => (
         <button
           key={m}
+          aria-pressed={value === m}
           onClick={() => onChange(m)}
           className={`px-2 py-0.5 text-xs rounded-md transition-colors ${
             value === m ? 'bg-bambu-green text-white' : 'text-bambu-gray hover:text-white'
