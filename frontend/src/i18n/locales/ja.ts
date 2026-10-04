@@ -3150,6 +3150,7 @@ export default {
 
   // Camera page
   camera: {
+    mode: 'カメラモード',
     title: 'カメラビュー',
     invalidPrinterId: '無効なプリンターID',
     live: 'ライブ',

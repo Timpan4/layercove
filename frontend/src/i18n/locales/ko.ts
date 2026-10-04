@@ -2983,6 +2983,7 @@ export default {
     understand: '확인했습니다'
   },
   camera: {
+    mode: '카메라 모드',
     title: '카메라 보기',
     invalidPrinterId: '유효하지 않은 프린터 ID',
     live: '실시간',

@@ -3150,6 +3150,7 @@ export default {
 
   // Camera page
   camera: {
+    mode: 'Kameramodus',
     title: 'Kameraansicht',
     invalidPrinterId: 'Ungültige Drucker-ID',
     live: 'Live',

@@ -660,9 +660,10 @@ export function CameraPage() {
             </div>
           )}
           {/* Mode toggle */}
-          <div className="flex bg-bambu-dark rounded p-0.5">
+          <div role="group" aria-label={t('camera.mode')} className="flex bg-bambu-dark rounded p-0.5">
             <button
               onClick={() => switchToMode('stream')}
+              aria-pressed={streamMode === 'stream'}
               disabled={isDisabled}
               className={`px-3 py-1 text-xs rounded transition-colors ${
                 streamMode === 'stream'
@@ -674,6 +675,7 @@ export function CameraPage() {
             </button>
             <button
               onClick={() => switchToMode('snapshot')}
+              aria-pressed={streamMode === 'snapshot'}
               disabled={isDisabled}
               className={`px-3 py-1 text-xs rounded transition-colors ${
                 streamMode === 'snapshot'
