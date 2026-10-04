@@ -637,7 +637,7 @@ function PrinterStatsWidget({
       <div className="bg-bambu-dark rounded-lg p-4">
         <div className="flex items-center justify-between mb-3">
           <h4 className="text-sm font-medium text-bambu-gray">{t('stats.printsByPrinter')}</h4>
-          <MetricToggle value={printerMetric} onChange={setPrinterMetric} />
+          <MetricToggle label={t('stats.printsByPrinter')} value={printerMetric} onChange={setPrinterMetric} />
         </div>
         {printerData.length > 0 ? (
           <ResponsiveContainer width="100%" height={Math.max(140, printerData.length * 40)}>
@@ -683,7 +683,7 @@ function PrinterStatsWidget({
         <div className="bg-bambu-dark rounded-lg p-4">
           <div className="flex items-center justify-between mb-3">
             <h4 className="text-sm font-medium text-bambu-gray">{t('stats.printHabits')}</h4>
-            <MetricToggle value={habitsMetric} onChange={setHabitsMetric} />
+            <MetricToggle label={t('stats.printHabits')} value={habitsMetric} onChange={setHabitsMetric} />
           </div>
           {archives.length > 0 ? (
             <ResponsiveContainer width="100%" height={160}>
