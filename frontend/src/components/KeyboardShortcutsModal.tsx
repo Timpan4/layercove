@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { X, Keyboard, ExternalLink } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Card, CardContent } from './Card';
@@ -80,27 +80,48 @@ function KeyBadge({ children }: { children: string }) {
 export function KeyboardShortcutsModal({ onClose, navItems, sidebarItems }: KeyboardShortcutsModalProps) {
   const { t } = useTranslation();
   const shortcuts = getShortcuts(sidebarItems, navItems, t);
+  const titleId = useId();
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
 
-  // Close on Escape key
+  useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    closeButtonRef.current?.focus();
+    return () => {
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
+
+  // Handle modal keys before the mobile drawer's document listener.
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        onClose();
+      } else if (e.key === 'Tab') {
+        // Close is the only focusable control in this reference dialog.
+        e.preventDefault();
+        e.stopImmediatePropagation();
+        closeButtonRef.current?.focus();
+      }
     };
-    window.addEventListener('keydown', handleKeyDown);
-    return () => window.removeEventListener('keydown', handleKeyDown);
+    window.addEventListener('keydown', handleKeyDown, true);
+    return () => window.removeEventListener('keydown', handleKeyDown, true);
   }, [onClose]);
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4" onClick={onClose}>
-      <Card className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+      <Card role="dialog" aria-modal="true" aria-labelledby={titleId} className="w-full max-w-md" onClick={(e) => e.stopPropagation()}>
         <CardContent className="p-0">
           {/* Header */}
           <div className="flex items-center justify-between p-4 border-b border-bambu-dark-tertiary">
             <div className="flex items-center gap-2">
               <Keyboard className="w-5 h-5 text-bambu-green" />
-              <h2 className="text-xl font-semibold text-white">Keyboard Shortcuts</h2>
+              <h2 id={titleId} className="text-xl font-semibold text-white">Keyboard Shortcuts</h2>
             </div>
             <button
+              ref={closeButtonRef}
+              aria-label={t('common.close')}
               onClick={onClose}
               className="text-bambu-gray hover:text-white transition-colors"
             >
