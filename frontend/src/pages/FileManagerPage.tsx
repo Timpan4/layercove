@@ -736,7 +736,7 @@ interface FileCardProps {
   onPrint?: (file: LibraryFileListItem) => void;
   onSlice?: (file: LibraryFileListItem) => void;
   onEditSlice?: (file: LibraryFileListItem) => void;
-  onRunPipeline?: (file: LibraryFileListItem) => void;
+  onRunPipeline?: (file: LibraryFileListItem, trigger: HTMLElement | null) => void;
   useSlicerApi?: boolean;
   onPreview3d?: (file: LibraryFileListItem) => void;
   onRename?: (file: LibraryFileListItem) => void;
@@ -751,6 +751,7 @@ interface FileCardProps {
 
 function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, onPrint, onSlice, onEditSlice, onRunPipeline, useSlicerApi, onPreview3d, onRename, onGenerateThumbnail, onTagClick, thumbnailVersion, hasPermission, canLibraryFileAction, authEnabled, t }: FileCardProps) {
   const [showActions, setShowActions] = useState(false);
+  const actionsRef = useRef<HTMLButtonElement>(null);
 
   return (
     <div
@@ -838,6 +839,7 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
       <div className={`absolute bottom-2 right-2 transition-opacity ${isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`} onClick={(e) => e.stopPropagation()}>
         <button
           aria-label={`${t('common.actions')}: ${file.print_name || file.filename}`}
+          ref={actionsRef}
           aria-expanded={showActions}
           onClick={() => setShowActions(!showActions)}
           className="p-1.5 rounded bg-bambu-dark-secondary/90 hover:bg-bambu-dark-tertiary"
@@ -890,7 +892,7 @@ function FileCard({ file, isSelected, isMobile, onSelect, onDelete, onDownload, 
                   className={`w-full px-3 py-1.5 text-left text-sm flex items-center gap-2 ${
                     hasPermission('pipelines:run') ? 'text-white hover:bg-bambu-dark' : 'text-bambu-gray cursor-not-allowed'
                   }`}
-                  onClick={() => { if (hasPermission('pipelines:run')) { onRunPipeline(file); setShowActions(false); } }}
+                  onClick={() => { if (hasPermission('pipelines:run')) { onRunPipeline(file, actionsRef.current); setShowActions(false); } }}
                   disabled={!hasPermission('pipelines:run')}
                   title={!hasPermission('pipelines:run') ? t('library.runWithPipeline.noPermission') : undefined}
                 >
@@ -1014,6 +1016,7 @@ export function FileManagerPage() {
   const [sliceFile, setSliceFile] = useState<LibraryFileListItem | null>(null);
   // Slicer Pipelines (#1425 PR B) — file gets "Run with pipeline" action.
   const [runPipelineFile, setRunPipelineFile] = useState<LibraryFileListItem | null>(null);
+  const runPipelineTriggerRef = useRef<HTMLElement | null>(null);
   const [renameItem, setRenameItem] = useState<{ type: 'file' | 'folder'; id: number; name: string } | null>(null);
   const [thumbnailVersions, setThumbnailVersions] = useState<Record<number, number>>({});
   const [viewerFile, setViewerFile] = useState<LibraryFileListItem | null>(null);
@@ -2309,7 +2312,10 @@ export function FileManagerPage() {
                     onPrint={setPrintFile}
                     onSlice={setSliceFile}
                     onEditSlice={workbenchAvailable ? (file) => navigate(`/slicer/workbench?library_file=${file.id}`) : undefined}
-                    onRunPipeline={setRunPipelineFile}
+                    onRunPipeline={(file, trigger) => {
+                      runPipelineTriggerRef.current = trigger;
+                      setRunPipelineFile(file);
+                    }}
                     useSlicerApi={settings?.use_slicer_api ?? false}
                     onPreview3d={(f) => {
                       // Sliced files (.gcode / .gcode.3mf) open the same
@@ -2507,7 +2513,11 @@ export function FileManagerPage() {
                       )}
                       {(settings?.use_slicer_api ?? false) && isSliceableFilename(file.filename) && (
                         <button
-                          onClick={() => hasPermission('pipelines:run') && setRunPipelineFile(file)}
+                          onClick={(event) => {
+                            if (!hasPermission('pipelines:run')) return;
+                            runPipelineTriggerRef.current = event.currentTarget;
+                            setRunPipelineFile(file);
+                          }}
                           className={`p-1.5 rounded transition-colors ${
                             hasPermission('pipelines:run')
                               ? 'hover:bg-bambu-dark text-bambu-gray hover:text-bambu-green'
@@ -2725,6 +2735,7 @@ export function FileManagerPage() {
         <RunWithPipelineModal
           source={{ kind: 'libraryFile', id: runPipelineFile.id, filename: runPipelineFile.filename }}
           onClose={() => setRunPipelineFile(null)}
+          returnFocusTo={runPipelineTriggerRef.current}
         />
       )}
 
