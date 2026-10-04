@@ -85,6 +85,13 @@ const PROVIDER_REPO_URL_I18N_KEY: Record<GitProviderType, string> = {
   gitlab: 'backup.repoUrlPlaceholderGitLab',
 };
 
+const PROVIDER_TOKEN_HINT_I18N_KEY: Record<GitProviderType, string> = {
+  github: 'backup.tokenHint',
+  gitea: 'backup.tokenHintGitea',
+  forgejo: 'backup.tokenHintForgejo',
+  gitlab: 'backup.tokenHintGitLab',
+};
+
 const PROVIDER_TOKEN_PLACEHOLDER: Record<GitProviderType, string> = {
   github: 'ghp_xxxxxxxxxxxx',
   gitea: 'your_access_token',
@@ -671,7 +678,7 @@ export function GitHubBackupSettings() {
                     className="w-full h-10 px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
                   />
                   <p className="text-xs text-bambu-gray mt-1">
-                    {t('backup.tokenHint')}
+                    {t(PROVIDER_TOKEN_HINT_I18N_KEY[provider])}
                   </p>
                 </div>
 
