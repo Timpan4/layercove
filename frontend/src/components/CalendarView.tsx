@@ -98,6 +98,7 @@ export function CalendarView({ archives, onArchiveClick, highlightedArchiveId }:
         <div className="flex items-center justify-between mb-4">
           <button
             onClick={prevMonth}
+            aria-label="Previous month"
             className="p-2 hover:bg-bambu-dark-tertiary rounded-lg transition-colors"
           >
             <ChevronLeft className="w-5 h-5 text-bambu-gray" />
@@ -115,6 +116,7 @@ export function CalendarView({ archives, onArchiveClick, highlightedArchiveId }:
           </div>
           <button
             onClick={nextMonth}
+            aria-label="Next month"
             className="p-2 hover:bg-bambu-dark-tertiary rounded-lg transition-colors"
           >
             <ChevronRight className="w-5 h-5 text-bambu-gray" />

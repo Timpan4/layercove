@@ -1,4 +1,5 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useId, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import DOMPurify from 'dompurify';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
@@ -21,9 +22,22 @@ interface ProjectPageModalProps {
   archiveId: number;
   archiveName?: string;
   onClose: () => void;
+  returnFocusTo?: HTMLElement | null;
 }
 
-export function ProjectPageModal({ archiveId, archiveName, onClose }: ProjectPageModalProps) {
+export function ProjectPageModal({ archiveId, archiveName, onClose, returnFocusTo }: ProjectPageModalProps) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const opener = returnFocusTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    panelRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [returnFocusTo]);
+
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = useState(false);
   const [selectedImageIndex, setSelectedImageIndex] = useState<number | null>(null);
@@ -123,12 +137,38 @@ export function ProjectPageModal({ archiveId, archiveName, onClose }: ProjectPag
       className="fixed inset-0 bg-black/70 flex items-center justify-center z-50 p-4"
       onClick={handleBackdropClick}
     >
-      <div className="bg-bambu-dark-secondary rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col">
+      <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className="bg-bambu-dark-secondary rounded-xl max-w-4xl w-full max-h-[90vh] overflow-hidden flex flex-col"
+        onKeyDown={(e) => {
+          if (e.key !== 'Tab') return;
+          const panel = e.currentTarget;
+          const controls = Array.from(panel.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+          )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (!first) {
+            e.preventDefault();
+            panel.focus();
+          } else if (e.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && (document.activeElement === last || document.activeElement === panel)) {
+            e.preventDefault();
+            first.focus();
+          }
+        }}
+      >
         {/* Header */}
         <div className="flex items-center justify-between p-4 border-b border-bambu-dark-tertiary">
           <div className="flex items-center gap-3">
             <FileText className="w-5 h-5 text-bambu-green" />
-            <h2 className="text-lg font-semibold text-white">
+            <h2 id={titleId} className="text-lg font-semibold text-white">
               Project Page
               {archiveName && <span className="text-bambu-gray ml-2">- {archiveName}</span>}
             </h2>
@@ -158,6 +198,7 @@ export function ProjectPageModal({ archiveId, archiveName, onClose }: ProjectPag
             )}
             <button
               onClick={onClose}
+              aria-label={t('common.close')}
               className="p-2 hover:bg-bambu-dark-tertiary rounded-lg transition-colors"
             >
               <X className="w-5 h-5 text-bambu-gray" />
