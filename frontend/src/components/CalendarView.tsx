@@ -257,8 +257,12 @@ export function CalendarView({ archives, onArchiveClick, highlightedArchiveId }:
                         {archive.print_name || archive.filename}
                       </p>
                       <div className="flex items-center gap-2 text-xs">
-                        <span className={archive.status === 'failed' ? 'text-red-700 dark:text-red-400' : 'text-green-700 dark:text-green-400'}>
-                          {archive.status === 'failed' ? 'Failed' : 'Completed'}
+                        <span className={archive.status === 'failed'
+                          ? 'text-red-700 dark:text-red-400'
+                          : archive.status === 'completed'
+                          ? 'text-green-700 dark:text-green-400'
+                          : 'text-bambu-gray'}>
+                          {archive.status === 'aborted' ? 'Cancelled' : archive.status.charAt(0).toUpperCase() + archive.status.slice(1)}
                         </span>
                         {archive.filament_color && (
                           <div className="flex gap-0.5">
