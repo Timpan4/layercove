@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useId, useRef } from 'react';
 import { useMutation } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { X, Stethoscope, CheckCircle2, XCircle, MinusCircle, Loader2 } from 'lucide-react';
@@ -18,6 +18,8 @@ function StageIcon({ status }: { status: CameraDiagnoseStage['status'] }) {
 
 export function CameraDiagnoseModal({ printerId, printerName, onClose }: CameraDiagnoseModalProps) {
   const { t } = useTranslation();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const titleId = useId();
 
   // Kick the diagnostic off as soon as the modal mounts. There's no
   // "Start" button — opening the modal IS the test. The mutation
@@ -34,8 +36,38 @@ export function CameraDiagnoseModal({ printerId, printerName, onClose }: CameraD
   }, []);
 
   useEffect(() => {
+    const previous = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    dialogRef.current?.querySelector<HTMLButtonElement>('button:not(:disabled)')?.focus();
+    return () => {
+      if (previous?.isConnected) previous.focus();
+    };
+  }, []);
+
+  useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') onClose();
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        onClose();
+        return;
+      }
+      if (e.key !== 'Tab') return;
+      const dialog = dialogRef.current;
+      if (!dialog) return;
+      const buttons = Array.from(dialog.querySelectorAll<HTMLButtonElement>('button:not(:disabled)'))
+        .filter((button) => button.tabIndex >= 0 && button.getClientRects().length > 0);
+      const first = buttons[0];
+      const last = buttons[buttons.length - 1];
+      const active = document.activeElement;
+      if (!first || !last) {
+        e.preventDefault();
+        dialog.focus();
+      } else if (e.shiftKey && (active === first || !dialog.contains(active))) {
+        e.preventDefault();
+        last.focus();
+      } else if (!e.shiftKey && (active === last || !dialog.contains(active))) {
+        e.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
@@ -49,13 +81,18 @@ export function CameraDiagnoseModal({ printerId, printerName, onClose }: CameraD
       onClick={onClose}
     >
       <div
+        ref={dialogRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         className="bg-bambu-dark-secondary rounded-xl border border-bambu-dark-tertiary w-full max-w-lg flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-6 py-4 border-b border-bambu-dark-tertiary">
           <div className="flex items-center gap-2 min-w-0">
             <Stethoscope className="w-5 h-5 text-bambu-green flex-shrink-0" />
-            <h2 className="text-lg font-semibold text-white truncate">
+            <h2 id={titleId} className="text-lg font-semibold text-white truncate">
               {t('camera.diagnose.modalTitle', { name: printerName || '' })}
             </h2>
           </div>
