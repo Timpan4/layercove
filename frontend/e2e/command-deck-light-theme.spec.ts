@@ -4,6 +4,8 @@ import type { Locator, Page } from '@playwright/test';
 test.use({ serviceWorkers: 'block', locale: 'en-US', colorScheme: 'light' });
 
 const appOrigin = new URL(process.env.LAYERCOVE_URL || 'http://localhost:8001').origin;
+const wsOrigin = new URL(appOrigin);
+wsOrigin.protocol = wsOrigin.protocol === 'https:' ? 'wss:' : 'ws:';
 const allowedStartupPosts = new Set([
   'POST /api/v1/auth/ws-token',
   'POST /api/v1/printers/camera/stream-token',
@@ -81,7 +83,7 @@ async function openCommandDeck(page: Page, width: number) {
     localStorage.setItem('theme-mode', 'dark');
     localStorage.setItem('bambutrack_language', 'en');
   });
-  await page.routeWebSocket((url) => url.origin === appOrigin && url.pathname.startsWith('/api/'), (socket) => socket.close());
+  await page.routeWebSocket((url) => url.origin === wsOrigin.origin && url.pathname.startsWith('/api/'), (socket) => socket.close());
   await page.route((url) => url.origin === appOrigin, async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/\/+$/, '');
