@@ -4504,12 +4504,13 @@ export function SettingsPage() {
               </div>
               {(localSettings.use_slicer_api ?? false) && (
                 <div>
-                  <label className="block text-sm text-bambu-gray mb-1">
+                  <label htmlFor="workflow-slicer-api-url" className="block text-sm text-bambu-gray mb-1">
                     {(localSettings.preferred_slicer ?? 'bambu_studio') === 'orcaslicer'
                       ? t('settings.orcaslicerApiUrl', 'OrcaSlicer sidecar URL')
                       : t('settings.bambuStudioApiUrl', 'Bambu Studio sidecar URL')}
                   </label>
                   <input
+                    id="workflow-slicer-api-url"
                     type="text"
                     value={
                       ((localSettings.preferred_slicer ?? 'bambu_studio') === 'orcaslicer'
