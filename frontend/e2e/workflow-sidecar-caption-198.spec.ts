@@ -22,7 +22,13 @@ for (const width of [390, 1440]) {
         }, language);
         await page.routeWebSocket((url) => url.pathname.startsWith('/api/'), (socket) => socket.close());
         await page.route('**/*', async (route) => {
-          if (new URL(route.request().url()).origin !== appOrigin) return route.abort();
+          const request = route.request();
+          const url = new URL(request.url());
+          if (url.origin !== appOrigin) return route.abort();
+          if (request.method() !== 'GET') {
+            writes.push(`${request.method()} ${url.pathname}`);
+            return route.fulfill({ status: 405, json: { detail: 'Read-only sidecar caption fixture' } });
+          }
           return route.continue();
         });
         await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
