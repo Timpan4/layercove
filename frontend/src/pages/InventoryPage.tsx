@@ -1957,21 +1957,23 @@ function InventoryPage() {
                       return (
                         <th
                           key={colId}
-                          className={`text-left py-3 px-4 text-xs font-medium uppercase tracking-wide select-none ${colId === 'remaining' ? 'min-w-[150px]' : ''} ${
+                          className={`text-left ${sortable ? 'p-0' : 'py-3 px-4'} text-xs font-medium uppercase tracking-wide select-none ${colId === 'remaining' ? 'min-w-[150px]' : ''} ${
                             sortable ? 'cursor-pointer hover:text-bambu-green transition-colors' : ''
                           } ${isActive ? 'text-bambu-green' : 'text-bambu-gray'}`}
-                          onClick={sortable ? () => handleSort(colId) : undefined}
+                          aria-sort={sortable ? isActive ? sortState.direction === 'asc' ? 'ascending' : 'descending' : 'none' : undefined}
                         >
-                          <span className="inline-flex items-center gap-1">
+                          {sortable ? <button
+                            type="button"
+                            onClick={() => handleSort(colId)}
+                            className="flex w-full items-center gap-1 py-3 px-4 text-left uppercase tracking-wide rounded focus-visible:outline focus-visible:outline-2 focus-visible:outline-bambu-green"
+                          >
                             {columnHeaders[colId]?.(t) ?? colId}
-                            {sortable && (
-                              isActive
+                            {isActive
                                 ? sortState.direction === 'asc'
                                   ? <ArrowUp className="w-3 h-3" />
                                   : <ArrowDown className="w-3 h-3" />
-                                : <ArrowUpDown className="w-3 h-3 opacity-30" />
-                            )}
-                          </span>
+                                : <ArrowUpDown className="w-3 h-3 opacity-30" />}
+                          </button> : <span>{columnHeaders[colId]?.(t) ?? colId}</span>}
                         </th>
                       );
                     })}
