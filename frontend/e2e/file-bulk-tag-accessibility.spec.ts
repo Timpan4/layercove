@@ -106,11 +106,11 @@ for (const language of ['en', 'de'] as const) {
       test(`bulk tagging contains ${direction} at its boundary in ${language} at ${width}px`, async ({ page }) => {
         const { dialog, writes } = await openBulkTags(page, language, width, 9);
         const close = dialog.getByRole('button', { name: language === 'en' ? 'Close' : 'Schließen', exact: true });
-        const cancel = dialog.getByRole('button', { name: language === 'en' ? 'Cancel' : 'Abbrechen', exact: true });
+        const last = dialog.getByRole('button').last();
         try {
-          await (direction === 'Tab' ? cancel : close).focus();
+          await (direction === 'Tab' ? last : close).focus();
           await page.keyboard.press(direction);
-          await expect(direction === 'Tab' ? close : cancel).toBeFocused();
+          await expect(direction === 'Tab' ? close : last).toBeFocused();
         } finally {
           expect(writes).toEqual([]);
         }

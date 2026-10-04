@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useTranslation } from 'react-i18next';
 import { Tag, Loader2, Plus, X } from 'lucide-react';
@@ -29,6 +29,8 @@ export function BulkTagsPickerModal({ open, fileIds, onClose }: BulkTagsPickerMo
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const dialogRef = useRef<HTMLDivElement>(null);
+  const previousFocusRef = useRef<HTMLElement | null>(null);
 
   const [action, setAction] = useState<Action>('add');
   const [selected, setSelected] = useState<Set<number>>(new Set());
@@ -108,6 +110,39 @@ export function BulkTagsPickerModal({ open, fileIds, onClose }: BulkTagsPickerMo
 
   useEffect(() => {
     if (!open) return;
+    const dialog = dialogRef.current;
+    previousFocusRef.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const getFocusable = () => Array.from(dialog?.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    ) ?? []);
+    (getFocusable()[0] ?? dialog)?.focus();
+
+    const trapFocus = (event: KeyboardEvent) => {
+      if (event.key !== 'Tab') return;
+      const focusable = getFocusable();
+      if (focusable.length === 0) {
+        event.preventDefault();
+        return;
+      }
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (event.shiftKey && (document.activeElement === first || !dialog?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialog?.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    dialog?.addEventListener('keydown', trapFocus);
+    return () => {
+      dialog?.removeEventListener('keydown', trapFocus);
+      previousFocusRef.current?.focus();
+    };
+  }, [open]);
+
+  useEffect(() => {
+    if (!open) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && !applyMutation.isPending && !createTagMutation.isPending) {
         onClose();
@@ -134,6 +169,8 @@ export function BulkTagsPickerModal({ open, fileIds, onClose }: BulkTagsPickerMo
         role="dialog"
         aria-modal="true"
         aria-labelledby={titleId}
+        ref={dialogRef}
+        tabIndex={-1}
       >
         <div className="flex items-center justify-between gap-4 px-5 py-4 border-b border-bambu-dark-tertiary">
           <h3 id={titleId} className="text-base font-semibold text-white flex items-center gap-2">
