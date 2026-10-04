@@ -3138,6 +3138,7 @@ export default {
 
   // Camera page
   camera: {
+    mode: '攝影機模式',
     title: '攝影機檢視',
     invalidPrinterId: '無效的印表機 ID',
     live: '即時',

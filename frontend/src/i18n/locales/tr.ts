@@ -3154,6 +3154,7 @@ export default {
 
   // Kamera sayfası
   camera: {
+    mode: 'Kamera modu',
     title: 'Kamera Görünümü',
     invalidPrinterId: 'Geçersiz yazıcı ID\'si',
     live: 'Canlı',

@@ -3138,6 +3138,7 @@ export default {
 
   // Camera page
   camera: {
+    mode: '摄像头模式',
     title: '摄像头视图',
     invalidPrinterId: '无效的打印机 ID',
     live: '实时',
