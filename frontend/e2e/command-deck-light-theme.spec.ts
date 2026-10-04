@@ -117,7 +117,7 @@ async function openCommandDeck(page: Page, width: number) {
 
 async function switchMode(page: Page, name: string) {
   const menu = page.getByRole('button', { name: 'Open menu', exact: true });
-  if (await menu.isVisible()) await menu.click();
+  if (await menu.isVisible() && await menu.getAttribute('aria-expanded') !== 'true') await menu.click();
   await page.getByRole('button', { name, exact: true }).click();
 }
 
