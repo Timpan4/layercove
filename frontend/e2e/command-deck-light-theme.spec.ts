@@ -128,11 +128,34 @@ async function expectLightSurface(surface: Locator) {
   const result = await surface.evaluate((element) => {
     const style = getComputedStyle(element);
     const root = getComputedStyle(document.documentElement);
-    const colors = [style.backgroundColor, ...style.backgroundImage.matchAll(/rgba?\([^)]*\)/g)].map((value) => typeof value === 'string' ? value : value[0]);
+    const gradientColors = Array.from(style.backgroundImage.matchAll(/(?:rgba?|color|oklab)\([^)]*\)/g), (match) => match[0]);
+    if (style.backgroundImage !== 'none' && gradientColors.length === 0) {
+      throw new Error(`Unrecognized computed gradient paint: ${style.backgroundImage}`);
+    }
+    // A solid opaque pixel lets the browser convert its computed color spaces
+    // to the same 8-bit sRGB channels as the installed hex palette.
+    const canvas = document.createElement('canvas');
+    canvas.width = canvas.height = 1;
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas color conversion is unavailable');
+    const colors = [style.backgroundColor, ...gradientColors];
     const paints = colors.flatMap((value) => {
-      const channels = value.match(/[\d.]+/g)?.map(Number) ?? [];
-      if (channels.length < 3 || channels[3] === 0) return [];
-      return [`rgb(${channels.slice(0, 3).join(', ')})`];
+      if (!CSS.supports('color', value)) {
+        throw new Error(`Unrecognized computed surface paint: ${value}`);
+      }
+      const alpha = value.match(/\/\s*([\d.e+-]+)%?\s*\)$/i)
+        ?? value.match(/^rgba\([^,]+,[^,]+,[^,]+,\s*([\d.e+-]+)\s*\)$/i);
+      if (alpha && Number(alpha[1]) === 0) return [];
+      // Preserve permitted transparency while comparing the paint's color.
+      // Force opacity for conversion so premultiplied alpha cannot alter RGB.
+      const opaque = value.replace(/\/\s*[^)]+\)$/, '/ 1)')
+        .replace(/^(rgba\([^,]+,[^,]+,[^,]+),[^)]+\)$/, '$1, 1)');
+      if (!CSS.supports('color', opaque)) throw new Error(`Cannot normalize surface paint: ${value}`);
+      context.clearRect(0, 0, 1, 1);
+      context.fillStyle = opaque;
+      context.fillRect(0, 0, 1, 1);
+      const rgb = Array.from(context.getImageData(0, 0, 1, 1).data).slice(0, 3);
+      return [`rgb(${rgb.join(', ')})`];
     });
     return {
       paints,
