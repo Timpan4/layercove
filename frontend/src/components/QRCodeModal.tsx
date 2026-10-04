@@ -1,4 +1,5 @@
-import { useEffect } from 'react';
+import { useEffect, useId, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
 import { X, Download } from 'lucide-react';
 import { Button } from './Button';
 import { api } from '../api/client';
@@ -7,9 +8,22 @@ interface QRCodeModalProps {
   archiveId: number;
   archiveName: string;
   onClose: () => void;
+  returnFocusTo?: HTMLElement | null;
 }
 
-export function QRCodeModal({ archiveId, archiveName, onClose }: QRCodeModalProps) {
+export function QRCodeModal({ archiveId, archiveName, onClose, returnFocusTo }: QRCodeModalProps) {
+  const { t } = useTranslation();
+  const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const opener = returnFocusTo ?? (document.activeElement instanceof HTMLElement ? document.activeElement : null);
+    panelRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+    return () => {
+      if (opener?.isConnected) opener.focus();
+    };
+  }, [returnFocusTo]);
+
   const qrCodeUrl = api.getArchiveQRCodeUrl(archiveId, 300);
 
   // Close on Escape key
@@ -34,14 +48,39 @@ export function QRCodeModal({ archiveId, archiveName, onClose }: QRCodeModalProp
       onClick={onClose}
     >
       <div
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
         className="bg-bambu-dark-secondary rounded-xl border border-bambu-dark-tertiary w-full max-w-sm"
         onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => {
+          if (e.key !== 'Tab') return;
+          const panel = e.currentTarget;
+          const controls = Array.from(panel.querySelectorAll<HTMLElement>(
+            'button:not(:disabled), a[href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [contenteditable="true"], [tabindex]:not([tabindex="-1"])',
+          )).filter((element) => element.tabIndex >= 0 && element.getClientRects().length > 0);
+          const first = controls[0];
+          const last = controls[controls.length - 1];
+          if (!first) {
+            e.preventDefault();
+            panel.focus();
+          } else if (e.shiftKey && (document.activeElement === first || document.activeElement === panel)) {
+            e.preventDefault();
+            last.focus();
+          } else if (!e.shiftKey && (document.activeElement === last || document.activeElement === panel)) {
+            e.preventDefault();
+            first.focus();
+          }
+        }}
       >
         {/* Header */}
         <div className="flex items-center justify-between px-6 py-4 border-b border-bambu-dark-tertiary">
-          <h2 className="text-lg font-semibold text-white">QR Code</h2>
+          <h2 id={titleId} className="text-lg font-semibold text-white">QR Code</h2>
           <button
             onClick={onClose}
+            aria-label={t('common.close')}
             className="text-bambu-gray hover:text-white transition-colors"
           >
             <X className="w-5 h-5" />

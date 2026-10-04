@@ -209,6 +209,7 @@ function ArchiveCard({
   const [showTimelapse, setShowTimelapse] = useState(false);
   const [showTimelapseSelect, setShowTimelapseSelect] = useState(false);
   const [availableTimelapses, setAvailableTimelapses] = useState<Array<{ name: string; path: string; size: number; mtime: string | null }>>([]);
+  const archiveRef = useRef<HTMLDivElement>(null);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showPhotos, setShowPhotos] = useState(false);
   const [showProjectPage, setShowProjectPage] = useState(false);
@@ -723,6 +724,7 @@ function ArchiveCard({
 
       {/* Thumbnail with plate navigation */}
       <div
+        ref={archiveRef}
         className="aspect-video bg-bambu-dark relative flex-shrink-0 overflow-hidden rounded-t-xl"
         onMouseEnter={() => setShowPlateNav(true)}
         onMouseLeave={() => setShowPlateNav(false)}
@@ -801,7 +803,7 @@ function ArchiveCard({
         )}
         {/* Context menu button - visible on mobile, shows on hover for desktop */}
         <button
-          className={`absolute top-2 left-2 p-1.5 rounded bg-black/50 hover:bg-black/70 transition-all ${
+          className={`focus:opacity-100 absolute top-2 left-2 p-1.5 rounded bg-black/50 hover:bg-black/70 transition-all ${
             isMobile ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'
           } ${selectionMode ? 'left-10' : ''}`}
           onClick={(e) => {
@@ -809,6 +811,7 @@ function ArchiveCard({
             const rect = e.currentTarget.getBoundingClientRect();
             setContextMenu({ x: rect.left, y: rect.bottom + 4 });
           }}
+          data-archive-menu
           title={t('archives.card.moreOptions')}
         >
           <MoreVertical className="w-5 h-5 text-white" />
@@ -1494,6 +1497,7 @@ function ArchiveCard({
         <QRCodeModal
           archiveId={archive.id}
           archiveName={archive.print_name || archive.filename}
+          returnFocusTo={archiveRef.current?.querySelector<HTMLButtonElement>('[data-archive-menu]')}
           onClose={() => setShowQRCode(false)}
         />
       )}
@@ -1522,6 +1526,7 @@ function ArchiveCard({
         <ProjectPageModal
           archiveId={archive.id}
           archiveName={archive.print_name || archive.filename}
+          returnFocusTo={archiveRef.current?.querySelector<HTMLButtonElement>('[data-archive-menu]')}
           onClose={() => setShowProjectPage(false)}
         />
       )}
@@ -1624,6 +1629,7 @@ function ArchiveListRow({
   const [showTimelapse, setShowTimelapse] = useState(false);
   const [showTimelapseSelect, setShowTimelapseSelect] = useState(false);
   const [availableTimelapses, setAvailableTimelapses] = useState<Array<{ name: string; path: string; size: number; mtime: string | null }>>([]);
+  const archiveRef = useRef<HTMLDivElement>(null);
   const [showQRCode, setShowQRCode] = useState(false);
   const [showPhotos, setShowPhotos] = useState(false);
   const [showProjectPage, setShowProjectPage] = useState(false);
@@ -2084,6 +2090,7 @@ function ArchiveListRow({
   return (
     <>
       <div
+        ref={archiveRef}
         data-archive-id={archive.id}
         className={`grid grid-cols-[auto_minmax(0,1fr)] md:grid-cols-12 gap-3 md:gap-4 px-4 py-3 items-center hover:bg-bambu-dark-tertiary/30 ${
           isSelected ? 'bg-bambu-green/10' : ''
@@ -2280,6 +2287,7 @@ function ArchiveListRow({
               const rect = e.currentTarget.getBoundingClientRect();
               setContextMenu({ x: rect.left, y: rect.bottom + 4 });
             }}
+            data-archive-menu
             title={t('archives.card.moreOptions')}
           >
             <MoreVertical className="w-4 h-4" />
@@ -2512,6 +2520,7 @@ function ArchiveListRow({
         <QRCodeModal
           archiveId={archive.id}
           archiveName={archive.print_name || archive.filename}
+          returnFocusTo={archiveRef.current?.querySelector<HTMLButtonElement>('[data-archive-menu]')}
           onClose={() => setShowQRCode(false)}
         />
       )}
@@ -2540,6 +2549,7 @@ function ArchiveListRow({
         <ProjectPageModal
           archiveId={archive.id}
           archiveName={archive.print_name || archive.filename}
+          returnFocusTo={archiveRef.current?.querySelector<HTMLButtonElement>('[data-archive-menu]')}
           onClose={() => setShowProjectPage(false)}
         />
       )}
@@ -3334,11 +3344,12 @@ export function ArchivesPage() {
                 Archives
               </h1>
               <p className="text-bambu-gray mt-1">
-                {filteredArchives?.length || 0} of {archives?.length || 0} prints
+                {filteredArchives?.length || 0} of {archives?.length || 0} {viewMode === 'log' ? 'archives' : 'prints'}
               </p>
             </div>
             <select
               className="mt-0.5 px-3 py-1.5 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-bambu-gray-light text-sm focus:border-bambu-green focus:outline-none"
+              aria-label="Archive period"
               value={collection}
               onChange={(e) => setCollection(e.target.value as Collection)}
             >
@@ -3519,6 +3530,7 @@ export function ArchivesPage() {
               <Filter className="w-4 h-4 text-bambu-gray hidden md:block" />
               <select
                 className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                aria-label={t('archives.log.printer')}
                 value={filterPrinter || ''}
                 onChange={(e) =>
                   setFilterPrinter(e.target.value ? Number(e.target.value) : null)
@@ -3536,6 +3548,7 @@ export function ArchivesPage() {
               <Package className="w-4 h-4 text-bambu-gray hidden md:block" />
               <select
                 className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                aria-label={t('inventory.material')}
                 value={filterMaterial || ''}
                 onChange={(e) =>
                   setFilterMaterial(e.target.value || null)
@@ -3553,6 +3566,7 @@ export function ArchivesPage() {
               <FileCode className="w-4 h-4 text-bambu-gray hidden md:block" />
               <select
                 className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                aria-label="File type"
                 value={filterFileType}
                 onChange={(e) => setFilterFileType(e.target.value as 'all' | 'gcode' | 'source')}
               >
@@ -3625,6 +3639,7 @@ export function ArchivesPage() {
               <ArrowUpDown className="w-4 h-4 text-bambu-gray hidden md:block" />
               <select
                 className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                aria-label={t('archives.sortBy')}
                 value={sortBy}
                 onChange={(e) => setSortBy(e.target.value as SortOption)}
               >
@@ -3821,6 +3836,7 @@ export function ArchivesPage() {
                 {/* Printer filter */}
                 <select
                   className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                  aria-label={t('archives.log.printer')}
                   value={filterPrinter || ''}
                   onChange={(e) => { setFilterPrinter(e.target.value ? Number(e.target.value) : null); setLogOffset(0); }}
                 >
@@ -3832,6 +3848,7 @@ export function ArchivesPage() {
                 {/* User filter */}
                 <select
                   className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                  aria-label={t('archives.log.user')}
                   value={logFilterUser || ''}
                   onChange={(e) => { setLogFilterUser(e.target.value || null); setLogOffset(0); }}
                 >
@@ -3843,6 +3860,7 @@ export function ArchivesPage() {
                 {/* Status filter */}
                 <select
                   className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                  aria-label={t('archives.log.status')}
                   value={logFilterStatus || ''}
                   onChange={(e) => { setLogFilterStatus(e.target.value || null); setLogOffset(0); }}
                 >
@@ -3855,19 +3873,21 @@ export function ArchivesPage() {
                 </select>
                 {/* Date range */}
                 <div className="flex items-center gap-2">
-                  <label className="text-sm text-bambu-gray">{t('archives.log.dateFrom')}</label>
+                  <label htmlFor="archive-log-from" className="text-sm text-bambu-gray">{t('archives.log.dateFrom')}</label>
                   <input
                     type="date"
                     className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                    id="archive-log-from"
                     value={logFilterDateFrom}
                     onChange={(e) => { setLogFilterDateFrom(e.target.value); setLogOffset(0); }}
                   />
                 </div>
                 <div className="flex items-center gap-2">
-                  <label className="text-sm text-bambu-gray">{t('archives.log.dateTo')}</label>
+                  <label htmlFor="archive-log-to" className="text-sm text-bambu-gray">{t('archives.log.dateTo')}</label>
                   <input
                     type="date"
                     className="px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none text-sm"
+                    id="archive-log-to"
                     value={logFilterDateTo}
                     onChange={(e) => { setLogFilterDateTo(e.target.value); setLogOffset(0); }}
                   />
@@ -4031,9 +4051,10 @@ export function ArchivesPage() {
                       {t('archives.log.showing', { count: Math.min(logOffset + logPageSize, printLogData.total), total: printLogData.total })}
                     </span>
                     <div className="flex items-center gap-1.5">
-                      <label className="text-xs text-bambu-gray">{t('archives.log.rowsPerPage')}</label>
+                      <label htmlFor="archive-log-rows" className="text-xs text-bambu-gray">{t('archives.log.rowsPerPage')}</label>
                       <select
                         className="px-2 py-1 bg-bambu-dark border border-bambu-dark-tertiary rounded text-white text-xs focus:border-bambu-green focus:outline-none"
+                        id="archive-log-rows"
                         value={logPageSize}
                         onChange={(e) => { setLogPageSize(Number(e.target.value)); setLogOffset(0); }}
                       >
