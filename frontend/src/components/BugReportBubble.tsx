@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, useEffect } from 'react';
+import { useState, useRef, useCallback, useEffect, useId } from 'react';
 import { Bug, X, Loader2, CheckCircle, AlertCircle, AlertTriangle, Trash2, Upload, Circle, CheckCircle2, Stethoscope } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { useQuery } from '@tanstack/react-query';
@@ -49,6 +49,10 @@ function formatElapsed(seconds: number): string {
 
 export function BugReportBubble() {
   const { t } = useTranslation();
+  const panelId = useId();
+  const titleId = `${panelId}-title`;
+  const descriptionId = `${panelId}-description`;
+  const emailId = `${panelId}-email`;
   const [isOpen, setIsOpen] = useState(false);
   const [viewState, setViewState] = useState<ViewState>('form');
   const [description, setDescription] = useState('');
@@ -61,8 +65,13 @@ export function BugReportBubble() {
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
   const [wasDebug, setWasDebug] = useState(false);
   const modalRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const handleStopLoggingRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (isOpen) modalRef.current?.querySelector<HTMLButtonElement>('button')?.focus();
+  }, [isOpen]);
 
   // Before the user files a report, diagnose configured printers. Most bug
   // reports are setup issues — surfacing a connection problem inline lets the
@@ -124,6 +133,7 @@ export function BugReportBubble() {
 
   const handleClose = () => {
     setIsOpen(false);
+    triggerRef.current?.focus();
   };
 
   const handleFile = useCallback(async (file: File) => {
@@ -218,6 +228,7 @@ export function BugReportBubble() {
     <>
       {/* Floating bubble */}
       <button
+        ref={triggerRef}
         onClick={handleOpen}
         className="fixed bottom-4 right-4 z-40 w-12 h-12 rounded-full bg-red-500 hover:bg-red-600 text-white shadow-lg hover:shadow-xl transition-all duration-200 hover:scale-110 flex items-center justify-center"
         title={t('bugReport.title')}
@@ -229,6 +240,8 @@ export function BugReportBubble() {
       {isOpen && (
         <div
           id="bug-report-modal"
+          role="dialog"
+          aria-labelledby={titleId}
           className="fixed bottom-20 right-4 z-50 w-full max-w-md"
           onPaste={handlePaste}
         >
@@ -238,12 +251,13 @@ export function BugReportBubble() {
           >
             {/* Header */}
             <div className="flex items-center justify-between p-4 border-b border-gray-200 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-800 z-10">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+              <h2 id={titleId} className="text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
                 <Bug className="w-5 h-5 text-red-500" />
                 {t('bugReport.title')}
               </h2>
               <button
                 onClick={handleClose}
+                aria-label={t('common.close')}
                 className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
               >
                 <X className="w-5 h-5" />
@@ -333,10 +347,11 @@ export function BugReportBubble() {
 
                   {/* Description */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <label htmlFor={descriptionId} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                       {t('bugReport.description')} *
                     </label>
                     <textarea
+                      id={descriptionId}
                       value={description}
                       onChange={(e) => setDescription(e.target.value)}
                       placeholder={t('bugReport.descriptionPlaceholder')}
@@ -347,10 +362,11 @@ export function BugReportBubble() {
 
                   {/* Email (optional) */}
                   <div>
-                    <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <label htmlFor={emailId} className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                       {t('bugReport.email')}
                     </label>
                     <input
+                      id={emailId}
                       type="email"
                       value={email}
                       onChange={(e) => setEmail(e.target.value)}
