@@ -51,8 +51,9 @@ vi.mock('react-i18next', async () => {
   await translation.init({ lng: 'en', resources: { en: { translation: en } } });
   return {
     useTranslation: () => ({
-      // Keep existing fallback assertions; use real translations for options-only calls.
+      // Keep existing key-only and fallback assertions; translate options-only calls.
       t: (key: string, fallback?: string | Record<string, unknown>, options?: Record<string, unknown>) => {
+        if (fallback === undefined) return key;
         if (typeof fallback !== 'string') return translation.t(key, fallback);
         if (!options) return fallback;
         return fallback.replace(/\{\{(\w+)\}\}/g, (_m, k) => String(options[k] ?? ''));
