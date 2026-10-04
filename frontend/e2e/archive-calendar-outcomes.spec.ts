@@ -105,7 +105,7 @@ for (const width of [390, 1440]) {
 
       const monthHeading = page.getByRole('heading', { name: 'September 2026', exact: true });
       await expect(monthHeading).toBeVisible();
-      const month = monthHeading.locator('../../../');
+      const month = monthHeading.locator('xpath=../../..');
       const completedDay = month.getByRole('button', { name: /^21\s+1$/ });
       const cancelledDay = month.getByRole('button', { name: /^22\s+2$/ });
       const failedDay = month.getByRole('button', { name: /^23\s+1$/ });
