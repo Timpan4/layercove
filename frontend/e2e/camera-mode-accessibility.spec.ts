@@ -68,6 +68,8 @@ async function openCamera(page: import('@playwright/test').Page, width: number) 
       return route.fulfill({ status: 405, json: { detail: 'Blocked by camera mode fixture' } });
     }
 
+    if (!path.startsWith('/api/v1/')) return route.continue();
+
     if (/^\/api\/v1\/printers\/\d+\/(?:camera|cameras\/\d+)\/(?:stream|snapshot)$/.test(path)) {
       cameraGetPaths.push(path);
       if (path.endsWith('/snapshot')) {
