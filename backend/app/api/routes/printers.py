@@ -553,7 +553,15 @@ async def update_printer(
 
     moonraker_data = update_data.pop("moonraker_config", None)
     if moonraker_data is not None:
-        _require_inventory_for_spoolman_fields(caller, set(moonraker_data))
+        # The edit form resends stored values, so only actual Spoolman changes need inventory rights.
+        stored = printer.moonraker_config
+        current = {
+            "spoolman_accounting_owner": stored.spoolman_accounting_owner if stored else "moonraker",
+            "spoolman_spool_id": stored.spoolman_spool_id if stored else None,
+        }
+        _require_inventory_for_spoolman_fields(
+            caller, {key for key, value in moonraker_data.items() if key not in current or current[key] != value}
+        )
     site_fields_touched = "network_site_id" in update_data or "network_site_lan_ip" in update_data
     selected_site = printer.network_site
     generated_host = None

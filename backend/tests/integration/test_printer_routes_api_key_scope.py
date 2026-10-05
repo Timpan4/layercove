@@ -104,6 +104,21 @@ async def test_printer_update_without_inventory_permission_cannot_set_spoolman_f
         )
         assert created.status_code == 200, created.text
 
+        # The edit dialog always resends the stored Spoolman fields; unchanged values are not an inventory change.
+        rename = await async_client.patch(
+            f"/api/v1/printers/{created.json()['id']}",
+            headers=user,
+            json={
+                "name": "Klipper renamed",
+                "moonraker_config": {
+                    "base_url": config["base_url"],
+                    "spoolman_accounting_owner": "moonraker",
+                    "spoolman_spool_id": None,
+                },
+            },
+        )
+        assert rename.status_code == 200, rename.text
+
         response = await async_client.patch(
             f"/api/v1/printers/{created.json()['id']}",
             headers=user,
