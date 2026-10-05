@@ -460,12 +460,14 @@ def _is_valid_email_shaped(value: str | None) -> bool:
 def _enforce_auto_link_safety(provider: OIDCProvider) -> None:
     """Raise HTTP 422 if auto_link_existing_accounts is on with an unsafe combined state.
 
-    SEC-1: only Fall B (email_claim='email' + require_email_verified=False) is unsafe —
-    an attacker-controlled IdP could present an unverified email that matches a local account.
-    Fall C (custom claim) never performs an email_verified check, so auto_link is safe there.
+    SEC-1: auto-link needs a verified standard email. Fall B (require_email_verified=False) and
+    Fall C (custom claim, never email_verified-checked) let an IdP user assert an arbitrary
+    value that matches a privileged local account.
     Called after ORM construction (create) and after the setattr loop (update).
     """
-    if provider.auto_link_existing_accounts and provider.email_claim == "email" and not provider.require_email_verified:
+    if provider.auto_link_existing_accounts and (
+        provider.email_claim != "email" or not provider.require_email_verified
+    ):
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_CONTENT,
             detail=AUTO_LINK_REQUIREMENTS_ERROR,
@@ -477,7 +479,7 @@ def _resolve_provider_email(provider: OIDCProvider, claims: dict, provider_sub: 
 
     Implements three resolution paths (Fall A/B/C):
       Fall C — custom email_claim (!= "email"): shape-check only, no email_verified gate.
-               Recommended for Azure Entra ID (preferred_username or upn).
+               Never used for auto-link (see _enforce_auto_link_safety).
       Fall A — email_claim="email" + require_email_verified=True: strict, email_verified must be True.
       Fall B — email_claim="email" + require_email_verified=False: permissive, explicit False drops email.
 
@@ -1465,6 +1467,11 @@ async def update_oidc_provider(
         provider.icon_content_type = None
         provider.icon_etag = None
 
+    # Explicit `default_group_id: null` means "reset to the Viewers fallback";
+    # exclude_none=True drops it, so honour it via model_fields_set.
+    if "default_group_id" in body.model_fields_set and body.default_group_id is None:
+        provider.default_group_id = None
+
     for field, value in dumped.items():
         if field == "issuer_url" and value:
             value = value.rstrip("/")
@@ -1916,7 +1923,13 @@ async def oidc_callback(
                 if provider_email:
                     email_user = await get_user_by_email(db, provider_email)
 
-                if email_user and provider.auto_link_existing_accounts:
+                if (
+                    email_user
+                    and provider.auto_link_existing_accounts
+                    # SEC-1: rows saved before custom-claim auto-link was removed must not link.
+                    and provider.email_claim == "email"
+                    and provider.require_email_verified
+                ):
                     # M-4: Only auto-link when the provider has auto_link_existing_accounts
                     # enabled.  Operators can disable this to require explicit account linking,
                     # preventing an attacker-controlled IdP from hijacking local accounts.

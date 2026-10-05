@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import weakref
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Literal
@@ -716,11 +717,19 @@ class SpoolmanClient:
             self._extra_locks[spool_id] = lock
         return lock
 
-    async def merge_spool_extra(self, spool_id: int, new_fields: dict) -> dict:
-        """Fetch the spool's extra dict, merge new_fields into it, then PATCH back — serialised per spool."""
+    async def merge_spool_extra(
+        self, spool_id: int, new_fields: dict, only_if: Callable[[dict], bool] | None = None
+    ) -> dict | None:
+        """Fetch the spool's extra dict, merge new_fields into it, then PATCH back — serialised per spool.
+
+        ``only_if`` is evaluated on the freshly read extra while the lock is held; when it
+        returns False nothing is written and None is returned (compare-and-set).
+        """
         async with self.extra_lock(spool_id):
             current = await self.get_spool(spool_id)  # raises on error
             current_extra: dict = current.get("extra") or {}
+            if only_if is not None and not only_if(current_extra):
+                return None
             merged = {**current_extra, **new_fields}
             return await self.update_spool_full(spool_id=spool_id, extra=merged)
 

@@ -126,9 +126,10 @@ export const EFFECT_OVERLAYS: Partial<
     'rgba(0,0,0,0.18) 0 1px, transparent 1px 6px, ' +
     'rgba(0,0,0,0.08) 6px 7px, transparent 7px 12px)',
   // Marble: soft diagonal swirls.
-  marble: () =>
-    'repeating-linear-gradient(135deg, rgba(255,255,255,0.18) 0 2px, transparent 2px 8px), ' +
+  marble: () => [
+    'repeating-linear-gradient(135deg, rgba(255,255,255,0.18) 0 2px, transparent 2px 8px)',
     'repeating-linear-gradient(45deg, rgba(0,0,0,0.10) 0 1px, transparent 1px 7px)',
+  ],
   // Glow: bright center fade — visual hint for glow-in-the-dark filaments.
   glow: () =>
     'radial-gradient(circle at 50% 50%, rgba(255,255,255,0.35) 0%, rgba(255,255,255,0) 70%)',
@@ -142,9 +143,10 @@ export const EFFECT_OVERLAYS: Partial<
   galaxy: () =>
     'linear-gradient(110deg, rgba(255,255,255,0) 25%, rgba(255,255,255,0.40) 50%, rgba(255,255,255,0) 75%)',
   // Metal: brushed-metal look via tight horizontal striations + soft sheen.
-  metal: () =>
-    'repeating-linear-gradient(90deg, rgba(255,255,255,0.10) 0 1px, transparent 1px 3px), ' +
+  metal: () => [
+    'repeating-linear-gradient(90deg, rgba(255,255,255,0.10) 0 1px, transparent 1px 3px)',
     'linear-gradient(180deg, rgba(255,255,255,0.18) 0%, rgba(0,0,0,0.18) 100%)',
+  ],
 };
 
 /** Normalize a hex token (with or without `#`, 6 or 8 chars) → CSS hex string. */

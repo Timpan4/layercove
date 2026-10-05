@@ -566,3 +566,30 @@ class TestGitHubBackupTriggerAPI:
         response = await async_client.post("/api/v1/github-backup/run")
         assert response.status_code == 400
         assert "disabled" in response.json()["detail"].lower()
+
+
+class TestGitHubBackupTestConnectionBody:
+    """The PAT for /github-backup/test must travel in the JSON body, never the query string."""
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_credentials_read_from_json_body(self, async_client: AsyncClient):
+        mock = AsyncMock(return_value={"success": True, "message": "ok"})
+        with patch("backend.app.api.routes.github_backup.github_backup_service.test_connection", mock):
+            response = await async_client.post(
+                "/api/v1/github-backup/test",
+                json={"repo_url": "https://github.com/test/repo", "token": "ghp_secret", "provider": "github"},
+            )
+        assert response.status_code == 200
+        assert mock.call_args.args == ("https://github.com/test/repo", "ghp_secret")
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_query_string_credentials_are_rejected(self, async_client: AsyncClient):
+        mock = AsyncMock(return_value={"success": True, "message": "ok"})
+        with patch("backend.app.api.routes.github_backup.github_backup_service.test_connection", mock):
+            response = await async_client.post(
+                "/api/v1/github-backup/test?repo_url=https://github.com/test/repo&token=ghp_secret"
+            )
+        assert response.status_code == 422
+        mock.assert_not_called()

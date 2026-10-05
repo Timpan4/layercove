@@ -27,6 +27,8 @@ import logging
 import re
 import zipfile
 
+from backend.app.services.zip_limits import ZipBudget, check_zip_size
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,6 +69,7 @@ def inject_plate_thumbnails_if_missing(threemf_bytes: bytes) -> bytes:
     """
     try:
         with zipfile.ZipFile(io.BytesIO(threemf_bytes), "r") as zf:
+            check_zip_size(zf)
             names = set(zf.namelist())
             missing = _missing_plate_ids(names)
             if not missing:
@@ -223,8 +226,9 @@ def _inject_pngs(
         zipfile.ZipFile(io.BytesIO(threemf_bytes), "r") as src,
         zipfile.ZipFile(out_buf, "w", zipfile.ZIP_DEFLATED) as dst,
     ):
+        budget = ZipBudget()
         for item in src.infolist():
-            dst.writestr(item, src.read(item.filename))
+            budget.copy_member(src, dst, item)
         for n in plate_ids:
             dst.writestr(f"Metadata/plate_{n}.png", large_png)
             dst.writestr(f"Metadata/plate_{n}_small.png", small_png)

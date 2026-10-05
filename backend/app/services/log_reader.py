@@ -18,6 +18,7 @@ from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
+from backend.app.models.virtual_printer import VirtualPrinter
 
 logger = logging.getLogger(__name__)
 
@@ -215,6 +216,12 @@ async def collect_sensitive_strings(db: AsyncSession) -> dict[str, str]:
             sensitive_strings[ip_address] = "[IP]"
         if access_code:
             sensitive_strings[access_code] = "[ACCESS_CODE]"
+
+    # Virtual printer names are user-chosen free text
+    result = await db.execute(select(VirtualPrinter.name))
+    for (vp_name,) in result.all():
+        if vp_name:
+            sensitive_strings[vp_name] = "[VIRTUAL_PRINTER]"
 
     # Moonraker credentials are encrypted at rest. Decrypt only while
     # assembling this in-memory redaction map; never add ciphertext to it.

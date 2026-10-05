@@ -19,7 +19,7 @@ from pydantic import BaseModel
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from backend.app.core.auth import RequirePermissionIfAuthEnabled
+from backend.app.core.auth import RequirePermissionIfAuthEnabled, caller_is_api_key
 from backend.app.core.config import APP_VERSION, settings
 from backend.app.core.database import async_session, get_db
 from backend.app.core.permissions import Permission
@@ -1247,8 +1247,15 @@ async def _get_recent_sanitized_logs(max_lines: int = 200) -> str:
 @router.get("/bundle")
 async def generate_support_bundle(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_READ),
+    is_api_key: bool = Depends(caller_is_api_key),
 ):
-    """Generate a support bundle ZIP file for issue reporting."""
+    """Generate a support bundle ZIP file for issue reporting.
+
+    JWT users only: the bundle covers every printer and the full log, which an
+    API key's printer_ids scope cannot be applied to.
+    """
+    if is_api_key:
+        raise HTTPException(status_code=403, detail="API keys cannot generate support bundles")
     # Check if debug logging is enabled and collect sensitive values for redaction
     async with async_session() as db:
         enabled, _enabled_at = await _get_debug_setting(db)

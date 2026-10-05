@@ -550,9 +550,11 @@ async def nfc_write_tag(
     if not device:
         raise HTTPException(status_code=404, detail="Device not registered")
 
-    # Try local DB first
-    result = await db.execute(select(Spool).where(Spool.id == req.spool_id))
-    spool = result.scalar_one_or_none()
+    # Try local DB first (unless the caller says the ID belongs to Spoolman)
+    spool = None
+    if req.data_origin != "spoolman":
+        result = await db.execute(select(Spool).where(Spool.id == req.spool_id))
+        spool = result.scalar_one_or_none()
 
     nfc_warnings: list[str] = []
     if spool:
@@ -562,7 +564,7 @@ async def nfc_write_tag(
         # Local DB miss — fall back to Spoolman when enabled
         from backend.app.api.routes._spoolman_helpers import _map_spoolman_spool
 
-        sm_client = await _get_spoolman_client_or_none(db)
+        sm_client = None if req.data_origin == "local" else await _get_spoolman_client_or_none(db)
         if sm_client is None:
             raise HTTPException(status_code=404, detail="Spool not found")
 

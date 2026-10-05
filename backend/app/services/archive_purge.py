@@ -16,11 +16,12 @@ import asyncio
 import logging
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import func, select
+from sqlalchemy import exists, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core import database as _database
 from backend.app.models.archive import PrintArchive
+from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.settings import Settings
 from backend.app.services.archive import ArchiveService
 
@@ -61,6 +62,12 @@ def _last_activity_expr():
         PrintArchive.started_at,
         PrintArchive.created_at,
     )
+
+
+def _not_printing_clause():
+    """Exclude archives with a queue item mid-print (a reprint keeps the old
+    ``completed_at``, so such archives are otherwise age-eligible)."""
+    return ~exists().where(PrintQueueItem.archive_id == PrintArchive.id, PrintQueueItem.status == "printing")
 
 
 class ArchivePurgeService:
@@ -202,7 +209,7 @@ class ArchivePurgeService:
         now = datetime.now(timezone.utc)
         cutoff = _age_cutoff(now, older_than_days)
         last_activity = _last_activity_expr()
-        clause = last_activity < cutoff
+        clause = (last_activity < cutoff) & _not_printing_clause()
 
         count_stmt = select(func.count(PrintArchive.id)).where(clause)
         size_stmt = select(func.coalesce(func.sum(PrintArchive.file_size), 0)).where(clause)
@@ -262,7 +269,7 @@ class ArchivePurgeService:
         # a repeat sweeper run keeps re-touching the same rows. Hard-delete
         # mode doesn't filter — already-soft-deleted rows are eligible for
         # promotion to hard-delete when the user opts in.
-        select_stmt = select(PrintArchive.id).where(_last_activity_expr() < cutoff)
+        select_stmt = select(PrintArchive.id).where(_last_activity_expr() < cutoff, _not_printing_clause())
         if not purge_stats:
             select_stmt = select_stmt.where(PrintArchive.deleted_at.is_(None))
         id_result = await db.execute(select_stmt)

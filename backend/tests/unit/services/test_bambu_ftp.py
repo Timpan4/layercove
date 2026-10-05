@@ -595,6 +595,19 @@ class TestDelete:
         assert result == DeleteResult.NOT_FOUND
         client.disconnect()
 
+    def test_delete_550_on_existing_file_is_failed(self, ftp_client_factory, ftp_server):
+        """A 550 on a file that is still on the printer must stay FAILED so cleanup retries."""
+        from backend.app.services.bambu_ftp import DeleteResult
+
+        ftp_server.add_file("cache/locked.bin", b"locked")
+        ftp_server.inject_failure("DELE", 550, "Permission denied.")
+        client = ftp_client_factory()
+        client.connect()
+        result = client.delete_file("/cache/locked.bin")
+        assert result == DeleteResult.FAILED
+        assert ftp_server.file_exists("cache/locked.bin")
+        client.disconnect()
+
     def test_delete_not_connected(self):
         """Delete when not connected returns FAILED."""
         from backend.app.services.bambu_ftp import DeleteResult

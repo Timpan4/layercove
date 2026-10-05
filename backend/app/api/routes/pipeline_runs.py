@@ -374,11 +374,18 @@ async def _resolve_source(
     *,
     library_file_id: int | None,
     archive_id: int | None,
+    user: User | None,
 ) -> tuple[SourceKind, int, str, Path]:
+    """Resolve the source file. ``user`` is the caller (None when auth is disabled);
+    sources they could not read directly (no *_READ_ALL and not the owner) are 404."""
+    from backend.app.api.routes.archives import _ensure_archive_visible
+    from backend.app.api.routes.library import _ensure_library_file_visible
+
     if library_file_id is not None:
         lib = (await db.execute(select(LibraryFile).where(LibraryFile.id == library_file_id))).scalar_one_or_none()
         if lib is None:
             raise HTTPException(404, "Source library file not found")
+        _ensure_library_file_visible(lib, user, user is None or user.has_permission(Permission.LIBRARY_READ_ALL.value))
         src_path = (
             Path(app_settings.base_dir) / lib.file_path
         )  # SEC-PATH-OK: lib.file_path is a LibraryFile DB column set only by the upload route, which writes a UUID-named file under base_dir/library_files/.
@@ -390,6 +397,7 @@ async def _resolve_source(
     arc = (await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))).scalar_one_or_none()
     if arc is None:
         raise HTTPException(404, "Source archive not found")
+    _ensure_archive_visible(arc, user, user is None or user.has_permission(Permission.ARCHIVES_READ_ALL.value))
     rel = arc.source_3mf_path or arc.file_path
     if not rel:
         raise HTTPException(400, "Archive has no source file to slice")
@@ -625,7 +633,7 @@ def _make_orchestration_callable(
 async def check_eligibility(
     pipeline_id: int,
     body: CheckEligibilityRequest,
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PIPELINES_READ),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PIPELINES_READ),
     db: AsyncSession = Depends(get_db),
 ):
     pipeline = await _load_pipeline(db, pipeline_id)
@@ -633,6 +641,7 @@ async def check_eligibility(
         db,
         library_file_id=body.source_library_file_id,
         archive_id=body.source_archive_id,
+        user=current_user,
     )
     if pipeline.target_kind == "printer_class" and pipeline.target_printer_id is None:
         report = await check_pipeline_eligibility(db, pipeline, status_lookup=_make_status_lookup())
@@ -662,6 +671,7 @@ async def run_pipeline(
         db,
         library_file_id=body.source_library_file_id,
         archive_id=body.source_archive_id,
+        user=current_user,
     )
 
     # Cap copies against the configured ceiling.

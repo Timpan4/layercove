@@ -234,6 +234,26 @@ def _merge_ams_dict(prev_ams: dict, new_ams: dict) -> dict:
     for uid, prev_unit in prev_by_id.items():
         if uid not in seen_ids:
             merged_units.append(prev_unit)
+    # ``ams_exist_bits`` is firmware's authoritative unit-presence mask. When
+    # the update carries it, drop units whose bit is clear so a disconnected
+    # AMS isn't replayed from the cache. All-zero bits with power_on_flag=False
+    # is the printer-shutdown pattern (#765) and keeps the cached units.
+    if "ams_exist_bits" in new_ams:
+        try:
+            exist_bits = int(str(new_ams["ams_exist_bits"]), 16)
+        except ValueError:
+            exist_bits = None
+        if exist_bits is not None and not (exist_bits == 0 and merged.get("power_on_flag", True) is False):
+
+            def _unit_present(unit) -> bool:
+                try:
+                    uid = int(unit.get("id"))
+                except (AttributeError, TypeError, ValueError):
+                    return True
+                # AMS-HT (id >= 128) uses a separate addressing scheme.
+                return uid >= 128 or bool(exist_bits >> uid & 1)
+
+            merged_units = [u for u in merged_units if _unit_present(u)]
     merged["ams"] = merged_units
     return merged
 
@@ -484,7 +504,10 @@ class MQTTBridge:
             return
 
         if new_target_le == self._target_ip_uint32_le and new_vp_le == self._vp_ip_uint32_le:
-            return  # No change — nothing to do.
+            # No change, but validation succeeded: reset the dedup so a later
+            # failure re-logs.
+            self._not_armed_reason = None
+            return
 
         # Encoding either became valid for the first time or shifted (DHCP
         # renewal, bind_ip reconfigured, etc.). Update + sweep the cache.

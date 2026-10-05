@@ -39,8 +39,11 @@ services:
     # FTP passive-mode port slicing (#1646): non-proxy VPs (Archive / Review /
     # Queue modes) get a 10-port slice each, allocated by VP id — VP 1 →
     # 50000-50009, VP 2 → 50010-50019, VP 3 → 50020-50029, etc. The default
-    # exposure above covers 3 VPs; widen the range to cover more
-    # (`50000-500N9` where N = vp_count - 1). Proxy-mode VPs forward the
+    # exposure above covers VP ids 1-3 only. Ids are not reused or renumbered
+    # after a VP is deleted, so a VP with id N uses
+    # 50000 + ((N - 1) % 100) * 10 through that + 9. Publish the slices for
+    # the ids you actually have (shown in the VP's API response and URL), or
+    # the whole `50000-50999` range. Proxy-mode VPs forward the
     # real printer's full 50000-50100 range — if you use proxy mode, expose
     # `50000-50100:50000-50100` instead.
     #
@@ -83,6 +86,11 @@ services:
       #   1. Tailscale installed + `tailscale up` completed on the host
       #   2. `sudo tailscale set --operator=<container-user>` on the host so
       #      the user running the container can call `tailscale cert`
+      # WARNING: the socket grants full control of the HOST's Tailscale daemon,
+      # not just `tailscale cert`. Anything running in this container (or any
+      # compromise of it) can change the host's tailnet state: log it out,
+      # alter routes/exit nodes, enable SSH or Funnel, or reconfigure the node.
+      # Mount it only if you trust everything in this container with that access.
       # Without this mount, the Tailscale toggle in the UI is harmless —
       # LayerCove falls back to self-signed certs.
       #- /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock

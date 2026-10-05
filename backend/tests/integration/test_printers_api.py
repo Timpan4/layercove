@@ -459,12 +459,12 @@ class TestPrintersAPI:
             },
         )
 
-        base_url_only = await async_client.patch(
+        same_origin = await async_client.patch(
             f"/api/v1/printers/{created.json()['id']}",
-            json={"moonraker_config": {"base_url": "http://moved-klipper.local:7125"}},
+            json={"moonraker_config": {"base_url": "http://klipper.local:7125/", "tls_verify": False}},
         )
-        assert base_url_only.status_code == 200
-        assert base_url_only.json()["moonraker_config"]["api_key_configured"] is True
+        assert same_origin.status_code == 200
+        assert same_origin.json()["moonraker_config"]["api_key_configured"] is True
 
         response = await async_client.patch(
             f"/api/v1/printers/{created.json()['id']}",
@@ -491,6 +491,33 @@ class TestPrintersAPI:
         deleted = await async_client.delete(f"/api/v1/printers/{created.json()['id']}")
         assert deleted.status_code == 200
         assert (await async_client.get(f"/api/v1/printers/{created.json()['id']}")).status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_moonraker_origin_change_drops_stored_credentials(self, async_client: AsyncClient):
+        created = await async_client.post(
+            "/api/v1/printers/",
+            json={
+                "name": "Klipper Printer",
+                "provider": "moonraker",
+                "moonraker_config": {"base_url": "http://klipper.local:7125", "api_key": "stored-secret"},
+            },
+        )
+        printer_id = created.json()["id"]
+
+        moved = await async_client.patch(
+            f"/api/v1/printers/{printer_id}",
+            json={"moonraker_config": {"base_url": "https://attacker.example"}},
+        )
+        assert moved.status_code == 200
+        assert moved.json()["moonraker_config"]["api_key_configured"] is False
+
+        with patch("backend.app.api.routes.printers.MoonrakerHTTPClient") as client_class:
+            client_class.return_value.test_connection = AsyncMock(return_value=True)
+            await async_client.post(f"/api/v1/printers/{printer_id}/test-connection")
+
+        assert client_class.call_args.kwargs["api_key"] is None
+        assert client_class.call_args.kwargs["authorization"] is None
 
     @pytest.mark.asyncio
     @pytest.mark.integration

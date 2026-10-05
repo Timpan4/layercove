@@ -726,3 +726,40 @@ class TestVirtualPrinterSerialSurface:
         body = get_resp.json()
         assert body["serial"]  # non-empty
         assert len(body["serial"]) >= 8
+
+
+class TestVirtualPrinterAccessCodeRotation:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_printer_access_code_rotation_updates_linked_vp(
+        self, async_client: AsyncClient, printer_factory, db_session
+    ):
+        """Rotating a printer's access code must revoke the old code on linked non-proxy VPs."""
+        from sqlalchemy import select
+
+        from backend.app.models.virtual_printer import VirtualPrinter
+
+        target = await printer_factory(name="Real X1C", access_code="OLDCODE1")
+        queue_vp = VirtualPrinter(
+            name="QueueVP", mode="queue", target_printer_id=target.id, access_code="OLDCODE1", enabled=True
+        )
+        proxy_vp = VirtualPrinter(
+            name="ProxyVP", mode="proxy", target_printer_id=target.id, access_code="KEEPCODE", enabled=False
+        )
+        db_session.add_all([queue_vp, proxy_vp])
+        await db_session.commit()
+        queue_id, proxy_id = queue_vp.id, proxy_vp.id
+
+        with (
+            patch("backend.app.api.routes.printers.printer_manager.disconnect_printer_async", new=AsyncMock()),
+            patch("backend.app.api.routes.printers.printer_manager.connect_printer", new=AsyncMock()),
+            patch("backend.app.services.virtual_printer.virtual_printer_manager.sync_from_db", new=AsyncMock()) as sync,
+        ):
+            response = await async_client.patch(f"/api/v1/printers/{target.id}", json={"access_code": "NEWCODE2"})
+
+        assert response.status_code == 200
+        db_session.expire_all()
+        rows = {vp.id: vp.access_code for vp in (await db_session.execute(select(VirtualPrinter))).scalars()}
+        assert rows[queue_id] == "NEWCODE2"
+        assert rows[proxy_id] == "KEEPCODE"
+        sync.assert_awaited()

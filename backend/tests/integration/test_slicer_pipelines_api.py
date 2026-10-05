@@ -97,6 +97,21 @@ class TestSlicerPipelinesAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_update_explicit_null_clears_nullable_fields(self, async_client: AsyncClient):
+        created = (
+            await async_client.post(
+                "/api/v1/slicer-pipelines/", json=_payload(description="old", bed_type="Cool Plate")
+            )
+        ).json()
+        resp = await async_client.put(
+            f"/api/v1/slicer-pipelines/{created['id']}", json={"description": None, "bed_type": None}
+        )
+        assert resp.status_code == 200
+        assert resp.json()["description"] is None
+        assert resp.json()["bed_type"] is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_update_filament_list_replaces_wholesale(self, async_client: AsyncClient):
         """Setting filament_presets replaces the entire list."""
         created = (await async_client.post("/api/v1/slicer-pipelines/", json=_payload())).json()

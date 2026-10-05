@@ -1460,3 +1460,46 @@ class TestLinkSpoolMqttConfigure:
         # cali_sel must fire with cali_idx=42 — proves get_status was used
         mqtt_mock.extrusion_cali_sel.assert_called_once()
         assert mqtt_mock.extrusion_cali_sel.call_args.kwargs["cali_idx"] == 42
+
+
+class TestConcurrentTagLinks:
+    """Two concurrent links of the same tag must leave exactly one holder."""
+
+    async def test_concurrent_links_of_same_tag_keep_one_holder(self, async_client: AsyncClient, db_session):
+        import asyncio
+        import json
+
+        from backend.app.models.settings import Settings
+
+        db_session.add(Settings(key="spoolman_enabled", value="true"))
+        db_session.add(Settings(key="spoolman_url", value="http://localhost:7912"))
+        await db_session.commit()
+
+        tag = "A1B2C3D4E5F6A1B2C3D4E5F6A1B2C3D4"
+        extras: dict[int, dict] = {1: {}, 2: {}}
+
+        async def get_spools():
+            await asyncio.sleep(0.01)  # let the other request's bind land before enumerating
+            return [{"id": sid, "extra": dict(extra)} for sid, extra in extras.items()]
+
+        async def merge_spool_extra(spool_id, new_fields, only_if=None):
+            await asyncio.sleep(0.05 if only_if is None else 0)  # slow bind: the other bind lands first
+            if only_if is not None and not only_if(extras[spool_id]):
+                return None
+            extras[spool_id] = {**extras[spool_id], **new_fields}
+            return {"id": spool_id, "extra": extras[spool_id]}
+
+        client = MagicMock()
+        client.health_check = AsyncMock(return_value=True)
+        client.get_spools = get_spools
+        client.merge_spool_extra = merge_spool_extra
+
+        with patch("backend.app.api.routes.spoolman.get_spoolman_client", AsyncMock(return_value=client)):
+            responses = await asyncio.gather(
+                async_client.post("/api/v1/spoolman/spools/1/link", json={"tray_uuid": tag}),
+                async_client.post("/api/v1/spoolman/spools/2/link", json={"tray_uuid": tag}),
+            )
+
+        assert [r.status_code for r in responses] == [200, 200]
+        holders = [sid for sid, extra in extras.items() if json.loads(extra.get("tag") or '""') == tag]
+        assert len(holders) == 1

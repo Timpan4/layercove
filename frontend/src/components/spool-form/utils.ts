@@ -306,8 +306,9 @@ export function toFilamentId(id: string | null | undefined): string {
   if (!id) return '';
   // Drop "_NN" variant suffix.
   let s = id.split('_')[0];
-  // Strip the "S" infix in "GFS..." so "GFSG98" → "GFG98".
-  if (/^GFS/i.test(s)) s = s.slice(0, 2) + s.slice(3);
+  // Strip the "S" infix in setting IDs ("GFSG98" → "GFG98"). Bare filament IDs
+  // such as GFS99 (Generic PVA) are 5 chars and already normalized.
+  if (/^GFS/i.test(s) && s.length > 5) s = s.slice(0, 2) + s.slice(3);
   return s.toUpperCase();
 }
 

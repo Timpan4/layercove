@@ -7,12 +7,13 @@ the scheduler dispatch path never set `current_print_user` and the `/start`
 route didn't record the clicker.
 
 The fix is two-sided:
-  - `POST /queue/{id}/start` credits the clicker as `created_by_id` when
-    no prior owner is set (does NOT overwrite an existing owner — a
-    UI-added queue item's original uploader keeps attribution).
-  - `PrintScheduler._start_print` propagates `item.created_by_id` into
-    `printer_manager.set_current_print_user` so the print-complete callback
-    can write the username into the PrintLogEntry row.
+  - `POST /queue/{id}/start` records the clicker in `started_by_id` when
+    the item has no owner. It never sets `created_by_id`: that column is the
+    authorization boundary, so starting an ownerless item must not grant the
+    starter update/cancel rights over it.
+  - `PrintScheduler._start_print` propagates the creator, else the starter,
+    into `printer_manager.set_current_print_user` so the print-complete
+    callback can write the username into the PrintLogEntry row.
 
 These tests pin both halves so a future refactor can't silently regress
 either one back to "blank User column."
@@ -102,11 +103,11 @@ async def queue_item(db_session):
 
 
 class TestStartCreditsTheClicker:
-    """`/start` writes the clicker's id to `created_by_id` when none was set."""
+    """`/start` records the clicker in `started_by_id`, leaving the item ownerless."""
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_start_writes_created_by_id_when_unattributed(
+    async def test_start_records_starter_without_taking_ownership(
         self, async_client: AsyncClient, test_engine, queue_item
     ):
         admin_token, admin_user = await _enable_auth_with_admin(async_client)
@@ -118,8 +119,10 @@ class TestStartCreditsTheClicker:
         assert response.status_code == 200
 
         refreshed = await _read_item(test_engine, queue_item.id)
-        assert refreshed.created_by_id == admin_user["id"]
+        assert refreshed.created_by_id is None
+        assert refreshed.started_by_id == admin_user["id"]
         assert refreshed.manual_start is False
+        assert response.json()["started_by_username"] == admin_user["username"]
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -148,10 +151,11 @@ class TestStartCreditsTheClicker:
         refreshed = await _read_item(test_engine, queue_item.id)
         # Prior owner survives — `/start` did not promote the clicker.
         assert refreshed.created_by_id == prior_owner_id
+        assert refreshed.started_by_id is None
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_start_with_auth_disabled_leaves_created_by_id_null(
+    async def test_start_with_auth_disabled_leaves_attribution_null(
         self, async_client: AsyncClient, test_engine, queue_item
     ):
         """When auth is off the route's user dep returns None — the item stays
@@ -162,6 +166,7 @@ class TestStartCreditsTheClicker:
 
         refreshed = await _read_item(test_engine, queue_item.id)
         assert refreshed.created_by_id is None
+        assert refreshed.started_by_id is None
 
 
 class TestSchedulerPropagatesOwnerToPrinterManager:
@@ -197,6 +202,34 @@ class TestSchedulerPropagatesOwnerToPrinterManager:
         await PrintScheduler()._propagate_owner_to_printer_manager(db_session, queue_item)
 
         assert captured == [(queue_item.printer_id, user.id, "clickeruser")]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_propagates_starter_when_item_is_ownerless(self, db_session, queue_item, monkeypatch):
+        from backend.app.models.user import User
+        from backend.app.services import print_scheduler as scheduler_module
+        from backend.app.services.print_scheduler import PrintScheduler
+
+        user = User(username="starteruser", password_hash="x", is_active=True)
+        db_session.add(user)
+        await db_session.commit()
+        await db_session.refresh(user)
+
+        queue_item.started_by_id = user.id
+        db_session.add(queue_item)
+        await db_session.commit()
+        await db_session.refresh(queue_item)
+
+        captured: list[tuple[int, int, str]] = []
+        monkeypatch.setattr(
+            scheduler_module.printer_manager,
+            "set_current_print_user",
+            lambda printer_id, uid, username: captured.append((printer_id, uid, username)),
+        )
+
+        await PrintScheduler()._propagate_owner_to_printer_manager(db_session, queue_item)
+
+        assert captured == [(queue_item.printer_id, user.id, "starteruser")]
 
     @pytest.mark.asyncio
     @pytest.mark.integration

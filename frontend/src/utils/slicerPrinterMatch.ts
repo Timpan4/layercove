@@ -161,7 +161,9 @@ function classifyByBambuName(
   // identical — e.g. "Q1" preset against "Bambu Lab Q1 0.4 nozzle" —
   // without us having to ship a code update. When they differ in form
   // (X1C vs "X1 Carbon"), the registry is what makes the match work.
-  const inferredModel = bambuModelByShortCode[parsed.token] ?? parsed.token;
+  const inferredModel = Object.hasOwn(bambuModelByShortCode, parsed.token)
+    ? bambuModelByShortCode[parsed.token]
+    : parsed.token;
   const selectedParts = extractPrinterPresetModel(selectedPrinterName);
   if (!selectedParts) return 'unknown';
   // The raw inferred model and the printer-preset fragment may differ only by

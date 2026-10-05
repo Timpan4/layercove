@@ -589,6 +589,64 @@ class TestAssignSpoolLiveCaliIdx:
         assert mock_client.extrusion_cali_sel.call_args[1]["cali_idx"] == -1
 
 
+class TestAssignSpoolRfidAndDefaultK:
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_default_k_filament_id_matches_configured_tray_info_idx(
+        self, async_client: AsyncClient, printer_factory, spool_factory
+    ):
+        """PFUS ids are rejected as tray_info_idx; the Default-K reset must use the
+        id the slot was actually configured with, not the raw slicer_filament."""
+        printer = await printer_factory()
+        spool = await spool_factory(slicer_filament="PFUS9ac902733670a9", material="PLA")
+
+        mock_client = MagicMock()
+        tray = {"id": 1, "tray_type": "PLA", "tray_info_idx": ""}
+        status = _make_mock_status(ams_data=[{"id": 0, "tray": [tray]}])
+
+        with patch("backend.app.services.printer_manager.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+            mock_pm.get_status.return_value = status
+            response = await async_client.post(
+                "/api/v1/inventory/assignments",
+                json={"spool_id": spool.id, "printer_id": printer.id, "ams_id": 0, "tray_id": 1},
+            )
+
+        assert response.status_code == 200
+        configured_idx = mock_client.ams_set_filament_setting.call_args.kwargs["tray_info_idx"]
+        assert configured_idx == "GFL99"
+        assert mock_client.extrusion_cali_sel.call_args.kwargs["filament_id"] == configured_idx
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_assign_to_rfid_slot_does_not_overwrite_rfid_filament_setting(
+        self, async_client: AsyncClient, printer_factory, spool_factory
+    ):
+        printer = await printer_factory()
+        spool = await spool_factory(slicer_filament="GFL99", material="PLA")
+
+        mock_client = MagicMock()
+        tray = {
+            "id": 1,
+            "tray_type": "PLA",
+            "tray_info_idx": "GFA00",
+            "tray_uuid": "A1B2C3D4E5F60718293A4B5C6D7E8F90",
+            "tag_uid": "1122334455667788",
+        }
+        status = _make_mock_status(ams_data=[{"id": 0, "tray": [tray]}])
+
+        with patch("backend.app.services.printer_manager.printer_manager") as mock_pm:
+            mock_pm.get_client.return_value = mock_client
+            mock_pm.get_status.return_value = status
+            response = await async_client.post(
+                "/api/v1/inventory/assignments",
+                json={"spool_id": spool.id, "printer_id": printer.id, "ams_id": 0, "tray_id": 1},
+            )
+
+        assert response.status_code == 200
+        mock_client.ams_set_filament_setting.assert_not_called()
+
+
 class TestAssignSpoolEmptySlotPreConfig:
     """Assign path under ambiguous / explicit-empty AMS state.
 

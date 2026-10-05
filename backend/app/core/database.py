@@ -471,6 +471,8 @@ async def run_migrations(conn):
                 "      AND prev.status IN ('completed', 'failed', 'cancelled', 'aborted') "
                 "      AND prev.completed_at IS NOT NULL "
                 "      AND prev.completed_at < print_queue.completed_at "
+                # A pending item cancelled before it started is not a print attempt.
+                "      AND (prev.status != 'cancelled' OR prev.started_at IS NOT NULL) "
                 "    ORDER BY prev.completed_at DESC LIMIT 1"
                 "  ) = 'cancelled'"
             )
@@ -485,7 +487,15 @@ async def run_migrations(conn):
                 "    AND (a.printer_id = print_log_entries.printer_id "
                 "      OR (a.printer_id IS NULL AND print_log_entries.printer_id IS NULL)) "
                 "  ORDER BY a.id DESC LIMIT 1"
-                ") WHERE archive_id IS NULL AND print_name IS NOT NULL"
+                ") WHERE archive_id IS NULL AND print_name IS NOT NULL "
+                # Only link when exactly one archive matches; a name collision
+                # is ambiguous and must not attach runs to the wrong archive.
+                "AND ("
+                "  SELECT COUNT(*) FROM print_archives a "
+                "  WHERE a.print_name = print_log_entries.print_name "
+                "    AND (a.printer_id = print_log_entries.printer_id "
+                "      OR (a.printer_id IS NULL AND print_log_entries.printer_id IS NULL))"
+                ") = 1"
             )
         )
         await conn.execute(

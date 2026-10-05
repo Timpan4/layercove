@@ -608,6 +608,50 @@ class TestWriteTagEndpoints:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_write_tag_spoolman_origin_ignores_colliding_local_spool(
+        self, async_client: AsyncClient, device_factory, spool_factory, spoolman_settings
+    ):
+        """Local spool 1 (PLA) and Spoolman spool 1 (PETG) share an ID: the Spoolman one must be written."""
+        device = await device_factory(device_id="sb-wt-collide")
+        local = await spool_factory(material="PLA", brand="Polymaker", color_name="Red", rgba="FF0000FF")
+        sm_spool = {
+            "id": local.id,
+            "filament": {
+                "material": "PETG",
+                "name": "PETG Basic",
+                "color_hex": "0000FF",
+                "weight": 1000.0,
+                "spool_weight": 196.0,
+                "vendor": {"name": "eSun"},
+            },
+            "used_weight": 0.0,
+            "archived": False,
+            "registered": "2024-01-01T00:00:00Z",
+        }
+        mock_client = _mock_spoolman_client()
+        mock_client.get_spool = AsyncMock(return_value=sm_spool)
+
+        with patch(
+            "backend.app.api.routes.spoolbuddy._get_spoolman_client_or_none",
+            AsyncMock(return_value=mock_client),
+        ):
+            resp = await async_client.post(
+                f"{API}/nfc/write-tag",
+                json={"device_id": device.device_id, "spool_id": local.id, "data_origin": "spoolman"},
+            )
+
+        assert resp.status_code == 200
+        mock_client.get_spool.assert_awaited_once_with(local.id)
+        with patch("backend.app.api.routes.spoolbuddy.ws_manager") as mock_ws:
+            mock_ws.broadcast = AsyncMock()
+            hb = await async_client.post(
+                f"{API}/devices/{device.device_id}/heartbeat",
+                json={"nfc_ok": True, "scale_ok": True, "uptime_s": 10},
+            )
+        assert hb.json()["pending_write_payload"]["data_origin"] == "spoolman"
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_write_tag_heartbeat_not_cleared(self, async_client: AsyncClient, device_factory, spool_factory):
         """write_tag command persists across heartbeats until write-result clears it."""
         device = await device_factory(device_id="sb-wt-persist")

@@ -764,6 +764,10 @@ export function PrintModal({
     };
 
     const filamentOverridesArray = buildFilamentOverridesArray();
+    // A specific printer has no filament substitution, so the only overrides that
+    // mean anything there are the "Force color match" guards.
+    const printerForceOverrides = filamentOverridesArray?.filter((o) => o.force_color_match);
+    const printerOverridesArray = printerForceOverrides?.length ? printerForceOverrides : undefined;
 
     // Multi-plate auto-batch: when the user adds 2+ plates from one source in
     // a single create submission, pre-create a PrintBatch and pass its
@@ -811,7 +815,7 @@ export function PrintModal({
       printer_id: assignmentMode === 'printer' ? printerId : null,
       target_model: assignmentMode === 'model' ? targetModel : null,
       target_location: assignmentMode === 'model' ? targetLocation : null,
-      filament_overrides: assignmentMode === 'model' ? filamentOverridesArray : undefined,
+      filament_overrides: assignmentMode === 'model' ? filamentOverridesArray : printerOverridesArray,
       // Use library_file_id for library files, archive_id for archives
       archive_id: isLibraryFile ? undefined : archiveId,
       library_file_id: isLibraryFile ? libraryFileId : undefined,
@@ -910,6 +914,7 @@ export function PrintModal({
                 printer_id: printerId,
                 target_model: null,
                 target_location: null,
+                filament_overrides: printerOverridesArray ?? null,
                 require_previous_success: scheduleOptions.requirePreviousSuccess,
                 auto_off_after: scheduleOptions.autoOffAfter,
                 gcode_injection: scheduleOptions.gcodeInjection,

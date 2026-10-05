@@ -157,6 +157,24 @@ describe('FileManagerPage - External Folders', () => {
       });
     });
 
+    it('shows the combined External view when the only external folder is nested', async () => {
+      const nested = {
+        ...mockFoldersWithExternal[1],
+        id: 20,
+        parent_id: 1,
+      };
+      server.use(
+        http.get('/api/v1/library/folders', () =>
+          HttpResponse.json([{ ...mockFoldersWithExternal[0], children: [nested] }]),
+        ),
+      );
+      render(<FileManagerPage />);
+
+      await waitFor(() => {
+        expect(screen.getByRole('option', { name: /External/ })).toBeInTheDocument();
+      });
+    });
+
     it('shows regular folder alongside external', async () => {
       render(<FileManagerPage />);
 

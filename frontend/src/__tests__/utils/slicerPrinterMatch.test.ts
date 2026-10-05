@@ -361,3 +361,18 @@ describe('presetCompatibility with Bambu cloud A1M rename (#1649)', () => {
     ).toBe('mismatch');
   });
 });
+
+describe('presetCompatibility with Object.prototype property names as @BBL token', () => {
+  it.each(['constructor', 'toString', '__proto__', 'hasOwnProperty'])(
+    'does not throw for a preset tagged "@BBL %s"',
+    (token) => {
+      const idx = buildCompatibilityIndex(PRINTER_MODELS);
+      expect(() =>
+        presetCompatibility({ name: `Malicious @BBL ${token}` }, 'process', X1C, idx),
+      ).not.toThrow();
+      expect(presetCompatibility({ name: `Malicious @BBL ${token}` }, 'process', X1C, idx)).toBe(
+        'mismatch',
+      );
+    },
+  );
+});

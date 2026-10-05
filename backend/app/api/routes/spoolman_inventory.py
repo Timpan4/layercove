@@ -12,6 +12,7 @@ import json
 import logging
 import re
 import time
+import weakref
 from contextlib import asynccontextmanager
 
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Response
@@ -83,12 +84,30 @@ def _tag_cleared(val: str | None) -> bool:
     return val is None
 
 
+_tag_locks: weakref.WeakValueDictionary[str, asyncio.Lock] = weakref.WeakValueDictionary()
+
+
+def tag_link_lock(tag: str) -> asyncio.Lock:
+    """Per-tag lock serialising "bind tag to spool" + stale-tag cleanup.
+
+    Without it, two concurrent links of the same tag to different spools each
+    see the other's binding during cleanup and clear it, leaving no holder.
+    """
+    key = tag.upper()
+    lock = _tag_locks.get(key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _tag_locks[key] = lock
+    return lock
+
+
 async def _clear_stale_tag_links(
     client: SpoolmanClient,
     *,
     tag: str,
     keep_spool_id: int,
     log_context: str,
+    lock_held: bool = False,
 ) -> int:
     """Clear extra.tag on OTHER spools still claiming the given tag (#1457).
 
@@ -104,6 +123,11 @@ async def _clear_stale_tag_links(
     """
     if not tag:
         return 0
+    if not lock_held:
+        async with tag_link_lock(tag):
+            return await _clear_stale_tag_links(
+                client, tag=tag, keep_spool_id=keep_spool_id, log_context=log_context, lock_held=True
+            )
     tag_upper = tag.upper()
 
     try:
@@ -125,7 +149,15 @@ async def _clear_stale_tag_links(
         if clean_tag != tag_upper:
             continue
         try:
-            await client.merge_spool_extra(spool_id, {"tag": json.dumps("")})
+            # Re-check under the per-spool lock: the tag may have been rebound
+            # since the enumeration above, and that newer binding must survive.
+            result = await client.merge_spool_extra(
+                spool_id,
+                {"tag": json.dumps("")},
+                only_if=lambda current_extra: str(current_extra.get("tag") or "").strip('"').upper() == tag_upper,
+            )
+            if result is None:
+                continue
             cleared += 1
             logger.info(
                 "Cleared stale tag '%s' from Spoolman spool %s (%s; reassigned to spool %s)",

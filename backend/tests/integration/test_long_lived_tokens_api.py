@@ -293,7 +293,21 @@ class TestCameraStreamTokenVerification:
         )
         long_lived = created.json()["token"]
 
-        assert await verify_camera_stream_token(long_lived) is True
+        assert await verify_camera_stream_token(long_lived, allow_long_lived=True) is True
+
+    async def test_long_lived_token_rejected_on_non_stream_media_routes(self, async_client: AsyncClient):
+        """A long-lived camera token must not unlock archive/project media."""
+        token = await _setup_admin(async_client, suffix="_scope_media")
+        created = await async_client.post(
+            "/api/v1/auth/tokens",
+            headers={"Authorization": f"Bearer {token}"},
+            json={"name": "kiosk", "expires_in_days": 90},
+        )
+        long_lived = created.json()["token"]
+
+        for path in ("/api/v1/archives/1/timelapse", "/api/v1/archives/1/thumbnail"):
+            response = await async_client.get(path, params={"token": long_lived})
+            assert response.status_code == 401, (path, response.text)
 
     async def test_revoked_long_lived_token_fails_camera_stream_check(self, async_client: AsyncClient):
         from backend.app.core.auth import verify_camera_stream_token
@@ -311,7 +325,7 @@ class TestCameraStreamTokenVerification:
             f"/api/v1/auth/tokens/{token_id}",
             headers={"Authorization": f"Bearer {token}"},
         )
-        assert await verify_camera_stream_token(long_lived) is False
+        assert await verify_camera_stream_token(long_lived, allow_long_lived=True) is False
 
     async def test_garbage_token_fails_camera_stream_check(self, async_client: AsyncClient):
         from backend.app.core.auth import verify_camera_stream_token

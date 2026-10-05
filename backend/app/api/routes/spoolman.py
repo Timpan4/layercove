@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.routes._spoolman_helpers import _map_spoolman_spool
-from backend.app.api.routes.spoolman_inventory import _clear_stale_tag_links
+from backend.app.api.routes.spoolman_inventory import _clear_stale_tag_links, tag_link_lock
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
@@ -838,65 +838,69 @@ async def link_spool(
             raise HTTPException(status_code=404, detail="Printer not found")
         printer_context = (request.printer_id, request.ams_id, request.tray_id)
 
-    try:
-        await client.merge_spool_extra(spool_id, {"tag": json.dumps(spool_tag)})
-    except SpoolmanNotFoundError:
-        raise HTTPException(status_code=404, detail="Spool not found in Spoolman")
-    except SpoolmanClientError:
-        raise HTTPException(status_code=502, detail="Spoolman rejected the request")
-    except SpoolmanUnavailableError:
-        raise HTTPException(status_code=503, detail="Spoolman is not reachable")
-
-    # Upsert slot assignment locally when printer context was supplied
-    if printer_context:
-        p_id, a_id, t_id = printer_context
+    # Bind + stale cleanup run under the tag lock so concurrent links of the
+    # same tag cannot clear each other's freshly bound spool.
+    async with tag_link_lock(spool_tag):
         try:
-            await db.execute(
-                text(
-                    "INSERT INTO spoolman_slot_assignments"
-                    " (printer_id, ams_id, tray_id, spoolman_spool_id)"
-                    " VALUES (:printer_id, :ams_id, :tray_id, :spool_id)"
-                    " ON CONFLICT(printer_id, ams_id, tray_id)"
-                    " DO UPDATE SET spoolman_spool_id = excluded.spoolman_spool_id"
-                ),
-                {"printer_id": p_id, "ams_id": a_id, "tray_id": t_id, "spool_id": spool_id},
-            )
-            await db.commit()
-        except Exception as e:
-            await db.rollback()
-            logger.error(
-                "Linked spool %s in Spoolman but failed to persist local slot assignment "
-                "(printer=%s ams=%s tray=%s): %s",
-                spool_id,
-                p_id,
-                a_id,
-                t_id,
-                e,
-            )
-            raise HTTPException(
-                status_code=500,
-                detail=(
-                    "Spool linked in Spoolman but the local slot assignment could not be saved. "
-                    "Please re-open the link dialog to retry."
-                ),
-            ) from e
+            await client.merge_spool_extra(spool_id, {"tag": json.dumps(spool_tag)})
+        except SpoolmanNotFoundError:
+            raise HTTPException(status_code=404, detail="Spool not found in Spoolman")
+        except SpoolmanClientError:
+            raise HTTPException(status_code=502, detail="Spoolman rejected the request")
+        except SpoolmanUnavailableError:
+            raise HTTPException(status_code=503, detail="Spoolman is not reachable")
 
-    logger.info("Linked Spoolman spool %s to tag %s", spool_id, spool_tag)
+        # Upsert slot assignment locally when printer context was supplied
+        if printer_context:
+            p_id, a_id, t_id = printer_context
+            try:
+                await db.execute(
+                    text(
+                        "INSERT INTO spoolman_slot_assignments"
+                        " (printer_id, ams_id, tray_id, spoolman_spool_id)"
+                        " VALUES (:printer_id, :ams_id, :tray_id, :spool_id)"
+                        " ON CONFLICT(printer_id, ams_id, tray_id)"
+                        " DO UPDATE SET spoolman_spool_id = excluded.spoolman_spool_id"
+                    ),
+                    {"printer_id": p_id, "ams_id": a_id, "tray_id": t_id, "spool_id": spool_id},
+                )
+                await db.commit()
+            except Exception as e:
+                await db.rollback()
+                logger.error(
+                    "Linked spool %s in Spoolman but failed to persist local slot assignment "
+                    "(printer=%s ams=%s tray=%s): %s",
+                    spool_id,
+                    p_id,
+                    a_id,
+                    t_id,
+                    e,
+                )
+                raise HTTPException(
+                    status_code=500,
+                    detail=(
+                        "Spool linked in Spoolman but the local slot assignment could not be saved. "
+                        "Please re-open the link dialog to retry."
+                    ),
+                ) from e
 
-    # #1457: clear stale tag links on OTHER spools still claiming this exact tag.
-    # A given AMS-slot tag (RFID or deterministic fallback) belongs to one
-    # physical spool; without this cleanup the previous holder's extra.tag
-    # keeps it visible in the hover card / fill-level lookup.
-    await _clear_stale_tag_links(
-        client,
-        tag=spool_tag,
-        keep_spool_id=spool_id,
-        log_context=(
-            f"printer={printer_context[0]} ams={printer_context[1]} tray={printer_context[2]}"
-            if printer_context
-            else "via /spools/{id}/link"
-        ),
-    )
+        logger.info("Linked Spoolman spool %s to tag %s", spool_id, spool_tag)
+
+        # #1457: clear stale tag links on OTHER spools still claiming this exact tag.
+        # A given AMS-slot tag (RFID or deterministic fallback) belongs to one
+        # physical spool; without this cleanup the previous holder's extra.tag
+        # keeps it visible in the hover card / fill-level lookup.
+        await _clear_stale_tag_links(
+            client,
+            tag=spool_tag,
+            keep_spool_id=spool_id,
+            log_context=(
+                f"printer={printer_context[0]} ams={printer_context[1]} tray={printer_context[2]}"
+                if printer_context
+                else "via /spools/{id}/link"
+            ),
+            lock_held=True,
+        )
 
     # Auto-configure AMS slot via MQTT (best-effort; tag link and slot assignment already persisted)
     if printer_context:

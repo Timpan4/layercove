@@ -80,3 +80,36 @@ class TestAmsHasFilament:
         assert _ams_has_filament(loaded) is True
         empty_int = {"tray_exist_bits": 0xED}  # no tray array, int ignored
         assert _ams_has_filament(empty_int) is False
+
+
+class TestAmsHasFilamentFromMqttState:
+    """The gate must work on units as normalized by the MQTT handler, not hand-built dicts."""
+
+    def test_loaded_but_unconfigured_tray_counts_as_filament(self):
+        from backend.app.services.bambu_backend import _ams_units
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="TEST123", access_code="12345678")
+        client._process_message(
+            {
+                "print": {
+                    "ams": {
+                        "tray_exist_bits": "1",
+                        "ams": [{"id": "0", "humidity": "3", "tray": [{"id": "0"}, {"id": "1"}]}],
+                    }
+                }
+            }
+        )
+
+        assert _ams_units(client.state)[0].has_filament is True
+
+    def test_empty_unit_still_reports_empty(self):
+        from backend.app.services.bambu_backend import _ams_units
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="TEST123", access_code="12345678")
+        client._process_message(
+            {"print": {"ams": {"tray_exist_bits": "10", "ams": [{"id": "0", "tray": [{"id": "0"}]}]}}}
+        )
+
+        assert _ams_units(client.state)[0].has_filament is False

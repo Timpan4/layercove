@@ -101,7 +101,10 @@ class ExportService:
         """
         # Build query
         query = (
-            select(PrintArchive).options(selectinload(PrintArchive.project)).order_by(PrintArchive.created_at.desc())
+            select(PrintArchive)
+            .options(selectinload(PrintArchive.project))
+            .where(PrintArchive.deleted_at.is_(None))
+            .order_by(PrintArchive.created_at.desc())
         )
 
         # Apply filters

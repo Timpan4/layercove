@@ -23,6 +23,35 @@ DEFAULT_FILAMENT_DIAMETER = 1.75  # mm
 DEFAULT_FILAMENT_DENSITY = 1.24  # g/cm³ (PLA)
 
 
+_PLATE_MEMBER_RE = re.compile(r"^Metadata/plate_(\d+)\.(?:gcode|json|png)$")
+
+
+def plate_ids_in_3mf(zf: zipfile.ZipFile) -> set[int]:
+    """Plate indices a 3MF defines (plate members, ``plater_id``, slice_info).
+
+    A file with no plate metadata is a single-plate project, so ``{1}``.
+    """
+    ids = {int(m.group(1)) for n in zf.namelist() if (m := _PLATE_MEMBER_RE.match(n))}
+    for member, pattern in (
+        ("Metadata/model_settings.config", rb'<metadata key="plater_id" value="(\d+)"'),
+        ("Metadata/slice_info.config", rb'<metadata key="index" value="(\d+)"'),
+    ):
+        try:
+            ids.update(int(v) for v in re.findall(pattern, zf.read(member)))
+        except KeyError:
+            pass
+    return ids or {1}
+
+
+def is_known_plate(file_path: Path, plate_id: int) -> bool:
+    """True when ``plate_id`` exists in the 3MF; unreadable archives pass through."""
+    try:
+        with zipfile.ZipFile(file_path, "r") as zf:
+            return plate_id in plate_ids_in_3mf(zf)
+    except (zipfile.BadZipFile, OSError):
+        return True
+
+
 def parse_gcode_layer_filament_usage(gcode_content: str) -> dict[int, dict[int, float]]:
     """Parse G-code to extract per-layer, per-filament cumulative extrusion in mm.
 

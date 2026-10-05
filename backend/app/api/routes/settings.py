@@ -554,6 +554,25 @@ async def create_backup(
         )
 
 
+def _resume_background_services() -> None:
+    """Restart the schedulers paused for a restore that then failed."""
+    from backend.app.core.tasks import spawn_background_task
+    from backend.app.services.notification_service import notification_service
+    from backend.app.services.print_scheduler import scheduler as print_scheduler
+    from backend.app.services.smart_plug_manager import smart_plug_manager
+
+    try:
+        spawn_background_task(print_scheduler.run(), name="print-scheduler")
+        smart_plug_manager.start_scheduler()
+        notification_service.start_digest_scheduler()
+        logger.info("Resumed background services after failed restore")
+    except Exception as e:
+        logger.warning("Could not resume background services after failed restore: %s", e)
+
+
+_LEGACY_RESTORE_DROP_TABLES = ("spoolman_slot_assignments", "spoolman_k_profile")
+
+
 async def _import_sqlite_to_postgres(sqlite_path: Path, postgres_url: str):
     """Import data from a SQLite database file into the current PostgreSQL database.
 
@@ -609,26 +628,13 @@ async def _import_sqlite_to_postgres(sqlite_path: Path, postgres_url: str):
             # restore path the global default (no timeout) applies.
             await conn.execute(text("SET LOCAL lock_timeout = '10s'"))
 
-            # Drop every existing table in the public schema with CASCADE
-            # rather than `metadata.drop_all`. Two reasons:
-            #   1. The user's live DB may carry orphan tables from removed
-            #      features (e.g. the legacy `spoolman_slot_assignments`,
-            #      `spoolman_k_profile`) that hold FK constraints back to
-            #      ORM tables. `drop_all` doesn't know they exist and emits
-            #      `DROP TABLE printers` without CASCADE — Postgres refuses
-            #      and the whole restore aborts (#XXXX).
-            #   2. Even within the metadata, `drop_all` is FK-ordered and
-            #      breaks if a future schema rename leaves old constraints
-            #      around. CASCADE is the right tool for a destructive
-            #      restore: the user is intentionally wiping state.
-            await conn.execute(
-                text(
-                    "DO $$ DECLARE r RECORD; BEGIN "
-                    "FOR r IN (SELECT tablename FROM pg_tables WHERE schemaname = 'public') LOOP "
-                    "EXECUTE 'DROP TABLE IF EXISTS public.' || quote_ident(r.tablename) || ' CASCADE'; "
-                    "END LOOP; END $$;"
-                )
-            )
+            # Drop the ORM tables (plus known legacy ones) with CASCADE rather
+            # than `metadata.drop_all`, and never unrelated public-schema
+            # tables that may belong to another application. CASCADE removes
+            # FK constraints that orphan legacy tables hold back to ORM
+            # tables, which would otherwise make a plain DROP fail.
+            for table_name in [*metadata.tables, *_LEGACY_RESTORE_DROP_TABLES]:
+                await conn.execute(text(f'DROP TABLE IF EXISTS public."{table_name}" CASCADE'))  # noqa: S608  # nosec B608
             await conn.run_sync(metadata.create_all)
 
         # Restore FK definitions in metadata (needed for re-adding later)
@@ -845,13 +851,16 @@ async def restore_backup(
             # pass in the PostgreSQL restore path needs AccessExclusiveLock
             # on every public table, producing an AB/BA deadlock and a
             # full restore rollback. Successful restore already requires a
-            # container restart, so we don't restart the services here.
+            # container restart, so we only restart the services when the
+            # restore fails and the process keeps running.
+            services_paused = False
             try:
                 from backend.app.services.notification_service import notification_service
                 from backend.app.services.print_scheduler import scheduler as print_scheduler
                 from backend.app.services.smart_plug_manager import smart_plug_manager
 
                 logger.info("Pausing background services for restore...")
+                services_paused = True
                 print_scheduler.stop()
                 smart_plug_manager.stop_scheduler()
                 notification_service.stop_digest_scheduler()
@@ -1025,9 +1034,13 @@ async def restore_backup(
             # body (e.g. the key-write OSError → 500). The blanket
             # except Exception below would otherwise swallow them and replace
             # the operator-facing detail with a generic message.
+            if services_paused:
+                _resume_background_services()
             raise
         except Exception as e:
             logger.error("Restore failed: %s", e, exc_info=True)
+            if services_paused:
+                _resume_background_services()
             return JSONResponse(
                 status_code=500,
                 content={"success": False, "message": "Restore failed. Check server logs for details."},

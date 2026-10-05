@@ -92,6 +92,17 @@ class TestResolveGlobalTrayId:
         mapping = []
         assert _resolve_global_tray_id(1, mapping) == 0
 
+    def test_h2d_two_external_trays_not_collapsed_to_first(self):
+        """H2D sends [254, 255] as [-1, -1]; each slot must not resolve to tray 254."""
+        ams_trays = {254: {"tray_type": "PLA"}, 255: {"tray_type": "PETG"}}
+        mapping = [-1, -1]
+        assert _resolve_global_tray_id(1, mapping, ams_trays) == 254
+        assert _resolve_global_tray_id(2, mapping, ams_trays) == 255
+
+    def test_single_external_tray_resolved_from_minus_one(self):
+        ams_trays = {0: {}, 1: {}, 254: {"tray_type": "PLA"}}
+        assert _resolve_global_tray_id(1, [-1], ams_trays) == 254
+
 
 class TestFallbackTagHelpers:
     """Tests for frontend-mirrored fallback tag helpers."""

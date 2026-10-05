@@ -142,6 +142,10 @@ class CalibrationResponse(BaseModel):
 class WriteTagRequest(BaseModel):
     device_id: str = Field(..., max_length=50)
     spool_id: int = Field(..., gt=0)
+    # Which inventory spool_id refers to. Local and Spoolman IDs overlap, so
+    # when set the lookup is restricted to that inventory. None keeps the
+    # legacy local-first-then-Spoolman resolution.
+    data_origin: Literal["local", "spoolman"] | None = None
 
 
 class WriteTagResultRequest(BaseModel):

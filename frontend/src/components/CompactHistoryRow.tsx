@@ -172,13 +172,13 @@ export function CompactHistoryRow({
             {formatDuration(item.print_time_seconds)}
           </span>
         )}
-        {item.created_by_username && (
+        {(item.created_by_username ?? item.started_by_username) && (
           <span
             className="flex items-center gap-1 shrink-0"
-            title={t('queue.addedBy', { name: item.created_by_username })}
+            title={t('queue.addedBy', { name: item.created_by_username ?? item.started_by_username })}
           >
             <User className="w-3 h-3" />
-            <span className="truncate max-w-[120px]">{item.created_by_username}</span>
+            <span className="truncate max-w-[120px]">{item.created_by_username ?? item.started_by_username}</span>
           </span>
         )}
       </div>

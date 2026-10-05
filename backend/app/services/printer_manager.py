@@ -658,6 +658,13 @@ class PrinterManager:
             )
         elif isinstance(event, JobLifecycle):
             dedupe_key = (printer_id, event.correlation_id, event.kind)
+            if event.kind == "started" and any(
+                (printer_id, event.correlation_id, kind) in self._seen_lifecycle_events
+                for kind in ("completed", "failed", "cancelled")
+            ):
+                # A start after that job already ended is a new job reusing a stale
+                # provider id; forget the printer's old events so it isn't dropped.
+                self._seen_lifecycle_events = {k for k in self._seen_lifecycle_events if k[0] != printer_id}
             if dedupe_key in self._seen_lifecycle_events:
                 return
             self._seen_lifecycle_events.add(dedupe_key)

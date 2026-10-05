@@ -82,7 +82,7 @@ class TestStorePrintDataNo3mf:
         db = AsyncMock()
         # No queue lookup for the no-3MF branch — only the DELETE.
         delete_result = MagicMock()
-        db.execute = AsyncMock(side_effect=[delete_result])
+        db.execute = AsyncMock(side_effect=[MagicMock(), delete_result])
         db.add = MagicMock()
         db.commit = AsyncMock()
 
@@ -171,7 +171,7 @@ class TestStorePrintDataNo3mf:
         queue_result = MagicMock()
         queue_result.scalar_one_or_none.return_value = queue_item
         delete_result = MagicMock()
-        db.execute = AsyncMock(side_effect=[queue_result, delete_result])
+        db.execute = AsyncMock(side_effect=[MagicMock(), queue_result, delete_result])
         db.add = MagicMock()
         db.commit = AsyncMock()
 
@@ -366,6 +366,78 @@ class TestReportUsageRemainDelta:
         # was never reached because slot 0 was already in the handled set.
         client.use_spool.assert_awaited_once_with(99, 50.0)
         client.get_spool.assert_not_called()
+
+
+class TestRemainDeltaScopedToPrintSlots:
+    """The remain% fallback must only charge slots the print used, and must
+    charge the spool that was assigned at print start."""
+
+    @staticmethod
+    async def _run_report(tracking, current_raw, resolved_spool_id=None):
+        from backend.app.services.spoolman_tracking import report_usage
+
+        db = AsyncMock()
+        select_result = MagicMock()
+        select_result.scalar_one_or_none.return_value = tracking
+        db.execute = AsyncMock(return_value=select_result)
+        db.delete = AsyncMock()
+        db.commit = AsyncMock()
+
+        client = AsyncMock()
+        client.get_spool = AsyncMock(side_effect=lambda sid: {"id": sid, "filament": {"weight": 1000.0}})
+        client.use_spool = AsyncMock()
+
+        printer_manager = MagicMock()
+        printer_manager.get_status.return_value = SimpleNamespace(raw_data=current_raw, tray_change_log=[])
+
+        with (
+            patch("backend.app.services.spoolman_tracking.async_session", lambda: _AsyncCtx(db)),
+            patch("backend.app.api.routes.settings.get_setting", AsyncMock(return_value="true")),
+            patch(
+                "backend.app.services.spoolman_tracking._get_spoolman_client_with_fallback",
+                AsyncMock(return_value=client),
+            ),
+            patch("backend.app.services.spoolman_tracking._get_printer_serial", AsyncMock(return_value="serial")),
+            patch(
+                "backend.app.services.spoolman_tracking._resolve_spool_id_via_slot_assignment",
+                AsyncMock(return_value=resolved_spool_id),
+            ),
+            patch("backend.app.services.printer_manager.printer_manager", printer_manager),
+        ):
+            await report_usage(printer_id=1, archive_id=42)
+        return client
+
+    @pytest.mark.asyncio
+    async def test_unused_slot_is_not_charged(self):
+        tracking = SimpleNamespace(
+            filament_usage=None,
+            ams_trays={},
+            slot_to_tray=[0],  # print uses AMS0-T0 only
+            tray_remain_start={
+                "0-0": {"remain": 80, "tray_uuid": ""},
+                "0-1": {"remain": 90, "tray_uuid": ""},
+            },
+        )
+        current = {
+            "ams": [
+                {"id": 0, "tray": [{"id": 0, "tray_uuid": "", "remain": 70}, {"id": 1, "tray_uuid": "", "remain": 10}]}
+            ]
+        }
+        client = await self._run_report(tracking, current, resolved_spool_id=7)
+        client.use_spool.assert_awaited_once_with(7, 100.0)
+
+    @pytest.mark.asyncio
+    async def test_charges_spool_assigned_at_print_start(self):
+        tracking = SimpleNamespace(
+            filament_usage=None,
+            ams_trays={},
+            slot_to_tray=None,
+            tray_remain_start={"0-0": {"remain": 80, "tray_uuid": "", "spool_id": 7}},
+        )
+        current = {"ams": [{"id": 0, "tray": [{"id": 0, "tray_uuid": "", "remain": 70}]}]}
+        # Slot was reassigned to spool 8 mid-print.
+        client = await self._run_report(tracking, current, resolved_spool_id=8)
+        client.use_spool.assert_awaited_once_with(7, 100.0)
 
 
 class TestPartialUsageRemainDelta:

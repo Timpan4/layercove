@@ -341,3 +341,10 @@ class TestExternalStorageCheck:
         with _Env(state=_state(store_to_sdcard=False)):
             result = await run_connection_diagnostic("192.168.1.50", printer=_printer(model="X1C"))
         assert _statuses(result)["external_storage"] == "fail"
+
+
+def test_fresh_printer_state_has_unknown_store_to_sdcard():
+    """A state that never saw home_flag must not read as an explicit False."""
+    from backend.app.services.bambu_mqtt import PrinterState
+
+    assert PrinterState().store_to_sdcard is None

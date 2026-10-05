@@ -112,9 +112,9 @@ async def delete_old_history(
     printer_id: int,
     days: int = Query(default=30, ge=1, le=365, description="Delete data older than X days"),
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTER_SENSOR_HISTORY_READ),
+    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ):
-    """Delete old printer sensor history for a printer."""
+    """Delete old printer sensor history for a printer (admin only: destructive)."""
     cutoff = datetime.now(timezone.utc) - timedelta(days=days)
 
     result = await db.execute(

@@ -8,9 +8,8 @@ constraint still references `printers`), Postgres refuses with
 `DependentObjectsStillExistError` and the entire restore aborts before
 any rows land.
 
-The fix: drop every table in the `public` schema with `CASCADE` via a
-`pg_tables`-iterating PL/pgSQL `DO` block, then re-create from the
-ORM metadata. CASCADE removes external constraints alongside the table,
+The fix: drop every ORM table (and known legacy orphans) with `CASCADE`,
+then re-create from the ORM metadata. Unrelated public-schema tables are left alone. CASCADE removes external constraints alongside the table,
 so orphan tables can no longer block the restore.
 
 These tests guard against a regression to `metadata.drop_all` (which
@@ -25,6 +24,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+
+import backend.app.models.slice_job  # noqa: F401  (register every FK target in Base.metadata)
 
 
 def _make_sqlite_source() -> Path:
@@ -90,19 +91,12 @@ async def test_restore_drops_tables_with_cascade_not_metadata_drop_all():
         ):
             await settings_module._import_sqlite_to_postgres(sqlite_path, "postgresql+asyncpg://test/test")
 
-        # 1. CASCADE drop is emitted, hitting every public-schema table.
-        cascade_drops = [s for s in executed_sql if "CASCADE" in s and "pg_tables" in s]
-        assert cascade_drops, (
-            "Expected a CASCADE-aware DROP TABLE iteration over the public "
-            "schema in the restore SQL stream. Without it, orphan tables "
-            "with FK constraints back to ORM tables (e.g. legacy "
-            "spoolman_slot_assignments) abort the restore. Captured SQL: " + "; ".join(s[:120] for s in executed_sql)
-        )
-        # 2. The DO block iterates pg_tables (not just one DROP) so every
-        #    table is handled, including orphan ones not in the ORM.
-        do_block = cascade_drops[0]
-        assert "DROP TABLE" in do_block
-        assert "schemaname = 'public'" in do_block
+        # 1. Every ORM table and known legacy orphan is dropped with CASCADE.
+        cascade_drops = [s for s in executed_sql if "DROP TABLE" in s and "CASCADE" in s]
+        dropped = {s.split('public."')[1].split('"')[0] for s in cascade_drops}
+        assert {"printers", "users", "spoolman_slot_assignments"} <= dropped, dropped
+        # 2. Restore never enumerates pg_tables (would drop unrelated tables).
+        assert not any("pg_tables" in s for s in executed_sql)
 
         # 3. `metadata.drop_all` is never invoked — that was the buggy
         #    path. `metadata.create_all` is fine; it rebuilds the schema
@@ -124,11 +118,11 @@ async def test_restore_drops_tables_with_cascade_not_metadata_drop_all():
 
 
 @pytest.mark.asyncio
-async def test_restore_cascade_drop_targets_only_public_schema():
-    """Defensive: the CASCADE drop must scope to the `public` schema so a
-    shared Postgres holding non-Bambuddy tables in other schemas doesn't
-    lose data on restore."""
+async def test_restore_does_not_drop_unrelated_public_tables():
+    """A shared Postgres may hold another application's tables in `public`;
+    restore must only drop LayerCove's own tables."""
     from backend.app.api.routes import settings as settings_module
+    from backend.app.core.database import Base
 
     sqlite_path = _make_sqlite_source()
     try:
@@ -152,12 +146,11 @@ async def test_restore_cascade_drop_targets_only_public_schema():
         ):
             await settings_module._import_sqlite_to_postgres(sqlite_path, "postgresql+asyncpg://test/test")
 
-        cascade = next((s for s in executed_sql if "CASCADE" in s), None)
-        assert cascade is not None
-        # Schema scope check: we're not iterating `pg_class` /
-        # `information_schema.tables` without a schema filter, which
-        # would catch system catalogs or other-app tables.
-        assert "schemaname = 'public'" in cascade, f"CASCADE drop must filter to public schema; got: {cascade[:200]}"
-        assert "schemaname = '*'" not in cascade
+        drops = [s for s in executed_sql if "DROP TABLE" in s]
+        allowed = set(Base.metadata.tables) | set(settings_module._LEGACY_RESTORE_DROP_TABLES)
+        assert drops
+        for stmt in drops:
+            assert stmt.split('public."')[1].split('"')[0] in allowed, stmt
+        assert not any("pg_tables" in s for s in executed_sql)
     finally:
         sqlite_path.unlink(missing_ok=True)

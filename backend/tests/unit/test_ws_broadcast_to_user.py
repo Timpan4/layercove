@@ -62,6 +62,19 @@ async def test_broadcast_to_user_none_fans_out_to_all():
 
 
 @pytest.mark.asyncio
+async def test_broadcast_to_user_none_skips_auth_enabled_connections():
+    """With auth enabled an ownerless item must not reach every logged-in user."""
+    mgr = ConnectionManager()
+    viewer = _mock_conn(5)
+    viewer.state.bambuddy_auth_required = True
+    mgr.active_connections = [viewer]
+
+    await mgr.broadcast_to_user(None, {"type": "queue_item_uploading", "queue_item_id": 1})
+
+    viewer.send_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_send_queue_item_uploading_carries_total_bytes():
     mgr = ConnectionManager()
     target = _mock_conn(42)

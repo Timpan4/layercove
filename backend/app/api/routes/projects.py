@@ -14,9 +14,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from backend.app.api.routes.library import get_library_dir
-from backend.app.core.auth import RequireCameraStreamTokenIfAuthEnabled, RequirePermissionIfAuthEnabled
+from backend.app.core.auth import (
+    RequireCameraStreamTokenIfAuthEnabled,
+    RequirePermissionIfAuthEnabled,
+    require_caller_identity_if_auth_enabled,
+)
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
+from backend.app.core.identity import CallerIdentity
 from backend.app.core.permissions import Permission
 from backend.app.models.archive import PrintArchive
 from backend.app.models.library import LibraryFile, LibraryFolder
@@ -236,7 +241,7 @@ async def list_projects(
         # Get archive previews (up to 6 most recent)
         archives_result = await db.execute(
             select(PrintArchive)
-            .where(PrintArchive.project_id == project.id)
+            .where(PrintArchive.project_id == project.id, PrintArchive.deleted_at.is_(None))
             .order_by(PrintArchive.created_at.desc())
             .limit(6)
         )
@@ -692,7 +697,7 @@ async def list_project_archives(
     query = (
         select(PrintArchive)
         .options(selectinload(PrintArchive.project), selectinload(PrintArchive.created_by))
-        .where(PrintArchive.project_id == project_id)
+        .where(PrintArchive.project_id == project_id, PrintArchive.deleted_at.is_(None))
         .order_by(PrintArchive.created_at.desc())
         .limit(limit)
         .offset(offset)
@@ -1485,7 +1490,7 @@ async def get_project_timeline(
     # Get archives and add events
     archives_result = await db.execute(
         select(PrintArchive)
-        .where(PrintArchive.project_id == project_id)
+        .where(PrintArchive.project_id == project_id, PrintArchive.deleted_at.is_(None))
         .order_by(PrintArchive.created_at.desc())
         .limit(limit)
     )
@@ -1779,9 +1784,13 @@ async def import_project(
 async def import_project_file(
     file: UploadFile = File(...),
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.PROJECTS_CREATE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.PROJECTS_CREATE)),
 ):
-    """Import a project from a ZIP or JSON file."""
+    """Import a project from a ZIP or JSON file.
+
+    Linked folders/files write to the library, so they additionally need the
+    library upload permission (``can_manage_library`` for API keys).
+    """
     if not file.filename:
         raise HTTPException(status_code=400, detail="No filename provided")
 
@@ -1810,6 +1819,9 @@ async def import_project_file(
             raise HTTPException(status_code=400, detail="Invalid JSON file")
     else:
         raise HTTPException(status_code=400, detail="File must be .zip or .json")
+
+    if data.get("linked_folders"):
+        caller.require_permissions(Permission.LIBRARY_UPLOAD)
 
     # Create the project
     project = Project(
@@ -1904,11 +1916,7 @@ async def import_project_file(
             # parts because ``safe_join_under`` rejects parts that start
             # with ``/``, and a single combined string would hide an
             # embedded ``..`` segment behind a forward slash.
-            file_disk_path = safe_join_under(
-                library_dir,
-                folder_name,
-                *Path(relative_path).parts,
-            )
+            file_disk_path = safe_join_under(folder_path, *Path(relative_path).parts)
             file_disk_path.parent.mkdir(parents=True, exist_ok=True)
             file_disk_path.write_bytes(file_content)
 

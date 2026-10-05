@@ -153,6 +153,13 @@ class TestCalculateNextRun:
         monkeypatch.setattr(lb_module, "ZoneInfo", _always_missing)
         assert lb_module._local_zone() is timezone.utc
 
+    @pytest.mark.parametrize("bad", ["/etc/localtime", "../UTC", "Europe//Berlin"])
+    def test_malformed_tz_falls_back_to_utc(self, monkeypatch, bad):
+        from backend.app.services import local_backup as lb_module
+
+        monkeypatch.setenv("TZ", bad)
+        assert str(lb_module._local_zone()) == "UTC"
+
     def test_dst_spring_forward_gap_does_not_crash(self, monkeypatch):
         """Europe/Berlin spring-forward 2026-03-29 jumps 02:00 → 03:00 local;
         02:30 wall-clock does not exist. ``replace(hour=2, minute=30)`` should

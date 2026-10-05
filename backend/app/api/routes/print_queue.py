@@ -183,6 +183,16 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
         except json.JSONDecodeError:
             nozzles_info_parsed = None
 
+    # Rows written before intake validation may hold malformed JSON; drop it
+    # rather than failing every queue read on response-model validation.
+    if not (
+        isinstance(nozzle_mapping_parsed, list)
+        and all(isinstance(n, int) and not isinstance(n, bool) for n in nozzle_mapping_parsed)
+    ):
+        nozzle_mapping_parsed = None
+    if not (isinstance(nozzles_info_parsed, list) and all(isinstance(n, dict) for n in nozzles_info_parsed)):
+        nozzles_info_parsed = None
+
     # Create response with parsed ams_mapping
     item_dict = {
         "id": item.id,
@@ -223,6 +233,8 @@ def _enrich_response(item: PrintQueueItem) -> PrintQueueItemResponse:
         # User tracking (Issue #206)
         "created_by_id": item.created_by_id,
         "created_by_username": item.created_by.username if item.created_by else None,
+        "started_by_id": item.started_by_id,
+        "started_by_username": item.started_by.username if item.started_by else None,
         # Batch grouping
         "batch_id": item.batch_id,
         "batch_name": item.batch.name if item.batch else None,
@@ -506,6 +518,12 @@ async def enqueue_print(data, db, caller, *, before_commit=None, check_only=Fals
             and library_file.created_by_id != current_user.id
         ):
             raise HTTPException(404, "Library file not found")
+        # The cleanup flag makes the scheduler delete the library entry after
+        # dispatch, so it needs the same rights as DELETE /library/files/{id}.
+        if data.cleanup_library_after_dispatch:
+            decision = caller.require_ownership(Permission.LIBRARY_DELETE_ALL, Permission.LIBRARY_DELETE_OWN)
+            if not decision.can_access_all and library_file.created_by_id != decision.owner_id:
+                raise HTTPException(403, "You can only clean up your own library files")
         # Bambu SD card is FAT32/exFAT — illegal filename chars would 553 at
         # FTP upload time (#1540). Reject at queue time so the user gets the
         # actionable error before waiting in queue.
@@ -563,9 +581,10 @@ async def enqueue_print(data, db, caller, *, before_commit=None, check_only=Fals
                 logger.info("Extracted filament types for model-based queue: %s", filament_types)
 
     # If filament overrides are provided, update required_filament_types to match override types
-    filament_overrides_json = None
+    # Specific-printer jobs store them too: their "Force color match" guards are
+    # enforced by the scheduler against the assigned printer.
+    filament_overrides_json = json.dumps(data.filament_overrides) if data.filament_overrides else None
     if data.filament_overrides and target_model_norm:
-        filament_overrides_json = json.dumps(data.filament_overrides)
         # Update required_filament_types from overrides so scheduler validates against overridden types
         override_types = sorted({o["type"] for o in data.filament_overrides if "type" in o})
         if override_types:
@@ -593,7 +612,6 @@ async def enqueue_print(data, db, caller, *, before_commit=None, check_only=Fals
             raise HTTPException(400, "Cannot add items to a non-active batch")
         if (
             current_user is not None
-            and existing_batch.created_by_id is not None
             and existing_batch.created_by_id != current_user.id
             and not current_user.has_permission(Permission.QUEUE_UPDATE_ALL.value)
         ):
@@ -1589,8 +1607,8 @@ async def start_queue_item(
     caller.require_printer_access(item.printer_id)
 
     # Ownership check — softer than /cancel because /start is the entry point
-    # for #1670's VP-import flow: an unowned item is claimable by the first
-    # _OWN holder who clicks ▶, and the route below credits them as owner.
+    # for #1670's VP-import flow: an unowned item is startable by any _OWN
+    # holder who clicks ▶; the route below records them as starter only.
     # An item with a DIFFERENT owner → 403.
     if not can_modify_all and user is not None:
         if item.created_by_id is not None and item.created_by_id != user.id:
@@ -1622,19 +1640,18 @@ async def start_queue_item(
     # "scheduler re-blocked on same deficit" forever.
     if skip_filament_check:
         item.skip_filament_check = True
-    # Credit the clicker as the item's owner when no prior owner is set —
-    # VP-uploaded queue items arrive over FTP unattributed, so without this
-    # the print log's User column stays blank even when auth is on
-    # (#1670). An item that already has a creator (UI-added queue items)
-    # keeps that attribution; the dispatcher is not promoted over the
-    # original uploader.
+    # Record the clicker for an ownerless item (#1670). VP-uploaded queue
+    # items arrive over FTP unattributed, so without this the print log's User
+    # column stays blank even when auth is on. It goes in started_by_id, not
+    # created_by_id: created_by_id is the authorization boundary, and an
+    # own-only starter must not gain update/cancel rights over the item.
     if user is not None and item.created_by_id is None:
-        item.created_by_id = user.id
+        item.started_by_id = user.id
     await db.commit()
     from backend.app.services.print_scheduler import scheduler
 
     scheduler.notify_queue_changed()
-    await db.refresh(item, ["archive", "printer", "library_file", "created_by", "batch"])
+    await db.refresh(item, ["archive", "printer", "library_file", "created_by", "started_by", "batch"])
 
     logger.info(
         "Manually started queue item %s (cleared manual_start; skip_filament_check=%s)",

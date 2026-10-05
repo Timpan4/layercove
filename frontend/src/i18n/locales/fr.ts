@@ -2672,7 +2672,7 @@ export default {
         emailClaim: 'Claim e-mail',
         emailClaimDesc: "Claim JWT utilisé comme identité e-mail. Utiliser 'preferred_username' ou 'upn' pour Azure Entra ID (qui n'envoie pas email_verified). Utiliser uniquement des noms de claims de confiance.",
         emailClaimPlaceholder: 'e-mail',
-        emailClaimCustomClaimAutoLinkWarning: 'Les revendications personnalisées sont sûres pour la liaison auto uniquement lorsque la valeur est administrée par le tenant (par ex. Azure Entra ID upn / preferred_username). N\'activez pas la liaison auto si votre IdP permet aux utilisateurs de s\'auto-attribuer cette revendication.',
+        emailClaimCustomClaimAutoLinkWarning: "La liaison auto ne fonctionne qu'avec le claim standard 'email' et un e-mail vérifié. Les claims personnalisés ne sont jamais utilisés pour lier des comptes existants, et l'enregistrement de cette combinaison est refusé.",
         requireEmailVerified: 'Exiger la vérification e-mail',
         requireEmailVerifiedDesc: "N'accepter le claim e-mail que si le fournisseur le marque comme vérifié.",
         requireEmailVerifiedWarning: "Avertissement : l'e-mail sera accepté sans vérification. À utiliser uniquement avec des fournisseurs de confiance.",
@@ -4170,6 +4170,8 @@ export default {
     runningWithProgressMultiPlate: 'Plateau {{plateIndex}} sur {{plateCount}} • {{name}} – {{stage}} ({{percent}} %) – {{elapsed}}',
     completedToast: '{{name}} découpé',
     failedTitle: 'Échec du découpage',
+    embeddedSettingsTitle: 'Embedded settings used',
+    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
     failedToast: 'Échec du découpage de {{name}} : {{detail}}',
     tier: {
       local: 'Importé',

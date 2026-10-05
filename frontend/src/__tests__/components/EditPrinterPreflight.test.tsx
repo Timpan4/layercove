@@ -171,4 +171,27 @@ describe('EditPrinterModal pre-flight', () => {
 
     expect(updated).toBe(false);
   });
+
+  it('asks for confirmation before entering maintenance on a printing printer', async () => {
+    let updateBody: Record<string, unknown> | null = null;
+    server.use(
+      http.get('/api/v1/printers/', () => HttpResponse.json([{ ...mockPrinter, is_active: true }])),
+      http.get('/api/v1/printers/:id/status', () => HttpResponse.json({ ...mockStatus, state: 'RUNNING' })),
+      http.post('/api/v1/printers/diagnostic', () => HttpResponse.json({ overall: 'ok', checks: [] })),
+      http.patch('/api/v1/printers/:id', async ({ request }) => {
+        updateBody = (await request.json()) as Record<string, unknown>;
+        return HttpResponse.json({ ...mockPrinter, ...updateBody });
+      }),
+    );
+
+    await openEditModal();
+    await userEvent.click(screen.getByLabelText(/maintenance mode/i));
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    expect(await screen.findByText('Enter maintenance mode mid-print?')).toBeInTheDocument();
+    expect(updateBody).toBeNull();
+
+    await userEvent.click(screen.getByRole('button', { name: /^enter maintenance mode$/i }));
+    await waitFor(() => expect(updateBody?.is_active).toBe(false));
+  });
 });

@@ -593,11 +593,10 @@ class TestQueueOwnershipPermissions(TestOwnershipPermissionsSetup):
         self, async_client: AsyncClient, auth_setup, queue_item_factory, db_session
     ):
         """Operator can start a NULL-owner queue item (VP-uploaded, #1670)
-        and claims ownership in the process.
+        and is recorded as the starter, but does not become its owner.
 
-        Stop and Cancel reject unowned items for _OWN holders (destructive,
-        no "I own it" claim available), but Start is the entry point for the
-        VP-import flow where attribution happens at click-time.
+        Stop and Cancel reject unowned items for _OWN holders (destructive),
+        so starting must not hand out the ownership that gates them.
         """
         from backend.app.models.print_queue import PrintQueueItem
 
@@ -609,10 +608,16 @@ class TestQueueOwnershipPermissions(TestOwnershipPermissionsSetup):
         )
 
         assert response.status_code == 200
-        # Ownership claimed: operator is now the item's owner.
         await db_session.refresh(item)
         refetch = await db_session.get(PrintQueueItem, item.id)
-        assert refetch.created_by_id == auth_setup["operator_user"]["id"]
+        assert refetch.created_by_id is None
+        assert refetch.started_by_id == auth_setup["operator_user"]["id"]
+
+        cancel = await async_client.post(
+            f"/api/v1/queue/{item.id}/cancel",
+            headers={"Authorization": f"Bearer {auth_setup['operator_token']}"},
+        )
+        assert cancel.status_code == 403
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -1057,6 +1062,61 @@ class TestLibraryOwnershipPermissions(TestOwnershipPermissionsSetup):
         result = response.json()
         # Should only delete the owned file; other_file is skipped (but skipped count not in response)
         assert result["deleted_files"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_folder_activity_hides_other_users_file_timestamps(
+        self, async_client: AsyncClient, auth_setup, library_file_factory, library_folder_factory, db_session
+    ):
+        """latest_activity_at must not leak updated_at of files the caller can't read."""
+        from datetime import datetime, timedelta, timezone
+
+        from backend.app.models.archive import PrintArchive  # noqa: F401
+        from backend.app.models.library import LibraryFolder
+
+        folder = await library_folder_factory(name="Shared", project_id=None)
+        secret_time = datetime.now(timezone.utc) + timedelta(days=30)
+        await library_file_factory(
+            folder_id=folder.id,
+            created_by_id=auth_setup["operator2_user"]["id"],
+            updated_at=secret_time,
+        )
+        await db_session.refresh(folder)
+        folder_ts = folder.updated_at
+
+        def _ts(value: str) -> datetime:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+            return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+
+        op_headers = {"Authorization": f"Bearer {auth_setup['operator_token']}"}
+        admin_headers = {"Authorization": f"Bearer {auth_setup['admin_token']}"}
+
+        # Admin (read_all) still sees the file activity.
+        admin_resp = await async_client.get(f"/api/v1/library/folders/{folder.id}", headers=admin_headers)
+        assert abs((_ts(admin_resp.json()["latest_activity_at"]) - secret_time).total_seconds()) < 1
+
+        resp = await async_client.get(f"/api/v1/library/folders/{folder.id}", headers=op_headers)
+        assert resp.status_code == 200
+        assert _ts(resp.json()["latest_activity_at"]) < secret_time - timedelta(days=1)
+
+        resp = await async_client.get("/api/v1/library/folders", headers=op_headers)
+        item = next(f for f in resp.json() if f["id"] == folder.id)
+        assert _ts(item["latest_activity_at"]) < secret_time - timedelta(days=1)
+
+        # by-project / by-archive variants
+        from backend.app.models.project import Project
+
+        project = Project(name="P")
+        db_session.add(project)
+        await db_session.commit()
+        await db_session.refresh(project)
+        folder_row = await db_session.get(LibraryFolder, folder.id)
+        folder_row.project_id = project.id
+        await db_session.commit()
+        resp = await async_client.get(f"/api/v1/library/folders/by-project/{project.id}", headers=op_headers)
+        assert resp.status_code == 200
+        assert _ts(resp.json()[0]["latest_activity_at"]) < secret_time - timedelta(days=1)
+        assert folder_ts is not None
 
 
 class TestAuthDisabledPermissions:

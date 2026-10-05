@@ -9,6 +9,7 @@ This allows users to add the CA to their slicer's trust store once.
 """
 
 import logging
+import os
 import socket
 from datetime import datetime, timedelta, timezone
 from ipaddress import IPv4Address
@@ -38,6 +39,13 @@ def _get_local_ip() -> str:
         return ip
     except OSError:
         return "127.0.0.1"
+
+
+def _write_private_key(path: Path, data: bytes) -> None:
+    """Write a private key, creating it with mode 0600 so it is never briefly umask-readable."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "wb") as f:
+        f.write(data)
 
 
 class CertificateService:
@@ -179,12 +187,13 @@ class CertificateService:
         # the writes targeted the parent CA dir, which works only because
         # the manager pre-creates both — the method itself was latent.
         self.ca_key_path.parent.mkdir(parents=True, exist_ok=True)
-        self.ca_key_path.write_bytes(
+        _write_private_key(
+            self.ca_key_path,
             ca_key.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.TraditionalOpenSSL,
                 encryption_algorithm=serialization.NoEncryption(),
-            )
+            ),
         )
         try:
             self.ca_key_path.chmod(0o600)
@@ -361,12 +370,13 @@ class CertificateService:
         )
 
         # Write printer private key
-        self.key_path.write_bytes(
+        _write_private_key(
+            self.key_path,
             printer_key.private_bytes(
                 encoding=serialization.Encoding.PEM,
                 format=serialization.PrivateFormat.TraditionalOpenSSL,
                 encryption_algorithm=serialization.NoEncryption(),
-            )
+            ),
         )
         try:
             self.key_path.chmod(0o600)

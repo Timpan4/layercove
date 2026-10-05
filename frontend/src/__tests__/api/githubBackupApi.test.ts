@@ -285,10 +285,10 @@ describe('GitHub Backup API Endpoints', () => {
       })
     );
 
-    const response = await fetch(
-      `${API_BASE}/github-backup/test?repo_url=https://github.com/test/repo&token=ghp_test`,
-      { method: 'POST' }
-    );
+    const response = await fetch(`${API_BASE}/github-backup/test`, {
+      method: 'POST',
+      body: JSON.stringify({ repo_url: 'https://github.com/test/repo', token: 'ghp_test' }),
+    });
     const data = await response.json();
     expect(data.success).toBe(true);
     expect(data.repo_name).toBe('test/repo');
@@ -306,10 +306,10 @@ describe('GitHub Backup API Endpoints', () => {
       })
     );
 
-    const response = await fetch(
-      `${API_BASE}/github-backup/test?repo_url=https://github.com/test/repo&token=invalid`,
-      { method: 'POST' }
-    );
+    const response = await fetch(`${API_BASE}/github-backup/test`, {
+      method: 'POST',
+      body: JSON.stringify({ repo_url: 'https://github.com/test/repo', token: 'invalid' }),
+    });
     const data = await response.json();
     expect(data.success).toBe(false);
     expect(data.message).toBe('Authentication failed');

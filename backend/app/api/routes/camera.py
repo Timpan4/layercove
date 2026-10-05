@@ -3,8 +3,10 @@
 import asyncio
 import logging
 import os
+import re
 import subprocess
 import sys
+import time
 from collections.abc import AsyncGenerator
 from uuid import uuid4
 
@@ -14,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.auth import (
+    RequireCameraStreamOrLongLivedTokenIfAuthEnabled,
     RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
     create_camera_stream_token,
@@ -118,6 +121,9 @@ def is_stream_active(printer_id: int) -> bool:
     )
 
 
+_STALE_FRAME_SECONDS = 30
+
+
 def try_get_active_buffered_frame(printer_id: int) -> bytes | None:
     """Return a buffered frame iff a stream is currently running for this printer.
 
@@ -135,6 +141,12 @@ def try_get_active_buffered_frame(printer_id: int) -> bytes | None:
     should consult is_stream_active() first; see #1348.
     """
     if not is_stream_active(printer_id):
+        return None
+    # A registered stream survives read timeouts and reconnects while the cached
+    # frame ages; refuse frames older than the stale-stream threshold used by
+    # the ffmpeg cleanup (no frames for >30s).
+    last_ts = _last_frame_times.get(printer_id)
+    if last_ts is None or time.time() - last_ts > _STALE_FRAME_SECONDS:
         return None
     return _last_frames.get(printer_id)
 
@@ -376,6 +388,9 @@ async def _terminate_ffmpeg(process: asyncio.subprocess.Process, stream_id: str 
     _spawned_ffmpeg_pids.pop(process.pid, None)
 
 
+_URL_USERINFO_RE = re.compile(r"(\b[a-z][a-z0-9+.-]*://)[^\s/@]+@", re.IGNORECASE)
+
+
 def _summarize_ffmpeg_stderr(text: str | None) -> str:
     """Strip ffmpeg's boilerplate banner and keep only actionable lines.
 
@@ -400,7 +415,8 @@ def _summarize_ffmpeg_stderr(text: str | None) -> str:
         "  libpostproc ",
     )
     meaningful = [ln for ln in text.splitlines() if ln.strip() and not ln.startswith(banner_prefixes)]
-    return "\n".join(meaningful[-10:])
+    # The RTSP URL embeds the printer access code as userinfo; never log it.
+    return _URL_USERINFO_RE.sub(r"\1<redacted>@", "\n".join(meaningful[-10:]))
 
 
 async def _read_ffmpeg_stderr(process: asyncio.subprocess.Process) -> str | None:
@@ -882,7 +898,7 @@ async def selected_camera_snapshot(
     printer_id: int,
     camera_id: int,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    _: None = RequireCameraStreamOrLongLivedTokenIfAuthEnabled,
 ):
     camera = await _camera_or_404(printer_id, camera_id, db)
     if not camera.enabled or not camera.source_enabled or camera.missing_since is not None:
@@ -905,7 +921,7 @@ async def selected_camera_stream(
     request: Request,
     fps: int = 10,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    _: None = RequireCameraStreamOrLongLivedTokenIfAuthEnabled,
 ):
     camera = await _camera_or_404(printer_id, camera_id, db)
     if not camera.enabled or not camera.source_enabled or camera.missing_since is not None:
@@ -947,7 +963,7 @@ async def camera_stream(
     request: Request,
     fps: int = 10,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    _: None = RequireCameraStreamOrLongLivedTokenIfAuthEnabled,
 ):
     """Stream live video from printer camera as MJPEG.
 
@@ -1226,7 +1242,7 @@ async def stop_camera_stream(
 async def camera_snapshot(
     printer_id: int,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    _: None = RequireCameraStreamOrLongLivedTokenIfAuthEnabled,
 ):
     """Capture a single frame from the printer camera.
 

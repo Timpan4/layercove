@@ -15,6 +15,11 @@ import {
 } from '../../../components/spool-form/utils';
 
 describe('toFilamentId', () => {
+  it('keeps bare GFS-prefixed filament IDs (Generic PVA GFS99) unchanged', () => {
+    expect(toFilamentId('GFS99')).toBe('GFS99');
+    expect(toFilamentId('GFSS99')).toBe('GFS99');
+  });
+
   it('strips the variant suffix', () => {
     expect(toFilamentId('GFG98_09')).toBe('GFG98');
   });

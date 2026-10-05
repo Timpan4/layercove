@@ -270,6 +270,34 @@ async def _get_printer_backup_context(
     return backup_on, ams_extruder_map, is_dual
 
 
+def _slot_unreachable_for_backup(printer_id: int, ams_id: int, tray_id: int) -> bool:
+    """True when live state shows the slot can't feed a backup switch.
+
+    External spools never back an AMS slot, and a slot the firmware reports empty
+    (state 9/10) holds only a pre-assigned spool. Unknown live state returns False
+    so the pool falls back to counting the assignment.
+    """
+    if ams_id == 255:
+        return True
+    try:
+        from backend.app.services.printer_manager import printer_manager
+
+        raw = getattr(printer_manager.get_status(printer_id), "raw_data", None)
+    except ImportError:
+        return False
+    if not isinstance(raw, dict):
+        return False
+    ams = raw.get("ams")
+    units = ams.get("ams") if isinstance(ams, dict) else ams
+    for unit in units if isinstance(units, list) else []:
+        if not isinstance(unit, dict) or str(unit.get("id")) != str(ams_id):
+            continue
+        for tray in unit.get("tray") or []:
+            if isinstance(tray, dict) and str(tray.get("id")) == str(tray_id):
+                return tray.get("state") in (9, 10)
+    return False
+
+
 async def compute_deficit_for_queue_item(
     db: AsyncSession,
     item: PrintQueueItem,
@@ -467,6 +495,11 @@ async def compute_deficit_for_queue_item(
     # print's mapping). Then emit deficits only when the pool for a slot's
     # material is too small for the print's total required of that material.
     pool_by_key: dict[tuple[str, int], float] = defaultdict(float)
+    mapped_slots = {(row.ams_id, row.tray_id) for row in resolved}
+
+    def _counts_toward_pool(ams_id: int, tray_id: int) -> bool:
+        return (ams_id, tray_id) in mapped_slots or not _slot_unreachable_for_backup(item.printer_id, ams_id, tray_id)
+
     required_by_key: dict[tuple[str, int], float] = defaultdict(float)
 
     if spoolman_mode:
@@ -486,6 +519,8 @@ async def compute_deficit_for_queue_item(
         for sa in sm_all.scalars().all():
             if client is None:
                 break
+            if not _counts_toward_pool(sa.ams_id, sa.tray_id):
+                continue
             try:
                 spool_dict = await client.get_spool(sa.spoolman_spool_id)
             except (SpoolmanNotFoundError, SpoolmanClientError):
@@ -517,7 +552,7 @@ async def compute_deficit_for_queue_item(
         )
         for assignment in internal_all.scalars().all():
             spool = assignment.spool
-            if spool is None:
+            if spool is None or not _counts_toward_pool(assignment.ams_id, assignment.tray_id):
                 continue
             label_weight = float(spool.label_weight or 0)
             weight_used = float(spool.weight_used or 0)

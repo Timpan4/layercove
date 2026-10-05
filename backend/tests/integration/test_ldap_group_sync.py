@@ -194,3 +194,28 @@ class TestLdapGroupSyncPreservesManualAssignments:
             "Users",  # LDAP-managed, retained from LDAP
             "Power Users",  # LDAP-managed, newly added from LDAP
         }
+
+
+class TestLdapGroupSyncRevokesChangedMappings:
+    """A mapping changed from an elevated group to a lower one must revoke the old group."""
+
+    @pytest.mark.asyncio
+    async def test_remapped_group_is_revoked_and_manual_group_kept(self, db_session: AsyncSession):
+        admins = await _make_group(db_session, "Administrators")
+        viewers = await _make_group(db_session, "Viewers")
+        ops = await _make_group(db_session, "PrintOps")
+        user = await _make_ldap_user(db_session, "frank", [ops])
+        ldap_user = _FakeLdapUser(username="frank", email="frank@example.com", groups=["cn=staff"])
+
+        # First login: cn=staff maps to Administrators.
+        await _sync_ldap_user(
+            db_session, user, ldap_user, _FakeLdapConfig(group_mapping={"cn=staff": "Administrators"})
+        )
+        await db_session.refresh(user, attribute_names=["groups"])
+        assert {g.name for g in user.groups} == {"PrintOps", "Administrators"}
+
+        # Admin changes the mapping to Viewers; Administrators is no longer configured anywhere.
+        await _sync_ldap_user(db_session, user, ldap_user, _FakeLdapConfig(group_mapping={"cn=staff": "Viewers"}))
+        await db_session.refresh(user, attribute_names=["groups"])
+        assert {g.name for g in user.groups} == {"PrintOps", "Viewers"}
+        assert admins.id != viewers.id

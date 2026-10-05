@@ -29,6 +29,25 @@ const MIME: Record<string, string> = {
 }
 
 /**
+ * Map a request URL to a file inside `dir`. Returns null when the URL is not
+ * under /gcode-viewer (segment boundary required) or when the resolved path
+ * escapes `dir`.
+ */
+export function resolveGcodeViewerPath(url: string, dir: string): string | null {
+  const pathname = url.split('?')[0]
+  if (pathname !== '/gcode-viewer' && !pathname.startsWith('/gcode-viewer/')) return null
+  let rel = pathname.slice('/gcode-viewer'.length)
+  if (rel === '' || rel === '/') rel = '/index.html'
+  try {
+    rel = decodeURIComponent(rel)
+  } catch {
+    return null
+  }
+  const absPath = path.resolve(dir, '.' + rel)
+  return absPath.startsWith(dir + path.sep) ? absPath : null
+}
+
+/**
  * Vite dev-server plugin: serves ../gcode_viewer/ at /gcode-viewer/
  * without needing a proxy to uvicorn.  In production uvicorn handles it
  * via the StaticFiles mount in main.py.
@@ -38,16 +57,8 @@ function serveGcodeViewer() {
     name: 'serve-gcode-viewer',
     configureServer(server: { middlewares: Connect.Server }) {
       server.middlewares.use((req, res, next) => {
-        const url = req.url ?? ''
-        if (!url.startsWith('/gcode-viewer')) return next()
-
-        // Strip prefix, default to index.html
-        let rel = url.slice('/gcode-viewer'.length)
-        if (rel === '' || rel === '/') rel = '/index.html'
-        // Strip query string
-        rel = rel.split('?')[0]
-
-        const absPath = path.join(gcodeViewerDir, rel)
+        const absPath = resolveGcodeViewerPath(req.url ?? '', gcodeViewerDir)
+        if (!absPath) return next()
 
         try {
           const stat = fs.statSync(absPath)

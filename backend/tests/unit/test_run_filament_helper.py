@@ -21,6 +21,14 @@ class TestComputeRunFilamentGrams:
         # Inventory page. Two halves of the app must show the same number.
         assert _compute_run_filament_grams("completed", 100.0, 100, [{"weight_used": 96.5}]) == 96.5
 
+    def test_completed_partial_tracking_uses_estimate(self):
+        # Only 1 of the 2 slots the print used is assigned to a spool: the
+        # tracked 40g is a fraction of the print, so Stats keeps the estimate.
+        assert _compute_run_filament_grams("completed", 100.0, 100, [{"weight_used": 40.0}], slots_used=2) == 100.0
+
+    def test_completed_full_tracking_keeps_measured_grams(self):
+        assert _compute_run_filament_grams("completed", 100.0, 100, [{"weight_used": 96.5}], slots_used=1) == 96.5
+
     def test_failed_uses_tracked_spool_delta(self):
         # Failed reprint at 10g actual: inventory tracked the spool delta.
         # The estimate was 100g; we want 10g recorded for stats.

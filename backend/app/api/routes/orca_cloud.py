@@ -466,7 +466,7 @@ async def _sync_catalog_after_connect(
 async def auth_start(
     payload: OrcaAuthStartRequest = OrcaAuthStartRequest(),
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.ORCA_CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.ORCA_CLOUD_AUTH, jwt_only=True),
 ):
     """Generate PKCE state and return the Supabase authorize URL for the
     requested OAuth provider (google / apple / github). The frontend opens
@@ -487,7 +487,7 @@ async def auth_start(
 async def auth_password(
     payload: OrcaAuthPasswordRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.ORCA_CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.ORCA_CLOUD_AUTH, jwt_only=True),
 ):
     """Direct email+password sign-in. No browser redirect, no paste flow —
     Bambuddy POSTs the credentials to Supabase and stores the returned
@@ -522,7 +522,7 @@ async def auth_password(
 async def auth_finish(
     payload: OrcaAuthFinishRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.ORCA_CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.ORCA_CLOUD_AUTH, jwt_only=True),
 ):
     """Complete the PKCE handshake — parse the pasted callback URL, validate
     state (CSRF), exchange the code for tokens, persist."""
@@ -606,7 +606,7 @@ async def get_status(
 @router.post("/logout")
 async def logout(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.ORCA_CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.ORCA_CLOUD_AUTH, jwt_only=True),
 ):
     """Clear stored Orca Cloud credentials. Does not call Supabase's
     ``/logout`` endpoint (the token would still survive its 1h expiry there

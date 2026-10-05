@@ -78,8 +78,17 @@ jobs:
               return;
             }
 
-            // Don't re-add if already present (issue edit path).
+            // Edit path: drop any other area:* label so only the picked area remains.
             const existing = (context.payload.issue.labels || []).map(l => l.name);
+            for (const stale of existing.filter(n => n.startsWith('area:') && n !== label)) {
+              await github.rest.issues.removeLabel({
+                owner: context.repo.owner,
+                repo:  context.repo.repo,
+                issue_number: context.payload.issue.number,
+                name: stale,
+              });
+              core.info(`Removed stale label "${stale}".`);
+            }
             if (existing.includes(label)) {
               core.info(`Label "${label}" already present — nothing to do.`);
               return;

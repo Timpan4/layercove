@@ -288,12 +288,24 @@ async def get_catalog_revision(
     }
 
 
+def _account_visibility(current_user: User | None):
+    """Shared accounts plus the caller's own (ownerless ones when there is no user)."""
+    visibility = SlicerProfileAccount.sharing_state == "shared"
+    if current_user is not None:
+        return or_(visibility, SlicerProfileAccount.user_id == current_user.id)
+    return or_(visibility, SlicerProfileAccount.user_id.is_(None))
+
+
 @router.get("/accounts")
 async def list_catalog_accounts(
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_READ),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_READ),
 ) -> list[dict[str, Any]]:
-    accounts = (await db.scalars(select(SlicerProfileAccount).order_by(SlicerProfileAccount.id))).all()
+    accounts = (
+        await db.scalars(
+            select(SlicerProfileAccount).where(_account_visibility(current_user)).order_by(SlicerProfileAccount.id)
+        )
+    ).all()
     return [
         {
             "id": account.id,
@@ -457,8 +469,13 @@ async def set_account_sharing(
 async def list_review_batches(
     account_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_READ),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_READ),
 ) -> list[dict[str, Any]]:
+    visible = await db.scalar(
+        select(SlicerProfileAccount.id).where(SlicerProfileAccount.id == account_id, _account_visibility(current_user))
+    )
+    if visible is None:
+        raise HTTPException(status_code=404, detail="Account not found")
     batches = (
         await db.scalars(
             select(SlicerProfileReviewBatch)

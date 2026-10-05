@@ -145,6 +145,9 @@ class PrintQueueItem(Base):
 
     # User tracking (who added this to the queue)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Who clicked Start on an ownerless item (#1670). Attribution only: never
+    # an authorization boundary, so it stays separate from created_by_id.
+    started_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     printer: Mapped["Printer"] = relationship()
@@ -152,10 +155,16 @@ class PrintQueueItem(Base):
     library_file: Mapped["LibraryFile | None"] = relationship()
     project: Mapped["Project | None"] = relationship(back_populates="queue_items")
     batch: Mapped["PrintBatch | None"] = relationship(back_populates="queue_items")
-    created_by: Mapped["User | None"] = relationship()
+    created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_id])
+    started_by: Mapped["User | None"] = relationship(foreign_keys=[started_by_id], lazy="selectin")
     material_confirmation_record: Mapped["PrintMaterialConfirmation | None"] = relationship(
         cascade="all, delete-orphan", uselist=False, lazy="selectin"
     )
+
+    @property
+    def attributed_user_id(self) -> int | None:
+        """Creator, else whoever started an ownerless item. Never use for authorization."""
+        return self.created_by_id if self.created_by_id is not None else self.started_by_id
 
 
 class PrintMaterialConfirmation(Base):

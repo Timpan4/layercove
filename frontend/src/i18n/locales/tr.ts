@@ -2733,7 +2733,7 @@ export default {
         emailClaim: 'E-posta İddiası',
         emailClaimDesc: "E-posta kimliği olarak kullanılan JWT iddiası. Azure Entra ID için 'preferred_username' veya 'upn' kullanın (email_verified göndermez). Yalnızca güvenilir iddia adlarını kullanın.",
         emailClaimPlaceholder: 'email',
-        emailClaimCustomClaimAutoLinkWarning: 'Özel iddialar yalnızca değer kiracı tarafından yönetildiğinde otomatik bağlantı için güvenlidir (örn. Azure Entra ID upn / preferred_username). Kimlik sağlayıcınız kullanıcıların bu iddiayı kendi kendine onaylamasına izin veriyorsa otomatik bağlantıyı etkinleştirmeyin.',
+        emailClaimCustomClaimAutoLinkWarning: "Otomatik bağlantı yalnızca standart 'email' iddiası ve doğrulanmış bir e-posta ile çalışır. Özel iddialar mevcut hesapları bağlamak için asla kullanılmaz ve bu kombinasyonun kaydedilmesi reddedilir.",
         requireEmailVerified: 'E-posta doğrulamasını gerektir',
         requireEmailVerifiedDesc: 'E-posta iddiasını yalnızca sağlayıcı doğrulanmış olarak işaretlediğinde kabul et.',
         requireEmailVerifiedWarning: 'Uyarı: e-posta doğrulama olmadan bile kabul edilecek. Yalnızca güvenilir sağlayıcılarla kullanın.',
@@ -4171,6 +4171,8 @@ export default {
     runningWithProgressMultiPlate: '{{plateCount}}/{{plateIndex}} plaka • {{name}} — {{stage}} (%{{percent}}) — {{elapsed}}',
     completedToast: '{{name}} dilimlendi',
     failedTitle: 'Dilimleme başarısız',
+    embeddedSettingsTitle: 'Embedded settings used',
+    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
     failedToast: '{{name}} dilimleme başarısız: {{detail}}',
     tier: {
       local: 'İçe aktarılmış',

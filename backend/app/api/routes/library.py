@@ -1,5 +1,6 @@
 """API routes for File Manager (Library) functionality."""
 
+import asyncio
 import base64
 import binascii
 import contextlib
@@ -72,12 +73,14 @@ from backend.app.schemas.slicer import (
 from backend.app.services.archive import ThreeMFParser
 from backend.app.services.plate_thumbnail import inject_plate_thumbnails_if_missing
 from backend.app.services.stl_thumbnail import MIN_USABLE_STL_BYTES, generate_stl_thumbnail
+from backend.app.services.zip_limits import ZipBudget, ZipTooLargeError, check_zip_size
 from backend.app.utils.filename import InvalidFilenameError, validate_print_filename
 from backend.app.utils.safe_path import safe_join_under
 from backend.app.utils.threemf_tools import (
     extract_embedded_presets_from_3mf,
     extract_nozzle_mapping_from_3mf,
     extract_project_filaments_from_3mf,
+    is_known_plate,
 )
 
 logger = logging.getLogger(__name__)
@@ -665,6 +668,11 @@ def create_image_thumbnail(file_path: Path, thumbnails_dir: Path, max_size: int 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".tiff", ".tif"}
 
 
+# Folders with a backfill worker running; a concurrent scan skips them instead
+# of rendering the same STLs again and orphaning the first worker's PNGs.
+_stl_backfill_active: set[int] = set()
+
+
 async def _backfill_external_stl_thumbnails(folder_ids: list[int]) -> None:
     """Generate STL thumbnails for an external folder tree in the background.
 
@@ -681,8 +689,17 @@ async def _backfill_external_stl_thumbnails(folder_ids: list[int]) -> None:
     only loses the in-flight file. Caps STL load to a single file at a time
     to avoid memory pressure on systems with many huge STLs.
     """
+    folder_ids = [fid for fid in folder_ids if fid not in _stl_backfill_active]
     if not folder_ids:
         return
+    _stl_backfill_active.update(folder_ids)
+    try:
+        await _run_stl_backfill(folder_ids)
+    finally:
+        _stl_backfill_active.difference_update(folder_ids)
+
+
+async def _run_stl_backfill(folder_ids: list[int]) -> None:
     thumbnails_dir = get_library_thumbnails_dir()
     async with async_session() as db:
         result = await db.execute(
@@ -713,7 +730,7 @@ async def _backfill_external_stl_thumbnails(folder_ids: list[int]) -> None:
             except OSError:
                 continue
             try:
-                thumb_path = generate_stl_thumbnail(abs_path, thumbnails_dir)
+                thumb_path = await asyncio.to_thread(generate_stl_thumbnail, abs_path, thumbnails_dir)
             except Exception as exc:  # noqa: BLE001 — never let one bad STL kill the rest
                 logger.debug("STL thumbnail backfill skipped %s: %s", abs_path, exc)
                 continue
@@ -730,7 +747,7 @@ async def _backfill_external_stl_thumbnails(folder_ids: list[int]) -> None:
 async def list_folders(
     response: Response,
     db: AsyncSession = Depends(get_db),
-    _: tuple[User | None, bool] = Depends(
+    auth_result: tuple[User | None, bool] = Depends(
         require_ownership_permission(
             Permission.LIBRARY_READ_ALL,
             Permission.LIBRARY_READ_OWN,
@@ -738,6 +755,7 @@ async def list_folders(
     ),
 ):
     """Get all folders as a tree structure."""
+    user, can_read_all = auth_result
     # Prevent browser caching of folder list
     response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
 
@@ -762,11 +780,12 @@ async def list_folders(
     # file_counts subquery — same WHERE clause, MAX(updated_at) instead of
     # COUNT(id). Subfolder descent is not aggregated here; the frontend's
     # "sort by recent activity" mode is satisfied by immediate-parent bubble.
-    latest_file_activity_result = await db.execute(
-        select(LibraryFile.folder_id, func.max(LibraryFile.updated_at))
-        .where(LibraryFile.folder_id.isnot(None), LibraryFile.deleted_at.is_(None))
-        .group_by(LibraryFile.folder_id)
+    latest_activity_query = select(LibraryFile.folder_id, func.max(LibraryFile.updated_at)).where(
+        LibraryFile.folder_id.isnot(None), LibraryFile.deleted_at.is_(None)
     )
+    if user is not None and not can_read_all:
+        latest_activity_query = latest_activity_query.where(LibraryFile.created_by_id == user.id)
+    latest_file_activity_result = await db.execute(latest_activity_query.group_by(LibraryFile.folder_id))
     latest_file_activity = dict(latest_file_activity_result.all())
 
     # Build tree structure
@@ -808,7 +827,7 @@ async def list_folders(
 async def get_folders_by_project(
     project_id: int,
     db: AsyncSession = Depends(get_db),
-    _: tuple[User | None, bool] = Depends(
+    auth_result: tuple[User | None, bool] = Depends(
         require_ownership_permission(
             Permission.LIBRARY_READ_ALL,
             Permission.LIBRARY_READ_OWN,
@@ -816,6 +835,8 @@ async def get_folders_by_project(
     ),
 ):
     """Get all folders linked to a specific project."""
+    user, can_read_all = auth_result
+    owner_filter = [] if user is None or can_read_all else [LibraryFile.created_by_id == user.id]
     result = await db.execute(
         select(LibraryFolder, Project.name)
         .outerjoin(Project, LibraryFolder.project_id == Project.id)
@@ -830,7 +851,7 @@ async def get_folders_by_project(
         agg_result = await db.execute(
             select(
                 func.count(LibraryFile.id),
-                func.max(LibraryFile.updated_at),
+                func.max(LibraryFile.updated_at).filter(*owner_filter),
             ).where(
                 LibraryFile.folder_id == folder.id,
                 LibraryFile.deleted_at.is_(None),
@@ -867,7 +888,7 @@ async def get_folders_by_project(
 async def get_folders_by_archive(
     archive_id: int,
     db: AsyncSession = Depends(get_db),
-    _: tuple[User | None, bool] = Depends(
+    auth_result: tuple[User | None, bool] = Depends(
         require_ownership_permission(
             Permission.LIBRARY_READ_ALL,
             Permission.LIBRARY_READ_OWN,
@@ -875,6 +896,8 @@ async def get_folders_by_archive(
     ),
 ):
     """Get all folders linked to a specific archive."""
+    user, can_read_all = auth_result
+    owner_filter = [] if user is None or can_read_all else [LibraryFile.created_by_id == user.id]
     result = await db.execute(
         select(LibraryFolder, PrintArchive.print_name)
         .outerjoin(PrintArchive, LibraryFolder.archive_id == PrintArchive.id)
@@ -889,7 +912,7 @@ async def get_folders_by_archive(
         agg_result = await db.execute(
             select(
                 func.count(LibraryFile.id),
-                func.max(LibraryFile.updated_at),
+                func.max(LibraryFile.updated_at).filter(*owner_filter),
             ).where(
                 LibraryFile.folder_id == folder.id,
                 LibraryFile.deleted_at.is_(None),
@@ -989,7 +1012,7 @@ async def create_folder(
 async def get_folder(
     folder_id: int,
     db: AsyncSession = Depends(get_db),
-    _: tuple[User | None, bool] = Depends(
+    auth_result: tuple[User | None, bool] = Depends(
         require_ownership_permission(
             Permission.LIBRARY_READ_ALL,
             Permission.LIBRARY_READ_OWN,
@@ -997,6 +1020,8 @@ async def get_folder(
     ),
 ):
     """Get a folder by ID."""
+    user, can_read_all = auth_result
+    owner_filter = [] if user is None or can_read_all else [LibraryFile.created_by_id == user.id]
     result = await db.execute(
         select(LibraryFolder, Project.name, PrintArchive.print_name)
         .outerjoin(Project, LibraryFolder.project_id == Project.id)
@@ -1014,7 +1039,7 @@ async def get_folder(
     agg_result = await db.execute(
         select(
             func.count(LibraryFile.id),
-            func.max(LibraryFile.updated_at),
+            func.max(LibraryFile.updated_at).filter(*owner_filter),
         ).where(
             LibraryFile.folder_id == folder_id,
             LibraryFile.deleted_at.is_(None),
@@ -2996,6 +3021,9 @@ async def get_library_file_filament_requirements(
     if not lib_file.filename.lower().endswith(".3mf"):
         return {"file_id": file_id, "filename": lib_file.filename, "plate_id": plate_id, "filaments": []}
 
+    if plate_id is not None and not is_known_plate(file_path, plate_id):
+        raise HTTPException(status_code=400, detail=f"Plate {plate_id} not found in file")
+
     filaments = []
 
     try:
@@ -3114,6 +3142,15 @@ async def get_library_file_filament_requirements(
                     f["used_in_plate"] = fallback_all_used or f["slot_id"] in used_slot_ids
                 filaments = project_filaments
 
+            if plate_id is None:
+                # A slot reused on several plates is one slot; keep the highest
+                # consumption (same rule as extract_filament_requirements).
+                by_slot: dict[int, dict] = {}
+                for f in filaments:
+                    if f["slot_id"] not in by_slot or f["used_grams"] > by_slot[f["slot_id"]]["used_grams"]:
+                        by_slot[f["slot_id"]] = f
+                filaments = list(by_slot.values())
+
             # Sort by slot ID
             filaments.sort(key=lambda x: x["slot_id"])
 
@@ -3185,10 +3222,12 @@ def _strip_3mf_embedded_settings(zip_bytes: bytes) -> bytes:
     src = BytesIO(zip_bytes)
     dst = BytesIO()
     with zipfile.ZipFile(src, "r") as zin, zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        check_zip_size(zin)
+        budget = ZipBudget()
         for item in zin.infolist():
             if item.filename in _STRIPPABLE_3MF_CONFIGS:
                 continue
-            zout.writestr(item, zin.read(item.filename))
+            budget.copy_member(zin, zout, item)
     return dst.getvalue()
 
 
@@ -3240,6 +3279,7 @@ def _sanitize_project_settings_sentinels(zip_bytes: bytes) -> bytes:
 
     try:
         with zipfile.ZipFile(BytesIO(zip_bytes), "r") as zin:
+            check_zip_size(zin)
             if "Metadata/project_settings.config" not in zin.namelist():
                 return zip_bytes
             try:
@@ -3259,13 +3299,16 @@ def _sanitize_project_settings_sentinels(zip_bytes: bytes) -> bytes:
                 sorted(removed),
             )
             dst = BytesIO()
+            budget = ZipBudget()
             with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
                 for item in zin.infolist():
                     if item.filename == "Metadata/project_settings.config":
                         zout.writestr(item, patched)
                     else:
-                        zout.writestr(item, zin.read(item.filename))
+                        budget.copy_member(zin, zout, item)
             return dst.getvalue()
+    except ZipTooLargeError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
     except (zipfile.BadZipFile, OSError):
         return zip_bytes
 
@@ -3440,6 +3483,51 @@ def _slicer_rejection_message(error_text: str) -> str | None:
     return reason
 
 
+def _embedded_settings_mismatch(
+    zip_bytes: bytes, printer_json: str, process_json: str, filament_jsons: list[str]
+) -> bool:
+    """True when the 3MF's embedded printer/process/filament preset names differ
+    from the profiles the user selected.
+
+    Used only after the embedded-settings fallback ran, so the UI warns when the
+    output was governed by settings other than the chosen ones. Unreadable
+    embedded settings report no mismatch (nothing embedded to differ).
+    """
+    from io import BytesIO
+
+    try:
+        with zipfile.ZipFile(BytesIO(zip_bytes), "r") as zf:
+            embedded = json.loads(zf.read("Metadata/project_settings.config").decode("utf-8"))
+    except (zipfile.BadZipFile, KeyError, OSError, UnicodeDecodeError, ValueError):
+        return False
+    if not isinstance(embedded, dict):
+        return False
+
+    def selected_name(profile_json: str, id_key: str) -> str | None:
+        try:
+            data = json.loads(profile_json)
+        except ValueError:
+            return None
+        name = data.get("name") or data.get(id_key) if isinstance(data, dict) else None
+        return name if isinstance(name, str) else None
+
+    def as_list(value) -> list[str]:
+        return [str(v) for v in value] if isinstance(value, list) else [str(value)]
+
+    pairs = [
+        (selected_name(printer_json, "printer_settings_id"), embedded.get("printer_settings_id")),
+        (selected_name(process_json, "print_settings_id"), embedded.get("print_settings_id")),
+    ]
+    for chosen, found in pairs:
+        if chosen is not None and found and chosen != found:
+            return True
+    chosen_filaments = [selected_name(f, "filament_settings_id") for f in filament_jsons]
+    found_filaments = embedded.get("filament_settings_id")
+    if found_filaments and None not in chosen_filaments:
+        return chosen_filaments != as_list(found_filaments)
+    return False
+
+
 async def _run_slicer_with_fallback(
     db: AsyncSession,
     *,
@@ -3452,7 +3540,7 @@ async def _run_slicer_with_fallback(
 ):
     """Validate presets, dispatch to the right sidecar, run the slicer with
     the auto-fallback for 3MF inputs whose `--load-settings` path crashes the
-    CLI. Returns ``(SliceResult, used_embedded_settings: bool)``. Raises
+    CLI. Returns ``(SliceResult, used_embedded_settings, embedded_settings_mismatch)``. Raises
     ``HTTPException`` for any caller-facing error.
 
     `current_user_id` is needed to resolve **cloud** presets — the cloud token
@@ -3585,6 +3673,7 @@ async def _run_slicer_with_fallback(
                 presets["process"] = _patch_process_support_settings(presets["process"], primary_bytes)
 
     used_embedded_settings = False
+    embedded_settings_mismatch = False
     service = SlicerApiService(api_url)
 
     # #1493: cross-nozzle-class re-slice (single <-> dual). Without
@@ -3824,6 +3913,9 @@ async def _run_slicer_with_fallback(
                 on_progress=progress_callback,
             )
             used_embedded_settings = True
+            embedded_settings_mismatch = _embedded_settings_mismatch(
+                primary_bytes, presets["printer"], presets["process"], filament_jsons
+            )
     except SlicerInputError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except SlicerSchemaMismatchError as exc:
@@ -3838,7 +3930,7 @@ async def _run_slicer_with_fallback(
     finally:
         await service.close()
 
-    return result, used_embedded_settings
+    return result, used_embedded_settings, embedded_settings_mismatch
 
 
 def _canonical_printer_model(raw: str | None) -> str | None:
@@ -3928,7 +4020,7 @@ async def slice_and_persist(
     is_klipper_gcode = request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
     library_request = request.model_copy(update={"export_3mf": not is_klipper_gcode})
 
-    result, used_embedded_settings = await _run_slicer_with_fallback(
+    result, used_embedded_settings, embedded_settings_mismatch = await _run_slicer_with_fallback(
         db,
         model_bytes=model_bytes,
         model_filename=model_filename,
@@ -4007,6 +4099,7 @@ async def slice_and_persist(
             filament_used_g=result.filament_used_g,
             filament_used_mm=result.filament_used_mm,
             used_embedded_settings=used_embedded_settings,
+            embedded_settings_mismatch=embedded_settings_mismatch,
         )
 
     base_name = model_filename.rsplit(".", 1)[0]
@@ -4094,6 +4187,7 @@ async def slice_and_persist(
         filament_used_g=filament_g,
         filament_used_mm=filament_mm,
         used_embedded_settings=used_embedded_settings,
+        embedded_settings_mismatch=embedded_settings_mismatch,
     )
 
 
@@ -4126,7 +4220,7 @@ async def slice_and_persist_as_archive(
     is_klipper_gcode = request.destination_artifact_kind is DestinationArtifactKind.KLIPPER_GCODE
     archive_request = request.model_copy(update={"export_3mf": not is_klipper_gcode})
 
-    result, used_embedded_settings = await _run_slicer_with_fallback(
+    result, used_embedded_settings, embedded_settings_mismatch = await _run_slicer_with_fallback(
         db,
         model_bytes=model_bytes,
         model_filename=model_filename,
@@ -4220,6 +4314,7 @@ async def slice_and_persist_as_archive(
             filament_used_g=result.filament_used_g,
             filament_used_mm=result.filament_used_mm,
             used_embedded_settings=used_embedded_settings,
+            embedded_settings_mismatch=embedded_settings_mismatch,
         )
 
     safe_source_name = Path(model_filename.replace("\\", "/")).name
@@ -4381,6 +4476,7 @@ async def slice_and_persist_as_archive(
             filament_used_g=filament_g,
             filament_used_mm=filament_mm,
             used_embedded_settings=used_embedded_settings,
+            embedded_settings_mismatch=embedded_settings_mismatch,
         )
     except BaseException:
         try:

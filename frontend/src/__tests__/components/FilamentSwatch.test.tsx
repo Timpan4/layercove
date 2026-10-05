@@ -312,3 +312,26 @@ describe('buildFilamentBackground', () => {
     expect(bg.backgroundImage).toMatch(/repeating-conic-gradient/);
   });
 });
+
+describe('buildFilamentBackground layer/size alignment', () => {
+  // CSS treats every top-level comma as a separate image, so the number of
+  // background-size entries must match the number of images.
+  const topLevelCount = (value: string) => {
+    let depth = 0;
+    let count = 1;
+    for (const ch of value) {
+      if (ch === '(') depth++;
+      else if (ch === ')') depth--;
+      else if (ch === ',' && depth === 0) count++;
+    }
+    return count;
+  };
+
+  it.each(['sparkle', 'wood', 'marble', 'glow', 'matte', 'silk', 'galaxy', 'metal'])(
+    'emits one background-size per image for the %s effect',
+    (effectType) => {
+      const bg = buildFilamentBackground({ rgba: 'ff0000ff', effectType, effectSize: 'table' });
+      expect(topLevelCount(bg.backgroundSize)).toBe(topLevelCount(bg.backgroundImage));
+    },
+  );
+});

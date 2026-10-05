@@ -74,6 +74,7 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
   // slicer's reason (e.g. "objects over the bed boundary") is actionable and
   // a 3s toast hides it before it can be read.
   const [sliceError, setSliceError] = useState<{ name: string; detail: string } | null>(null);
+  const [sliceWarning, setSliceWarning] = useState<{ name: string; detail: string } | null>(null);
 
   // Stable mutable ref so the polling effect can read the current list
   // without re-subscribing every time it changes.
@@ -175,11 +176,14 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
       dismissToast(toastIdFor(job.id));
 
       if (state.status === 'completed') {
-        // `used_embedded_settings` still comes back on the result for tests
-        // and observability, but the warning toast that surfaced it was
-        // firing on essentially every slice (3MF inputs trigger the
-        // embedded-settings fallback as a normal path) and just added
-        // noise — see the trailing yellow toast complaint, removed.
+        // The fallback to embedded 3MF settings is a normal path, so only a
+        // real mismatch with the selected profiles earns a persistent warning.
+        if (state.result?.embedded_settings_mismatch) {
+          setSliceWarning({
+            name: prettifyFilename(job.sourceName),
+            detail: t('slice.embeddedSettingsMismatch'),
+          });
+        }
         showToast(
           t('slice.completedToast', 'Sliced {{name}}', { name: prettifyFilename(job.sourceName) }),
           'success',
@@ -271,6 +275,15 @@ export function SliceJobTrackerProvider({ children }: { children: ReactNode }) {
   return (
     <SliceJobTrackerContext.Provider value={{ trackJob, activeJobs, jobStates }}>
       {children}
+      {sliceWarning && (
+        <AlertModal
+          variant="warning"
+          title={t('slice.embeddedSettingsTitle')}
+          subtitle={sliceWarning.name}
+          message={sliceWarning.detail}
+          onClose={() => setSliceWarning(null)}
+        />
+      )}
       {sliceError && (
         <AlertModal
           title={t('slice.failedTitle')}

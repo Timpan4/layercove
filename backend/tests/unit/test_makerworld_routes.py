@@ -364,6 +364,27 @@ class TestImport:
         assert resp.json()["filename"] == "evil.3mf"
 
     @pytest.mark.asyncio
+    async def test_fallback_filename_from_url_tail_is_basenamed(self, async_client, db_session):
+        """The URL-tail fallback is percent-decoded; ``%2E%2E%2F`` must not
+        survive as ``../`` in the persisted library filename."""
+        svc = _fake_service(
+            get_design=_default_design(),
+            get_profile_download={
+                "name": "no-extension",
+                "url": "https://makerworld.bblmw.com/makerworld/model/X/Y/f.3mf?exp=1&key=k",
+            },
+            download_3mf=(self._FAKE_3MF_BYTES, "%2E%2E%2Fother.gcode.3mf"),
+        )
+
+        with patch("backend.app.api.routes.makerworld._build_service", AsyncMock(return_value=svc)):
+            resp = await async_client.post(
+                "/api/v1/makerworld/import",
+                json={"model_id": 1400373, "profile_id": 298919107},
+            )
+        assert resp.status_code == 200, resp.text
+        assert resp.json()["filename"] == "other.gcode.3mf"
+
+    @pytest.mark.asyncio
     async def test_response_includes_profile_id(self, async_client, db_session):
         """UI matches imports back to the plate row via ``profile_id`` — the
         response field must always be populated, even when the caller provided

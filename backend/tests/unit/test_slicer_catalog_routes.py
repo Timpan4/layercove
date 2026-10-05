@@ -14,6 +14,7 @@ from backend.app.api.routes.slicer_catalog import (
     ReviewRequest,
     SharingRequest,
     freeze_catalog_account,
+    list_catalog_accounts,
     list_catalog_profile_revisions,
     list_catalog_profiles,
     list_review_batches,
@@ -458,6 +459,32 @@ async def test_private_account_visibility_requires_owner_consent(db):
     await set_account_sharing(result.account_id, SharingRequest(shared=True), db, owner)
 
     assert len(await list_catalog_profiles(db, outsider)) == 1
+
+
+async def test_account_listing_and_reviews_hide_other_users_private_accounts(db):
+    owner = User(username="acct-owner", role="admin")
+    outsider = User(username="acct-outsider")
+    db.add_all([owner, outsider])
+    await db.commit()
+    result = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud",
+            remote_account_id="global:owner@example.com",
+            user_id=owner.id,
+            profiles=[CatalogProfile("p", "process", "Private", {"type": "print"})],
+        ),
+    )
+    await db.commit()
+
+    assert [a["id"] for a in await list_catalog_accounts(db, owner)] == [result.account_id]
+    assert await list_catalog_accounts(db, outsider) == []
+    assert await list_catalog_accounts(db, None) == []
+    assert len(await list_review_batches(result.account_id, db, owner)) == 1
+    for caller in (outsider, None):
+        with pytest.raises(HTTPException) as hidden:
+            await list_review_batches(result.account_id, db, caller)
+        assert hidden.value.status_code == 404
 
 
 async def test_catalog_profile_listing_exposes_filament_material_from_revision(db):

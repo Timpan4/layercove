@@ -8,7 +8,7 @@ discovery/JWKS calls. Streaming-mock helper lives in
 
 import hashlib
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -17,6 +17,7 @@ from backend.app.services.oidc_icon import (
     OIDCIconUnavailableError,
     OIDCIconUrlError,
     _resolve_content_type,
+    _resolve_global_ips as _REAL_RESOLVE,
     fetch_icon,
 )
 from backend.tests._fixtures.oidc_icon import (
@@ -24,6 +25,14 @@ from backend.tests._fixtures.oidc_icon import (
     PNG_ETAG,
     build_streaming_icon_mock,
 )
+
+
+@pytest.fixture(autouse=True)
+def _public_dns():
+    """Resolve every icon host to a public IP so tests need no network."""
+    with patch("backend.app.services.oidc_icon._resolve_global_ips", AsyncMock(return_value=["93.184.216.34"])):
+        yield
+
 
 # ─── _resolve_content_type — pure helper, tested directly ────────────────
 
@@ -354,3 +363,45 @@ async def test_passes_follow_redirects_false():
     stream_recorder.assert_called_once()
     _args, kwargs = stream_recorder.call_args
     assert kwargs.get("follow_redirects") is False
+
+
+# ─── DNS-based SSRF: hostname must resolve only to public IPs, then be pinned ──
+
+
+def _addrinfo(*ips):
+    return [(0, 0, 0, "", (ip, 443)) for ip in ips]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("bad_ip", ["127.0.0.1", "10.0.0.5", "169.254.169.254", "::1", "::ffff:192.168.1.1"])
+async def test_hostname_resolving_to_non_global_ip_is_rejected(bad_ip):
+    """An attacker-controlled hostname with a private A/AAAA record must not be fetched."""
+    mock_cls, stream_recorder = build_streaming_icon_mock()
+    loop_patch = patch(
+        "asyncio.BaseEventLoop.getaddrinfo",
+        AsyncMock(return_value=_addrinfo("93.184.216.34", bad_ip)),
+    )
+    with (
+        patch("backend.app.services.oidc_icon._resolve_global_ips", _REAL_RESOLVE),
+        loop_patch,
+        patch("backend.app.services.oidc_icon.httpx.AsyncClient", mock_cls),
+        pytest.raises(OIDCIconUrlError),
+    ):
+        await fetch_icon("https://evil.example.com/icon.png")
+    stream_recorder.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_connection_is_pinned_to_checked_ip():
+    """The request goes to the validated IP (no second DNS lookup), keeping Host/SNI."""
+    mock_cls, stream_recorder = build_streaming_icon_mock()
+    with (
+        patch("backend.app.services.oidc_icon._resolve_global_ips", _REAL_RESOLVE),
+        patch("asyncio.BaseEventLoop.getaddrinfo", AsyncMock(return_value=_addrinfo("93.184.216.34"))),
+        patch("backend.app.services.oidc_icon.httpx.AsyncClient", mock_cls),
+    ):
+        await fetch_icon("https://idp.example.com/icon.png")
+    args, kwargs = stream_recorder.call_args
+    assert str(args[1]) == "https://93.184.216.34/icon.png"
+    assert kwargs["headers"] == {"Host": "idp.example.com"}
+    assert kwargs["extensions"] == {"sni_hostname": "idp.example.com"}

@@ -33,6 +33,7 @@ from backend.app.services.slicer_api import (
     SlicerApiError,
     SlicerApiService,
 )
+from backend.app.utils.threemf_tools import plate_ids_in_3mf
 
 logger = logging.getLogger(__name__)
 
@@ -75,6 +76,13 @@ async def get_preview_filaments(
     back to whatever heuristic it has (typically the project_filaments +
     painted-face approach in ``threemf_tools``).
     """
+    try:
+        with zipfile.ZipFile(BytesIO(file_bytes), "r") as zf:
+            if plate_id not in plate_ids_in_3mf(zf):
+                logger.warning("Preview slice skipped for %s/%s: unknown plate %s", kind, source_id, plate_id)
+                return None
+    except (zipfile.BadZipFile, OSError):
+        pass
     h = _content_hash(file_bytes)
     key: _PreviewCacheKey = (kind, source_id, plate_id, h)
     cached = _preview_cache.get(key)
@@ -108,9 +116,11 @@ async def get_preview_filaments(
                 plate_id,
                 e,
             )
+            _preview_locks.pop(key, None)
             return None
         except Exception as e:  # noqa: BLE001 — never break the modal on sidecar issues
             logger.warning("Preview slice unexpected error: %s", e)
+            _preview_locks.pop(key, None)
             return None
 
         filaments = _parse_filaments_from_sliced_3mf(result.content, plate_id)

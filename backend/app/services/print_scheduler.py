@@ -286,9 +286,16 @@ class PrintScheduler:
             # to clear it (#1865).
             require_plate_clear = await self._get_bool_setting(db, "require_plate_clear", default=False)
 
+            busy_result = await db.execute(
+                select(PrintQueueItem.printer_id)
+                .where(PrintQueueItem.status == "printing")
+                .where(PrintQueueItem.printer_id.is_not(None))
+            )
+            busy_printers: set[int] = {pid for (pid,) in busy_result.all() if pid is not None}
+
             if not items:
-                # No pending items — still check auto-drying on idle printers
-                await self._check_auto_drying(db, [], set(), require_plate_clear=require_plate_clear)
+                # No pending items — still check auto-drying (idle and mid-print printers)
+                await self._check_auto_drying(db, [], busy_printers, require_plate_clear=require_plate_clear)
                 return
 
             logger.info(
@@ -305,13 +312,6 @@ class PrintScheduler:
             # Without this guard, two pending items targeting the same printer
             # (e.g. a batch with quantity>1) both end up in 'printing' status —
             # surfaced via the "BUG: Multiple queue items" warning in on_print_complete.
-            busy_result = await db.execute(
-                select(PrintQueueItem.printer_id)
-                .where(PrintQueueItem.status == "printing")
-                .where(PrintQueueItem.printer_id.is_not(None))
-            )
-            busy_printers: set[int] = {pid for (pid,) in busy_result.all() if pid is not None}
-
             # Defense-in-depth (#1157): augment busy_printers with any printer
             # still in its post-dispatch hold window. Empirically, the DB seed
             # above can miss in-flight items in a multi-plate batch — same-file
@@ -410,7 +410,7 @@ class PrintScheduler:
             if changed.rowcount:
                 try:
                     await ws_manager.send_queue_item_failed(
-                        user_id=item.created_by_id, queue_item_id=item_id, printer_id=printer_id, reason=reason
+                        user_id=item.attributed_user_id, queue_item_id=item_id, printer_id=printer_id, reason=reason
                     )
                 except Exception as exc:
                     self._log_dispatch_error(item_id, exc)
@@ -558,6 +558,14 @@ class PrintScheduler:
                     )
                     return
 
+            # Force color match: wait until every flagged slot is loaded on this printer.
+            force_color_reason = self._force_color_waiting_reason(item)
+            if force_color_reason:
+                if item.waiting_reason != force_color_reason:
+                    item.waiting_reason = force_color_reason
+                    await db.commit()
+                return
+
             # Compute AMS mapping if not already set
             if not item.ams_mapping:
                 computed_mapping = await self._compute_ams_mapping_for_printer(db, item.printer_id, item)
@@ -694,6 +702,25 @@ class PrintScheduler:
 
                 if sjf_enabled:
                     await self._mark_shorter_job_jumps(db, item, model_scope=True)
+
+    def _force_color_waiting_reason(self, item: PrintQueueItem) -> str | None:
+        """Waiting reason for a specific-printer item whose force-color slots aren't loaded.
+
+        Mirrors the model-based path: every ``force_color_match`` override needs an
+        exact type+color match on the assigned printer.
+        """
+        if not item.filament_overrides:
+            return None
+        try:
+            overrides = json.loads(item.filament_overrides)
+        except json.JSONDecodeError:
+            return None
+        force_overrides = [o for o in overrides if o.get("force_color_match")]
+        backend = printer_manager.get_backend(item.printer_id)
+        if not force_overrides or not (backend is None or backend.capabilities.ams):
+            return None
+        missing = self._get_missing_force_color_slots(item.printer_id, force_overrides)
+        return f"No matching material/color. Waiting on {', '.join(missing)}" if missing else None
 
     async def _find_idle_printer_for_model(
         self,
@@ -1674,10 +1701,6 @@ class PrintScheduler:
             logger.debug("Printer %d: no status available", printer_id)
             return False
 
-        backend = printer_manager.get_backend(printer_id)
-        if backend is not None and backend.provider is PrinterProvider.MOONRAKER:
-            return not state.telemetry_stale and state.state in MOONRAKER_STARTABLE_STATES
-
         # Plate-clear gate: if the printer finished/failed a previous print and the user
         # hasn't acknowledged the plate was cleared, the queue must not dispatch the next
         # job — even if the printer currently reports IDLE. After Auto Off cycles the
@@ -1690,6 +1713,10 @@ class PrintScheduler:
                 state.state,
             )
             return False
+
+        backend = printer_manager.get_backend(printer_id)
+        if backend is not None and backend.provider is PrinterProvider.MOONRAKER:
+            return not state.telemetry_stale and state.state in MOONRAKER_STARTABLE_STATES
 
         idle = state.state in ("IDLE", "FINISH", "FAILED")
         if not idle:
@@ -2472,6 +2499,8 @@ class PrintScheduler:
             .where(PrintQueueItem.id != item.id)
             .where(PrintQueueItem.status.in_(["completed", "failed", "cancelled", "aborted"]))
             .where(PrintQueueItem.gate_acknowledged == False)  # noqa: E712
+            # A pending item cancelled before it started is not a print attempt.
+            .where(or_(PrintQueueItem.status != "cancelled", PrintQueueItem.started_at.is_not(None)))
             .order_by(PrintQueueItem.completed_at.desc())
             .limit(1)
         )
@@ -2591,16 +2620,16 @@ class PrintScheduler:
         """Hand the queue item's owner to printer_manager so the
         print-complete callback can credit the user in PrintLogEntry (#1670).
 
-        No-ops when the item has no `created_by_id` or the referenced user
+        No-ops when the item has no creator or starter (`attributed_user_id`) or the referenced user
         row is missing (e.g. user deleted between queue-add and dispatch —
         in that case the print log row falls back to the existing un-credited
         behaviour rather than crashing the dispatch).
         """
-        if not item.created_by_id:
+        if not item.attributed_user_id:
             return
         from backend.app.models.user import User
 
-        owner = await db.get(User, item.created_by_id)
+        owner = await db.get(User, item.attributed_user_id)
         if owner:
             printer_manager.set_current_print_user(item.printer_id, owner.id, owner.username)
 
@@ -2678,7 +2707,7 @@ class PrintScheduler:
             async with moonraker_gcode_source(file_path, item.plate_id) as source:
                 try:
                     await ws_manager.send_queue_item_uploading(
-                        user_id=item.created_by_id,
+                        user_id=item.attributed_user_id,
                         queue_item_id=item.id,
                         printer_id=printer.id,
                         printer_name=printer.name,
@@ -2687,7 +2716,7 @@ class PrintScheduler:
                     )
                 except Exception:
                     pass
-                progress = _UploadProgressBridge(item.created_by_id, item.id)
+                progress = _UploadProgressBridge(item.attributed_user_id, item.id)
                 remote_path = self._safe_moonraker_path(
                     (
                         await backend.upload(
@@ -2732,7 +2761,7 @@ class PrintScheduler:
             logger.info("Queue item %s cancelled after Moonraker upload; retaining remote G-code", item.id)
             try:
                 await ws_manager.send_queue_item_failed(
-                    item.created_by_id, item.id, printer.id, "Cancelled before print start"
+                    item.attributed_user_id, item.id, printer.id, "Cancelled before print start"
                 )
             except Exception:
                 pass
@@ -2801,7 +2830,7 @@ class PrintScheduler:
         logger.info("Queue item %s, printer %s: dispatch stage %s", item.id, printer.id, stage)
         try:
             await ws_manager.send_queue_item_dispatch_stage(
-                user_id=item.created_by_id,
+                user_id=item.attributed_user_id,
                 queue_item_id=item.id,
                 printer_id=printer.id,
                 printer_name=printer.name,
@@ -3013,7 +3042,7 @@ class PrintScheduler:
         )
         await db.commit()
         try:
-            await ws_manager.send_queue_item_failed(item.created_by_id, item.id, printer.id, reason)
+            await ws_manager.send_queue_item_failed(item.attributed_user_id, item.id, printer.id, reason)
         except Exception:
             pass
         outcome = {
@@ -3101,7 +3130,7 @@ class PrintScheduler:
                 )
         if bound:
             try:
-                await ws_manager.send_queue_item_acked(item.created_by_id, item_id, printer_id)
+                await ws_manager.send_queue_item_acked(item.attributed_user_id, item_id, printer_id)
             except Exception:
                 pass
             await PrintScheduler.dispatch_moonraker_cancel_intent(item_id, printer_id)
@@ -3232,10 +3261,10 @@ class PrintScheduler:
             await db.commit()
         try:
             if status == "completed":
-                await ws_manager.send_queue_item_acked(item.created_by_id, item.id, printer_id)
+                await ws_manager.send_queue_item_acked(item.attributed_user_id, item.id, printer_id)
             else:
                 await ws_manager.send_queue_item_failed(
-                    item.created_by_id,
+                    item.attributed_user_id,
                     item.id,
                     printer_id,
                     str(data.get("reason") or "Print cancelled"),
@@ -3536,7 +3565,7 @@ class PrintScheduler:
 
         # Dispatch toast — announce the upload start with the total byte
         # count so the frontend can render an honest progress bar.
-        toast_uid = item.created_by_id
+        toast_uid = item.attributed_user_id
         toast_file_name = filename.replace(".gcode.3mf", "").replace(".3mf", "")
         try:
             total_bytes = file_path.stat().st_size
@@ -3643,7 +3672,7 @@ class PrintScheduler:
                 remote_filename,
                 archive.id,
                 ams_mapping=ams_mapping,
-                created_by_id=item.created_by_id,
+                created_by_id=item.attributed_user_id,
                 plate_id=item.plate_id,
             )
 
@@ -3885,7 +3914,7 @@ class PrintScheduler:
             self._release_dispatch_hold(printer_id)
             try:
                 await ws_manager.send_queue_item_acked(
-                    user_id=item.created_by_id if item.created_by_id is not None else created_by_id,
+                    user_id=item.attributed_user_id if item.attributed_user_id is not None else created_by_id,
                     queue_item_id=item_id,
                     printer_id=printer_id,
                 )
@@ -3958,7 +3987,7 @@ class PrintScheduler:
             self._release_dispatch_hold(printer_id)
             try:
                 await ws_manager.send_queue_item_failed(
-                    user_id=item.created_by_id,
+                    user_id=item.attributed_user_id,
                     queue_item_id=item_id,
                     printer_id=printer_id,
                     reason=reason,

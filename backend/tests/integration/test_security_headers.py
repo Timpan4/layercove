@@ -268,3 +268,12 @@ async def test_pwa_bootstrap_routes_accept_head(async_client: AsyncClient, path:
     # 200 if static asset is present in the test environment, 404 if it's
     # not packaged in this checkout — but never 405.
     assert resp.status_code != 405, f"HEAD {path} returned 405 — route must accept HEAD as well as GET"
+
+
+class TestTrustedFrameOriginInjection:
+    @pytest.mark.parametrize(
+        "value",
+        ["https://ha.local https:", "https://ha.local;https:", "https://user@ha.local", "https://ha.local:99999"],
+    )
+    def test_malformed_origin_is_dropped(self, value):
+        assert _parse_origins(value) == ()

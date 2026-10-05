@@ -1192,3 +1192,34 @@ class TestMidPrintDrying(_DryingTestBase):
         await scheduler._check_auto_drying(db, [], {1})
 
         mock_pm.send_drying_command.assert_not_called()
+
+
+class TestEmptyPendingQueueStillSeesPrintingPrinters:
+    """After the last pending job dispatches, mid-print drying must still see the printing printer."""
+
+    @pytest.mark.asyncio
+    async def test_busy_printers_passed_when_no_pending_items(self, db_session, printer_factory):
+        from contextlib import asynccontextmanager
+        from unittest.mock import AsyncMock, patch
+
+        from backend.app.models.print_queue import PrintQueueItem
+        from backend.app.services import print_scheduler as scheduler_module
+
+        printer = await printer_factory()
+        db_session.add(PrintQueueItem(printer_id=printer.id, status="printing"))
+        await db_session.commit()
+
+        @asynccontextmanager
+        async def _session():
+            yield db_session
+
+        scheduler = scheduler_module.PrintScheduler()
+        with (
+            patch.object(scheduler_module, "async_session", _session),
+            patch.object(scheduler, "_reconcile_persisted_bambu_starts", AsyncMock()),
+            patch.object(scheduler, "_reconcile_persisted_moonraker_starts", AsyncMock()),
+            patch.object(scheduler, "_check_auto_drying", AsyncMock()) as drying,
+        ):
+            await scheduler._check_queue_locked()
+
+        assert drying.await_args.args[2] == {printer.id}

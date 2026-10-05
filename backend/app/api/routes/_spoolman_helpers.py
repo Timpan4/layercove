@@ -96,6 +96,8 @@ def assert_safe_spoolman_url(url: str) -> None:
       IPv4 addresses.
     - Cloud provider metadata endpoints (169.254.169.254, 100.100.100.200,
       fd00:ec2::254) are blocked — the classic SSRF credential-exfil target.
+    - Link-local addresses (169.254.0.0/16, fe80::/10) are blocked; they host
+      workload/credential metadata services beyond the well-known IMDS IPs.
     - Multicast (224.0.0.0/4, ff00::/8) and unspecified (0.0.0.0, ::) addresses
       are blocked — pointless as a destination and suggests misuse.
     - IPv4-mapped IPv6 addresses (::ffff:x.x.x.x) are unwrapped so they cannot
@@ -132,6 +134,9 @@ def assert_safe_spoolman_url(url: str) -> None:
 
     if effective in CLOUD_METADATA_IPS:
         raise ValueError("Spoolman URL must not point to a cloud metadata endpoint")
+
+    if effective.is_link_local:
+        raise ValueError("Spoolman URL must not point to a link-local address")
 
     if effective.is_multicast or effective.is_unspecified:
         raise ValueError("Spoolman URL must not point to a multicast or unspecified address")

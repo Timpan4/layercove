@@ -98,6 +98,15 @@ class CallerIdentity:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=decision.denial_reason)
 
     def ownership_decision(self, all_permission: Permission, own_permission: Permission) -> OwnershipDecision:
+        if self.kind is CallerKind.API_KEY and self.api_key is not None:
+            # Import lazily: auth creates CallerIdentity instances.
+            from backend.app.core.auth import apikey_owner_scoped
+
+            if apikey_owner_scoped(all_permission, own_permission):
+                self.require_permissions(own_permission)
+                if self.api_key.user_id is None:
+                    return OwnershipDecision(False, None, "API key has no owner; recreate it to modify files")
+                return OwnershipDecision(False, self.api_key.user_id)
         if self.kind in {CallerKind.AUTH_DISABLED, CallerKind.API_KEY}:
             self.require_permissions(all_permission)
             return OwnershipDecision(True, None)

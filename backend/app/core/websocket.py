@@ -46,8 +46,8 @@ class ConnectionManager:
     async def broadcast_to_user(self, user_id: int | None, message: dict[str, Any]):
         """Send a message to every connection authenticated as the given user.
 
-        When ``user_id`` is None the message fans out to all connections —
-        this is the auth-disabled single-user path, where neither the queue
+        When ``user_id`` is None the message fans out to all auth-disabled
+        connections — this is the auth-disabled single-user path, where neither the queue
         item's ``created_by_id`` nor the WS principal is set, and the
         existing fan-out semantics are exactly what the user wants.
 
@@ -57,7 +57,21 @@ class ConnectionManager:
         anonymous reader never receives another user's dispatch toast.
         """
         if user_id is None:
-            await self.broadcast(message)
+            # Ownerless item: fan out only on auth-disabled connections. With auth
+            # enabled, null means "no owner" and must not reach arbitrary users.
+            data = json.dumps(message)
+            async with self._lock:
+                disconnected = []
+                for connection in self.active_connections:
+                    if getattr(connection.state, "bambuddy_auth_required", False):
+                        continue
+                    try:
+                        await connection.send_text(data)
+                    except Exception:
+                        disconnected.append(connection)
+                for conn in disconnected:
+                    if conn in self.active_connections:
+                        self.active_connections.remove(conn)
             return
 
         if not self.active_connections:

@@ -2728,7 +2728,7 @@ export default {
         emailClaim: 'メールクレーム',
         emailClaimDesc: "メールIDとして使用するJWTクレーム。Azure Entra IDには'preferred_username'または'upn'を使用（email_verifiedを送信しない）。信頼できるクレーム名のみ使用してください。",
         emailClaimPlaceholder: 'メール',
-        emailClaimCustomClaimAutoLinkWarning: 'カスタムクレームは、値がテナント管理されている場合（Azure Entra IDのupn / preferred_usernameなど）にのみ自動リンクに安全です。IdPがユーザーにこのクレームの自己宣言を許可している場合は、自動リンクを有効にしないでください。',
+        emailClaimCustomClaimAutoLinkWarning: "自動リンクは標準の'email'クレームと検証済みメールでのみ機能します。カスタムクレームは既存アカウントのリンクに使用されず、この組み合わせは保存できません。",
         requireEmailVerified: 'メール確認を要求',
         requireEmailVerifiedDesc: 'プロバイダーが確認済みとしてマークした場合にのみメールクレームを受け入れます。',
         requireEmailVerifiedWarning: '警告：確認なしでメールが受け入れられます。信頼できるプロバイダーのみで使用してください。',
@@ -4181,6 +4181,8 @@ export default {
     runningWithProgressMultiPlate: 'プレート {{plateIndex}} / {{plateCount}} • {{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}}をスライス済み',
     failedTitle: 'スライスに失敗しました',
+    embeddedSettingsTitle: 'Embedded settings used',
+    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
     failedToast: '{{name}}のスライスに失敗: {{detail}}',
     tier: {
       local: 'インポート済み',

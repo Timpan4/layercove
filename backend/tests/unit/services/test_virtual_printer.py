@@ -1812,15 +1812,13 @@ class TestVirtualPrinterInstance:
         mock_db.commit = AsyncMock()
 
         # First execute() call (the position-max SELECT inside _add_to_print_queue)
-        # returns None; second (the eligible-pending SELECT in
-        # _restamp_recent_queue_item) returns the committed queue id; third
-        # (the UPDATE) is fire-and-forget.
+        # returns None; second is the status-guarded UPDATE in
+        # _restamp_recent_queue_item.
         position_max_result = MagicMock()
         position_max_result.scalar = MagicMock(return_value=None)
-        select_pending_result = MagicMock()
-        select_pending_result.all = MagicMock(return_value=[(101,)])
         update_result = MagicMock()
-        mock_db.execute = AsyncMock(side_effect=[position_max_result, select_pending_result, update_result])
+        update_result.rowcount = 1
+        mock_db.execute = AsyncMock(side_effect=[position_max_result, update_result])
 
         mock_session_factory = MagicMock()
         mock_session_ctx = AsyncMock()
@@ -1888,8 +1886,8 @@ class TestVirtualPrinterInstance:
             },
         )
 
-        # The UPDATE call is the third execute. Inspect its values.
-        update_call = mock_db.execute.await_args_list[2]
+        # The UPDATE call is the second execute. Inspect its values.
+        update_call = mock_db.execute.await_args_list[1]
         update_stmt = update_call.args[0]
         compiled = update_stmt.compile(compile_kwargs={"literal_binds": False})
         params = dict(compiled.params)
@@ -1919,10 +1917,9 @@ class TestVirtualPrinterInstance:
 
         position_max_result = MagicMock()
         position_max_result.scalar = MagicMock(return_value=None)
-        select_pending_result = MagicMock()
-        select_pending_result.all = MagicMock(return_value=[(301,)])
         update_result = MagicMock()
-        mock_db.execute = AsyncMock(side_effect=[position_max_result, select_pending_result, update_result])
+        update_result.rowcount = 1
+        mock_db.execute = AsyncMock(side_effect=[position_max_result, update_result])
 
         mock_session_factory = MagicMock()
         mock_session_ctx = AsyncMock()
@@ -1989,7 +1986,7 @@ class TestVirtualPrinterInstance:
         assert len(added_items) == 1
         # But the post-commit pop caught the late stash and applied the
         # slicer nozzle_mapping via _restamp's UPDATE.
-        update_call = mock_db.execute.await_args_list[2]
+        update_call = mock_db.execute.await_args_list[1]
         update_stmt = update_call.args[0]
         compiled = update_stmt.compile(compile_kwargs={"literal_binds": False})
         params = dict(compiled.params)
@@ -2010,9 +2007,9 @@ class TestVirtualPrinterInstance:
         from backend.app.services.virtual_printer.manager import VirtualPrinterInstance
 
         mock_db = AsyncMock()
-        # The eligible-pending SELECT returns nothing — item is no longer pending.
+        # The status-guarded UPDATE matches no rows — item is no longer pending.
         empty_result = MagicMock()
-        empty_result.all = MagicMock(return_value=[])
+        empty_result.rowcount = 0
         mock_db.execute = AsyncMock(return_value=empty_result)
         mock_db.commit = AsyncMock()
 
@@ -2046,7 +2043,7 @@ class TestVirtualPrinterInstance:
                     "nozzle_mapping": [16, -1],
                 },
             )
-        # No UPDATE was issued — only the eligibility SELECT ran.
+        # The guarded UPDATE matched nothing, so nothing was committed.
         assert mock_db.execute.await_count == 1
         mock_db.commit.assert_not_awaited()
         assert "test.3mf" not in inst._recent_queue_items

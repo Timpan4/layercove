@@ -35,9 +35,9 @@ def assert_safe_public_https_url(url: str) -> None:
     - IPv4-mapped IPv6 (``::ffff:127.0.0.1``) — unwrapped before the IP-class
       check so an attacker can't bypass via IPv6 encoding.
 
-    Hostname-based addresses are accepted without DNS resolution (consistent
-    with ``_validate_issuer_url`` policy — the operator is trusted to
-    configure a sensible IdP host).
+    Hostnames are not resolved here (this is a sync schema-level check);
+    ``services.oidc_icon.fetch_icon`` resolves them, rejects any non-global
+    record, and pins the connection to the checked IP.
     """
     parsed = urlparse(url)
     if parsed.scheme.lower() != "https":

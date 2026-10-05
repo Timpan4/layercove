@@ -93,6 +93,14 @@ describe('UploadModal', () => {
       expect(screen.getByRole('button', { name: /Upload \(2\)/i })).toBeInTheDocument();
     });
 
+    it('keeps uppercase .3MF files from initialFiles', () => {
+      const initialFiles = [new File(['content'], 'MODEL.3MF', { type: 'application/3mf' })];
+
+      render(<UploadModal onClose={mockOnClose} initialFiles={initialFiles} />);
+
+      expect(screen.getByText('MODEL.3MF')).toBeInTheDocument();
+    });
+
     it('filters out non-3mf files from initialFiles', () => {
       const initialFiles = [
         new File(['content'], 'model.3mf', { type: 'application/3mf' }),

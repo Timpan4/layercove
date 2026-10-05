@@ -5,6 +5,7 @@ These tests focus on timelapse tracking during prints.
 """
 
 import json
+import logging
 import time
 
 import pytest
@@ -1808,6 +1809,24 @@ class TestRequestTopicAmsMapping:
         }
         mqtt_client._handle_request_message(data)
         assert mqtt_client._captured_ams_mapping == [0, 4, -1, -1]
+
+    def test_external_project_file_log_omits_sensitive_fields(self, mqtt_client, caplog):
+        """Slicer-launched project_file payloads must not leak names, URLs or ids into logs."""
+        data = {
+            "print": {
+                "command": "project_file",
+                "sequence_id": "123",
+                "subtask_name": "SecretModelName",
+                "url": "ftp://user:hunter2@192.168.1.100/SecretModelName.3mf",
+                "md5": "abcdef0123456789",
+                "project_id": "987654321",
+                "use_ams": True,
+            }
+        }
+        with caplog.at_level(logging.DEBUG):
+            mqtt_client._handle_request_message(data)
+        for secret in ("SecretModelName", "hunter2", "abcdef0123456789", "987654321"):
+            assert secret not in caplog.text
 
     def test_handle_request_message_ignores_non_print_commands(self, mqtt_client):
         """Non-project_file commands don't store ams_mapping."""
@@ -6194,3 +6213,52 @@ class TestLastLayerFinishPhotoTrigger:
 
         assert len(events) == 1
         assert len(completion_events) == 1
+
+
+class TestExternalSlotChangeCallback:
+    """External spool changes must fire on_ams_change so deferred slot config replays."""
+
+    def test_vir_slot_change_triggers_on_ams_change(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="TEST123", access_code="12345678")
+        calls = []
+        client.on_ams_change = calls.append
+
+        empty = {"print": {"vir_slot": [{"id": "255", "tray_type": ""}]}}
+        loaded = {"print": {"vir_slot": [{"id": "255", "tray_type": "PLA", "tray_color": "FF0000FF"}]}}
+        client._process_message(empty)
+        calls.clear()
+        client._process_message(loaded)
+
+        assert len(calls) == 1
+
+
+class TestSynthesizedEmptyStateClearedOnInsert:
+    def test_state_9_not_sticky_after_spool_inserted_without_explicit_state(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="TEST123", access_code="12345678")
+
+        def ams(bits, tray):
+            return {"print": {"ams": {"tray_exist_bits": bits, "ams": [{"id": "0", "tray": [{"id": "0", **tray}]}]}}}
+
+        client._process_message(ams("0", {}))
+        assert client.state.raw_data["ams"][0]["tray"][0]["state"] == 9
+
+        client._process_message(ams("1", {"tray_type": "PLA"}))
+        tray = client.state.raw_data["ams"][0]["tray"][0]
+        assert tray.get("state") != 9
+
+    def test_explicit_state_after_insert_is_kept(self):
+        from backend.app.services.bambu_mqtt import BambuMQTTClient
+
+        client = BambuMQTTClient(ip_address="192.168.1.100", serial_number="TEST123", access_code="12345678")
+
+        def ams(bits, tray):
+            return {"print": {"ams": {"tray_exist_bits": bits, "ams": [{"id": "0", "tray": [{"id": "0", **tray}]}]}}}
+
+        client._process_message(ams("0", {}))
+        client._process_message(ams("1", {"tray_type": "PLA", "state": 11}))
+        client._process_message(ams("1", {"remain": 50}))
+        assert client.state.raw_data["ams"][0]["tray"][0]["state"] == 11

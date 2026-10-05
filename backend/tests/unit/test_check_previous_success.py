@@ -51,10 +51,12 @@ def queue_factory(db_session, printer_factory):
         status: str,
         error_message: str | None = None,
         gate_acknowledged: bool = False,
+        started: bool = True,
     ) -> PrintQueueItem:
         printer = await _make_printer()
         counter["n"] += 1
         item = PrintQueueItem(
+            started_at=base_time + timedelta(minutes=counter["n"] - 1) if started else None,
             printer_id=printer.id,
             status=status,
             error_message=error_message,
@@ -216,3 +218,13 @@ async def test_acknowledged_failure_walks_back_to_completed(scheduler, db_sessio
     await queue_factory["add"]("failed", gate_acknowledged=True)
     pending = await queue_factory["add_pending"]()
     assert await scheduler._check_previous_success(db_session, pending) is True
+
+
+@pytest.mark.asyncio
+async def test_never_started_cancellation_does_not_clear_failure(scheduler, db_session, queue_factory):
+    """A pending item cancelled before it ever started is not a print attempt;
+    it must not mask a real failure for downstream require_previous_success items."""
+    await queue_factory["add"]("failed")
+    await queue_factory["add"]("cancelled", started=False)
+    pending = await queue_factory["add_pending"]()
+    assert await scheduler._check_previous_success(db_session, pending) is False

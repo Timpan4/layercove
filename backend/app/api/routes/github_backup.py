@@ -18,8 +18,8 @@ from backend.app.schemas.github_backup import (
     GitHubBackupLogResponse,
     GitHubBackupStatus,
     GitHubBackupTriggerResponse,
+    GitHubTestConnectionRequest,
     GitHubTestConnectionResponse,
-    ProviderType,
 )
 from backend.app.services.github_backup import github_backup_service
 
@@ -263,13 +263,11 @@ async def delete_config(
 
 @router.post("/test", response_model=GitHubTestConnectionResponse)
 async def test_connection(
-    repo_url: str = Query(..., description="Repository URL"),
-    token: str = Query(..., description="Personal Access Token"),
-    provider: ProviderType = Query(default=ProviderType.GITHUB, description="Git provider key"),
+    body: GitHubTestConnectionRequest,
     _: User | None = RequirePermissionIfAuthEnabled(Permission.GITHUB_BACKUP),
 ):
     """Test Git provider connection with provided credentials."""
-    result = await github_backup_service.test_connection(repo_url, token, provider=provider)
+    result = await github_backup_service.test_connection(body.repo_url, body.token, provider=body.provider)
     return GitHubTestConnectionResponse(**result)
 
 

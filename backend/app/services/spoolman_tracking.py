@@ -136,11 +136,13 @@ def _resolve_global_tray_id(slot_id: int, slot_to_tray: list | None, ams_trays: 
         if mapped_tray == -1 and ams_trays:
             # -1 means external spool. 254 = VIRTUAL_TRAY_DEPUTY_ID (main on
             # single-nozzle, left/deputy on H2D dual-nozzle); 255 =
-            # VIRTUAL_TRAY_MAIN_ID. Prefer 254 when both exist since that's
-            # what single-nozzle printers report via tray_now.
-            for ext_id in (254, 255):
-                if ext_id in ams_trays:
-                    return ext_id
+            # VIRTUAL_TRAY_MAIN_ID. With both present (H2D) the flat mapping
+            # can't say which one (ams_mapping2 isn't captured), so only infer
+            # when exactly one external tray exists; otherwise fall through to
+            # the position-based default.
+            ext_ids = [ext_id for ext_id in (254, 255) if ext_id in ams_trays]
+            if len(ext_ids) == 1:
+                return ext_ids[0]
     # Position-based default: sort available tray IDs so external spools (254/255)
     # come after standard AMS trays, matching the slicer's slot assignment order.
     if ams_trays:
@@ -226,6 +228,53 @@ def _snapshot_tray_remain(raw_data: dict) -> dict[str, dict]:
                 "tray_uuid": vt.get("tray_uuid", "") or "",
             }
     return snapshot
+
+
+def _global_tray_id_to_slot_key(global_tray_id: int) -> str:
+    """Inverse of the key encoding used by ``_snapshot_tray_remain``."""
+    if global_tray_id >= 254:
+        return f"255-{global_tray_id - 254}"
+    if global_tray_id >= 128:
+        return f"{global_tray_id}-0"
+    return f"{global_tray_id // 4}-{global_tray_id % 4}"
+
+
+async def _annotate_remain_snapshot(db, printer_id: int, snapshot: dict[str, dict], tray_now: int | None) -> None:
+    """Record, per snapshotted slot, the Spoolman spool assigned at print start
+    (``spool_id``) and whether it was the active tray (``active``), so the
+    completion fallback doesn't depend on live assignments or charge unused slots."""
+    from backend.app.models.spoolman_slot_assignment import SpoolmanSlotAssignment
+
+    result = await db.execute(
+        select(
+            SpoolmanSlotAssignment.ams_id, SpoolmanSlotAssignment.tray_id, SpoolmanSlotAssignment.spoolman_spool_id
+        ).where(SpoolmanSlotAssignment.printer_id == printer_id)
+    )
+    for ams_id, tray_id, spool_id in result.all():
+        entry = snapshot.get(f"{ams_id}-{tray_id}")
+        if entry is not None:
+            entry["spool_id"] = spool_id
+    if isinstance(tray_now, int) and tray_now >= 0:
+        entry = snapshot.get(_global_tray_id_to_slot_key(tray_now))
+        if entry is not None:
+            entry["active"] = True
+
+
+def _print_used_slot_keys(
+    tray_remain_start: dict[str, dict], slot_to_tray: list | None, tray_changes: list | None
+) -> set[str]:
+    """Slot keys the print is known to have used: slicer mapping, tray-change log
+    and the tray active at print start. Mirrors ``usage_tracker`` (#1269)."""
+    used = {key for key, start in tray_remain_start.items() if start.get("active")}
+    for gid in slot_to_tray or []:
+        if isinstance(gid, int) and gid >= 0:
+            used.add(_global_tray_id_to_slot_key(gid))
+        elif gid == -1:
+            used.update(("255-0", "255-1"))  # external spool(s)
+    for change in tray_changes or []:
+        if isinstance(change, (tuple, list)) and change and isinstance(change[0], int) and change[0] >= 0:
+            used.add(_global_tray_id_to_slot_key(change[0]))
+    return used
 
 
 async def store_moonraker_print_data(printer_id: int, data: dict) -> None:
@@ -354,6 +403,8 @@ async def store_print_data(
     if state and state.raw_data:
         ams_trays = build_ams_tray_lookup(state.raw_data)
         tray_remain_start = _snapshot_tray_remain(state.raw_data)
+        if tray_remain_start:
+            await _annotate_remain_snapshot(db, printer_id, tray_remain_start, getattr(state, "tray_now", None))
 
     # Try to read per-slot filament estimates from the 3MF. Two paths can
     # leave ``filament_usage`` empty: (1) fallback archive (no .gcode.3mf
@@ -879,6 +930,8 @@ async def _report_partial_usage(
             current_lookup=current_lookup,
             handled_global_tray_ids=set(),
             archive_id=getattr(tracking, "archive_id", -1),
+            slot_to_tray=slot_to_tray,
+            tray_changes=list(getattr(state, "tray_change_log", []) or []),
         )
         return
 
@@ -1152,6 +1205,8 @@ async def report_usage(printer_id: int, archive_id: int):
                 handled_global_tray_ids=handled_global_tray_ids,
                 archive_id=archive_id,
                 slot_colors_out=slot_colors,
+                slot_to_tray=slot_to_tray,
+                tray_changes=list(getattr(current, "tray_change_log", []) or []),
             )
             spools_updated += fallback_updates
 
@@ -1175,6 +1230,8 @@ async def _report_remain_delta_for_slots(
     handled_global_tray_ids: set[int],
     archive_id: int,
     slot_colors_out: dict[int, str] | None = None,
+    slot_to_tray: list | None = None,
+    tray_changes: list | None = None,
 ) -> int:
     """AMS remain%-delta path: write ``(start - current) * filament.weight``
     grams to Spoolman for slots the 3MF path didn't cover.
@@ -1185,7 +1242,13 @@ async def _report_remain_delta_for_slots(
     unreliable ``tray_weight`` (which is the failure mode #1119 documented).
     """
     spools_updated = 0
+    # Only slots the print used may be charged (#1269). With no evidence at all,
+    # keep the legacy behaviour of scanning every snapshotted slot.
+    used_keys = _print_used_slot_keys(tray_remain_start, slot_to_tray, tray_changes)
     for slot_key, start in tray_remain_start.items():
+        if used_keys and slot_key not in used_keys:
+            logger.info("[SPOOLMAN] %s: not used by this print, skipping remain-delta", slot_key)
+            continue
         try:
             ams_id_str, tray_id_str = slot_key.split("-", 1)
             ams_id, tray_id = int(ams_id_str), int(tray_id_str)
@@ -1223,7 +1286,11 @@ async def _report_remain_delta_for_slots(
         if delta_pct <= 0:
             continue  # No consumption captured at AMS granularity, or refilled
 
-        spool_id = await _resolve_spool_id_via_slot_assignment(printer_id, ams_id, tray_id)
+        # Prefer the spool assigned at print start; reassignment mid-print must
+        # not redirect the charge. Rows from before the snapshot fall back to live.
+        spool_id = start.get("spool_id")
+        if spool_id is None:
+            spool_id = await _resolve_spool_id_via_slot_assignment(printer_id, ams_id, tray_id)
         if spool_id is None:
             logger.debug("[SPOOLMAN] AMS%d-T%d: no Spoolman slot assignment, skipping fallback", ams_id, tray_id)
             continue

@@ -94,11 +94,15 @@ class PrintArchive(Base):
 
     # User tracking (who uploaded/created this archive)
     created_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    # Who reprinted an ownerless archive (#730). Attribution only: never an
+    # authorization boundary, so it stays separate from created_by_id.
+    reprinted_by_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
 
     # Relationships
     printer: Mapped["Printer | None"] = relationship(back_populates="archives")
     project: Mapped["Project | None"] = relationship(back_populates="archives")
-    created_by: Mapped["User | None"] = relationship()
+    created_by: Mapped["User | None"] = relationship(foreign_keys=[created_by_id])
+    reprinted_by: Mapped["User | None"] = relationship(foreign_keys=[reprinted_by_id], lazy="selectin")
 
 
 from backend.app.models.printer import Printer  # noqa: E402, F811

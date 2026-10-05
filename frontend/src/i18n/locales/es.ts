@@ -2732,7 +2732,7 @@ export default {
         emailClaim: 'Claim de correo',
         emailClaimDesc: 'Claim de JWT usado como identidad de correo. Use «preferred_username» o «upn» para Azure Entra ID (que no envía email_verified). Use solo nombres de claim de confianza.',
         emailClaimPlaceholder: 'correo',
-        emailClaimCustomClaimAutoLinkWarning: 'Los claims personalizados solo son seguros para la vinculación automática cuando el valor lo administra el inquilino (p. ej. upn / preferred_username de Azure Entra ID). No active la vinculación automática si su IdP permite a los usuarios autoasignarse este claim.',
+        emailClaimCustomClaimAutoLinkWarning: "La vinculación automática solo funciona con el claim estándar 'email' y un correo verificado. Los claims personalizados nunca se usan para vincular cuentas existentes y se rechaza guardar esta combinación.",
         requireEmailVerified: 'Requerir correo verificado',
         requireEmailVerifiedDesc: 'Aceptar el claim de correo solo cuando el proveedor lo marca como verificado.',
         requireEmailVerifiedWarning: 'Advertencia: el correo se aceptará incluso sin verificación. Úselo solo con proveedores de confianza.',
@@ -4184,6 +4184,8 @@ export default {
     runningWithProgressMultiPlate: 'Bandeja {{plateIndex}} de {{plateCount}} • {{name}} — {{stage}} ({{percent}}%) — {{elapsed}}',
     completedToast: '{{name}} laminado',
     failedTitle: 'Error al laminar',
+    embeddedSettingsTitle: 'Embedded settings used',
+    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
     failedToast: 'Error al laminar {{name}}: {{detail}}',
     tier: {
       local: 'Importado',

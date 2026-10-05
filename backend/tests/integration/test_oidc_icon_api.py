@@ -8,7 +8,7 @@ httpx mocking follows the project convention:
 ``patch("backend.app.services.oidc_icon.httpx.AsyncClient", ...)``.
 """
 
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -21,6 +21,13 @@ from backend.tests._fixtures.oidc_icon import (
     PNG_ETAG as _PNG_ETAG,
     build_streaming_icon_mock,
 )
+
+
+@pytest.fixture(autouse=True)
+def _public_dns():
+    """Resolve every icon host to a public IP so tests need no network."""
+    with patch("backend.app.services.oidc_icon._resolve_global_ips", AsyncMock(return_value=["93.184.216.34"])):
+        yield
 
 
 def _build_icon_mock(*, body: bytes = _PNG_BYTES, content_type: str = "image/png", status_code: int = 200):

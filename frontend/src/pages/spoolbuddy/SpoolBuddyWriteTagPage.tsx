@@ -186,7 +186,7 @@ export function SpoolBuddyWriteTagPage() {
     setWriteStatus('writing');
     setWriteMessage(t('spoolbuddy.writeTag.waiting', 'Waiting for SpoolBuddy...'));
     try {
-      const resp = await spoolbuddyApi.writeTag(device.device_id, selectedSpool.id);
+      const resp = await spoolbuddyApi.writeTag(device.device_id, selectedSpool.id, spoolmanMode ? 'spoolman' : 'local');
       if (resp?.warnings?.length) {
         for (const w of resp.warnings) {
           showToast(w, 'warning');

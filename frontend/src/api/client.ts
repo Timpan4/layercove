@@ -777,6 +777,7 @@ export interface Archive {
   // User tracking (Issue #206)
   created_by_id: number | null;
   created_by_username: string | null;
+  reprinted_by_username?: string | null;
   // Per-archive run aggregates from PrintLogEntry (#1378)
   run_count: number;
   last_run_at: string | null;
@@ -2038,6 +2039,8 @@ export interface SliceResponse {
   filament_used_g: number;
   filament_used_mm: number;
   used_embedded_settings: boolean;
+  /** Fallback ran and the 3MF's embedded presets differ from the selected ones. */
+  embedded_settings_mismatch?: boolean;
 }
 
 export interface SliceArchiveResponse {
@@ -2047,6 +2050,8 @@ export interface SliceArchiveResponse {
   filament_used_g: number;
   filament_used_mm: number;
   used_embedded_settings: boolean;
+  /** Fallback ran and the 3MF's embedded presets differ from the selected ones. */
+  embedded_settings_mismatch?: boolean;
 }
 
 // Background slice-job lifecycle. POST /slice returns 202 + this shape;
@@ -2530,6 +2535,7 @@ export interface PrintQueueItem {
   // User tracking (Issue #206)
   created_by_id?: number | null;
   created_by_username?: string | null;
+  started_by_username?: string | null;
   // Batch grouping
   batch_id?: number | null;
   batch_name?: string | null;
@@ -6736,10 +6742,10 @@ export const api = {
     request<{ message: string }>('/github-backup/config', { method: 'DELETE' }),
 
   testGitHubConnection: (repoUrl: string, token: string, provider: GitProviderType = 'github') =>
-    request<GitHubTestConnectionResponse>(
-      `/github-backup/test?repo_url=${encodeURIComponent(repoUrl)}&token=${encodeURIComponent(token)}&provider=${encodeURIComponent(provider)}`,
-      { method: 'POST' }
-    ),
+    request<GitHubTestConnectionResponse>('/github-backup/test', {
+      method: 'POST',
+      body: JSON.stringify({ repo_url: repoUrl, token, provider }),
+    }),
 
   testGitHubStoredConnection: () =>
     request<GitHubTestConnectionResponse>('/github-backup/test-stored', { method: 'POST' }),
@@ -8089,10 +8095,10 @@ export const spoolbuddyApi = {
   getSSHPublicKey: () =>
     request<{ public_key: string }>('/spoolbuddy/ssh/public-key'),
 
-  writeTag: (deviceId: string, spoolId: number) =>
+  writeTag: (deviceId: string, spoolId: number, dataOrigin?: 'local' | 'spoolman') =>
     request<{ status: string; warnings?: string[] }>('/spoolbuddy/nfc/write-tag', {
       method: 'POST',
-      body: JSON.stringify({ device_id: deviceId, spool_id: spoolId }),
+      body: JSON.stringify({ device_id: deviceId, spool_id: spoolId, data_origin: dataOrigin }),
     }),
 
   cancelWrite: (deviceId: string) =>

@@ -59,6 +59,8 @@ See [docs/moonraker-configuration.md](docs/moonraker-configuration.md) for the f
 
 Keep LayerCove and Moonraker on a trusted LAN or a private overlay such as Tailscale. For remote browser access, put LayerCove behind an authenticated HTTPS boundary such as a reverse proxy with authentication or Cloudflare Access. Never publish Moonraker directly. A tunnel alone is not application authorization.
 
+The optional Tailscale certificate integration in `docker-compose.yml` mounts the host's `tailscaled` socket into the LayerCove container. That socket gives the container full control of the host's Tailscale daemon, including logging the node out, changing routes and exit nodes, and enabling Tailscale SSH or Funnel. Leave the mount commented out unless you accept that trust, and treat a compromise of the container as a compromise of the host's tailnet identity.
+
 Enable LayerCove authentication before any untrusted client can reach it. Grant printer-control and printer-file permissions only to users allowed to move, heat, start, or stop hardware. Keep Moonraker API keys and long-lived LayerCove tokens out of URLs, browser-visible configuration, proxy logs, and support tickets.
 
 LayerCove ignores forwarded client-address headers unless `TRUSTED_PROXY_IPS` lists the direct proxy peers. Set it to the proxy addresses that actually connect to LayerCove, not to client networks or a broad subnet. LayerCove then reads `X-Forwarded-For` from right to left and uses the first address that is not a trusted proxy. Configure the proxy to set forwarded headers consistently, and make sure clients cannot bypass the proxy.

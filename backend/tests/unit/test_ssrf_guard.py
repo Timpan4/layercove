@@ -94,3 +94,10 @@ class TestSsrfGuardRejected:
         """F10: AWS IMDS IPv6 address fd00:ec2::254 must be blocked."""
         with pytest.raises(ValueError):
             assert_safe_spoolman_url("http://[fd00:ec2::254]:7912")
+
+
+class TestLinkLocalBlocked:
+    @pytest.mark.parametrize("host", ["169.254.170.2", "169.254.170.23", "169.254.0.23", "[fe80::1]"])
+    def test_link_local_rejected(self, host):
+        with pytest.raises(ValueError):
+            assert_safe_spoolman_url(f"http://{host}:7912")

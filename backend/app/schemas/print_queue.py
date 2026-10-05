@@ -184,6 +184,9 @@ class PrintQueueItemResponse(BaseModel):
     # User tracking (Issue #206)
     created_by_id: int | None = None
     created_by_username: str | None = None
+    # Set when an ownerless item was started by a user (#1670); attribution only.
+    started_by_id: int | None = None
+    started_by_username: str | None = None
 
     # Batch grouping
     batch_id: int | None = None

@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.auth import require_caller_identity_if_auth_enabled
 from backend.app.core.database import get_db
-from backend.app.core.identity import CallerIdentity
+from backend.app.core.identity import CallerIdentity, CallerKind
 from backend.app.core.permissions import Permission
 from backend.app.models.slice_job import SliceJobRecord
 from backend.app.schemas.slicer import (
@@ -28,6 +28,9 @@ def _require_job_access(job: SliceJobRecord | None, caller: CallerIdentity) -> S
         raise HTTPException(status_code=404, detail="Slice job not found or expired")
     if job.source_kind == "calibration_session":
         caller.require_permissions(Permission.PRINTERS_READ)
+        # API keys have no row-ownership identity, so they never match a session's owner.
+        if caller.kind is CallerKind.API_KEY:
+            raise HTTPException(status_code=403, detail="API keys cannot read calibration jobs")
         if job.owner_id != caller.owner_id:
             raise HTTPException(status_code=404, detail="Slice job not found or expired")
         return job

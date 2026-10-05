@@ -99,6 +99,9 @@ class ArchiveResponse(BaseModel):
     # User tracking (Issue #206)
     created_by_id: int | None = None
     created_by_username: str | None = None
+    # Set when an ownerless archive was reprinted by a user (#730); attribution only.
+    reprinted_by_id: int | None = None
+    reprinted_by_username: str | None = None
 
     # Per-archive run aggregates (#1378). Computed from PrintLogEntry — one
     # row per actual print event — so reprints contribute to these counters

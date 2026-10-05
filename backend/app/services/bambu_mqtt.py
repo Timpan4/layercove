@@ -132,7 +132,13 @@ def apply_tray_exist_bits(
             global_bit = ams_id * 4 + tray_id
             slot_exists = (tray_exist_bits >> global_bit) & 1
             if slot_exists:
+                # A state we synthesized while the slot was empty must not outlive
+                # the insertion when the payload carries no explicit state.
+                if tray.pop("_state_synthesized", False):
+                    tray.pop("state", None)
                 continue
+            if tray.get("state") != 9:
+                tray["_state_synthesized"] = True
             tray["state"] = 9
             if tray.get("tray_type"):
                 if log_label:
@@ -287,7 +293,7 @@ class PrinterState:
     hms_errors: list = field(default_factory=list)  # List of HMSError
     kprofiles: list = field(default_factory=list)  # List of KProfile
     sdcard: bool = False  # SD card inserted
-    store_to_sdcard: bool = False  # Store sent files on SD card (home_flag bit 11)
+    store_to_sdcard: bool | None = None  # Store sent files on SD card (home_flag bit 11); None until home_flag seen
     timelapse: bool = False  # Timelapse recording active
     ipcam: bool = False  # Live view / camera streaming enabled
     wifi_signal: int | None = None  # WiFi signal strength in dBm
@@ -558,6 +564,7 @@ class BambuMQTTClient:
         self._raw_message_handlers: list[Callable[[str, bytes], None]] = []
         self._disconnection_event: threading.Event | None = None
         self._previous_ams_hash: str | None = None  # Track AMS changes
+        self._previous_vt_hash: str | None = None  # Track external spool changes
 
         # Cache AMS firmware/SN from get_version in case it arrives before AMS status
         # Key: ams_id (int). Value: {'sw_ver': str, 'sn': str}
@@ -964,6 +971,17 @@ class BambuMQTTClient:
         except json.JSONDecodeError:
             pass  # Ignore non-JSON MQTT messages (e.g. binary or malformed payloads)
 
+    _EXTERNAL_PROJECT_FILE_LOG_FIELDS = (
+        "command",
+        "use_ams",
+        "timelapse",
+        "bed_leveling",
+        "flow_cali",
+        "vibration_cali",
+        "layer_inspect",
+        "bed_type",
+    )
+
     def _handle_request_message(self, data: dict) -> None:
         """Intercept print commands on the request topic to capture ams_mapping."""
         print_data = data.get("print", {})
@@ -980,16 +998,13 @@ class BambuMQTTClient:
                 )
             # Diagnostic for #1162 follow-up (X2D + FTS routing): when a
             # slicer-launched project_file passes through the request topic,
-            # log the full payload so we can diff Studio's field set against
-            # ours. We pin our own sequence_id to "20000" (line ~3195), so
-            # any other value means the command came from Studio/Orca, not
-            # from us.
+            # log the routing-relevant fields so we can diff Studio's field set
+            # against ours. We pin our own sequence_id to "20000" (line ~3195),
+            # so any other value means the command came from Studio/Orca, not
+            # from us. Names, URLs, MD5s and ids are deliberately not logged.
             if print_data.get("sequence_id") != "20000":
-                logger.info(
-                    "[%s] External project_file payload: %s",
-                    self.serial_number,
-                    json.dumps(print_data),
-                )
+                safe = {k: print_data[k] for k in self._EXTERNAL_PROJECT_FILE_LOG_FIELDS if k in print_data}
+                logger.debug("[%s] External project_file fields: %s", self.serial_number, json.dumps(safe))
 
     def _process_message(self, payload: dict):
         """Process incoming MQTT message from printer."""
@@ -1135,6 +1150,8 @@ class BambuMQTTClient:
                     if isinstance(vt_tray, dict):
                         vt_tray = [vt_tray]
                     self.state.raw_data["vt_tray"] = vt_tray
+
+            self._notify_external_slot_change()
 
             # Parse ams_status directly from print data (NOT from print.ams)
             # ams_status is a combined value: lower 8 bits = sub status, bits 8-15 = main status
@@ -1979,6 +1996,9 @@ class BambuMQTTClient:
                                     )
                                 ):
                                     merged_tray[key] = value
+                            if "state" in new_tray:
+                                # Printer-reported state supersedes a synthesized one.
+                                merged_tray.pop("_state_synthesized", None)
                             merged_trays.append(merged_tray)
                         else:
                             merged_trays.append(new_tray)
@@ -2011,6 +2031,7 @@ class BambuMQTTClient:
                 power_on_flag=ams_data.get("power_on_flag", True),
                 log_label=self.serial_number,
             )
+            self._stamp_unit_tray_exist_bits(merged_ams, ams_data)
 
         self.state.raw_data["ams"] = merged_ams
 
@@ -2135,6 +2156,57 @@ class BambuMQTTClient:
                 # Pass merged AMS data (not raw ams_list) — partial MQTT updates
                 # may lack fields like 'remain' that the merged state preserves
                 self.on_ams_change(merged_ams)
+
+    @staticmethod
+    def _stamp_unit_tray_exist_bits(units: list, ams_data: dict) -> None:
+        """Copy each AMS unit's nibble of the enclosing ``tray_exist_bits`` onto the unit.
+
+        The bitmap lives beside the unit list, so per-unit readers (alarm gating)
+        would otherwise only see tray_type, which is blank for loaded-but-unconfigured trays.
+        """
+        raw_bits = ams_data.get("tray_exist_bits")
+        if not raw_bits:
+            return
+        try:
+            bits = raw_bits if isinstance(raw_bits, int) else int(raw_bits, 16)
+        except (ValueError, TypeError):
+            return
+        if bits == 0 and not ams_data.get("power_on_flag", True):
+            return  # printer-shutdown pattern (#765); bitmap isn't trustworthy
+        for unit in units:
+            try:
+                unit_id = int(unit.get("id", 0))
+            except (TypeError, ValueError):
+                continue
+            if 0 <= unit_id < 128:
+                unit["tray_exist_bits"] = f"{(bits >> (unit_id * 4)) & 0xF:x}"
+
+    def _notify_external_slot_change(self):
+        """Fire on_ams_change when the external spool(s) change.
+
+        The AMS hash only covers AMS trays, so an external-slot insertion would
+        otherwise never replay deferred (pending_config) slot configuration.
+        """
+        import hashlib
+
+        vt_tray = self.state.raw_data.get("vt_tray")
+        if not isinstance(vt_tray, list):
+            return
+        vt_hash = hashlib.md5(
+            ":".join(
+                f"{vt.get('id')}:{vt.get('tray_type')}:{vt.get('tag_uid')}:{vt.get('remain')}:{vt.get('tray_color')}"
+                for vt in vt_tray
+                if isinstance(vt, dict)
+            ).encode(),
+            usedforsecurity=False,
+        ).hexdigest()
+        if vt_hash == self._previous_vt_hash:
+            return
+        self._previous_vt_hash = vt_hash
+        if self.on_ams_change:
+            ams_raw = self.state.raw_data.get("ams", [])
+            ams_list = ams_raw.get("ams", []) if isinstance(ams_raw, dict) else ams_raw
+            self.on_ams_change(ams_list if isinstance(ams_list, list) else [])
 
     def _update_state(self, data: dict):
         """Update printer state from message data."""
