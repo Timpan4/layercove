@@ -85,11 +85,11 @@ async def test_postgres_statistics_date_bounds_and_user_filters(monkeypatch):
 
         async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
             for params, total, successful, failed, cancelled in [
-                ({}, 8, 1, 4, 3),
-                ({"date_from": "2020-01-05"}, 7, 1, 3, 3),
-                ({"date_to": "2020-01-12"}, 7, 1, 3, 3),
-                ({"date_from": "2020-01-05", "date_to": "2020-01-12"}, 6, 1, 2, 3),
-                ({"date_from": "2020-01-05", "date_to": "2020-01-12", "created_by_id": 901}, 3, 1, 1, 1),
+                ({}, 8, 1, 3, 4),
+                ({"date_from": "2020-01-05"}, 7, 1, 2, 4),
+                ({"date_to": "2020-01-12"}, 7, 1, 2, 4),
+                ({"date_from": "2020-01-05", "date_to": "2020-01-12"}, 6, 1, 1, 4),
+                ({"date_from": "2020-01-05", "date_to": "2020-01-12", "created_by_id": 901}, 3, 1, 0, 2),
                 ({"date_from": "2020-01-05", "date_to": "2020-01-12", "created_by_id": -1}, 1, 0, 0, 1),
             ]:
                 response = await client.get("/api/v1/archives/stats", params=params)

@@ -90,7 +90,12 @@ async def test_printer_update_without_inventory_permission_cannot_set_spoolman_f
     user_login = await async_client.post("/api/v1/auth/login", json={"username": "noinv", "password": "NoinvPass1!"})
     user = {"Authorization": f"Bearer {user_login.json()['access_token']}"}
     config = {"base_url": "http://klipper.local:7125"}
-    with patch("backend.app.api.routes.printers.MoonrakerHTTPClient") as client_class:
+    # Keep the real printer_manager untouched so the created printer does not leak into later tests.
+    with (
+        patch("backend.app.api.routes.printers.MoonrakerHTTPClient") as client_class,
+        patch("backend.app.api.routes.printers.printer_manager.connect_printer", new=AsyncMock(return_value=True)),
+        patch("backend.app.api.routes.printers.printer_manager.disconnect_printer_async", new=AsyncMock()),
+    ):
         client_class.return_value.test_connection = AsyncMock(return_value=True)
         created = await async_client.post(
             "/api/v1/printers/",

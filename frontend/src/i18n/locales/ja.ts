@@ -4181,8 +4181,8 @@ export default {
     runningWithProgressMultiPlate: 'プレート {{plateIndex}} / {{plateCount}} • {{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}}をスライス済み',
     failedTitle: 'スライスに失敗しました',
-    embeddedSettingsTitle: 'Embedded settings used',
-    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
+    embeddedSettingsTitle: '埋め込み設定を使用',
+    embeddedSettingsMismatch: '選択したプロファイルでのスライスに失敗しました。結果は、選択と異なる3MF埋め込みのプリンター、プロセス、またはフィラメント設定を使用しています。印刷前に確認してください。',
     failedToast: '{{name}}のスライスに失敗: {{detail}}',
     tier: {
       local: 'インポート済み',

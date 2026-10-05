@@ -4171,8 +4171,8 @@ export default {
     runningWithProgressMultiPlate: '{{plateCount}}/{{plateIndex}} plaka • {{name}} — {{stage}} (%{{percent}}) — {{elapsed}}',
     completedToast: '{{name}} dilimlendi',
     failedTitle: 'Dilimleme başarısız',
-    embeddedSettingsTitle: 'Embedded settings used',
-    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
+    embeddedSettingsTitle: 'Gömülü ayarlar kullanıldı',
+    embeddedSettingsMismatch: 'Seçtiğiniz profillerle dilimleme başarısız oldu. Sonuç, 3MF içine gömülü ve seçiminizden farklı yazıcı, işlem veya filament ayarlarını kullanıyor. Yazdırmadan önce kontrol edin.',
     failedToast: '{{name}} dilimleme başarısız: {{detail}}',
     tier: {
       local: 'İçe aktarılmış',

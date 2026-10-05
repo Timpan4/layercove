@@ -4184,8 +4184,8 @@ export default {
     runningWithProgressMultiPlate: 'Bandeja {{plateIndex}} de {{plateCount}} • {{name}} — {{stage}} ({{percent}}%) — {{elapsed}}',
     completedToast: '{{name}} laminado',
     failedTitle: 'Error al laminar',
-    embeddedSettingsTitle: 'Embedded settings used',
-    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
+    embeddedSettingsTitle: 'Se usaron ajustes incrustados',
+    embeddedSettingsMismatch: 'El laminado con los perfiles seleccionados falló. El resultado usa ajustes de impresora, proceso o filamento incrustados en el 3MF que difieren de tu selección. Revísalo antes de imprimir.',
     failedToast: 'Error al laminar {{name}}: {{detail}}',
     tier: {
       local: 'Importado',

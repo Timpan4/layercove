@@ -17,10 +17,10 @@ async def test_queue_list_survives_malformed_nozzle_json(async_client: AsyncClie
     archive = PrintArchive(
         filename="a.3mf",
         print_name="a",
-        file_path="/tmp/a.3mf",
+        file_path="archives/a.3mf",
         file_size=1,
         content_hash="nzhash",
-        status="completed",  # nosec B108
+        status="completed",
     )
     db_session.add_all([printer, archive])
     await db_session.commit()

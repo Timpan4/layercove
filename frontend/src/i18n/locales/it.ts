@@ -4169,8 +4169,8 @@ export default {
     runningWithProgressMultiPlate: 'Piatto {{plateIndex}} di {{plateCount}} • {{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}} sezionato',
     failedTitle: 'Slicing fallito',
-    embeddedSettingsTitle: 'Embedded settings used',
-    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
+    embeddedSettingsTitle: 'Impostazioni incorporate utilizzate',
+    embeddedSettingsMismatch: 'Lo slicing con i profili selezionati non è riuscito. Il risultato usa impostazioni di stampante, processo o filamento incorporate nel 3MF diverse dalla tua selezione. Controllalo prima di stampare.',
     failedToast: 'Slicing di {{name}} fallito: {{detail}}',
     tier: {
       local: 'Importato',

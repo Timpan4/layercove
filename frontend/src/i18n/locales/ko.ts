@@ -3991,8 +3991,8 @@ export default {
     otherPrinters: '다른 프린터',
     runningWithProgressMultiPlate: '플레이트 {{plateIndex}}/{{plateCount}} • {{name}} — {{stage}} ({{percent}}%) — {{elapsed}}',
     failedTitle: '슬라이싱 실패',
-    embeddedSettingsTitle: 'Embedded settings used',
-    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
+    embeddedSettingsTitle: '내장 설정 사용됨',
+    embeddedSettingsMismatch: '선택한 프로필로 슬라이싱하지 못했습니다. 결과는 선택과 다른 3MF 내장 프린터, 프로세스 또는 필라멘트 설정을 사용합니다. 인쇄 전에 확인하세요.',
     bedType: {
       label: '빌드 플레이트',
       auto: '자동 (프로세스 프리셋 사용)',

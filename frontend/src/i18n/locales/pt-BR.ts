@@ -4169,8 +4169,8 @@ export default {
     runningWithProgressMultiPlate: 'Bandeja {{plateIndex}} de {{plateCount}} • {{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}} fatiado',
     failedTitle: 'Falha ao fatiar',
-    embeddedSettingsTitle: 'Embedded settings used',
-    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
+    embeddedSettingsTitle: 'Configurações incorporadas usadas',
+    embeddedSettingsMismatch: 'O fatiamento com os perfis selecionados falhou. O resultado usa configurações de impressora, processo ou filamento incorporadas no 3MF que diferem da sua seleção. Revise antes de imprimir.',
     failedToast: 'Falha ao fatiar {{name}}: {{detail}}',
     tier: {
       local: 'Importado',

@@ -4169,8 +4169,8 @@ export default {
     runningWithProgressMultiPlate: '盤面 {{plateIndex}} / {{plateCount}} • {{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '已切片 {{name}}',
     failedTitle: '切片失敗',
-    embeddedSettingsTitle: 'Embedded settings used',
-    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
+    embeddedSettingsTitle: '已使用內嵌設定',
+    embeddedSettingsMismatch: '使用所選設定檔切片失敗。結果使用了 3MF 中內嵌、與您的選擇不同的印表機、製程或線材設定。請在列印前檢查。',
     failedToast: '切片 {{name}} 失敗：{{detail}}',
     tier: {
       local: '已匯入',

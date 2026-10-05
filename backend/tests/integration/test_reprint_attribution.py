@@ -64,12 +64,9 @@ async def test_reprint_of_ownerless_archive_does_not_grant_ownership(
             },
         )
 
-        for task in asyncio.all_tasks() - tasks_before:
-            task.cancel()
-            try:
-                await task
-            except (asyncio.CancelledError, Exception):
-                pass
+        # Let the background tasks finish inside the mocks. Cancelling them mid-query
+        # can leave a SQLite connection open and lock the teardown DROP TABLE.
+        await asyncio.gather(*(asyncio.all_tasks() - tasks_before - {asyncio.current_task()}), return_exceptions=True)
 
     maker = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
     async with maker() as fresh:

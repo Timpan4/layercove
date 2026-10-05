@@ -4170,8 +4170,8 @@ export default {
     runningWithProgressMultiPlate: 'Plateau {{plateIndex}} sur {{plateCount}} • {{name}} – {{stage}} ({{percent}} %) – {{elapsed}}',
     completedToast: '{{name}} découpé',
     failedTitle: 'Échec du découpage',
-    embeddedSettingsTitle: 'Embedded settings used',
-    embeddedSettingsMismatch: 'Slicing with your selected profiles failed. The result uses printer, process, or filament settings embedded in the 3MF that differ from your selection. Review it before printing.',
+    embeddedSettingsTitle: 'Paramètres intégrés utilisés',
+    embeddedSettingsMismatch: "Le découpage avec les profils sélectionnés a échoué. Le résultat utilise des paramètres d'imprimante, de processus ou de filament intégrés au 3MF qui diffèrent de votre sélection. Vérifiez-le avant d'imprimer.",
     failedToast: 'Échec du découpage de {{name}} : {{detail}}',
     tier: {
       local: 'Importé',
