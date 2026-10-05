@@ -800,6 +800,8 @@ async def get_printer_status(
             layer_num=snapshot.current_layer,
             total_layers=snapshot.total_layers,
             temperatures=dict(snapshot.temperatures),
+            # The scheduler's plate-clear gate covers every provider; the UI needs this to offer the ack.
+            awaiting_plate_clear=printer_manager.is_awaiting_plate_clear(printer_id),
         )
 
     state = printer_manager.get_bambu_state(printer_id)
