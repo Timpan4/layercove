@@ -2671,7 +2671,7 @@ export default {
         emailClaim: 'Claim de e-mail',
         emailClaimDesc: "Claim JWT usado como identidade de e-mail. Use 'preferred_username' ou 'upn' para Azure Entra ID (que não envia email_verified). Use apenas nomes de claim confiáveis.",
         emailClaimPlaceholder: 'e-mail',
-        emailClaimCustomClaimAutoLinkWarning: 'Claims personalizadas são seguras para vinculação automática apenas quando o valor é administrado pelo tenant (ex. Azure Entra ID upn / preferred_username). Não ative a vinculação automática se seu IdP permite que usuários auto-declarem essa claim.',
+        emailClaimCustomClaimAutoLinkWarning: "A vinculação automática só funciona com o claim padrão 'email' e um e-mail verificado. Claims personalizadas nunca são usadas para vincular contas existentes, e salvar essa combinação é rejeitado.",
         requireEmailVerified: 'Exigir e-mail verificado',
         requireEmailVerifiedDesc: 'Aceitar o claim de e-mail apenas quando o provedor o marcar como verificado.',
         requireEmailVerifiedWarning: 'Aviso: o e-mail será aceito sem verificação. Use apenas com provedores confiáveis.',
@@ -4169,6 +4169,8 @@ export default {
     runningWithProgressMultiPlate: 'Bandeja {{plateIndex}} de {{plateCount}} • {{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}} fatiado',
     failedTitle: 'Falha ao fatiar',
+    embeddedSettingsTitle: 'Configurações incorporadas usadas',
+    embeddedSettingsMismatch: 'O fatiamento com os perfis selecionados falhou. O resultado usa configurações de impressora, processo ou filamento incorporadas no 3MF que diferem da sua seleção. Revise antes de imprimir.',
     failedToast: 'Falha ao fatiar {{name}}: {{detail}}',
     tier: {
       local: 'Importado',

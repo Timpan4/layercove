@@ -552,10 +552,10 @@ function SortableQueueItem({
                 </span>
               );
             })()}
-            {item.created_by_username && (
-              <span className="hidden sm:flex items-center gap-1.5" title={t('queue.addedBy', { name: item.created_by_username })}>
+            {(item.created_by_username ?? item.started_by_username) && (
+              <span className="hidden sm:flex items-center gap-1.5" title={t('queue.addedBy', { name: item.created_by_username ?? item.started_by_username })}>
                 <User className="w-3.5 h-3.5" />
-                {item.created_by_username}
+                {item.created_by_username ?? item.started_by_username}
               </span>
             )}
             {isPending && !item.manual_start && (

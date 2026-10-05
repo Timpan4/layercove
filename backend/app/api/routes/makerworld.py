@@ -397,7 +397,7 @@ async def import_instance(
     # path ends in a UUID that's not meaningful to users. Decode the
     # fallback path-tail too — same percent-encoding round-trip applies
     # there as on the manifest-supplied name.
-    filename = suggested_name if suggested_name.endswith(".3mf") else unquote(download_filename)
+    filename = suggested_name if suggested_name.endswith(".3mf") else os.path.basename(unquote(download_filename))
 
     library_file, was_existing = await save_3mf_bytes_to_library(
         db,

@@ -370,6 +370,9 @@ class SliceResponse(BaseModel):
     filament_used_g: float
     filament_used_mm: float
     used_embedded_settings: bool = False
+    # Fallback ran AND the embedded printer/process/filament presets differ
+    # from the ones the user selected.
+    embedded_settings_mismatch: bool = False
 
 
 class SliceArchiveResponse(BaseModel):
@@ -383,3 +386,6 @@ class SliceArchiveResponse(BaseModel):
     filament_used_g: float
     filament_used_mm: float
     used_embedded_settings: bool = False
+    # Fallback ran AND the embedded printer/process/filament presets differ
+    # from the ones the user selected.
+    embedded_settings_mismatch: bool = False

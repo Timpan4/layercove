@@ -45,6 +45,13 @@ class WriteRequestsOnlyFilter(logging.Filter):
     )
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 — stdlib API name
+        # Drop the query string from uvicorn's args (client, method, path, ...):
+        # some endpoints take secrets there (e.g. github-backup/test ``token``)
+        # and the log file is readable through /support/logs.
+        if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
+            args = list(record.args)
+            args[2] = args[2].split("?", 1)[0]
+            record.args = tuple(args)
         message = record.getMessage()
         return any(token in message for token in self._WRITE_VERB_TOKENS)
 

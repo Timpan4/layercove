@@ -128,6 +128,34 @@ async def test_manual_purge_soft_deletes_by_default(
 
 @pytest.mark.asyncio
 @pytest.mark.integration
+async def test_purge_skips_archive_with_printing_queue_item(
+    async_client: AsyncClient, archive_factory, printer_factory, db_session
+):
+    """An old archive being reprinted keeps its old ``completed_at``, so it is
+    age-eligible. Purge must not delete its ``printing`` queue row."""
+    from backend.app.models.archive import PrintArchive
+    from backend.app.models.print_queue import PrintQueueItem
+
+    printer = await printer_factory()
+    old = await archive_factory(printer.id, print_name="OldReprinting")
+    old.created_at = datetime.now(timezone.utc) - timedelta(days=400)
+    old.completed_at = datetime.now(timezone.utc) - timedelta(days=400)
+    item = PrintQueueItem(printer_id=printer.id, archive_id=old.id, status="printing", position=0)
+    db_session.add(item)
+    await db_session.commit()
+    old_id, item_id = old.id, item.id
+
+    resp = await async_client.post("/api/v1/archives/purge", json={"older_than_days": 365})
+    assert resp.status_code == 200
+    assert resp.json()["deleted"] == 0
+
+    db_session.expire_all()
+    assert (await db_session.get(PrintQueueItem, item_id)) is not None
+    assert (await db_session.get(PrintArchive, old_id)).deleted_at is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.integration
 async def test_manual_purge_hard_deletes_when_purge_stats_set(
     async_client: AsyncClient, archive_factory, printer_factory, db_session
 ):

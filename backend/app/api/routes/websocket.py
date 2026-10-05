@@ -89,6 +89,7 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
     # ``broadcast_to_principal()`` helper can filter on it without
     # touching every call site.
     websocket.state.bambuddy_principal = principal
+    websocket.state.bambuddy_auth_required = auth_required
     # Resolve principal username → User.id once at connect so
     # ``ws_manager.broadcast_to_user()`` can filter without re-querying
     # per message. Auth-disabled path keeps None (broadcast_to_user fans

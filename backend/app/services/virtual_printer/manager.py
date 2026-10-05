@@ -5,6 +5,7 @@ bound to its dedicated IP address, regardless of mode.
 """
 
 import asyncio
+import json
 import logging
 import time
 from collections.abc import Callable
@@ -127,6 +128,25 @@ _SLICER_OPTIONS_WAIT_TIMEOUT = 5.0
 # extra-late MQTT (slow wireless slicer, NIC drop+retry) and the
 # scheduler tick interval before dispatch picks the item up.
 _RECENT_QUEUE_ITEM_TTL = 30.0
+
+
+def _nozzle_mapping_json(raw: object, vp_name: str) -> str | None:
+    """Return a JSON list[int] for a slicer-supplied nozzle_mapping, or None if absent/invalid.
+
+    The value comes from the slicer's MQTT command; the queue response model
+    requires list[int], so anything else would break queue reads.
+    """
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except json.JSONDecodeError:
+            raw = None
+    if raw is None:
+        return None
+    if not isinstance(raw, list) or not all(isinstance(n, int) and not isinstance(n, bool) for n in raw):
+        logger.warning("[VP %s] Slicer nozzle_mapping is not a list of integers, dropping: %r", vp_name, raw)
+        return None
+    return json.dumps(raw)
 
 
 def _get_serial_for_model(model: str, serial_suffix: str) -> str:
@@ -404,8 +424,6 @@ class VirtualPrinterInstance:
             self._recent_queue_items.pop(stash_key, None)
             return
 
-        import json
-
         # Mirror the field set `_add_to_print_queue` reads off slicer_opts.
         # MQTT uses `bed_leveling` (single L); the column is `bed_levelling`.
         # `nozzles_info` is intentionally not stamped — column kept for
@@ -422,51 +440,40 @@ class VirtualPrinterInstance:
             if mqtt_field in data:
                 patch[column] = bool(data[mqtt_field])
 
-        raw = data.get("nozzle_mapping")
-        if raw is not None:
-            if isinstance(raw, str):
-                try:
-                    raw = json.loads(raw)
-                except json.JSONDecodeError:
-                    logger.warning(
-                        "[VP %s] Late MQTT nozzle_mapping is unparseable JSON, dropping: %r",
-                        self.name,
-                        raw,
-                    )
-                    raw = None
-            if raw is not None:
-                patch["nozzle_mapping"] = json.dumps(raw)
+        nozzle_json = _nozzle_mapping_json(data.get("nozzle_mapping"), self.name)
+        if nozzle_json is not None:
+            patch["nozzle_mapping"] = nozzle_json
 
         if not patch:
             self._recent_queue_items.pop(stash_key, None)
             return
 
-        from sqlalchemy import select, update
+        from sqlalchemy import update
 
         from backend.app.models.print_queue import PrintQueueItem
 
         try:
             async with self._session_factory() as db:
                 # Only stamp items still pending; once the scheduler has
-                # picked the row up we can't safely race the dispatcher.
+                # picked the row up we can't safely race the dispatcher. The
+                # status guard lives in the UPDATE itself so the check and the
+                # write are one atomic statement.
                 result = await db.execute(
-                    select(PrintQueueItem.id).where(
-                        PrintQueueItem.id.in_(queue_item_ids),
-                        PrintQueueItem.status == "pending",
-                    )
+                    update(PrintQueueItem)
+                    .where(PrintQueueItem.id.in_(queue_item_ids), PrintQueueItem.status == "pending")
+                    .values(**patch)
                 )
-                eligible_ids = [row[0] for row in result.all()]
-                if not eligible_ids:
+                if not result.rowcount:
+                    await db.rollback()
                     self._recent_queue_items.pop(stash_key, None)
                     return
-                await db.execute(update(PrintQueueItem).where(PrintQueueItem.id.in_(eligible_ids)).values(**patch))
                 await db.commit()
                 logger.info(
                     "[VP %s] Late slicer MQTT for %s — retroactively stamped %s onto queue item(s) %s",
                     self.name,
                     stash_key,
                     sorted(patch.keys()),
-                    eligible_ids,
+                    queue_item_ids,
                 )
         except Exception as e:
             logger.error(
@@ -603,6 +610,21 @@ class VirtualPrinterInstance:
         # not fatal — the response model falls back to the filename stem.
         metadata_print_name: str | None = None
         try:
+            import zipfile
+
+            from backend.app.services.zip_limits import ZipTooLargeError, check_zip_size
+
+            try:
+                with zipfile.ZipFile(file_path, "r") as zf:
+                    check_zip_size(zf)
+            except ZipTooLargeError as e:
+                logger.warning("[VP %s] Rejected %s: %s", self.name, file_path.name, e)
+                self._pending_files.pop(file_path.name, None)
+                file_path.unlink(missing_ok=True)
+                return
+            except (zipfile.BadZipFile, OSError):
+                pass
+
             from backend.app.services.archive import ThreeMFParser
 
             parsed = ThreeMFParser(file_path).parse()
@@ -755,25 +777,7 @@ class VirtualPrinterInstance:
                 # is forwarded now.)
                 nozzle_mapping_json: str | None = None
                 if slicer_opts is not None:
-                    raw = slicer_opts.get("nozzle_mapping")
-                    if raw is not None:
-                        # BambuStudio's NetworkAgent embeds this as parsed
-                        # JSON in the project_file body (matching the
-                        # ams_mapping shape Bambuddy already consumes as
-                        # list[int]). Accept a JSON-encoded string defensively
-                        # in case any path arrives stringified.
-                        if isinstance(raw, str):
-                            try:
-                                raw = json.loads(raw)
-                            except json.JSONDecodeError:
-                                logger.warning(
-                                    "[VP %s] Slicer nozzle_mapping is unparseable JSON, dropping: %r",
-                                    self.name,
-                                    raw,
-                                )
-                                raw = None
-                        if raw is not None:
-                            nozzle_mapping_json = json.dumps(raw)
+                    nozzle_mapping_json = _nozzle_mapping_json(slicer_opts.get("nozzle_mapping"), self.name)
 
                 service = ArchiveService(db)
                 archive = await service.archive_print(

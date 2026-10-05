@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
+    caller_is_api_key,
     require_ownership_permission,
 )
 from backend.app.core.config import settings
@@ -35,6 +36,7 @@ from backend.app.utils.threemf_tools import (
     extract_embedded_presets_from_3mf,
     extract_nozzle_mapping_from_3mf,
     extract_project_filaments_from_3mf,
+    is_known_plate,
 )
 
 logger = logging.getLogger(__name__)
@@ -341,6 +343,8 @@ def archive_to_response(
         # User tracking (Issue #206)
         "created_by_id": archive.created_by_id,
         "created_by_username": archive.created_by.username if archive.created_by else None,
+        "reprinted_by_id": archive.reprinted_by_id,
+        "reprinted_by_username": archive.reprinted_by.username if archive.reprinted_by else None,
     }
 
     # Add computed time accuracy fields. ``run_aggregate`` lets
@@ -1068,7 +1072,7 @@ async def get_archive_stats(
     successful_prints = successful_result.scalar() or 0
 
     failed_result = await db.execute(
-        select(func.count(PrintLogEntry.id)).where(PrintLogEntry.status.in_(("failed", "aborted")), *base_conditions)
+        select(func.count(PrintLogEntry.id)).where(PrintLogEntry.status == "failed", *base_conditions)
     )
     failed_prints = failed_result.scalar() or 0
 
@@ -1080,7 +1084,7 @@ async def get_archive_stats(
     # don't silently vanish from Total Prints (#1390).
     cancelled_result = await db.execute(
         select(func.count(PrintLogEntry.id)).where(
-            PrintLogEntry.status.in_(("stopped", "cancelled", "skipped")), *base_conditions
+            PrintLogEntry.status.in_(("stopped", "cancelled", "aborted", "skipped")), *base_conditions
         )
     )
     cancelled_prints = cancelled_result.scalar() or 0
@@ -1980,6 +1984,7 @@ async def delete_archive(
             Permission.ARCHIVES_DELETE_OWN,
         )
     ),
+    is_api_key: bool = Depends(caller_is_api_key),
 ):
     """Delete an archive (soft by default; ``?purge_stats=true`` to hard-delete).
 
@@ -1990,6 +1995,10 @@ async def delete_archive(
     doesn't lose its metadata trail under the running print.
     """
     user, can_modify_all = auth_result
+
+    # can_manage_archives excludes purging statistics (ARCHIVES_PURGE is admin-only).
+    if purge_stats and is_api_key:
+        raise HTTPException(403, "API keys cannot purge archives from statistics")
 
     # Get archive first to check ownership
     result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
@@ -3845,6 +3854,9 @@ async def get_filament_requirements(
     if not file_path.is_file():
         raise HTTPException(404, "Archive file not found")
 
+    if plate_id is not None and not is_known_plate(file_path, plate_id):
+        raise HTTPException(400, f"Plate {plate_id} not found in archive")
+
     filaments = []
 
     try:
@@ -3950,6 +3962,15 @@ async def get_filament_requirements(
                 for f in project_filaments:
                     f["used_in_plate"] = fallback_all_used or f["slot_id"] in used_slot_ids
                 filaments = project_filaments
+
+            if plate_id is None:
+                # A slot reused on several plates is one slot; keep the highest
+                # consumption (same rule as extract_filament_requirements).
+                by_slot: dict[int, dict] = {}
+                for f in filaments:
+                    if f["slot_id"] not in by_slot or f["used_grams"] > by_slot[f["slot_id"]]["used_grams"]:
+                        by_slot[f["slot_id"]] = f
+                filaments = list(by_slot.values())
 
             # Sort by slot ID
             filaments.sort(key=lambda x: x["slot_id"])

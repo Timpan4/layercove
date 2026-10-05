@@ -4,6 +4,7 @@ import logging
 import mimetypes as _mimetypes
 import os
 import posixpath
+import re
 import secrets
 import time
 from contextlib import asynccontextmanager
@@ -86,7 +87,13 @@ from backend.app.core.moonraker_upload_limit import MoonrakerUploadBodyLimitMidd
 from backend.app.core.tasks import spawn_background_task
 from backend.app.core.websocket import ws_manager
 from backend.app.models.smart_plug import SmartPlug
-from backend.app.services.archive import ArchiveService, peek_plate_index_in_3mf, swap_plate_suffix
+from backend.app.services.archive import (
+    ArchiveService,
+    current_timelapse_path,
+    peek_plate_index_in_3mf,
+    stale_timelapse_paths,
+    swap_plate_suffix,
+)
 from backend.app.services.archive_purge import archive_purge_service
 from backend.app.services.bambu_ftp import (
     FileNotOnPrinterError,
@@ -846,6 +853,7 @@ def _compute_run_filament_grams(
     archive_filament_used_grams: float | None,
     progress: float | int | None,
     usage_results: list[dict] | None,
+    slots_used: int | None = None,
 ) -> float | None:
     """Per-run filament for PrintLogEntry, partial- and tracker-aware (#1378, #1390).
 
@@ -854,12 +862,15 @@ def _compute_run_filament_grams(
            weight delta — same source that drives "Total Consumed" on the
            Inventory page, so Stats and Inventory totals stay aligned).
         2. For ``completed``: the slicer estimate (no tracker available, fall
-           back to the canonical "this print used X" value).
+           back to the canonical "this print used X" value). Also used when
+           fewer slots were tracked than the print used (``slots_used``), since
+           the tracked sum then covers only part of the print.
         3. For partial statuses: ``estimate * progress%``.
         4. ``None`` if nothing is known.
     """
     tracked_grams = sum(r.get("weight_used") or 0 for r in (usage_results or []))
-    if tracked_grams > 0:
+    partially_tracked = status == "completed" and slots_used is not None and len(usage_results or []) < slots_used
+    if tracked_grams > 0 and not (partially_tracked and archive_filament_used_grams):
         return round(tracked_grams, 1)
 
     if status == "completed":
@@ -1195,7 +1206,9 @@ async def _maybe_notify_printer_offline(printer_id: int) -> None:
     except Exception as e:
         logger.warning("Printer offline notification failed for printer %s: %s", printer_id, e)
     finally:
-        _printer_offline_notify_tasks.pop(printer_id, None)
+        # A cancelled task may already have been replaced; only drop our own entry.
+        if _printer_offline_notify_tasks.get(printer_id) is asyncio.current_task():
+            _printer_offline_notify_tasks.pop(printer_id, None)
 
 
 async def on_printer_status_change(printer_id: int, state: PrinterState | PrinterSnapshot):
@@ -2694,32 +2707,16 @@ async def on_print_start(printer_id: int, data: dict):
                 archive.status = "printing"
                 archive.started_at = datetime.now(timezone.utc)
 
-                # Reprint of an archive reuses the source row. Without resetting
-                # ``timelapse_path`` _scan_for_timelapse_with_retries early-returns
-                # ("already has timelapse") and _capture_finish_photo_from_timelapse
-                # extracts the *original* print's last frame, which then ships in
-                # the completion notification (#1707). Clear the path so the
-                # scanner runs fresh; also unlink the old video file so reprints
-                # don't accumulate orphans in the archive directory. Photos list
-                # is left alone — accumulating one finish photo per run is fine.
-                stale_timelapse_relpath = archive.timelapse_path
-                if stale_timelapse_relpath:
-                    archive.timelapse_path = None
-                    try:
-                        stale_path = app_settings.base_dir / stale_timelapse_relpath
-                        if stale_path.is_file():
-                            stale_path.unlink()
-                            logger.info(
-                                "Deleted stale timelapse %s on reprint of archive %s",
-                                stale_timelapse_relpath,
-                                expected_archive_id,
-                            )
-                    except OSError as e:
-                        logger.warning(
-                            "Failed to delete stale timelapse %s on reprint: %s",
-                            stale_timelapse_relpath,
-                            e,
-                        )
+                # Reprint of an archive reuses the source row. The old timelapse
+                # must not satisfy _scan_for_timelapse_with_retries' "already has
+                # timelapse" check or feed _capture_finish_photo_from_timelapse,
+                # which would extract the *original* print's last frame into the
+                # completion notification (#1707). Mark it stale instead of
+                # deleting it: a reprint permission must not destroy media, and
+                # the old video is only dropped once the new timelapse is saved
+                # (ArchiveService.attach_timelapse).
+                if archive.timelapse_path:
+                    stale_timelapse_paths[expected_archive_id] = archive.timelapse_path
                 # Persist a restart-stable id so a later restart resumes this
                 # archive by subtask_id instead of name-matching + duplicating
                 # it (#1485). The printer often hasn't echoed subtask_id back
@@ -3582,7 +3579,7 @@ async def _scan_for_timelapse_with_retries(archive_id: int, baseline_names: set[
             if not archive:
                 logger.warning("[TIMELAPSE] Archive %s not found, aborting", archive_id)
                 return
-            if archive.timelapse_path:
+            if current_timelapse_path(archive):
                 logger.info("[TIMELAPSE] Archive %s already has timelapse attached", archive_id)
                 return
             if not archive.printer_id:
@@ -3645,7 +3642,7 @@ async def _scan_for_timelapse_with_retries(archive_id: int, baseline_names: set[
                 if not archive:
                     logger.warning("[TIMELAPSE] Archive %s not found, stopping retries", archive_id)
                     return
-                if archive.timelapse_path:
+                if current_timelapse_path(archive):
                     logger.info("[TIMELAPSE] Archive %s already has timelapse attached, stopping retries", archive_id)
                     return
 
@@ -3709,7 +3706,7 @@ async def _scan_for_timelapse_with_retries(archive_id: int, baseline_names: set[
 
                 service = ArchiveService(db)
                 archive = await service.get_archive(archive_id)
-                if not archive or archive.timelapse_path:
+                if not archive or current_timelapse_path(archive):
                     return
 
                 result = await db.execute(select(Printer).where(Printer.id == archive.printer_id))
@@ -3782,7 +3779,7 @@ async def _capture_finish_photo_from_timelapse(
         async with async_session() as db:
             result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
             archive = result.scalar_one_or_none()
-            timelapse_relpath = archive.timelapse_path if archive else None
+            timelapse_relpath = current_timelapse_path(archive) if archive else None
 
         if timelapse_relpath:
             video_path = app_settings.base_dir / timelapse_relpath
@@ -4902,17 +4899,15 @@ async def on_print_complete(printer_id: int, data: dict):
 
             archive = await db.get(PrintArchive, archive_id)
             if archive:
-                # Back-fill created_by_id on reprint (#730): reprint reuses the
-                # source archive row rather than creating a new one, so an
-                # archive that was auto-created from a printer-initiated
-                # print (created_by_id=NULL) would otherwise stay unattributed
-                # forever. When we have a print-session user AND the archive
-                # has no attribution yet, credit the current user. Never
-                # overwrite an existing attribution — the original uploader
-                # keeps ownership.
+                # Attribute a reprint of an ownerless archive (#730): reprint
+                # reuses the source archive row, so an archive auto-created
+                # from a printer-initiated print (created_by_id=NULL) would
+                # otherwise show no user. Record the reprinter in
+                # reprinted_by_id, never created_by_id: that column gates
+                # update/delete, and a reprint permission must not grant it.
                 _print_user_id = _print_user_info.get("user_id") if _print_user_info else None
                 if archive.created_by_id is None and _print_user_id is not None:
-                    archive.created_by_id = _print_user_id
+                    archive.reprinted_by_id = _print_user_id
                 p_info = printer_manager.get_printer(printer_id)
                 # Per-run actuals — written to PrintLogEntry so stats reflect
                 # what THIS print actually used, not the source archive's
@@ -4925,6 +4920,10 @@ async def on_print_complete(printer_id: int, data: dict):
                     archive.filament_used_grams,
                     data.get("progress"),
                     usage_results,
+                    slots_used=sum(
+                        1 for s in (archive.extra_data or {}).get("filament_slots") or [] if (s.get("used_g") or 0) > 0
+                    )
+                    or None,
                 )
 
                 # Per-run cost — prefer usage_results sum. For partial prints
@@ -6677,7 +6676,23 @@ def _parse_trusted_frame_origins() -> tuple[str, ...]:
         if "*" in parsed.netloc:
             _security_headers_logger.warning("TRUSTED_FRAME_ORIGINS: dropping %r — wildcards not allowed", candidate)
             continue
-        valid.append(f"{parsed.scheme}://{parsed.netloc}")
+        # Rebuild the source from a strictly validated host and port: a raw
+        # netloc could smuggle extra CSP sources (e.g. "ha.local https:").
+        try:
+            port = parsed.port
+        except ValueError:
+            port = -1
+        host = parsed.hostname or ""
+        if (
+            any(c.isspace() or ord(c) < 32 for c in candidate)
+            or "@" in parsed.netloc
+            or port == -1
+            or not (re.fullmatch(r"[A-Za-z0-9]([A-Za-z0-9.-]*[A-Za-z0-9])?", host) or ":" in host)
+        ):
+            _security_headers_logger.warning("TRUSTED_FRAME_ORIGINS: dropping %r — invalid host or port", candidate)
+            continue
+        host_part = f"[{host}]" if ":" in host else host
+        valid.append(f"{parsed.scheme}://{host_part}" + (f":{port}" if port else ""))
     if valid:
         _security_headers_logger.info("TRUSTED_FRAME_ORIGINS: %s", ", ".join(valid))
     return tuple(valid)

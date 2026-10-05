@@ -1289,6 +1289,7 @@ async def _provision_ldap_user(db: AsyncSession, ldap_user, ldap_config) -> User
     if mapped_group_names:
         groups_result = await db.execute(select(Group).where(Group.name.in_(mapped_group_names)))
         new_user.groups = list(groups_result.scalars().all())
+    new_user.ldap_applied_group_ids = sorted(g.id for g in new_user.groups)
 
     db.add(new_user)
     await db.commit()
@@ -1300,12 +1301,11 @@ async def _provision_ldap_user(db: AsyncSession, ldap_user, ldap_config) -> User
 async def _sync_ldap_user(db: AsyncSession, user: User, ldap_user, ldap_config) -> None:
     """Sync LDAP user attributes (email, groups) on each login.
 
-    Group sync only touches BamBuddy groups that LDAP is configured to manage —
-    that is, the values of `group_mapping` plus `default_group`. Any group
-    outside that set is assumed to be a manual admin assignment and is
-    preserved across logins (#1292). Manual assignments to a BamBuddy group
-    that IS LDAP-managed are still overridden by LDAP truth, because revoking
-    access in LDAP must propagate to BamBuddy on next login.
+    Group sync only removes groups LDAP itself applied earlier (recorded in
+    ``User.ldap_applied_group_ids``), so manual admin assignments survive
+    (#1292) while a mapping that is changed or removed also revokes the group
+    it previously granted. Users with no record yet fall back to the groups
+    named by the current mapping and default group.
     """
     import logging
 
@@ -1319,12 +1319,6 @@ async def _sync_ldap_user(db: AsyncSession, user: User, ldap_user, ldap_config) 
     if ldap_user.email and ldap_user.email != user.email:
         user.email = ldap_user.email
         changed = True
-
-    # Compute the set of BamBuddy groups LDAP is allowed to manage. Anything
-    # outside this set is left alone so manual admin assignments survive logins.
-    ldap_managed_names: set[str] = set(ldap_config.group_mapping.values())
-    if ldap_config.default_group:
-        ldap_managed_names.add(ldap_config.default_group)
 
     # Resolve what LDAP says the user should currently be in.
     mapped_group_names = resolve_group_mapping(ldap_user.groups, ldap_config.group_mapping)
@@ -1341,16 +1335,29 @@ async def _sync_ldap_user(db: AsyncSession, user: User, ldap_user, ldap_config) 
         new_ldap_groups = list(groups_result.scalars().all())
     else:
         new_ldap_groups = []
+    new_ldap_ids = {g.id for g in new_ldap_groups}
 
-    # Preserve manual assignments to non-LDAP-managed groups; replace only
-    # the LDAP-managed slice with the resolved set.
-    preserved_manual_groups = [g for g in user.groups if g.name not in ldap_managed_names]
-    new_groups = preserved_manual_groups + new_ldap_groups
+    if user.ldap_applied_group_ids is not None:
+        previously_applied_ids = set(user.ldap_applied_group_ids)
+    else:
+        ldap_managed_names: set[str] = set(ldap_config.group_mapping.values())
+        if ldap_config.default_group:
+            ldap_managed_names.add(ldap_config.default_group)
+        previously_applied_ids = {g.id for g in user.groups if g.name in ldap_managed_names}
+
+    # Drop only groups LDAP applied before; keep everything else, then add the current set.
+    kept_groups = [g for g in user.groups if g.id not in previously_applied_ids and g.id not in new_ldap_ids]
+    new_groups = kept_groups + new_ldap_groups
 
     current_group_ids = {g.id for g in user.groups}
     new_group_ids = {g.id for g in new_groups}
     if current_group_ids != new_group_ids:
         user.groups = new_groups
+        changed = True
+
+    applied_ids = sorted(new_ldap_ids)
+    if user.ldap_applied_group_ids != applied_ids:
+        user.ldap_applied_group_ids = applied_ids
         changed = True
 
     if changed:

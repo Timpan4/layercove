@@ -925,3 +925,75 @@ class TestCancelTerminal:
         resp = await async_client.post(f"/api/v1/pipeline-runs/{run.id}/cancel")
         assert resp.status_code == 200
         assert resp.json()["status"] == "completed"  # unchanged
+
+
+class TestSourceOwnership:
+    """Own-only operators must not run pipelines on other users' sources."""
+
+    @staticmethod
+    async def _operator_headers(async_client: AsyncClient) -> dict[str, str]:
+        await async_client.post(
+            "/api/v1/auth/setup",
+            json={"auth_enabled": True, "admin_username": "pradmin", "admin_password": "AdminPass1!"},
+        )
+        admin = await async_client.post("/api/v1/auth/login", json={"username": "pradmin", "password": "AdminPass1!"})
+        admin_headers = {"Authorization": f"Bearer {admin.json()['access_token']}"}
+        groups = (await async_client.get("/api/v1/groups/", headers=admin_headers)).json()
+        operators = next(g for g in groups if g["name"] == "Operators")
+        await async_client.post(
+            "/api/v1/users/",
+            headers=admin_headers,
+            json={"username": "prop", "password": "Operatorpass1!", "group_ids": [operators["id"]]},
+        )
+        op = await async_client.post("/api/v1/auth/login", json={"username": "prop", "password": "Operatorpass1!"})
+        return {"Authorization": f"Bearer {op.json()['access_token']}"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_run_and_eligibility_hide_foreign_library_file(
+        self, async_client: AsyncClient, pipeline_factory, printer_factory, library_file_factory
+    ):
+        printer = await printer_factory()
+        pipeline = await pipeline_factory(target_printer_id=printer.id)
+        foreign = await library_file_factory(created_by_id=None)
+        operator_headers = await self._operator_headers(async_client)
+
+        run = await async_client.post(
+            f"/api/v1/slicer-pipelines/{pipeline['id']}/run",
+            headers=operator_headers,
+            json={"source_library_file_id": foreign.id, "force": True},
+        )
+        assert run.status_code == 404
+        check = await async_client.post(
+            f"/api/v1/slicer-pipelines/{pipeline['id']}/check-eligibility",
+            headers=operator_headers,
+            json={"source_library_file_id": foreign.id},
+        )
+        assert check.status_code == 404
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    async def test_retry_failed_hides_foreign_source(
+        self,
+        async_client: AsyncClient,
+        db_session,
+        pipeline_factory,
+        printer_factory,
+        library_file_factory,
+    ):
+        from backend.app.models.pipeline_run import PipelineJob, PipelineRun
+
+        printer = await printer_factory()
+        pipeline = await pipeline_factory(target_printer_id=printer.id)
+        foreign = await library_file_factory(created_by_id=None)
+        parent = PipelineRun(
+            pipeline_id=pipeline["id"], source_library_file_id=foreign.id, copies=1, status="failed", created_by=None
+        )
+        db_session.add(parent)
+        await db_session.flush()
+        db_session.add(PipelineJob(pipeline_run_id=parent.id, copy_index=0, status="failed"))
+        await db_session.commit()
+        operator_headers = await self._operator_headers(async_client)
+
+        resp = await async_client.post(f"/api/v1/pipeline-runs/{parent.id}/retry-failed", headers=operator_headers)
+        assert resp.status_code == 404

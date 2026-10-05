@@ -145,9 +145,25 @@ class TestMaybeNotifyPrinterOffline:
             patch("backend.app.main.printer_manager") as mock_pm,
         ):
             mock_pm.is_connected.return_value = True  # No notification path
-            main_module._printer_offline_notify_tasks[1] = MagicMock()
+            main_module._printer_offline_notify_tasks[1] = asyncio.current_task()
             await main_module._maybe_notify_printer_offline(printer_id=1)
             assert 1 not in main_module._printer_offline_notify_tasks
+
+
+class TestCancelledTaskKeepsReplacement:
+    @pytest.mark.asyncio
+    async def test_cancelled_task_does_not_remove_replacement_entry(self):
+        """A cancelled debounce task must not pop the entry of the task that replaced it."""
+        old = asyncio.create_task(main_module._maybe_notify_printer_offline(1))
+        main_module._printer_offline_notify_tasks[1] = old
+        await asyncio.sleep(0)  # let `old` reach its debounce sleep
+        old.cancel()
+        replacement = asyncio.create_task(asyncio.sleep(60))
+        main_module._printer_offline_notify_tasks[1] = replacement
+        with pytest.raises(asyncio.CancelledError):
+            await old
+        assert main_module._printer_offline_notify_tasks.get(1) is replacement
+        replacement.cancel()
 
 
 class TestOfflineEdgeDetection:

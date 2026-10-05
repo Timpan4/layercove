@@ -2588,6 +2588,9 @@ function SpoolTableGroup({
   onToggleGroupSelected?: (ids: number[], select: boolean) => void;
 }) {
   const allMembersSelected = !!selectedIds && spools.every((s) => selectedIds.has(s.id));
+  // The scale reading belongs to one physical spool, so compare it against that
+  // spool rather than the summed header totals.
+  const headerCellSpool = (colId: string) => (colId === 'weight_check' ? spools[0] : headerSpool);
   return (
     <>
       {/* Group header row */}
@@ -2611,14 +2614,14 @@ function SpoolTableGroup({
             {idx === 0 ? (
               <div className="flex items-center gap-2">
                 <ChevronDown className={`w-4 h-4 text-bambu-gray transition-transform ${isExpanded ? '' : '-rotate-90'}`} />
-                {columnCells[colId]?.({ spool: headerSpool, remaining, pct, assignmentMap, catalogMap, currencySymbol, dateFormat, t, onSyncWeight })}
+                {columnCells[colId]?.({ spool: headerCellSpool(colId), remaining, pct, assignmentMap, catalogMap, currencySymbol, dateFormat, t, onSyncWeight })}
               </div>
             ) : colId === 'id' ? (
               <span className="text-xs font-medium bg-bambu-green/20 text-bambu-green px-2 py-0.5 rounded-full">
                 {t('inventory.groupedSpools', { count: spools.length })}
               </span>
             ) : (
-              columnCells[colId]?.({ spool: headerSpool, remaining, pct, assignmentMap, catalogMap, currencySymbol, dateFormat, t, onSyncWeight })
+              columnCells[colId]?.({ spool: headerCellSpool(colId), remaining, pct, assignmentMap, catalogMap, currencySymbol, dateFormat, t, onSyncWeight })
             )}
           </td>
         ))}

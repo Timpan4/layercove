@@ -9,6 +9,9 @@ loosening of the strict ``img-src 'self' data: blob:`` CSP.
 Pattern mirrors ``services/makerworld.fetch_thumbnail``:
 - ``follow_redirects=False`` so the SSRF host allowlist (here: assert_safe_public_https_url)
   isn't bypassed by a 302 to a private address.
+- The hostname is resolved up front, every A/AAAA record must be globally
+  routable, and the connection is pinned to the checked IP (SNI/Host keep the
+  original hostname) so DNS rebinding cannot swap in a private address.
 - MIME whitelist (PNG/JPEG/WebP/GIF). SVG is rejected in v1 — XML payloads
   carry too many corner cases (xlink, external refs) for an MVP.
 - ``application/octet-stream`` is accepted only if the URL path ends in a
@@ -20,11 +23,16 @@ Pattern mirrors ``services/makerworld.fetch_thumbnail``:
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import ipaddress
 import logging
+import socket
 from urllib.parse import urlparse
 
 import httpx
+
+from backend.app.api.routes._url_safety import unwrap_ipv4_mapped
 
 logger = logging.getLogger(__name__)
 
@@ -70,6 +78,23 @@ class OIDCIconUnavailableError(OIDCIconError):
     redirects (we never follow), etc.  Maps to a 400 at the API layer because
     the admin's input (the URL) is what's at fault.
     """
+
+
+async def _resolve_global_ips(host: str, port: int) -> list[str]:
+    """Resolve *host* and return its addresses; raise if any is not globally routable."""
+    try:
+        records = await asyncio.get_running_loop().getaddrinfo(host, port, type=socket.SOCK_STREAM)
+    except OSError as exc:
+        raise OIDCIconUnavailableError(f"Icon host could not be resolved: {exc}") from exc
+    ips: list[str] = []
+    for record in records:
+        addr = unwrap_ipv4_mapped(ipaddress.ip_address(record[4][0]))
+        if not addr.is_global:
+            raise OIDCIconUrlError("icon URL must resolve only to public addresses")
+        ips.append(str(addr))
+    if not ips:
+        raise OIDCIconUnavailableError("Icon host did not resolve to any address")
+    return ips
 
 
 def _resolve_content_type(upstream_type: str, url_path: str) -> str:
@@ -128,10 +153,25 @@ async def fetch_icon(url: str) -> tuple[bytes, str, str]:
         # future code path bypassed the validators.
         raise OIDCIconUrlError("Icon URL must use https://")
 
+    hostname = parsed.hostname or ""
+    port = parsed.port or 443
+    pinned_ip = (await _resolve_global_ips(hostname, port))[0]
+    try:
+        pinned_url = httpx.URL(url).copy_with(host=pinned_ip)
+    except httpx.InvalidURL as exc:
+        raise OIDCIconUrlError(f"Invalid icon URL: {exc}") from exc
+    host_header = hostname if parsed.port is None else f"{hostname}:{parsed.port}"
+
     try:
         async with (
             httpx.AsyncClient(timeout=_FETCH_TIMEOUT_SECONDS) as client,
-            client.stream("GET", url, follow_redirects=False) as response,
+            client.stream(
+                "GET",
+                pinned_url,
+                headers={"Host": host_header},
+                extensions={"sni_hostname": hostname},
+                follow_redirects=False,
+            ) as response,
         ):
             if response.status_code != 200:
                 # Any non-200 — including 301/302 redirects (we set follow_redirects=False

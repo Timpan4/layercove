@@ -232,6 +232,11 @@ function ExternalFolderModal({ onClose, onSave, isLoading, t }: ExternalFolderMo
 // backend validator in backend/app/utils/filename.py — keep in sync.
 const INVALID_FILENAME_CHARS = '<>:"/\\|?*';
 
+// The folders API returns a tree; external folders may be nested under internal ones.
+function hasExternalFolder(folder: LibraryFolderTree): boolean {
+  return folder.is_external || folder.children.some(hasExternalFolder);
+}
+
 function findInvalidFilenameChar(name: string): string | null {
   for (const ch of name) {
     if (INVALID_FILENAME_CHARS.includes(ch)) return ch;
@@ -1788,7 +1793,7 @@ export function FileManagerPage() {
             className="w-full bg-bambu-dark-secondary border border-bambu-dark-tertiary rounded-lg px-3 py-2.5 text-white focus:outline-none focus:border-bambu-green"
           >
             <option value="__top:internal">📁 {t('fileManager.allFiles')}</option>
-            {folders?.some((f) => f.is_external) && (
+            {folders?.some(hasExternalFolder) && (
               <option value="__top:external">🔗 {t('fileManager.allExternal')}</option>
             )}
             {sortedFolders && (() => {
@@ -1926,7 +1931,7 @@ export function FileManagerPage() {
             {/* External (combined) — only shown when at least one external
                 folder is linked. Single folder users don't need a combined
                 view; clicking the individual folder is just as fast. */}
-            {folders?.some((f) => f.is_external) && (
+            {folders?.some(hasExternalFolder) && (
               <div
                 className={`flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer transition-colors ${
                   selectedFolderId === null && topLevelView === 'external'

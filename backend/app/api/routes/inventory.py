@@ -14,9 +14,11 @@ from backend.app.core.auth import (
     RequireAnyPermissionIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
     require_auth_if_enabled,
+    require_caller_identity_if_auth_enabled,
 )
 from backend.app.core.catalog_defaults import DEFAULT_COLOR_CATALOG, DEFAULT_SPOOL_CATALOG
 from backend.app.core.database import get_db
+from backend.app.core.identity import CallerIdentity
 from backend.app.core.permissions import Permission
 from backend.app.core.websocket import ws_manager
 from backend.app.models.ams_label import AmsLabel
@@ -93,6 +95,7 @@ async def apply_spool_to_slot_via_mqtt(
     tray_id: int,
     current_tray_info_idx: str = "",
     current_tray_type: str = "",
+    rfid_slot: bool = False,
 ) -> bool:
     """Publish ams_filament_setting + extrusion_cali_sel for a spool on a slot.
 
@@ -105,6 +108,10 @@ async def apply_spool_to_slot_via_mqtt(
     used as fallback hints when the spool's slicer_filament can't be resolved.
     Caller should not pass these for the empty-slot re-fire path (they'll be
     the freshly-loaded values, which is the intended fallback).
+
+    `rfid_slot` marks a Bambu Lab RFID-detected tray: ams_filament_setting is
+    skipped (it would replace the firmware's RFID state with a manual one) and
+    only the K-profile commands are sent, as in `auto_assign_spool`.
     """
     from backend.app.services.printer_manager import printer_manager
 
@@ -238,17 +245,18 @@ async def apply_spool_to_slot_via_mqtt(
             "printer" if printer_kp else "stored",
         )
 
-    client.ams_set_filament_setting(
-        ams_id=ams_id,
-        tray_id=tray_id,
-        tray_info_idx=effective_tray_info_idx,
-        tray_type=tray_type,
-        tray_sub_brands=tray_sub_brands,
-        tray_color=tray_color,
-        nozzle_temp_min=temp_min,
-        nozzle_temp_max=temp_max,
-        setting_id=effective_setting_id,
-    )
+    if not rfid_slot:
+        client.ams_set_filament_setting(
+            ams_id=ams_id,
+            tray_id=tray_id,
+            tray_info_idx=effective_tray_info_idx,
+            tray_type=tray_type,
+            tray_sub_brands=tray_sub_brands,
+            tray_color=tray_color,
+            nozzle_temp_min=temp_min,
+            nozzle_temp_max=temp_max,
+            setting_id=effective_setting_id,
+        )
 
     if matching_kp and matching_kp.cali_idx is not None:
         # filament_id for cali_sel must match the preset under which the kp
@@ -259,7 +267,7 @@ async def apply_spool_to_slot_via_mqtt(
         elif matching_kp.setting_id:
             cali_filament_id = normalize_slicer_filament(matching_kp.setting_id)[0] or matching_kp.setting_id
         else:
-            cali_filament_id = spool.slicer_filament or effective_tray_info_idx
+            cali_filament_id = effective_tray_info_idx
         client.extrusion_cali_sel(
             ams_id=ams_id,
             tray_id=tray_id,
@@ -274,7 +282,8 @@ async def apply_spool_to_slot_via_mqtt(
         # filament's calibration to the new spool. Default K is the firmware's
         # documented "no specific profile" value (see BambuClient.extrusion_cali_sel
         # docstring).
-        cali_filament_id = spool.slicer_filament or effective_tray_info_idx
+        # filament_id must equal the tray_info_idx the slot was configured with.
+        cali_filament_id = effective_tray_info_idx
         client.extrusion_cali_sel(
             ams_id=ams_id,
             tray_id=tray_id,
@@ -1672,6 +1681,7 @@ async def assign_spool(
 ):
     """Assign a spool to an AMS slot and auto-configure via MQTT."""
     from backend.app.services.printer_manager import printer_manager
+    from backend.app.services.spool_tag_matcher import is_bambu_tag
 
     # 1. Validate spool exists and is not archived
     result = await db.execute(select(Spool).options(selectinload(Spool.k_profiles)).where(Spool.id == data.spool_id))
@@ -1692,6 +1702,7 @@ async def assign_spool(
     fingerprint_type = None
     current_tray_info_idx = ""
     tray_state: int | None = None
+    rfid_slot = False
     state = printer_manager.get_status(data.printer_id)
     if state and state.raw_data:
         if data.ams_id == 255:
@@ -1703,6 +1714,7 @@ async def assign_spool(
                     fingerprint_color = vt.get("tray_color", "")
                     fingerprint_type = vt.get("tray_type", "")
                     current_tray_info_idx = vt.get("tray_info_idx", "")
+                    rfid_slot = is_bambu_tag(vt.get("tag_uid", ""), vt.get("tray_uuid", ""), current_tray_info_idx)
                     raw_state = vt.get("state")
                     if isinstance(raw_state, int):
                         tray_state = raw_state
@@ -1725,6 +1737,7 @@ async def assign_spool(
                 fingerprint_color = tray.get("tray_color", "")
                 fingerprint_type = tray.get("tray_type", "")
                 current_tray_info_idx = tray.get("tray_info_idx", "")
+                rfid_slot = is_bambu_tag(tray.get("tag_uid", ""), tray.get("tray_uuid", ""), current_tray_info_idx)
                 raw_state = tray.get("state")
                 if isinstance(raw_state, int):
                     tray_state = raw_state
@@ -1800,6 +1813,7 @@ async def assign_spool(
                 tray_id=data.tray_id,
                 current_tray_info_idx=current_tray_info_idx,
                 current_tray_type=fingerprint_type or "",
+                rfid_slot=rfid_slot,
             )
         except Exception as e:
             logger.warning("MQTT auto-configure failed for spool %d: %s", spool.id, e)
@@ -2412,7 +2426,7 @@ class CreateSpoolFromSlotRequest(BaseModel):
 async def create_spool_from_slot(
     req: CreateSpoolFromSlotRequest,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.INVENTORY_UPDATE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.INVENTORY_UPDATE)),
 ):
     """Explicit user action: create an inventory spool from an AMS slot's current tray data.
 
@@ -2420,6 +2434,7 @@ async def create_spool_from_slot(
     the user looked at the slot and chose to register it. Also assigns the new spool
     to the slot in the same call.
     """
+    caller.require_printer_access(req.printer_id)
     from backend.app.services.printer_manager import printer_manager
     from backend.app.services.spool_tag_matcher import auto_assign_spool, create_spool_from_tray
 

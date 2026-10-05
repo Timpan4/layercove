@@ -268,6 +268,26 @@ async def test_manager_routes_bambu_lifecycle_and_moonraker_terminal_callbacks()
 
 
 @pytest.mark.asyncio
+async def test_manager_does_not_drop_next_job_that_reuses_stale_correlation_id():
+    manager = PrinterManager(registry=PrinterBackendRegistry())
+    observed = []
+
+    async def on_lifecycle(event: PrintLifecycleEvent):
+        observed.append(event.kind)
+
+    manager.set_print_lifecycle_callback(on_lifecycle)
+    manager._backends = {2: SimpleNamespace(provider=PrinterProvider.BAMBU)}
+
+    for _ in range(2):
+        await manager._forward_backend_event(2, lifecycle("started", "cube", "job-2"))
+        await manager._forward_backend_event(2, lifecycle("completed", "cube", "job-2"))
+    # duplicates within one job are still dropped
+    await manager._forward_backend_event(2, lifecycle("completed", "cube", "job-2"))
+
+    assert observed == ["started", "completed", "started", "completed"]
+
+
+@pytest.mark.asyncio
 async def test_manager_routes_running_observed_callback_for_lifecycle_backends():
     manager = PrinterManager(registry=PrinterBackendRegistry())
     observed = []

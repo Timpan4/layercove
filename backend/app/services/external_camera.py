@@ -8,9 +8,11 @@ to ensure they are well-formed before use.
 """
 
 import asyncio
+import io
 import logging
 import re
 import shutil
+import warnings
 from collections.abc import AsyncGenerator
 from pathlib import Path
 from urllib.parse import urlparse
@@ -481,9 +483,16 @@ def _transcode_to_jpeg(data: bytes) -> bytes | None:
     try:
         import cv2
         import numpy as np
+        from PIL import Image
     except ImportError:
         return None
     try:
+        # Reject decompression bombs from the header, before cv2 allocates the
+        # decoded buffer. Pillow's own MAX_IMAGE_PIXELS is the pixel limit.
+        with warnings.catch_warnings():
+            warnings.simplefilter("error", Image.DecompressionBombWarning)
+            with Image.open(io.BytesIO(data)) as probe:
+                probe.verify()
         img = cv2.imdecode(np.frombuffer(data, dtype=np.uint8), cv2.IMREAD_COLOR)
         if img is None:
             return None
@@ -546,16 +555,15 @@ async def _capture_snapshot(url: str, timeout: int) -> bytes | None:
         )
         return transcoded
 
-    # Couldn't decode it as an image at all — most likely not an image response
-    # (HTML error page, auth redirect, wrong URL). Return the raw bytes as a last
-    # resort (unchanged behaviour) but log enough to debug.
+    # Not a decodable image (HTML error page, auth redirect, wrong URL, or an
+    # internal service response). Never relay it to callers.
     logger.warning(
         "External camera snapshot is not a decodable image "
         "(%d bytes, header %s) — verify the camera URL returns an image",
         len(data),
         data[:4].hex(),
     )
-    return data
+    return None
 
 
 async def test_connection(url: str, camera_type: str) -> dict:

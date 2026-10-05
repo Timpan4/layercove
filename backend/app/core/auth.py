@@ -7,7 +7,7 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 
 import jwt
-from fastapi import Depends, Header, HTTPException, status
+from fastapi import Depends, Header, HTTPException, Request, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jwt.exceptions import PyJWTError as JWTError
 from passlib.context import CryptContext
@@ -117,19 +117,14 @@ _APIKEY_SCOPE_BY_PERMISSION: dict[Permission, str] = {
     Permission.SMART_PLUGS_CONTROL: "can_control_printer",
     # can_manage_library — file-manager scope (upload/rename/delete library
     # entries + MakerWorld import which downloads files into the library).
-    # OWN and ALL ownership variants map to the same scope so the
-    # `require_ownership_permission` checker (which gates on `all_perm`)
-    # passes the API key through. This matches `can_queue` and the
-    # archives/inventory scopes — API keys have no per-row ownership identity
-    # (line 1663), so splitting OWN/ALL across allowlist/denylist made the
-    # whole library curation surface unreachable for API keys (#1832).
-    # LIBRARY_PURGE stays admin-only as a genuinely destructive op that
-    # bypasses the soft-delete window.
+    # Only the OWN variants are mapped. ``require_ownership_permission`` sees
+    # that the ALL variant is unmapped and resolves the key's owner instead,
+    # so the key can curate its owner's files (#1832) but never other users'.
+    # LIBRARY_UPDATE_ALL / LIBRARY_DELETE_ALL stay admin-only, as does
+    # LIBRARY_PURGE (bypasses the soft-delete window).
     Permission.LIBRARY_UPLOAD: "can_manage_library",
     Permission.LIBRARY_UPDATE_OWN: "can_manage_library",
-    Permission.LIBRARY_UPDATE_ALL: "can_manage_library",
     Permission.LIBRARY_DELETE_OWN: "can_manage_library",
-    Permission.LIBRARY_DELETE_ALL: "can_manage_library",
     Permission.MAKERWORLD_IMPORT: "can_manage_library",
     # can_manage_inventory — inventory write scope. Covers the documented
     # spool/catalog/forecast write surface AND the SpoolBuddy kiosk endpoints
@@ -234,11 +229,11 @@ _APIKEY_DENIED_PERMISSIONS: frozenset[Permission] = frozenset(
         # #1832). ARCHIVES_PURGE stays denied as a genuinely destructive op
         # that drops the print's stats contribution.
         Permission.ARCHIVES_PURGE,
-        # LIBRARY_UPDATE_ALL / LIBRARY_DELETE_ALL moved to the allowlist
-        # under `can_manage_library` (#1832) — split between allow/deny made
-        # the whole library curation surface unreachable for API keys via
-        # `require_ownership_permission`. Purge stays denied as a genuinely
-        # destructive op.
+        # LIBRARY_UPDATE_ALL / LIBRARY_DELETE_ALL cross user boundaries, so API
+        # keys get the OWN variants only (scoped to the key owner's files).
+        # Purge stays denied as a genuinely destructive op.
+        Permission.LIBRARY_UPDATE_ALL,
+        Permission.LIBRARY_DELETE_ALL,
         Permission.LIBRARY_PURGE,
         # PROJECTS_CREATE / _UPDATE / _DELETE moved to the allowlist under
         # `can_manage_projects` (#1893) — they were denied for every API key,
@@ -333,6 +328,47 @@ def _check_apikey_permissions(api_key: APIKey, perm_strings: list[str], *, requi
 
     if require_any and last_failure is not None:
         raise last_failure
+
+
+def apikey_owner_scoped(all_permission: str | Permission, own_permission: str | Permission) -> bool:
+    """True when API keys may use only the OWN variant of an ownership pair.
+
+    Such keys act as their owner (``api_key.user_id``) and never get
+    ``can_modify_all``.
+    """
+    all_perm = all_permission.value if isinstance(all_permission, Permission) else all_permission
+    own_perm = own_permission.value if isinstance(own_permission, Permission) else own_permission
+    return _resolve_apikey_scope(all_perm) is None and _resolve_apikey_scope(own_perm) is not None
+
+
+def _check_apikey_ownership(api_key: APIKey, all_perm: str, own_perm: str) -> bool:
+    """Gate an API key on an ownership pair. Returns True when it may act on all rows.
+
+    Owner-scoped pairs (see ``apikey_owner_scoped``) return False and require an
+    owned key; ownerless legacy keys fail closed.
+    """
+    if apikey_owner_scoped(all_perm, own_perm):
+        _check_apikey_permissions(api_key, [own_perm])
+        if api_key.user_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="API key has no owner; recreate it to modify files",
+            )
+        return False
+    _check_apikey_permissions(api_key, [all_perm])
+    return True
+
+
+async def _apikey_ownership_result(
+    db: AsyncSession, api_key: APIKey, all_perm: str, own_perm: str
+) -> tuple[User | None, bool]:
+    """``(user, can_modify_all)`` for an API key on an ownership-permission route."""
+    if _check_apikey_ownership(api_key, all_perm, own_perm):
+        return None, True
+    owner = await _user_from_api_key(db, api_key)
+    if owner is None:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="API key owner is not active")
+    return owner, False
 
 
 def require_energy_cost_update():
@@ -437,6 +473,11 @@ def _get_jwt_secret() -> str:
     # 1. Check environment variable first
     env_secret = os.environ.get("JWT_SECRET_KEY")
     if env_secret:
+        if len(env_secret) < 32:
+            logger.warning(
+                "JWT_SECRET_KEY is shorter than 32 characters; use a longer random secret "
+                "(e.g. `python -c 'import secrets; print(secrets.token_urlsafe(64))'`)"
+            )
         logger.info("Using JWT secret from JWT_SECRET_KEY environment variable")
         return env_secret
 
@@ -681,12 +722,15 @@ async def verify_websocket_token(token: str) -> str | None:
         return row.username or ""
 
 
-async def verify_camera_stream_token(token: str, printer_id: int | None = None) -> bool:
+async def verify_camera_stream_token(
+    token: str, printer_id: int | None = None, *, allow_long_lived: bool = False
+) -> bool:
     """Verify a camera stream token is valid (reusable — does not consume it).
 
-    Tries the ephemeral 60-minute token first (the common, browser-bound case)
-    and falls through to long-lived tokens (#1108) for HA / kiosk integrations
-    that paste a token once and expect it to keep working for days.
+    Tries the ephemeral 60-minute token first (the common, browser-bound case).
+    Long-lived tokens (#1108, for HA / kiosk integrations) are accepted only
+    when ``allow_long_lived`` is set, which only the live camera stream and
+    snapshot routes do; every other media route accepts ephemeral tokens only.
     """
     now = datetime.now(timezone.utc)
     async with async_session() as db:
@@ -724,6 +768,9 @@ async def verify_camera_stream_token(token: str, printer_id: int | None = None) 
             except HTTPException:
                 return False
             return True
+
+        if not allow_long_lived:
+            return False
 
         # Long-lived path. Imported lazily so the auth module stays importable
         # at startup before the long_lived_tokens model is registered.
@@ -1382,7 +1429,9 @@ def require_caller_identity_if_auth_enabled(*permissions: Permission):
     async def checker(
         caller: Annotated[CallerIdentity, Depends(get_caller_identity_if_auth_enabled)],
     ) -> CallerIdentity:
-        caller.require_permissions(*permissions)
+        # No permissions = auth-only: the route authorizes per resource itself.
+        if permissions:
+            caller.require_permissions(*permissions)
         return caller
 
     return checker
@@ -1496,6 +1545,19 @@ def require_permission(*permissions: str | Permission):
     return permission_checker
 
 
+def _check_apikey_path_printer(api_key: APIKey, request: Request | None) -> None:
+    """Reject a printer-restricted API key addressing another printer by path."""
+    raw = request.path_params.get("printer_id") if request is not None else None
+    if api_key.printer_ids is None or raw is None:
+        return
+    printer_id = int(raw) if str(raw).isdigit() else raw
+    if printer_id not in api_key.printer_ids:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"API key does not have access to printer {printer_id}",
+        )
+
+
 def require_permission_if_auth_enabled(
     *permissions: str | Permission,
     return_api_key: bool = False,
@@ -1518,6 +1580,7 @@ def require_permission_if_auth_enabled(
     async def permission_checker(
         credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
         x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+        request: Request = None,  # type: ignore[assignment]
     ) -> User | APIKey | None:
         async with async_session() as db:
             auth_enabled = await is_auth_enabled(db)
@@ -1536,6 +1599,7 @@ def require_permission_if_auth_enabled(
                 api_key = await _validate_api_key(db, x_api_key)
                 if api_key:
                     _check_apikey_permissions(api_key, perm_strings)
+                    _check_apikey_path_printer(api_key, request)
                     return api_key if return_api_key else None
 
             # Check for Bearer token (could be JWT or API key)
@@ -1546,6 +1610,7 @@ def require_permission_if_auth_enabled(
                     api_key = await _validate_api_key(db, token)
                     if api_key:
                         _check_apikey_permissions(api_key, perm_strings)
+                        _check_apikey_path_printer(api_key, request)
                         return api_key if return_api_key else None
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1716,7 +1781,7 @@ def RequireAnyPermissionIfAuthEnabled(*permissions: str | Permission):
     return Depends(require_any_permission_if_auth_enabled(*permissions))
 
 
-def require_camera_stream_token_if_auth_enabled():
+def require_camera_stream_token_if_auth_enabled(*, allow_long_lived: bool = False):
     """Dependency that validates a camera stream token query param when auth is enabled.
 
     Used for camera stream/snapshot endpoints that are loaded via <img> tags
@@ -1728,7 +1793,7 @@ def require_camera_stream_token_if_auth_enabled():
         async with async_session() as db:
             if not await is_auth_enabled(db):
                 return  # Auth disabled, allow access
-        if not token or not await verify_camera_stream_token(token, printer_id):
+        if not token or not await verify_camera_stream_token(token, printer_id, allow_long_lived=allow_long_lived):
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="Valid camera stream token required. Obtain one from POST /api/v1/printers/camera/stream-token",
@@ -1738,6 +1803,10 @@ def require_camera_stream_token_if_auth_enabled():
 
 
 RequireCameraStreamTokenIfAuthEnabled = Depends(require_camera_stream_token_if_auth_enabled())
+# Live stream/snapshot routes only: also accepts long-lived integration tokens (#1108).
+RequireCameraStreamOrLongLivedTokenIfAuthEnabled = Depends(
+    require_camera_stream_token_if_auth_enabled(allow_long_lived=True)
+)
 
 
 def require_ownership_permission(
@@ -1792,8 +1861,7 @@ def require_ownership_permission(
             if x_api_key:
                 api_key = await _validate_api_key(db, x_api_key)
                 if api_key:
-                    _check_apikey_permissions(api_key, [all_perm])
-                    return None, True
+                    return await _apikey_ownership_result(db, api_key, all_perm, own_perm)
 
             # Check for Bearer token (could be JWT or API key)
             if credentials is not None:
@@ -1802,8 +1870,7 @@ def require_ownership_permission(
                 if token.startswith("bb_"):
                     api_key = await _validate_api_key(db, token)
                     if api_key:
-                        _check_apikey_permissions(api_key, [all_perm])
-                        return None, True
+                        return await _apikey_ownership_result(db, api_key, all_perm, own_perm)
                     raise HTTPException(
                         status_code=status.HTTP_401_UNAUTHORIZED,
                         detail="Invalid API key",

@@ -38,38 +38,13 @@ def force_sqlite_dialect(monkeypatch):
 
 def _register_all_models():
     """run_migrations touches multiple tables; the full schema must exist."""
-    from backend.app.models import (  # noqa: F401
-        ams_history,
-        ams_label,
-        api_key,
-        archive,
-        color_catalog,
-        external_link,
-        filament,
-        group,
-        kprofile_note,
-        maintenance,
-        notification,
-        notification_template,
-        print_log,
-        print_queue,
-        printer,
-        project,
-        project_bom,
-        settings,
-        slot_preset,
-        smart_plug,
-        smart_plug_energy_snapshot,
-        spool,
-        spool_assignment,
-        spool_catalog,
-        spool_k_profile,
-        spool_usage_history,
-        spoolbuddy_device,
-        user,
-        user_email_pref,
-        virtual_printer,
-    )
+    import importlib
+    import pkgutil
+
+    import backend.app.models as models_pkg
+
+    for mod in pkgutil.iter_modules(models_pkg.__path__):
+        importlib.import_module(f"backend.app.models.{mod.name}")
 
 
 @pytest.fixture
@@ -89,7 +64,14 @@ BASE_TIME = datetime(2026, 6, 6, 12, 0, 0, tzinfo=timezone.utc)
 
 
 async def _insert_queue_item(
-    engine, *, id: int, printer_id: int, status: str, minutes_offset: int, error_message: str | None = None
+    engine,
+    *,
+    id: int,
+    printer_id: int,
+    status: str,
+    minutes_offset: int,
+    error_message: str | None = None,
+    started: bool = True,
 ) -> None:
     """Insert a print_queue row via the ORM so Python-side defaults
     (manual_start, position, bed_levelling, …) all apply without us having
@@ -103,6 +85,7 @@ async def _insert_queue_item(
                 printer_id=printer_id,
                 status=status,
                 error_message=error_message,
+                started_at=BASE_TIME + timedelta(minutes=minutes_offset - 1) if started else None,
                 completed_at=BASE_TIME + timedelta(minutes=minutes_offset),
                 require_previous_success=True,
                 position=id,
@@ -280,3 +263,25 @@ async def test_per_printer_isolation(engine):
     # printer 2's skipped item had a failed predecessor → stays skipped
     status, _ = await _get_status(engine, 72)
     assert status == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_never_started_cancellation_is_not_a_predecessor(engine):
+    """failed -> pending item cancelled before it started -> skipped: the
+    cancelled pending item is not a print attempt, so the real predecessor is
+    the failure and the skip must stay."""
+    await _insert_queue_item(engine, id=80, printer_id=1, status="failed", minutes_offset=1)
+    await _insert_queue_item(engine, id=81, printer_id=1, status="cancelled", minutes_offset=2, started=False)
+    await _insert_queue_item(
+        engine,
+        id=82,
+        printer_id=1,
+        status="skipped",
+        minutes_offset=3,
+        error_message="Previous print failed or was aborted",
+    )
+
+    async with engine.begin() as conn:
+        await run_migrations(conn)
+
+    assert (await _get_status(engine, 82))[0] == "skipped"

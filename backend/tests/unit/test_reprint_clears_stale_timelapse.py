@@ -9,8 +9,10 @@ pointing at the original run's downloaded MP4:
   - ``_capture_finish_photo_from_timelapse`` reads the stale path, extracts the
     *original* last frame, and ships it as the reprint's finish photo.
 
-The fix clears ``archive.timelapse_path`` (and unlinks the stale file) at
-expected-archive promotion so the scan + photo path run fresh.
+The fix marks the old video stale at expected-archive promotion so the scan +
+photo path run fresh. The old file and reference are kept: a reprint permission
+must not delete media, so ``ArchiveService.attach_timelapse`` drops the old
+video only after the reprint's timelapse is saved.
 """
 
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -27,6 +29,7 @@ from backend.app.main import (
     _timelapse_baselines,
     register_expected_print,
 )
+from backend.app.services.archive import ArchiveService, current_timelapse_path, stale_timelapse_paths
 
 
 @pytest.fixture(autouse=True)
@@ -37,6 +40,7 @@ def _clear_dicts():
     _print_ams_mappings.clear()
     _active_prints.clear()
     _timelapse_baselines.clear()
+    stale_timelapse_paths.clear()
     yield
     _expected_prints.clear()
     _expected_print_registered_at.clear()
@@ -44,6 +48,7 @@ def _clear_dicts():
     _print_ams_mappings.clear()
     _active_prints.clear()
     _timelapse_baselines.clear()
+    stale_timelapse_paths.clear()
 
 
 def _patches():
@@ -93,10 +98,10 @@ def _build_mocks(mock_printer, mock_archive):
 
 
 @pytest.mark.asyncio
-async def test_reprint_clears_timelapse_path_and_unlinks_stale_file(tmp_path):
-    """On reprint promotion, timelapse_path must be reset to None and the old
-    on-disk video unlinked, so the completion-time scanner and finish-photo
-    extractor don't reuse the original run's frame."""
+async def test_reprint_keeps_old_timelapse_but_marks_it_stale(tmp_path):
+    """On reprint promotion the old video and reference are kept (a reprint
+    permission must not delete media), but marked stale so the completion-time
+    scanner and finish-photo extractor don't reuse the original run's frame."""
     mock_printer = MagicMock()
     mock_printer.id = 1
     mock_printer.auto_archive = True
@@ -169,14 +174,12 @@ async def test_reprint_clears_timelapse_path_and_unlinks_stale_file(tmp_path):
 
         await on_print_start(1, {"filename": "MyModel.3mf", "subtask_name": "MyModel"})
 
-    assert mock_archive.timelapse_path is None, (
-        "expected-archive branch must clear timelapse_path on reprint so "
-        "_scan_for_timelapse_with_retries doesn't early-return and "
-        "_capture_finish_photo_from_timelapse doesn't extract the original "
-        "run's last frame (#1707)"
-    )
-    assert not stale_file.exists(), (
-        "old timelapse file must be unlinked at reprint promotion to avoid orphans in the archive directory"
+    assert stale_file.exists(), "old timelapse must survive until a replacement is saved"
+    assert mock_archive.timelapse_path == relpath
+    assert stale_timelapse_paths[42] == relpath
+    assert current_timelapse_path(mock_archive) is None, (
+        "stale timelapse must not satisfy the scanner's 'already has timelapse' check "
+        "or feed the finish-photo extractor (#1707)"
     )
 
 
@@ -249,6 +252,7 @@ async def test_reprint_with_no_timelapse_path_is_noop(tmp_path):
         await on_print_start(1, {"filename": "FreshFile.3mf", "subtask_name": "FreshFile"})
 
     assert mock_archive.timelapse_path is None
+    assert 99 not in stale_timelapse_paths
     assert mock_archive.status == "printing"
 
 
@@ -256,7 +260,7 @@ async def test_reprint_with_no_timelapse_path_is_noop(tmp_path):
 async def test_reprint_with_missing_stale_file_does_not_raise(tmp_path):
     """If the stale file referenced by timelapse_path no longer exists on
     disk (user deleted, archive purge, container rebuilt with bind-mount
-    drift), promotion must still clear the field cleanly without raising."""
+    drift), promotion must still complete without raising."""
     mock_printer = MagicMock()
     mock_printer.id = 1
     mock_printer.auto_archive = True
@@ -322,5 +326,57 @@ async def test_reprint_with_missing_stale_file_does_not_raise(tmp_path):
 
         await on_print_start(1, {"filename": "Ghost.3mf", "subtask_name": "Ghost"})
 
-    assert mock_archive.timelapse_path is None
+    assert stale_timelapse_paths[7] == "archives/7/timelapse/vanished.mp4"
     assert mock_archive.status == "printing"
+
+
+async def _archive_with_timelapse(db_session, tmp_path, monkeypatch):
+    from backend.app.models.archive import PrintArchive
+
+    monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+    archive_dir = tmp_path / "archives" / "x"
+    archive_dir.mkdir(parents=True)
+    (archive_dir / "model.3mf").write_bytes(b"3mf")
+    old = archive_dir / "old.mp4"
+    old.write_bytes(b"old")
+    archive = PrintArchive(
+        filename="model.3mf",
+        print_name="model",
+        file_path="archives/x/model.3mf",
+        file_size=3,
+        content_hash="tlswap",
+        status="printing",
+        timelapse_path="archives/x/old.mp4",
+    )
+    db_session.add(archive)
+    await db_session.commit()
+    await db_session.refresh(archive)
+    return archive, old
+
+
+@pytest.mark.asyncio
+async def test_new_timelapse_replaces_and_deletes_old_file(db_session, tmp_path, monkeypatch):
+    archive, old = await _archive_with_timelapse(db_session, tmp_path, monkeypatch)
+    stale_timelapse_paths[archive.id] = "archives/x/old.mp4"
+
+    assert await ArchiveService(db_session).attach_timelapse(archive.id, b"new", "new.mp4")
+
+    await db_session.refresh(archive)
+    assert archive.timelapse_path == "archives/x/new.mp4"
+    assert (tmp_path / "archives/x/new.mp4").read_bytes() == b"new"
+    assert not old.exists()
+    assert archive.id not in stale_timelapse_paths
+
+
+@pytest.mark.asyncio
+async def test_failed_timelapse_save_keeps_old_file(db_session, tmp_path, monkeypatch):
+    """An unsafe filename makes attach_timelapse bail before writing: the old
+    video and its reference must be untouched."""
+    archive, old = await _archive_with_timelapse(db_session, tmp_path, monkeypatch)
+    stale_timelapse_paths[archive.id] = "archives/x/old.mp4"
+
+    assert not await ArchiveService(db_session).attach_timelapse(archive.id, b"new", "../escape.mp4")
+
+    await db_session.refresh(archive)
+    assert archive.timelapse_path == "archives/x/old.mp4"
+    assert old.exists()

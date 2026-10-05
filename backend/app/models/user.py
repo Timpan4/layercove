@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import TYPE_CHECKING
 
-from sqlalchemy import DateTime, String, func
+from sqlalchemy import JSON, DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from backend.app.core.database import Base
@@ -32,6 +32,9 @@ class User(Base):
     )  # "admin" or "user" (legacy, kept for backward compat)
     auth_source: Mapped[str] = mapped_column(String(20), default="local")  # "local", "ldap", or "oidc"
     is_active: Mapped[bool] = mapped_column(default=True)
+    # IDs of groups LDAP last applied to this user. Only these are removed on later LDAP
+    # logins, so manual assignments survive; NULL for users not yet synced since this was added.
+    ldap_applied_group_ids: Mapped[list[int] | None] = mapped_column(JSON, nullable=True, default=None)
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now(), onupdate=func.now())
 

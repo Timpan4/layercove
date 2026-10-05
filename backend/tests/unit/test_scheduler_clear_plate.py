@@ -493,3 +493,24 @@ class TestSchedulerQueueCheckLogging:
 
         queue_logs = [r for r in caplog.records if "Queue check" in r.message]
         assert len(queue_logs) == 0
+
+
+class TestMoonrakerPlateClearGate:
+    """Moonraker printers must honour the persisted plate-clear gate."""
+
+    @pytest.mark.parametrize("state", ["IDLE", "COMPLETED", "CANCELLED"])
+    def test_awaiting_plate_clear_blocks_moonraker_dispatch(self, state):
+        from backend.app.services.moonraker_backend import MOONRAKER_STARTABLE_STATES
+        from backend.app.services.print_scheduler import PrinterProvider, printer_manager
+
+        status = MagicMock(telemetry_stale=False, state=next(s for s in MOONRAKER_STARTABLE_STATES if s.name == state))
+        backend = MagicMock(provider=PrinterProvider.MOONRAKER)
+        with (
+            patch.object(printer_manager, "is_connected", return_value=True),
+            patch.object(printer_manager, "get_status", return_value=status),
+            patch.object(printer_manager, "get_backend", return_value=backend),
+            patch.object(printer_manager, "is_awaiting_plate_clear", return_value=True),
+        ):
+            scheduler = PrintScheduler()
+            assert scheduler._is_printer_idle(1, require_plate_clear=True) is False
+            assert scheduler._is_printer_idle(1, require_plate_clear=False) is True

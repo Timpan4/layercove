@@ -3767,11 +3767,11 @@ class TestOIDCEmailClaimResolution:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_auto_link_allowed_with_custom_claim_create(self, async_client: AsyncClient):
-        """Fall C: auto_link + email_claim!='email' must be accepted on CREATE (201).
+    async def test_auto_link_blocked_with_custom_claim_create(self, async_client: AsyncClient):
+        """Fall C: auto_link + email_claim!='email' must be rejected on CREATE (422).
 
-        Custom claims (e.g. Azure preferred_username/upn) never perform an email_verified
-        check, so auto_link is safe regardless of require_email_verified.
+        Custom claims never get an email_verified check, so a user-assertable value could
+        link to a privileged local account.
         """
         admin_token = await _setup_and_login(async_client, "sec6c_adm", "Sec6CAdm123!")
         resp = await async_client.post(
@@ -3787,17 +3787,12 @@ class TestOIDCEmailClaimResolution:
             },
             headers={"Authorization": f"Bearer {admin_token}"},
         )
-        assert resp.status_code == 201
-        assert resp.json()["auto_link_existing_accounts"] is True
-        assert resp.json()["email_claim"] == "upn"
+        assert resp.status_code == 422
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_auto_link_allowed_with_custom_claim_update(self, async_client: AsyncClient):
-        """Fall C: auto_link=True + email_claim='upn' in same UPDATE request → 200.
-
-        Custom claims never perform an email_verified check, so auto_link is safe.
-        """
+    async def test_auto_link_blocked_with_custom_claim_update(self, async_client: AsyncClient):
+        """Fall C: auto_link=True + email_claim='upn' in same UPDATE request → 422."""
         admin_token = await _setup_and_login(async_client, "sec6u_adm", "Sec6UAdm123!")
         create_resp = await async_client.post(
             "/api/v1/auth/oidc/providers",
@@ -3817,9 +3812,7 @@ class TestOIDCEmailClaimResolution:
             json={"auto_link_existing_accounts": True, "email_claim": "upn"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
-        assert resp.status_code == 200
-        assert resp.json()["auto_link_existing_accounts"] is True
-        assert resp.json()["email_claim"] == "upn"
+        assert resp.status_code == 422
 
     # ── Combined-State-Guard (partial updates across two requests) ─────────────
 
@@ -3858,8 +3851,8 @@ class TestOIDCEmailClaimResolution:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_partial_update_custom_claim_then_auto_link_allowed(self, async_client: AsyncClient):
-        """Fall C: email_claim='upn' first, then auto_link=True → both 200 (custom claim is safe)."""
+    async def test_partial_update_custom_claim_then_auto_link_blocked(self, async_client: AsyncClient):
+        """Fall C: email_claim='upn' first, then auto_link=True → 200 then 422."""
         admin_token = await _setup_and_login(async_client, "pg_ec_adm", "PgEc123!")
         create_resp = await async_client.post(
             "/api/v1/auth/oidc/providers",
@@ -3887,14 +3880,12 @@ class TestOIDCEmailClaimResolution:
             json={"auto_link_existing_accounts": True},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
-        assert upd2.status_code == 200
-        assert upd2.json()["auto_link_existing_accounts"] is True
-        assert upd2.json()["email_claim"] == "upn"
+        assert upd2.status_code == 422
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_partial_update_auto_link_then_custom_claim_allowed(self, async_client: AsyncClient):
-        """Fall C: auto_link=True first (email_claim='email', safe), then email_claim='upn' → both 200."""
+    async def test_partial_update_auto_link_then_custom_claim_blocked(self, async_client: AsyncClient):
+        """auto_link=True first (email_claim='email', safe), then email_claim='upn' → 200 then 422."""
         admin_token = await _setup_and_login(async_client, "pg_al_ec_adm", "PgAlEc123!")
         create_resp = await async_client.post(
             "/api/v1/auth/oidc/providers",
@@ -3922,9 +3913,7 @@ class TestOIDCEmailClaimResolution:
             json={"email_claim": "preferred_username"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
-        assert upd2.status_code == 200
-        assert upd2.json()["auto_link_existing_accounts"] is True
-        assert upd2.json()["email_claim"] == "preferred_username"
+        assert upd2.status_code == 422
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -4302,11 +4291,7 @@ class TestOIDCEmailResolutionExtra:
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_combined_state_guard_email_claim_inverse_order(self, async_client: AsyncClient):
-        """Fall C: auto_link=True first, then switch email_claim to custom → both 200 (now allowed).
-
-        Custom claims never perform an email_verified check, so switching to a custom claim
-        while auto_link is on transitions from Fall A to Fall C — both are safe.
-        """
+        """auto_link=True first, then switch email_claim to custom → 200 then 422."""
         admin_token = await _setup_and_login(async_client, "inv_ec_adm", "InvEc123!")
         create_resp = await async_client.post(
             "/api/v1/auth/oidc/providers",
@@ -4330,15 +4315,13 @@ class TestOIDCEmailResolutionExtra:
         )
         assert upd1.status_code == 200
 
-        # Second: switch to custom claim → Fall C, still safe
+        # Second: switch to custom claim → Fall C, rejected
         upd2 = await async_client.put(
             f"/api/v1/auth/oidc/providers/{provider_id}",
             json={"email_claim": "preferred_username"},
             headers={"Authorization": f"Bearer {admin_token}"},
         )
-        assert upd2.status_code == 200
-        assert upd2.json()["auto_link_existing_accounts"] is True
-        assert upd2.json()["email_claim"] == "preferred_username"
+        assert upd2.status_code == 422
 
 
 # ===========================================================================
@@ -4558,17 +4541,14 @@ class TestOIDCStandardEmailFallback:
 
 
 class TestOIDCFallCAutoLinkE2E:
-    """OIDC callback with email_claim='preferred_username' (Fall C / Azure Entra ID)
-    must auto-link an existing local user when auto_link_existing_accounts=True.
-
-    This test exercises _resolve_provider_email Fall C and the auto-link path in
-    oidc_callback — a regression in either would silently drop the link without
-    being caught by the configuration-layer tests.
+    """OIDC callback with a legacy provider row (email_claim='preferred_username',
+    auto_link_existing_accounts=True) must NOT auto-link an existing local user:
+    custom claims are user-assertable and never email_verified-checked.
     """
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_fall_c_auto_link_links_existing_user_via_callback(
+    async def test_fall_c_legacy_auto_link_does_not_link_via_callback(
         self, async_client: AsyncClient, db_session: AsyncSession
     ):
         from unittest.mock import AsyncMock, MagicMock, patch
@@ -4674,28 +4654,11 @@ class TestOIDCFallCAutoLinkE2E:
 
         assert callback_resp.status_code == 302, callback_resp.text
         location = callback_resp.headers.get("location", "")
-        assert "oidc_token=" in location, f"Expected oidc_token in redirect, got: {location}"
+        assert "oidc_token=" not in location, f"Custom-claim auto-link must be refused, got: {location}"
 
-        # ── 5. Exchange token → full JWT ──────────────────────────────────────
-        oidc_exchange_token = location.split("oidc_token=")[1].split("&")[0].split("#")[-1]
-        exchange_resp = await async_client.post(
-            "/api/v1/auth/oidc/exchange",
-            json={"oidc_token": oidc_exchange_token},
-        )
-        assert exchange_resp.status_code == 200
-        assert exchange_resp.json()["user"]["username"] == "fallc_alice"
-
-        # ── 6. Verify UserOIDCLink was created in DB ──────────────────────────
         async with db_session as s:
-            result = await s.execute(
-                sa_select(UserOIDCLink).where(
-                    UserOIDCLink.user_id == alice.id,
-                    UserOIDCLink.provider_id == provider.id,
-                )
-            )
-            link = result.scalar_one_or_none()
-        assert link is not None, "UserOIDCLink must have been created by auto-link"
-        assert link.provider_user_id == "azure-sub-alice"
+            result = await s.execute(sa_select(UserOIDCLink).where(UserOIDCLink.user_id == alice.id))
+            assert result.scalar_one_or_none() is None
 
 
 class TestOIDCAutoCreateUsername:

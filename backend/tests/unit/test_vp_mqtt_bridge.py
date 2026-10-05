@@ -1735,3 +1735,35 @@ class TestNotArmedDiagnosticLogging:
         assert len(not_armed) == 1  # the post-arm failure
         armed = [r for r in caplog.records if "MQTT bridge IP encoding armed" in r.getMessage()]
         assert len(armed) == 1
+
+
+def test_merge_ams_dict_drops_units_cleared_by_ams_exist_bits():
+    """A full update with ams_exist_bits clearing a unit must not replay the stale unit."""
+    from backend.app.services.virtual_printer.mqtt_bridge import _merge_ams_dict
+
+    prev = {"ams": [{"id": "0", "tray": []}, {"id": "1", "tray": []}], "ams_exist_bits": "3"}
+
+    merged = _merge_ams_dict(prev, {"ams": [{"id": "0", "tray": []}], "ams_exist_bits": "1"})
+    assert [u["id"] for u in merged["ams"]] == ["0"]
+
+    merged = _merge_ams_dict(prev, {"ams": [], "ams_exist_bits": "0"})
+    assert merged["ams"] == []
+
+    # Incremental without ams_exist_bits still preserves prev units.
+    merged = _merge_ams_dict(prev, {"ams": [{"id": "0", "tray": []}]})
+    assert [u["id"] for u in merged["ams"]] == ["0", "1"]
+
+
+def test_recovery_with_unchanged_encoding_resets_not_armed_throttle(caplog):
+    """Failure -> recovery (same IPs, already armed) -> same failure must log again."""
+    bridge = _make_bridge(_make_server(bind_address=VP_IP))
+    bridge._target_client = _make_paho_client()
+    bridge._refresh_ip_encoding()  # arms
+    with caplog.at_level(logging.INFO, logger="backend.app.services.virtual_printer.mqtt_bridge"):
+        for _ in range(2):
+            client, bridge._target_client = bridge._target_client, None
+            bridge._refresh_ip_encoding()  # fails
+            bridge._target_client = client
+            bridge._refresh_ip_encoding()  # recovers, encoding unchanged
+    not_armed = [r for r in caplog.records if "NOT armed" in r.getMessage()]
+    assert len(not_armed) == 2

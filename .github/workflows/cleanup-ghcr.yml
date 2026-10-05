@@ -51,20 +51,21 @@ jobs:
           # 2. Build the live-digest set: digests referenced by any tagged
           #    multi-arch manifest list. Use the registry token (separate from
           #    GH_TOKEN) for ghcr.io manifest reads.
-          REG_TOKEN=$(curl -sS \
+          # Fail closed: any lookup failure aborts before deletion.
+          REG_TOKEN=$(curl -sS --fail-with-body -u "${OWNER}:${GH_TOKEN}" \
             "https://ghcr.io/token?scope=repository:${OWNER}/${PACKAGE}:pull&service=ghcr.io" \
-            | jq -r .token)
+            | jq -er .token)
 
           jq -r 'add | map(select(.metadata.container.tags | length > 0))
                  | .[] | .metadata.container.tags[0]' all.json > tags.txt
 
           : > live.txt
           while IFS= read -r tag; do
-            curl -sS \
+            curl -sS --fail-with-body \
               -H "Authorization: Bearer $REG_TOKEN" \
               -H "Accept: application/vnd.oci.image.index.v1+json,application/vnd.docker.distribution.manifest.list.v2+json,application/vnd.oci.image.manifest.v1+json,application/vnd.docker.distribution.manifest.v2+json" \
-              "https://ghcr.io/v2/${OWNER}/${PACKAGE}/manifests/${tag}" \
-            | jq -r '(.manifests // []) | .[].digest' >> live.txt 2>/dev/null || true
+              "https://ghcr.io/v2/${OWNER}/${PACKAGE}/manifests/${tag}" > manifest.json
+            jq -r '(.manifests // []) | .[].digest' manifest.json >> live.txt
           done < tags.txt
           sort -u live.txt -o live.txt
           echo "Live digests referenced by manifest lists: $(wc -l < live.txt)"

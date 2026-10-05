@@ -955,6 +955,39 @@ class TestSimplifiedBackupRestore:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_failed_restore_resumes_background_services(self, async_client: AsyncClient):
+        """A restore that fails after pausing schedulers must restart them."""
+        import io
+        import zipfile
+        from unittest.mock import AsyncMock, MagicMock, patch
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as zf:
+            zf.writestr("layercove.db", b"not a database")
+
+        with (
+            patch("backend.app.services.print_scheduler.scheduler.stop"),
+            patch("backend.app.services.print_scheduler.scheduler.run", MagicMock()),
+            patch("backend.app.services.smart_plug_manager.smart_plug_manager.stop_scheduler"),
+            patch("backend.app.services.smart_plug_manager.smart_plug_manager.start_scheduler") as start_plugs,
+            patch("backend.app.services.notification_service.notification_service.stop_digest_scheduler"),
+            patch(
+                "backend.app.services.notification_service.notification_service.start_digest_scheduler"
+            ) as start_digest,
+            patch("backend.app.core.tasks.spawn_background_task") as spawn,
+            patch("backend.app.core.database.close_all_connections", AsyncMock(side_effect=RuntimeError("boom"))),
+        ):
+            response = await async_client.post(
+                "/api/v1/settings/restore", files={"file": ("backup.zip", buf.getvalue(), "application/zip")}
+            )
+
+        assert response.status_code == 500
+        spawn.assert_called_once()
+        start_plugs.assert_called_once()
+        start_digest.assert_called_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_restore_rejects_legacy_database_member(self, async_client: AsyncClient):
         import io
         import zipfile

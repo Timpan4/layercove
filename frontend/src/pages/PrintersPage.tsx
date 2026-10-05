@@ -2153,7 +2153,7 @@ function PrinterCard({
   });
 
   // Combine both sources: queue item user takes precedence, then reprint user
-  const currentPrintUser = printingQueueItems?.[0]?.created_by_username || reprintUser?.username;
+  const currentPrintUser = printingQueueItems?.[0]?.created_by_username || printingQueueItems?.[0]?.started_by_username || reprintUser?.username;
 
   // Fetch last completed print for this printer
   const { data: lastPrints } = useQuery({
@@ -7598,9 +7598,17 @@ function EditPrinterModal({
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [onClose]);
 
-  const doSave = () => {
+  // Entering maintenance (is_active -> false) disconnects MQTT mid-print, so the
+  // edit dialog asks for the same confirmation as the overflow-menu toggle.
+  const [confirmMidPrintSave, setConfirmMidPrintSave] = useState(false);
+  const doSave = (confirmed = false) => {
     if (networkSiteId && !selectedNetworkSite) {
       setNetworkSiteError(t('common.error'));
+      return;
+    }
+    const liveStatus = queryClient.getQueryData<{ state: string | null }>(queryKeys.printerStatus(printer.id));
+    if (!confirmed && printer.is_active !== false && form.is_active === false && isActivePrintState(liveStatus?.state)) {
+      setConfirmMidPrintSave(true);
       return;
     }
     const data: Partial<PrinterCreate> = {
@@ -7690,6 +7698,7 @@ function EditPrinterModal({
   };
 
   return (
+    <>
     <div
       className="fixed inset-0 bg-black/50 flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto"
       onClick={onClose}
@@ -7884,7 +7893,7 @@ function EditPrinterModal({
                   </Button>
                   <Button
                     type="button"
-                    onClick={doSave}
+                    onClick={() => doSave()}
                     className="flex-1"
                     disabled={updateMutation.isPending || networkSitesLoading || (!!networkSiteId && !selectedNetworkSite)}
                   >
@@ -7914,6 +7923,20 @@ function EditPrinterModal({
         </CardContent>
       </Card>
     </div>
+    {confirmMidPrintSave && (
+      <ConfirmModal
+        title={t('printers.maintenance.confirmMidPrintTitle')}
+        message={t('printers.maintenance.confirmMidPrintMessage', { name: printer.name })}
+        confirmText={t('printers.maintenance.menuEnter')}
+        variant="danger"
+        onConfirm={() => {
+          setConfirmMidPrintSave(false);
+          doSave(true);
+        }}
+        onCancel={() => setConfirmMidPrintSave(false)}
+      />
+    )}
+    </>
   );
 }
 
@@ -8566,7 +8589,8 @@ export function PrintersPage() {
     }
 
     return sorted;
-  }, [filteredPrinters, sortBy, sortAsc, queryClient]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- statusCacheVersion forces re-sort on WebSocket status updates; filteredPrinters keeps its identity when no filter is active
+  }, [filteredPrinters, sortBy, sortAsc, queryClient, statusCacheVersion]);
 
   const selectAll = useCallback(() => {
     setSelectedPrinterIds(new Set(sortedPrinters.map(p => p.id)));

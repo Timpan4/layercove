@@ -120,3 +120,30 @@ async def test_read_stderr_returns_none_for_banner_only_output():
     """Banner with no actionable lines summarizes to empty -> None."""
     proc = _FakeProcess(_reader_with(_FAKE_BANNER.encode(), eof=True))
     assert await _read_ffmpeg_stderr(proc) is None
+
+
+def test_redacts_access_code_in_rtsp_url():
+    stderr = "Error opening input file rtsp://bblp:SECRET12@127.0.0.1:8554/streaming/live/1.\n"
+    result = _summarize_ffmpeg_stderr(stderr)
+    assert "SECRET12" not in result
+    assert "127.0.0.1:8554" in result
+
+
+def test_buffered_frame_not_returned_when_stale():
+    import time
+    from unittest.mock import patch
+
+    from backend.app.api.routes import camera
+
+    with (
+        patch.object(camera, "is_stream_active", return_value=True),
+        patch.dict(camera._last_frames, {7: b"\xff\xd8frame"}),
+        patch.dict(camera._last_frame_times, {7: time.time() - 3600}),
+    ):
+        assert camera.try_get_active_buffered_frame(7) is None
+    with (
+        patch.object(camera, "is_stream_active", return_value=True),
+        patch.dict(camera._last_frames, {7: b"\xff\xd8frame"}),
+        patch.dict(camera._last_frame_times, {7: time.time()}),
+    ):
+        assert camera.try_get_active_buffered_frame(7) == b"\xff\xd8frame"

@@ -351,6 +351,43 @@ class TestFilamentDeficitBackupAware:
         assert deficit == []
 
     @pytest.mark.asyncio
+    async def test_backup_on_empty_preassigned_slot_not_in_pool(self, db_session, printer_factory, tmp_path):
+        """A matching spool pre-assigned to a slot the firmware reports empty can't back up the print."""
+        from types import SimpleNamespace
+
+        printer = await printer_factory(model="X1C")
+        archive = await _setup_archive_3mf(
+            db_session,
+            tmp_path,
+            [{"id": "1", "type": "PLA", "color": "#000000", "used_g": "200.0"}],
+        )
+        short = await _spool(db_session, label_weight=1000, weight_used=990.0, slicer_filament="GFA00")  # 10 g
+        pre = await _spool(db_session, label_weight=1000, weight_used=500.0, slicer_filament="GFA00")  # 500 g
+        await _assign(db_session, printer_id=printer.id, spool_id=short.id, ams_id=0, tray_id=0)
+        await _assign(db_session, printer_id=printer.id, spool_id=pre.id, ams_id=1, tray_id=0)
+        item = await _queue_item(db_session, printer_id=printer.id, archive=archive, ams_mapping=[0])
+
+        fake_state = SimpleNamespace(
+            ams_filament_backup=True,
+            ams_extruder_map={},
+            raw_data={
+                "ams": [
+                    {"id": "0", "tray": [{"id": "0", "state": 11, "tray_type": "PLA"}]},
+                    {"id": "1", "tray": [{"id": "0", "state": 9, "tray_type": ""}]},
+                ]
+            },
+        )
+        with (
+            patch("backend.app.services.filament_deficit.app_settings.base_dir", Path("/")),
+            patch("backend.app.services.printer_manager.printer_manager.get_status", lambda pid: fake_state),
+            patch("backend.app.services.printer_manager.printer_manager.get_model", lambda pid: "X1C"),
+        ):
+            deficit = await compute_deficit_for_queue_item(db_session, item)
+
+        assert len(deficit) == 1
+        assert deficit[0].slot_id == 1
+
+    @pytest.mark.asyncio
     async def test_backup_on_pool_insufficient_emits_deficit(self, db_session, printer_factory, tmp_path):
         """Backup ON but the same-material pool across all slots is still
         too small for the print → deficit emitted (real shortfall)."""

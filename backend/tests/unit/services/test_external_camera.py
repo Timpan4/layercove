@@ -4,6 +4,7 @@ Tests for the external camera service.
 These tests cover pure functions and frame parsing logic.
 """
 
+import io
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 
@@ -683,15 +684,31 @@ class TestSnapshotTranscode:
         assert out == jpeg  # identical object bytes — proves no transcode ran
 
     @pytest.mark.asyncio
-    async def test_capture_snapshot_non_image_falls_back_to_raw(self):
-        """Undecodable (non-image) responses return the raw bytes unchanged, so
-        behaviour is never worse than before the fix."""
+    async def test_capture_snapshot_non_image_is_not_relayed(self):
+        """A non-image body (e.g. internal service response reached via a
+        malicious camera URL) must not be returned to callers."""
         from backend.app.services import external_camera as ec
 
-        html = b"<html><body>unauthorized</body></html>"
-        with patch.object(ec, "trusted_http_response", _fake_snapshot_response(html)):
+        body = b"<html><body>unauthorized</body></html>"
+        with patch.object(ec, "trusted_http_response", _fake_snapshot_response(body)):
             out = await ec._capture_snapshot("http://192.168.50.50/snapshot", 10)
-        assert out == html
+        assert out is None
+
+    def test_transcode_skips_decode_of_decompression_bomb(self):
+        """A tiny, highly compressible PNG with a huge canvas must be rejected
+        from its header before cv2 allocates the decoded pixel buffer."""
+        import cv2
+        from PIL import Image
+
+        from backend.app.services.external_camera import _transcode_to_jpeg
+
+        buf = io.BytesIO()
+        Image.new("L", (20000, 20000)).save(buf, format="PNG")
+        called = []
+        real = cv2.imdecode
+        with patch.object(cv2, "imdecode", lambda *a, **k: called.append(1) or real(*a, **k)):
+            assert _transcode_to_jpeg(buf.getvalue()) is None
+        assert not called
 
     @pytest.mark.asyncio
     async def test_capture_snapshot_rejects_body_over_existing_frame_cap(self):

@@ -1,4 +1,5 @@
 #!/bin/sh
+set -e
 
 cd backend
 ruff check && ruff format --check

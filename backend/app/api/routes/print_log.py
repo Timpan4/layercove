@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from backend.app.core.auth import (
     RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
+    caller_is_api_key,
     require_ownership_permission,
 )
 from backend.app.core.config import settings
@@ -145,11 +146,15 @@ async def get_print_log_thumbnail(
 async def clear_print_log(
     db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.ARCHIVES_DELETE_ALL),
+    is_api_key: bool = Depends(caller_is_api_key),
 ):
     """Clear the print log.
 
     Only deletes log entries. Archives and queue items are never touched.
+    Not available to API keys: clearing drops every run from statistics.
     """
+    if is_api_key:
+        raise HTTPException(403, "API keys cannot clear the print log")
     result = await db.execute(delete(PrintLogEntry))
     deleted = result.rowcount
     await db.commit()

@@ -640,6 +640,15 @@ class BambuFTPClient:
         except (OSError, ftplib.Error):
             return False
 
+    def _confirmed_absent(self, remote_path: str) -> bool:
+        """True only when the parent directory lists successfully without the file."""
+        parent, _, name = remote_path.rpartition("/")
+        try:
+            listed = self._ftp.nlst(parent or "/")
+        except (OSError, ftplib.Error):
+            return False
+        return name not in {entry.rsplit("/", 1)[-1] for entry in listed}
+
     def delete_file(self, remote_path: str) -> DeleteResult:
         """Delete a file from the printer.
 
@@ -654,7 +663,9 @@ class BambuFTPClient:
             self._ftp.delete(remote_path)
             return DeleteResult.DELETED
         except ftplib.error_perm as e:
-            if str(e).startswith("550"):
+            # 550 also means "permission denied / locked", so only report
+            # NOT_FOUND once a directory listing confirms the file is gone.
+            if str(e).startswith("550") and self._confirmed_absent(remote_path):
                 logger.debug("FTP delete: %s not on printer (550)", remote_path)
                 return DeleteResult.NOT_FOUND
             logger.warning("Failed to delete %s: %s", remote_path, e)

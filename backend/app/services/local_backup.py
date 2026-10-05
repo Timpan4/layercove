@@ -39,7 +39,7 @@ def _local_zone() -> tzinfo:
     if tz_name:
         try:
             return ZoneInfo(tz_name)
-        except ZoneInfoNotFoundError:
+        except (ZoneInfoNotFoundError, ValueError):
             logger.warning("Unrecognised TZ env value %r, scheduling in UTC", tz_name)
     try:
         return ZoneInfo("UTC")

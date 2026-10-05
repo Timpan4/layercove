@@ -112,3 +112,21 @@ class TestEdgeCases:
         for _ in range(3):
             assert filter_under_test.filter(kept) is True
             assert filter_under_test.filter(dropped) is False
+
+
+class TestQueryStringRedacted:
+    def test_query_string_not_written_to_access_log(self, filter_under_test):
+        """POST /github-backup/test takes the PAT as a query param; the file
+        log is readable via /support/logs, so the query must never be kept."""
+        record = logging.LogRecord(
+            name="uvicorn.access",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg='%s - "%s %s HTTP/%s" %d',
+            args=("127.0.0.1:5000", "POST", "/api/v1/github-backup/test?repo_url=x&token=ghp_SECRET", "1.1", 200),
+            exc_info=None,
+        )
+        assert filter_under_test.filter(record) is True
+        assert "ghp_SECRET" not in record.getMessage()
+        assert "/api/v1/github-backup/test" in record.getMessage()

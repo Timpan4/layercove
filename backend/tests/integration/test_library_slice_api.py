@@ -406,7 +406,7 @@ class TestSliceLibraryFile:
             )
 
         _install_mock_sidecar(handler)
-        result, used_embedded_settings = await _run_slicer_with_fallback(
+        result, used_embedded_settings, _ = await _run_slicer_with_fallback(
             db_session,
             model_bytes=_make_3mf_with_settings(
                 {
@@ -1247,6 +1247,69 @@ class TestSliceLibraryFile:
         assert final["status"] == "completed", final
         assert final["result"]["used_embedded_settings"] is True
         assert call_count["n"] == 2  # primary + fallback retry
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize(
+        ("embedded", "expected"),
+        [
+            ({"prime_tower_brim_width": "-1"}, False),
+            (
+                {
+                    "printer_settings_id": "Test printer",
+                    "print_settings_id": "Test process",
+                    "filament_settings_id": ["Test filament"],
+                },
+                False,
+            ),
+            ({"printer_settings_id": "Other printer", "print_settings_id": "Test process"}, True),
+            ({"filament_settings_id": ["Hostile filament"]}, True),
+        ],
+    )
+    async def test_fallback_reports_mismatch_only_when_embedded_presets_differ(
+        self, async_client: AsyncClient, db_session, slice_test_setup, embedded, expected
+    ):
+        src_3mf_path = slice_test_setup["tmp_path"] / "library" / "files" / "complex.3mf"
+        src_3mf_path.write_bytes(_make_3mf_with_settings(embedded))
+        threemf = LibraryFile(
+            filename="complex.3mf",
+            file_path=str(src_3mf_path.relative_to(slice_test_setup["tmp_path"])),
+            file_type="3mf",
+            file_size=src_3mf_path.stat().st_size,
+        )
+        db_session.add(threemf)
+        await db_session.commit()
+        await db_session.refresh(threemf)
+
+        calls = {"n": 0}
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            calls["n"] += 1
+            if calls["n"] == 1:
+                return httpx.Response(status_code=500, json={"message": "Failed to slice the model"})
+            return httpx.Response(
+                status_code=200,
+                content=b"PK\x03\x04 fake-3mf",
+                headers={
+                    "x-print-time-seconds": "100",
+                    "x-filament-used-g": "1.0",
+                    "x-filament-used-mm": "100",
+                },
+            )
+
+        _install_mock_sidecar(handler)
+        response = await async_client.post(
+            f"/api/v1/library/files/{threemf.id}/slice",
+            json={
+                "printer_preset_id": slice_test_setup["printer_id"],
+                "process_preset_id": slice_test_setup["process_id"],
+                "filament_preset_id": slice_test_setup["filament_id"],
+            },
+        )
+        final = await _wait_for_job(async_client, response.json()["job_id"])
+        assert final["status"] == "completed", final
+        assert final["result"]["used_embedded_settings"] is True
+        assert final["result"]["embedded_settings_mismatch"] is expected
 
     @pytest.mark.asyncio
     @pytest.mark.integration
@@ -2711,7 +2774,7 @@ class TestReviewSlicePersistenceRegressions:
             return httpx.Response(200, content=artifact)
 
         _install_mock_sidecar(sidecar)
-        result, embedded = await _run_slicer_with_fallback(
+        result, embedded, _ = await _run_slicer_with_fallback(
             db_session,
             model_bytes=b"solid Cube\nendsolid\n",
             model_filename=f"Cube.{extension}",

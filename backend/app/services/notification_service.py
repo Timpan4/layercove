@@ -132,12 +132,12 @@ class NotificationService:
 
     def _render_template(self, template_str: str, variables: dict[str, Any]) -> str:
         """Render a template string with variables. Missing variables become empty."""
-        result = template_str
-        for key, value in variables.items():
-            result = result.replace("{" + key + "}", str(value) if value is not None else "")
-        # Remove any remaining unreplaced placeholders
-        result = re.sub(r"\{[a-z_]+\}", "", result)
-        return result
+        # Single pass so placeholders inside substituted values are never re-expanded.
+        return re.sub(
+            r"\{([a-z_]+)\}",
+            lambda m: "" if variables.get(m.group(1)) is None else str(variables[m.group(1)]),
+            template_str,
+        )
 
     async def _format_eta(self, seconds: int | None, db: AsyncSession) -> str:
         """Format ETA as wall-clock time, respecting user's time_format setting."""
@@ -279,7 +279,8 @@ class NotificationService:
         # to the ntfy server's default so existing setups stay unchanged.
         event_priorities = config.get("event_priorities") or {}
         if event_type and isinstance(event_priorities, dict):
-            raw = event_priorities.get(event_type)
+            # The UI stores keys as ``on_<event>`` while handlers pass the bare event name.
+            raw = event_priorities.get(event_type, event_priorities.get(f"on_{event_type}"))
             try:
                 priority = int(raw) if raw is not None else None
             except (TypeError, ValueError):

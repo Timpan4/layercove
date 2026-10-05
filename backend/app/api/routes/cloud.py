@@ -97,7 +97,7 @@ async def _cloud_api_key_gate(
     request.state.api_key_owner = await _user_from_api_key(db, api_key)
 
 
-def cloud_caller(*permissions: Permission):
+def cloud_caller(*permissions: Permission, jwt_only: bool = False):
     """Route-level dep factory for /cloud/* handlers.
 
     Returns a Depends that resolves to:
@@ -111,6 +111,10 @@ def cloud_caller(*permissions: Permission):
     routes so API-keyed callers get the *owner* in ``current_user`` rather
     than None — without that the route falls back to the global Settings
     cloud_token, which is empty in auth-enabled deployments.
+
+    ``jwt_only=True`` rejects API-keyed callers: the ``can_access_cloud`` scope
+    is read-only, so routes that change the owner's cloud credentials or
+    presets must not accept it.
     """
     base_dep = require_permission_if_auth_enabled(*permissions)
 
@@ -120,7 +124,13 @@ def cloud_caller(*permissions: Permission):
     ) -> User | None:
         if base_user is not None:
             return base_user
-        return getattr(request.state, "api_key_owner", None)
+        api_key_owner = getattr(request.state, "api_key_owner", None)
+        if jwt_only and api_key_owner is not None:
+            raise HTTPException(
+                status_code=403,
+                detail="API keys cannot change cloud credentials or presets",
+            )
+        return api_key_owner
 
     return Depends(resolved)
 
@@ -326,7 +336,7 @@ async def get_auth_status(
 async def login(
     request: CloudLoginRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH, jwt_only=True),
 ):
     """
     Initiate login to Bambu Cloud.
@@ -366,7 +376,7 @@ async def login(
 async def verify_code(
     request: CloudVerifyRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH, jwt_only=True),
 ):
     """
     Complete login with verification code (email or TOTP).
@@ -411,7 +421,7 @@ async def verify_code(
 async def set_token(
     request: CloudTokenRequest,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH, jwt_only=True),
 ):
     """
     Set access token directly.
@@ -437,7 +447,7 @@ async def set_token(
 @router.post("/logout")
 async def logout(
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH, jwt_only=True),
 ):
     """Log out of Bambu Cloud."""
     await clear_token(db, current_user)
@@ -933,7 +943,7 @@ async def get_firmware_updates(
 async def create_setting(
     request: SlicerSettingCreate,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH, jwt_only=True),
 ):
     """
     Create a new slicer preset/setting.
@@ -970,7 +980,7 @@ async def update_setting(
     setting_id: str,
     request: SlicerSettingUpdate,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH, jwt_only=True),
 ):
     """
     Update an existing slicer preset/setting.
@@ -1001,7 +1011,7 @@ async def update_setting(
 async def delete_setting(
     setting_id: str,
     db: AsyncSession = Depends(get_db),
-    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH),
+    current_user: User | None = cloud_caller(Permission.CLOUD_AUTH, jwt_only=True),
 ):
     """
     Delete a slicer preset/setting.

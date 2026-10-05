@@ -138,7 +138,8 @@ async def update_pipeline(
 
     if data.name is not None:
         row.name = data.name.strip()
-    if data.description is not None:
+    # Nullable fields: an explicit null clears, an omitted field is untouched.
+    if "description" in data.model_fields_set:
         row.description = data.description
     if data.printer_preset is not None:
         row.printer_preset_source = data.printer_preset.source
@@ -148,7 +149,7 @@ async def update_pipeline(
         row.process_preset_id = data.process_preset.id
     if data.filament_presets is not None:
         row.filament_presets_json = json.dumps([f.model_dump() for f in data.filament_presets])
-    if data.bed_type is not None:
+    if "bed_type" in data.model_fields_set:
         row.bed_type = data.bed_type
 
     # PR B target binding. The schema accepts ``target_kind=specific_printer``

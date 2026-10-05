@@ -27,7 +27,7 @@ export function UploadModal({ onClose, initialFiles }: UploadModalProps) {
   const { showToast } = useToast();
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [files, setFiles] = useState<FileWithStatus[]>(() =>
-    initialFiles?.filter(f => f.name.endsWith('.3mf')).map(file => ({ file, status: 'pending' as const })) || []
+    initialFiles?.filter(f => f.name.toLowerCase().endsWith('.3mf')).map(file => ({ file, status: 'pending' as const })) || []
   );
   const [isDragging, setIsDragging] = useState(false);
   const [uploadResult, setUploadResult] = useState<BulkUploadResult | null>(null);
@@ -96,7 +96,7 @@ export function UploadModal({ onClose, initialFiles }: UploadModalProps) {
     setIsDragging(false);
 
     const droppedFiles = Array.from(e.dataTransfer.files).filter((f) =>
-      f.name.endsWith('.3mf')
+      f.name.toLowerCase().endsWith('.3mf')
     );
 
     if (droppedFiles.length > 0) {
@@ -109,7 +109,7 @@ export function UploadModal({ onClose, initialFiles }: UploadModalProps) {
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const selectedFiles = Array.from(e.target.files || []).filter((f) =>
-      f.name.endsWith('.3mf')
+      f.name.toLowerCase().endsWith('.3mf')
     );
 
     if (selectedFiles.length > 0) {

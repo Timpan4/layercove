@@ -169,6 +169,14 @@ class GitHubBackupStatus(BaseModel):
     next_scheduled_run: datetime | None
 
 
+class GitHubTestConnectionRequest(BaseModel):
+    """Credentials to test; sent in the body so the PAT never reaches URLs or access logs."""
+
+    repo_url: str = Field(..., min_length=1, description="Repository URL")
+    token: str = Field(..., min_length=1, description="Personal Access Token")
+    provider: ProviderType = Field(default=ProviderType.GITHUB, description="Git provider key")
+
+
 class GitHubTestConnectionResponse(BaseModel):
     """Schema for test connection response."""
 

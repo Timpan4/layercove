@@ -7,7 +7,7 @@ clears extra.tag on those orphans.
 """
 
 import json
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import ANY, AsyncMock, MagicMock
 
 import pytest
 
@@ -45,7 +45,7 @@ class TestClearStaleTagLinks:
         cleared = await _clear_stale_tag_links(client, tag=target_tag, keep_spool_id=9, log_context="test")
 
         assert cleared == 1
-        client.merge_spool_extra.assert_called_once_with(7, {"tag": json.dumps("")})
+        client.merge_spool_extra.assert_called_once_with(7, {"tag": json.dumps("")}, only_if=ANY)
 
     async def test_case_insensitive_match(self):
         target_tag = "aabbccdd11223344"
@@ -118,7 +118,7 @@ class TestClearStaleSlotFallbackTagLinks:
         )
 
         assert cleared == 1
-        client.merge_spool_extra.assert_called_once_with(11, {"tag": json.dumps("")})
+        client.merge_spool_extra.assert_called_once_with(11, {"tag": json.dumps("")}, only_if=ANY)
 
     async def test_empty_serial_no_op(self):
         client = _make_client([{"id": 1, "extra": {"tag": json.dumps("AABB")}}])
@@ -133,3 +133,21 @@ class TestClearStaleSlotFallbackTagLinks:
 
         assert cleared == 0
         client.get_spools.assert_not_called()
+
+
+@pytest.mark.asyncio
+class TestStaleTagCleanupRace:
+    async def test_does_not_erase_tag_rebound_after_enumeration(self):
+        """Spool 7 held tag T when enumerated, but was rebound to U before the clear."""
+        from backend.app.services.spoolman import SpoolmanClient
+
+        target_tag = "AABBCCDDEEFF0011"
+        client = SpoolmanClient("http://localhost:7912")
+        client.get_spools = AsyncMock(return_value=[{"id": 7, "extra": {"tag": json.dumps(target_tag)}}])
+        client.get_spool = AsyncMock(return_value={"id": 7, "extra": {"tag": json.dumps("1122334455667788")}})
+        client.update_spool_full = AsyncMock()
+
+        cleared = await _clear_stale_tag_links(client, tag=target_tag, keep_spool_id=9, log_context="test")
+
+        assert cleared == 0
+        client.update_spool_full.assert_not_called()

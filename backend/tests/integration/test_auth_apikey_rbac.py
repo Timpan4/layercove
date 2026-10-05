@@ -321,15 +321,12 @@ class TestCheckApiKeyPermissionsMatrix:
         ("PRINTERS_CONTROL", "can_control_printer", "start/stop print"),
         ("PRINTERS_FILES", "can_control_printer", "send file to printer"),
         ("SMART_PLUGS_CONTROL", "can_control_printer", "smart plug on/off"),
-        # can_manage_library — OWN and ALL ownership variants both fold into
-        # the same scope (#1832): API keys have no per-row ownership identity,
-        # so splitting OWN/ALL across allowlist/denylist made the curation
-        # surface unreachable. PURGE stays admin-only.
+        # can_manage_library — only the OWN variants are mapped; the ownership
+        # checker resolves the key's owner so keys never act on other users'
+        # files. The ALL variants and PURGE stay admin-only.
         ("LIBRARY_UPLOAD", "can_manage_library", "upload library file"),
         ("LIBRARY_UPDATE_OWN", "can_manage_library", "rename own library file"),
-        ("LIBRARY_UPDATE_ALL", "can_manage_library", "rename any library file"),
         ("LIBRARY_DELETE_OWN", "can_manage_library", "delete own library file"),
-        ("LIBRARY_DELETE_ALL", "can_manage_library", "delete any library file"),
         ("MAKERWORLD_IMPORT", "can_manage_library", "import from MakerWorld"),
         # can_manage_inventory
         ("INVENTORY_CREATE", "can_manage_inventory", "create spool record"),
@@ -369,8 +366,8 @@ class TestCheckApiKeyPermissionsMatrix:
         "FIRMWARE_UPDATE",
         # Unmapped administrative (allowlist fail-closed catches these too)
         "PRINTERS_CREATE",
-        # LIBRARY_DELETE_ALL / LIBRARY_UPDATE_ALL moved to can_manage_library
-        # under #1832 — covered by the _SCOPE_CASES matrix above.
+        "LIBRARY_UPDATE_ALL",
+        "LIBRARY_DELETE_ALL",
         "LIBRARY_PURGE",
         # ARCHIVES_PURGE stays admin-only even though the rest of archive
         # management moved to can_manage_archives under #1888 — it drops the

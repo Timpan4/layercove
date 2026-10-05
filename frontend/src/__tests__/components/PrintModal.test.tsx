@@ -574,6 +574,30 @@ describe('PrintModal', () => {
       await waitFor(() => expect(mockOnSuccess).toHaveBeenCalled());
     });
 
+    it('keeps the force-color guard when saving a specific-printer item', async () => {
+      const user = userEvent.setup();
+      const force = { slot_id: 1, type: 'PLA', color: '#FF0000', color_name: 'Red', force_color_match: true };
+      let saved: Record<string, unknown> | null = null;
+      server.use(
+        http.get('/api/v1/archives/:id/filament-requirements', () => HttpResponse.json({
+          filaments: [{ slot_id: 1, type: 'PLA', color: '#FF0000', used_grams: 5, used_meters: 1 }],
+        })),
+        http.patch('/api/v1/queue/:id', async ({ request }) => {
+          saved = await request.json() as Record<string, unknown>;
+          return HttpResponse.json({ id: 1, status: 'pending' });
+        }),
+      );
+      render(<PrintModal mode="edit-queue-item" archiveId={1} archiveName="Cube.3mf"
+        queueItem={createMockQueueItem({ filament_overrides: [force] })}
+        onClose={mockOnClose} onSuccess={mockOnSuccess}
+      />);
+      const save = await screen.findByRole('button', { name: /^save$/i });
+      await waitFor(() => expect(save).toBeEnabled());
+      await user.click(save);
+      await waitFor(() => expect(mockOnSuccess).toHaveBeenCalled());
+      expect(saved).toMatchObject({ printer_id: 1, filament_overrides: [force] });
+    });
+
     it('confirms and saves an item with a persisted nozzle-rack mapping', async () => {
       const user = userEvent.setup();
       server.use(

@@ -315,7 +315,7 @@ class AdminDisable2FARequest(BaseModel):
 
 
 AUTO_LINK_REQUIREMENTS_ERROR = (
-    "auto_link_existing_accounts requires require_email_verified=True when email_claim='email'"
+    "auto_link_existing_accounts requires email_claim='email' and require_email_verified=True"
 )
 
 
@@ -441,12 +441,12 @@ class OIDCProviderCreate(BaseModel):
     def validate_icon_url(cls, v: str | None) -> str | None:
         return _validate_icon_url(v)
 
-    # SEC-1: auto_link with email_claim='email' requires require_email_verified=True.
-    # Fall B (require_email_verified=False + email_claim='email') accepts absent email_verified → account-takeover risk.
-    # Fall C (custom claim != 'email') is safe: no email_verified gate on that path regardless of require_email_verified.
+    # SEC-1: auto_link requires email_claim='email' and require_email_verified=True.
+    # Fall B (require_email_verified=False) accepts absent email_verified and Fall C (custom claim)
+    # never checks it → both are account-takeover risks.
     @model_validator(mode="after")
     def check_auto_link_requires_verified(self) -> "OIDCProviderCreate":
-        if self.auto_link_existing_accounts and self.email_claim == "email" and not self.require_email_verified:
+        if self.auto_link_existing_accounts and (self.email_claim != "email" or not self.require_email_verified):
             raise ValueError(AUTO_LINK_REQUIREMENTS_ERROR)
         return self
 
@@ -489,16 +489,13 @@ class OIDCProviderUpdate(BaseModel):
     def validate_icon_url(cls, v: str | None) -> str | None:
         return _validate_icon_url(v)
 
-    # SEC-1 (schema-level): blocks only when auto_link=True + email_claim='email' + require_email_verified=False
-    # arrive in the same request. email_claim=None means the request leaves it unchanged (still 'email' by default),
-    # so that is also treated as 'email'. Partial updates spanning two requests are caught by the
-    # Combined-State-Guard in the route handler after the setattr loop.
+    # SEC-1 (schema-level): blocks auto_link=True arriving together with require_email_verified=False
+    # or a custom email_claim. Omitted fields are left unchanged, so partial updates spanning two
+    # requests are caught by the Combined-State-Guard in the route handler after the setattr loop.
     @model_validator(mode="after")
     def check_auto_link_requires_verified(self) -> "OIDCProviderUpdate":
-        if (
-            self.auto_link_existing_accounts is True
-            and self.require_email_verified is False
-            and (self.email_claim is None or self.email_claim == "email")
+        if self.auto_link_existing_accounts is True and (
+            self.require_email_verified is False or self.email_claim not in (None, "email")
         ):
             raise ValueError(AUTO_LINK_REQUIREMENTS_ERROR)
         return self

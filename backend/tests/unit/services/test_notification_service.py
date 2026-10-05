@@ -834,6 +834,29 @@ class TestNtfyPriority:
         headers = mock_client.put.call_args.kwargs["headers"]
         assert headers.get("Priority") == "4"
 
+    @pytest.mark.asyncio
+    async def test_ui_saved_priority_key_applies_via_real_handler(self, service):
+        """Keys saved by the UI (on_<event>) must match the unprefixed event
+        names the production handlers pass through _send_to_providers."""
+        provider = MagicMock()
+        provider.id = 1
+        provider.name = "ntfy"
+        provider.provider_type = "ntfy"
+        provider.daily_digest_enabled = False
+        provider.daily_digest_time = None
+        provider.config = json.dumps({"topic": "bambuddy", "event_priorities": {"on_printer_offline": 5}})
+        mock_client = self._mock_client(service)
+        with (
+            patch.object(service, "_get_providers_for_event", new_callable=AsyncMock, return_value=[provider]),
+            patch.object(service, "_build_message_from_template", new_callable=AsyncMock, return_value=("T", "M")),
+            patch.object(service, "_get_client", new_callable=AsyncMock, return_value=mock_client),
+            patch.object(service, "_update_provider_status", new_callable=AsyncMock),
+            patch.object(service, "_log_notification", new_callable=AsyncMock),
+        ):
+            await service.on_printer_offline(1, "P1", AsyncMock())
+
+        assert mock_client.post.call_args.kwargs["headers"].get("Priority") == "5"
+
 
 class TestHomeAssistantProvider:
     """Tests for Home Assistant notification provider."""
@@ -2542,3 +2565,16 @@ class TestEmailProvider:
         # contain BOTH the escaped URL AND the cid img (we swapped, not duplicated).
         # The plain-text part still has the URL; check it's there at least once.
         assert self.PHOTO_URL in raw
+
+
+class TestRenderTemplateNoRecursiveSubstitution:
+    def test_placeholder_in_variable_value_is_not_expanded(self):
+        """A filename of '{finish_photo_url}' must not expand into the photo URL,
+        otherwise the email finish-photo opt-in check is bypassed."""
+        from backend.app.services.notification_service import NotificationService
+
+        out = NotificationService()._render_template(
+            "Print done: {filename}",
+            {"filename": "{finish_photo_url}", "finish_photo_url": "https://x/photo.jpg"},
+        )
+        assert "https://x/photo.jpg" not in out

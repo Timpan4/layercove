@@ -103,6 +103,16 @@ async def _validate_spoolman_spool(db: AsyncSession, spool_id: int | None) -> No
         raise HTTPException(400, "Selected Spoolman spool was not found") from exc
 
 
+def _require_inventory_for_spoolman_fields(caller, fields_set: set[str]) -> None:
+    """Spoolman accounting fields mutate inventory, so they need inventory permissions."""
+    if not fields_set.intersection({"spoolman_accounting_owner", "spoolman_spool_id"}):
+        return
+    if isinstance(caller, User) and not caller.has_all_permissions(
+        Permission.INVENTORY_READ.value, Permission.INVENTORY_UPDATE.value
+    ):
+        raise HTTPException(403, "Missing required permissions: inventory:read, inventory:update")
+
+
 # Seconds the /hms/execute-action route waits for a printer status push
 # confirming the command landed before reporting 502 to the UI. Module-level
 # so tests can monkeypatch a near-zero value instead of mocking asyncio.sleep.
@@ -185,7 +195,7 @@ async def list_printers(
 @router.post("/", response_model=PrinterResponse)
 async def create_printer(
     printer_data: PrinterCreate,
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
+    caller=RequirePermissionIfAuthEnabled(Permission.PRINTERS_CREATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Add a new printer.
@@ -193,6 +203,8 @@ async def create_printer(
     Verifies the provider connection before persisting. Wrong credentials or
     an unreachable target would otherwise create an empty printer card.
     """
+    if printer_data.moonraker_config is not None:
+        _require_inventory_for_spoolman_fields(caller, printer_data.moonraker_config.model_fields_set)
     network_site, generated_host = await _network_site_target(
         db, printer_data.network_site_id, printer_data.network_site_lan_ip
     )
@@ -506,11 +518,16 @@ async def get_printer(
     return _serialize_printer(printer, include_secret=include_secret)
 
 
+def _url_origin(url: str) -> tuple[str, str, int | None]:
+    parts = urlsplit(url)
+    return parts.scheme.lower(), (parts.hostname or "").lower(), parts.port
+
+
 @router.patch("/{printer_id}", response_model=PrinterResponse)
 async def update_printer(
     printer_id: int,
     printer_data: PrinterUpdate,
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
+    caller=RequirePermissionIfAuthEnabled(Permission.PRINTERS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ):
     """Update a printer."""
@@ -535,6 +552,16 @@ async def update_printer(
         raise HTTPException(400, "Bambu connection fields must not be cleared")
 
     moonraker_data = update_data.pop("moonraker_config", None)
+    if moonraker_data is not None:
+        # The edit form resends stored values, so only actual Spoolman changes need inventory rights.
+        stored = printer.moonraker_config
+        current = {
+            "spoolman_accounting_owner": stored.spoolman_accounting_owner if stored else "moonraker",
+            "spoolman_spool_id": stored.spoolman_spool_id if stored else None,
+        }
+        _require_inventory_for_spoolman_fields(
+            caller, {key for key, value in moonraker_data.items() if key not in current or current[key] != value}
+        )
     site_fields_touched = "network_site_id" in update_data or "network_site_lan_ip" in update_data
     selected_site = printer.network_site
     generated_host = None
@@ -570,6 +597,11 @@ async def update_printer(
         config = printer.moonraker_config
         if config is None:
             config = MoonrakerPrinterConfig(printer=printer)
+        # Credentials are bound to their configured origin: moving to another
+        # origin drops them unless the caller resubmits replacements below.
+        if config.base_url and _url_origin(config.base_url) != _url_origin(moonraker_data["base_url"]):
+            config.api_key = None
+            config.authorization = None
         config.base_url = moonraker_data["base_url"]
         if "websocket_url_override" in moonraker_data:
             config.websocket_url_override = moonraker_data["websocket_url_override"]
@@ -620,7 +652,37 @@ async def update_printer(
     if site_fields_touched:
         printer.network_site = selected_site
 
+    # Non-proxy VPs mirror the target's access code; rotate them in the same
+    # transaction so the old code stops authenticating on the VP listener.
+    rotated_vp_codes = False
+    if printer.provider == PrinterProvider.BAMBU and "access_code" in update_data:
+        from backend.app.models.virtual_printer import VirtualPrinter
+
+        linked_vps = (
+            (
+                await db.execute(
+                    select(VirtualPrinter).where(
+                        VirtualPrinter.target_printer_id == printer_id,
+                        VirtualPrinter.mode != "proxy",
+                    )
+                )
+            )
+            .scalars()
+            .all()
+        )
+        for vp in linked_vps:
+            if vp.access_code != printer.access_code:
+                vp.access_code = printer.access_code
+                rotated_vp_codes = True
+
     await db.commit()
+    if rotated_vp_codes:
+        from backend.app.services.virtual_printer import virtual_printer_manager
+
+        try:
+            await virtual_printer_manager.sync_from_db()
+        except Exception:
+            logger.warning("Virtual printer sync failed after access code rotation", exc_info=True)
     await db.refresh(printer)
     if printer.provider == PrinterProvider.MOONRAKER:
         await db.refresh(printer, attribute_names=["moonraker_config"])
@@ -738,6 +800,8 @@ async def get_printer_status(
             layer_num=snapshot.current_layer,
             total_layers=snapshot.total_layers,
             temperatures=dict(snapshot.temperatures),
+            # The scheduler's plate-clear gate covers every provider; the UI needs this to offer the ack.
+            awaiting_plate_clear=printer_manager.is_awaiting_plate_clear(printer_id),
         )
 
     state = printer_manager.get_bambu_state(printer_id)
@@ -1033,7 +1097,7 @@ async def get_printer_status(
         ams_exists=ams_exists,
         vt_tray=vt_tray,
         sdcard=state.sdcard,
-        store_to_sdcard=state.store_to_sdcard,
+        store_to_sdcard=bool(state.store_to_sdcard),
         timelapse=state.timelapse,
         ipcam=state.ipcam,
         wifi_signal=state.wifi_signal,

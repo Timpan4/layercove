@@ -169,9 +169,10 @@ jobs:
           # No fix is available yet. Remove once Pygments ships a patched release.
           # CVE-2025-45768 (PYSEC-2025-183 / GHSA-65pc-fj4g-8rjx): disputed by PyJWT maintainers.
           # Advisory says "key length is chosen by the application that uses the library" — no
-          # PyJWT fix exists or will exist. Bambuddy is safe: backend/app/core/auth.py:184 uses
-          # secrets.token_urlsafe(64) (~86 chars of entropy) for auto-generated secrets and
-          # rejects file-loaded secrets shorter than 32 chars at :177. Keep ignored permanently.
+          # PyJWT fix exists or will exist. Bambuddy is safe: _get_jwt_secret() in
+          # backend/app/core/auth.py uses secrets.token_urlsafe(64) (~86 chars of entropy) for
+          # auto-generated secrets, rejects file-loaded secrets shorter than 32 chars, and warns
+          # at startup when JWT_SECRET_KEY is shorter than 32 chars. Keep ignored permanently.
           pip-audit --desc on --format json --output pip-audit-results.json \
             --ignore-vuln CVE-2026-4539 \
             --ignore-vuln CVE-2025-45768 \

@@ -547,6 +547,34 @@ class TestArchivesAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_soft_deleted_archive_hidden_from_export_and_project_list(
+        self, async_client: AsyncClient, archive_factory, printer_factory, db_session
+    ):
+        """Soft-deleted rows keep their metadata for stats only; export and the
+        project archive list must not return them."""
+        from backend.app.models.project import Project
+
+        project = Project(name="SoftDeleteProject")
+        db_session.add(project)
+        await db_session.commit()
+        await db_session.refresh(project)
+
+        printer = await printer_factory()
+        archive = await archive_factory(printer.id, print_name="RemovedSecretName", project_id=project.id)
+        keep = await archive_factory(printer.id, print_name="KeptName", project_id=project.id)
+        await async_client.delete(f"/api/v1/archives/{archive.id}")
+
+        export = await async_client.get("/api/v1/archives/export?format=csv&fields=print_name")
+        assert export.status_code == 200
+        assert "RemovedSecretName" not in export.text
+        assert "KeptName" in export.text
+
+        listing = await async_client.get(f"/api/v1/projects/{project.id}/archives")
+        assert listing.status_code == 200
+        assert [a["id"] for a in listing.json()] == [keep.id]
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_soft_deleted_archive_hidden_from_search(
         self, async_client: AsyncClient, archive_factory, printer_factory, db_session
     ):
@@ -1210,9 +1238,9 @@ class TestFailureAnalysisAPI:
         assert response.status_code == 200
         result = response.json()
         assert result["total_prints"] == 6
-        assert result["failed_prints"] == 2
-        assert result["outcome_prints"] == 3
-        assert result["failure_rate"] == 66.7
+        assert result["failed_prints"] == 1
+        assert result["outcome_prints"] == 2
+        assert result["failure_rate"] == 50.0
 
     @pytest.mark.asyncio
     @pytest.mark.integration

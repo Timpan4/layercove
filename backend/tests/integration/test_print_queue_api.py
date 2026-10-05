@@ -562,6 +562,25 @@ class TestPrintQueueAPI:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_specific_printer_job_stores_force_color_overrides(
+        self, async_client: AsyncClient, printer_factory, archive_factory, db_session
+    ):
+        """A specific-printer job keeps its "Force color match" guards so the
+        scheduler can enforce them; they used to be dropped without a target model."""
+        printer = await printer_factory()
+        archive = await archive_factory()
+        overrides = [{"slot_id": 1, "type": "PLA", "color": "#FF0000", "force_color_match": True}]
+
+        response = await async_client.post(
+            "/api/v1/queue/",
+            json={"printer_id": printer.id, "archive_id": archive.id, "filament_overrides": overrides},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["filament_overrides"] == overrides
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_add_to_queue_with_plate_id(
         self, async_client: AsyncClient, printer_factory, archive_factory, db_session
     ):

@@ -2716,7 +2716,7 @@ export default {
         emailClaim: '邮箱声明',
         emailClaimDesc: "用作邮箱身份的 JWT 声明。Azure Entra ID 请使用 'preferred_username' 或 'upn'（不发送 email_verified）。仅使用可信的声明名称。",
         emailClaimPlaceholder: '邮箱',
-        emailClaimCustomClaimAutoLinkWarning: '自定义声明仅在值由租户管理时（例如 Azure Entra ID 的 upn / preferred_username）对自动关联安全。如果您的 IdP 允许用户自我声明此声明，请勿启用自动关联。',
+        emailClaimCustomClaimAutoLinkWarning: "自动关联仅适用于标准 'email' 声明和已验证的邮箱。自定义声明绝不会用于关联现有账户，保存此组合将被拒绝。",
         requireEmailVerified: '要求邮箱已验证',
         requireEmailVerifiedDesc: '仅在提供商将邮箱声明标记为已验证时才接受。',
         requireEmailVerifiedWarning: '警告：将在未经验证的情况下接受邮箱。仅对受信任的提供商使用。',
@@ -4169,6 +4169,8 @@ export default {
     runningWithProgressMultiPlate: '盘面 {{plateIndex}} / {{plateCount}} • {{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '已切片 {{name}}',
     failedTitle: '切片失败',
+    embeddedSettingsTitle: '已使用内嵌设置',
+    embeddedSettingsMismatch: '使用所选配置文件切片失败。结果使用了 3MF 中内嵌的、与您的选择不同的打印机、工艺或耗材设置。请在打印前检查。',
     failedToast: '切片 {{name}} 失败：{{detail}}',
     tier: {
       local: '已导入',

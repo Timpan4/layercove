@@ -19,6 +19,7 @@ from backend.app.core.tasks import spawn_background_task
 from backend.app.models.archive import PrintArchive
 from backend.app.models.filament import Filament
 from backend.app.models.printer import Printer
+from backend.app.services.zip_limits import check_zip_size
 from backend.app.utils.safe_path import PathTraversalError, safe_join_under
 from backend.app.utils.threemf_tools import ThreeMFDocument
 
@@ -135,6 +136,7 @@ class ThreeMFParser:
         """Extract metadata from 3MF file."""
         try:
             with zipfile.ZipFile(self.file_path, "r") as zf:
+                check_zip_size(zf)
                 self._parse_slice_info(zf)  # Now sets self.plate_number from slice_info
                 self._parse_project_settings(zf)
                 self._parse_gcode_header(zf)
@@ -961,6 +963,19 @@ async def _count_related_queue_items(db: AsyncSession, archive_id: int) -> tuple
     return int(total or 0), int(printing or 0)
 
 
+# archive_id -> timelapse path left over from before a reprint (#1707). The old
+# video stays attached until the reprint's timelapse is saved, so a reprint
+# permission never deletes media without a replacement. In-memory on purpose:
+# after a restart the old file is simply kept.
+stale_timelapse_paths: dict[int, str] = {}
+
+
+def current_timelapse_path(archive) -> str | None:
+    """The archive's timelapse path, ignoring a video left over from a previous run."""
+    path = archive.timelapse_path
+    return None if path and stale_timelapse_paths.get(archive.id) == path else path
+
+
 class ArchiveService:
     """Service for archiving print jobs."""
 
@@ -1551,8 +1566,17 @@ class ArchiveService:
         await asyncio.to_thread(timelapse_file.write_bytes, timelapse_data)
 
         # Update archive record
+        previous_relpath = archive.timelapse_path
         archive.timelapse_path = str(timelapse_file.relative_to(settings.base_dir))
         await self.db.commit()
+
+        # The reprint's timelapse is saved: swap complete, drop the old video.
+        stale_relpath = stale_timelapse_paths.pop(archive_id, None)
+        if stale_relpath and stale_relpath == previous_relpath and stale_relpath != archive.timelapse_path:
+            try:
+                (settings.base_dir / stale_relpath).unlink(missing_ok=True)  # SEC-PATH-OK: DB-stored archive path
+            except OSError as e:
+                logger.warning("Failed to delete replaced timelapse %s: %s", stale_relpath, e)
 
         # For non-MP4 videos (e.g. AVI from P1S), kick off background conversion
         if not filename.lower().endswith(".mp4"):

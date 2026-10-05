@@ -296,6 +296,24 @@ class TestScalePollLoopWakeGating:
         assert display.wake.call_count == 2
 
     @pytest.mark.asyncio
+    async def test_step_change_wakes_when_stability_arrives_after_report(self):
+        """Production timing: the moving average settles several reports after the
+        step, so the stable reading equals the previous (unstable) report and the
+        telemetry threshold no longer fires. Wake must still be evaluated."""
+        readings = [
+            (0.0, True, 100),  # settled baseline
+            (120.0, False, 2000),  # spool placed, average still climbing
+            (250.0, False, 5000),
+            (250.0, True, 5000),  # settled, same as last report
+        ]
+        scale = self._make_scale(readings)
+        display = MagicMock()
+
+        await self._run_loop(scale, display, iterations=20)
+
+        assert display.wake.call_count == 2
+
+    @pytest.mark.asyncio
     async def test_noise_then_settled_wakes_once(self):
         """Noise that briefly exceeds threshold must not bump last_wake_grams.
 

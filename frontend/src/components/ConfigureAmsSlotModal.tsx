@@ -28,8 +28,9 @@ function convertToTrayInfoIdx(settingId: string): string {
   // Strip version suffix if present (e.g., GFSL05_07 -> GFSL05)
   const baseId = settingId.includes('_') ? settingId.split('_')[0] : settingId;
 
-  // Bambu presets start with "GFS" - remove the 'S' to get filament_id
-  if (baseId.startsWith('GFS')) {
+  // Bambu setting IDs start with "GFS" - remove the 'S' to get filament_id.
+  // 5-char IDs (e.g. GFS99, Generic PVA) are already bare filament IDs.
+  if (baseId.startsWith('GFS') && baseId.length > 5) {
     return 'GF' + baseId.slice(3);
   }
 

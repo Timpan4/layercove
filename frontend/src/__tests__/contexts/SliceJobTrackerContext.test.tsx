@@ -509,3 +509,61 @@ describe('SliceJobTrackerProvider — persistent progress toast', () => {
     expect(screen.queryByText(/Expired\.3mf/)).toBeNull();
   });
 });
+
+describe('SliceJobTrackerProvider — embedded settings mismatch warning', () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  async function completeWith(mismatch: boolean) {
+    mockApi.getSliceJob.mockResolvedValue({
+      job_id: 9,
+      status: 'completed',
+      kind: 'library_file',
+      source_id: 1,
+      source_name: 'Model.3mf',
+      created_at: new Date().toISOString(),
+      started_at: new Date().toISOString(),
+      completed_at: new Date().toISOString(),
+      result: {
+        library_file_id: 5,
+        name: 'Model.gcode.3mf',
+        print_time_seconds: 1,
+        filament_used_g: 1,
+        filament_used_mm: 1,
+        used_embedded_settings: true,
+        embedded_settings_mismatch: mismatch,
+      },
+    });
+    render(
+      <Wrapper>
+        <TrackTrigger id={9} name="Model.3mf" />
+      </Wrapper>,
+    );
+    act(() => {
+      screen.getByText('track-9').click();
+    });
+    await act(async () => {
+      vi.advanceTimersByTime(1500);
+    });
+    await act(async () => {
+      await Promise.resolve();
+      await Promise.resolve();
+    });
+  }
+
+  it('shows a persistent warning when the embedded settings differ from the selection', async () => {
+    await completeWith(true);
+    expect(screen.getByText('Embedded settings used')).toBeDefined();
+  });
+
+  it('shows no warning when the fallback used matching settings', async () => {
+    await completeWith(false);
+    expect(screen.queryByText('Embedded settings used')).toBeNull();
+  });
+});

@@ -8,8 +8,9 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from backend.app.core.auth import RequirePermissionIfAuthEnabled
+from backend.app.core.auth import RequirePermissionIfAuthEnabled, require_caller_identity_if_auth_enabled
 from backend.app.core.database import get_db
+from backend.app.core.identity import CallerIdentity
 from backend.app.core.permissions import Permission
 from backend.app.models.maintenance import MaintenanceHistory, MaintenanceType, PrinterMaintenance
 from backend.app.models.printer import Printer
@@ -474,7 +475,7 @@ async def update_printer_maintenance(
     item_id: int,
     data: PrinterMaintenanceUpdate,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.MAINTENANCE_UPDATE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.MAINTENANCE_UPDATE)),
 ):
     """Update a printer maintenance item (e.g., custom interval, enabled)."""
     result = await db.execute(
@@ -485,6 +486,7 @@ async def update_printer_maintenance(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Maintenance item not found")
+    caller.require_printer_access(item.printer_id)
 
     update_data = data.model_dump(exclude_unset=True)
     for key, value in update_data.items():
@@ -500,9 +502,10 @@ async def assign_maintenance_type(
     printer_id: int,
     type_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.MAINTENANCE_CREATE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.MAINTENANCE_CREATE)),
 ):
     """Assign a maintenance type to a specific printer (for custom types)."""
+    caller.require_printer_access(printer_id)
     # Verify printer exists
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()
@@ -553,7 +556,7 @@ async def assign_maintenance_type(
 async def remove_maintenance_item(
     item_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.MAINTENANCE_DELETE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.MAINTENANCE_DELETE)),
 ):
     """Remove a maintenance item (unassign a custom type from a printer)."""
     result = await db.execute(
@@ -564,6 +567,7 @@ async def remove_maintenance_item(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Maintenance item not found")
+    caller.require_printer_access(item.printer_id)
 
     # Only allow removing custom (non-system) types
     if item.maintenance_type.is_system:
@@ -580,7 +584,7 @@ async def perform_maintenance(
     item_id: int,
     data: PerformMaintenanceRequest,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.MAINTENANCE_UPDATE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.MAINTENANCE_UPDATE)),
 ):
     """Mark maintenance as performed (reset the counter)."""
     result = await db.execute(
@@ -591,6 +595,7 @@ async def perform_maintenance(
     item = result.scalar_one_or_none()
     if not item:
         raise HTTPException(status_code=404, detail="Maintenance item not found")
+    caller.require_printer_access(item.printer_id)
 
     # Get printer for name
     result = await db.execute(select(Printer).where(Printer.id == item.printer_id))
@@ -711,7 +716,7 @@ async def set_printer_hours(
     printer_id: int,
     total_hours: float,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.MAINTENANCE_UPDATE),
+    caller: CallerIdentity = Depends(require_caller_identity_if_auth_enabled(Permission.MAINTENANCE_UPDATE)),
 ):
     """Set the total print hours for a printer (adjusts offset to match).
 
@@ -719,6 +724,7 @@ async def set_printer_hours(
     Where runtime_hours comes from the runtime_seconds counter that tracks
     actual machine active time (RUNNING state only — paused time excluded, #1521).
     """
+    caller.require_printer_access(printer_id)
     # Get printer
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()

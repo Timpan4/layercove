@@ -200,6 +200,21 @@ class TestGetPreviewFilaments:
         assert len(stub.calls) == 2
 
     @pytest.mark.asyncio
+    async def test_failed_slice_does_not_leak_lock(self):
+        stub = _StubService(raise_exc=SlicerApiUnavailableError("boom"))
+        with patch.object(slice_preview, "SlicerApiService", lambda **kw: stub):
+            for plate in range(1, 6):
+                await get_preview_filaments(
+                    kind="archive",
+                    source_id=1,
+                    plate_id=plate,
+                    file_bytes=b"abc",
+                    file_name="x.3mf",
+                    api_url="http://sidecar",
+                )
+        assert slice_preview._preview_locks == {}
+
+    @pytest.mark.asyncio
     async def test_concurrent_calls_share_one_slice(self):
         body = _make_sliced_3mf(plate_id=1, filaments=[{"id": "1", "type": "PLA", "color": "#000"}])
 

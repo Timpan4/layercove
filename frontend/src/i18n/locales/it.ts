@@ -2671,7 +2671,7 @@ export default {
         emailClaim: 'Claim email',
         emailClaimDesc: "Claim JWT usato come identità email. Usare 'preferred_username' o 'upn' per Azure Entra ID (che non invia email_verified). Usare solo nomi di claim affidabili.",
         emailClaimPlaceholder: 'e-mail',
-        emailClaimCustomClaimAutoLinkWarning: 'I claim personalizzati sono sicuri per il collegamento automatico solo se il valore è gestito dal tenant (es. Azure Entra ID upn / preferred_username). Non abilitare il collegamento automatico se il tuo IdP consente agli utenti di auto-assegnare questo claim.',
+        emailClaimCustomClaimAutoLinkWarning: "Il collegamento automatico funziona solo con il claim standard 'email' e un'email verificata. I claim personalizzati non vengono mai usati per collegare account esistenti e il salvataggio di questa combinazione viene rifiutato.",
         requireEmailVerified: 'Richiedi verifica email',
         requireEmailVerifiedDesc: "Accetta il claim email solo se il provider lo contrassegna come verificato.",
         requireEmailVerifiedWarning: 'Attenzione: l\'email sarà accettata senza verifica. Usare solo con provider affidabili.',
@@ -4169,6 +4169,8 @@ export default {
     runningWithProgressMultiPlate: 'Piatto {{plateIndex}} di {{plateCount}} • {{name}} – {{stage}} ({{percent}}%) – {{elapsed}}',
     completedToast: '{{name}} sezionato',
     failedTitle: 'Slicing fallito',
+    embeddedSettingsTitle: 'Impostazioni incorporate utilizzate',
+    embeddedSettingsMismatch: 'Lo slicing con i profili selezionati non è riuscito. Il risultato usa impostazioni di stampante, processo o filamento incorporate nel 3MF diverse dalla tua selezione. Controllalo prima di stampare.',
     failedToast: 'Slicing di {{name}} fallito: {{detail}}',
     tier: {
       local: 'Importato',

@@ -67,7 +67,7 @@ describe('OIDCProviderSettings', () => {
       await user.click(screen.getAllByRole('button', { name: /Add Provider/i })[0]);
 
       await waitFor(() => {
-        expect(screen.getByText(/Auto.*Link/i)).toBeInTheDocument();
+        expect(screen.getByText(/^Auto-link existing accounts$/i)).toBeInTheDocument();
       });
 
       // Find the Auto Link switch by aria-label or by position
@@ -121,7 +121,7 @@ describe('OIDCProviderSettings', () => {
       await user.click(screen.getAllByRole('button', { name: /Add Provider/i })[0]);
 
       await waitFor(() => {
-        expect(screen.getByText(/Auto.*Link/i)).toBeInTheDocument();
+        expect(screen.getByText(/^Auto-link existing accounts$/i)).toBeInTheDocument();
       });
 
       // Enable auto_link (switch index 2)
@@ -133,7 +133,7 @@ describe('OIDCProviderSettings', () => {
       fireEvent.change(emailClaimInput, { target: { value: 'preferred_username' } });
 
       await waitFor(() => {
-        expect(screen.getByText(/tenant-administered/i)).toBeInTheDocument();
+        expect(screen.getByText(/custom claims are never used to link/i)).toBeInTheDocument();
       });
     });
   });

@@ -2578,7 +2578,7 @@ export default {
         emailClaim: '이메일 클레임',
         emailClaimDesc: '이메일 ID로 사용되는 JWT 클레임.',
         emailClaimPlaceholder: 'email',
-        emailClaimCustomClaimAutoLinkWarning: '사용자 지정 클레임은 값이 테넌트 관리인 경우에만 자동 연결에 안전합니다. IdP가 사용자가 이 클레임을 직접 주장할 수 있게 하면 자동 연결을 활성화하지 마세요.',
+        emailClaimCustomClaimAutoLinkWarning: "자동 연결은 표준 'email' 클레임과 인증된 이메일에서만 작동합니다. 사용자 지정 클레임은 기존 계정 연결에 사용되지 않으며, 이 조합은 저장할 수 없습니다.",
         requireEmailVerified: '이메일 확인 필요',
         requireEmailVerifiedDesc: '제공자가 확인된 것으로 표시한 경우에만 이메일 클레임을 수락합니다.',
         requireEmailVerifiedWarning: '경고: 확인 없이도 이메일이 수락됩니다. 신뢰할 수 있는 제공자에만 사용하세요.',
@@ -3991,6 +3991,8 @@ export default {
     otherPrinters: '다른 프린터',
     runningWithProgressMultiPlate: '플레이트 {{plateIndex}}/{{plateCount}} • {{name}} — {{stage}} ({{percent}}%) — {{elapsed}}',
     failedTitle: '슬라이싱 실패',
+    embeddedSettingsTitle: '내장 설정 사용됨',
+    embeddedSettingsMismatch: '선택한 프로필로 슬라이싱하지 못했습니다. 결과는 선택과 다른 3MF 내장 프린터, 프로세스 또는 필라멘트 설정을 사용합니다. 인쇄 전에 확인하세요.',
     bedType: {
       label: '빌드 플레이트',
       auto: '자동 (프로세스 프리셋 사용)',

@@ -2729,7 +2729,7 @@ export default {
         emailClaim: 'E-Mail-Claim',
         emailClaimDesc: "JWT-Claim für die E-Mail-Identität. Für Azure Entra ID 'preferred_username' oder 'upn' verwenden (sendet kein email_verified). Nur vertrauenswürdige Claim-Namen verwenden.",
         emailClaimPlaceholder: 'E-Mail',
-        emailClaimCustomClaimAutoLinkWarning: "Benutzerdefinierte Claims sind für die Auto-Verknüpfung nur sicher, wenn der Wert vom Mandanten verwaltet wird (z. B. Azure Entra ID upn / preferred_username). Aktiviere Auto-Verknüpfung nicht, wenn dein IdP Benutzern erlaubt, diesen Claim selbst zu setzen.",
+        emailClaimCustomClaimAutoLinkWarning: "Auto-Verknüpfung funktioniert nur mit dem Standard-Claim 'email' und einer verifizierten E-Mail. Benutzerdefinierte Claims werden nie zum Verknüpfen bestehender Konten verwendet, und das Speichern dieser Kombination wird abgelehnt.",
         requireEmailVerified: 'E-Mail-Verifizierung erforderlich',
         requireEmailVerifiedDesc: 'E-Mail-Claim nur akzeptieren, wenn der Provider ihn als verifiziert markiert.',
         requireEmailVerifiedWarning: 'Warnung: E-Mail wird auch ohne Verifizierung akzeptiert. Nur bei vertrauenswürdigen Providern verwenden.',
@@ -4181,6 +4181,8 @@ export default {
     runningWithProgressMultiPlate: 'Plate {{plateIndex}} von {{plateCount}} • {{name}} – {{stage}} ({{percent}} %) – {{elapsed}}',
     completedToast: '{{name}} wurde gesliced',
     failedTitle: 'Slicen fehlgeschlagen',
+    embeddedSettingsTitle: 'Eingebettete Einstellungen verwendet',
+    embeddedSettingsMismatch: 'Das Slicen mit den gewählten Profilen ist fehlgeschlagen. Das Ergebnis nutzt die in der 3MF-Datei eingebetteten Drucker-, Prozess- oder Filament-Einstellungen, die von Ihrer Auswahl abweichen. Prüfen Sie das Ergebnis vor dem Drucken.',
     failedToast: 'Slicen von {{name}} fehlgeschlagen: {{detail}}',
     tier: {
       local: 'Importiert',
