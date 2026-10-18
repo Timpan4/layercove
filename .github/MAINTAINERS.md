@@ -16,6 +16,12 @@
 
 `codeql.yml` (CodeQL) and `security.yml` (Security Audit) run separately.
 
+Independent Ruff checks and frontend lint/typecheck/build steps use GitHub's
+[`parallel` groups](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsparallel).
+Frontend tests follow the build because brand tests inspect its output. The
+production Docker build runs in the background during E2E dependency setup;
+an explicit `wait` propagates build failures before image checks and Compose.
+
 ### Fixing common failures
 
 ```bash
@@ -63,4 +69,8 @@ LayerCove starts only from its current schema. `run_migrations` in `backend/app/
 These files still name the upstream maintainer and need a LayerCove decision:
 
 - `.github/CODEOWNERS` assigns every path to `@maziggy`.
-- `cleanup-ghcr.yml` and `repo-stats.yml` target upstream resources (#92).
+
+The inherited `cleanup-ghcr.yml` and `repo-stats.yml` workflows were removed
+(#92). They targeted the old `bambuddy` package and upstream repository stats,
+required absent PATs, and repeatedly failed. LayerCove does not schedule package
+deletion or collect upstream traffic stats.
