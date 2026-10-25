@@ -179,7 +179,7 @@ describe('provider capability UI', () => {
 
     expect(await screen.findByTestId('speed-control')).toBeInTheDocument();
     expect(screen.getAllByTitle(/view heater history/i)).not.toHaveLength(0);
-    expect(screen.getByRole('button', { name: 'OK' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'HMS: OK' })).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: /^print$/i }));
     const picker = document.querySelector<HTMLInputElement>('input[type="file"]')!;
     expect(picker).toHaveAttribute('accept', '.3mf');
@@ -217,7 +217,7 @@ describe('provider capability UI', () => {
     expect(screen.queryByTestId('speed-control')).not.toBeInTheDocument();
     expect(screen.queryByTitle(/camera/i)).not.toBeInTheDocument();
     expect(screen.queryByTitle(/view heater history/i)).not.toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'OK' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'HMS: OK' })).not.toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /pause/i })).toBeInTheDocument();
     expect(screen.getAllByText('cube.gcode').length).toBeGreaterThan(0);
     expect(screen.getAllByText('45%').length).toBeGreaterThan(0);

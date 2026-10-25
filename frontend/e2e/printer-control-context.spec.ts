@@ -57,7 +57,7 @@ for (const width of [1280, 390]) {
   test(`Back restores the inspected Voron and retains the fleet at ${width}px`, async ({ page }) => {
     const unexpectedWrites = await openVoronControls(page, width);
     await page.getByRole('button', { name: 'Back', exact: true }).click();
-    await expect(page.getByRole('heading', { name: 'Command deck', exact: true })).toBeVisible();
+    await expect(page.getByRole('heading', { name: 'Printers', exact: true })).toBeVisible();
     await expect(page.getByRole('heading', { name: 'Tim Voron', level: 1 })).toBeVisible();
     await expect(page.getByRole('button', { name: "Inspect DOGGE'S PRINTER", exact: true })).toBeVisible();
     await expect(page.getByRole('button', { name: 'Inspect Tim Voron', exact: true })).toBeVisible();

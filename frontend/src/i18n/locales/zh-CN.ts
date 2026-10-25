@@ -162,6 +162,7 @@ export default {
     addedBy: '由 {{username}} 添加',
     prints: '次打印',
     more: '还有 {{count}} 个',
+    moreActions: '更多操作',
     ascending: '升序',
     descending: '降序',
     back: '返回',
@@ -722,7 +723,7 @@ export default {
     },
     // HMS errors
     clickToViewHmsErrors: '点击查看 HMS 错误',
-    estimatedCompletion: '预计完成时间',
+    hmsStatusOk: 'HMS: 正常',    estimatedCompletion: '预计完成时间',
     plateNumber: '板 {{number}}',
     slotOptions: '槽位选项',
     // AMS hover popup
