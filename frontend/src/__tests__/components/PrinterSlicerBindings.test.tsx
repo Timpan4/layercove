@@ -9,14 +9,21 @@ import {
   type PrinterStatus,
   type SlicerCatalogBinding,
   type SlicerCatalogClassification,
+  type SlicerCatalogReviewBatch,
+  type UnifiedPreset,
+  type UnifiedPresetsResponse,
 } from '../../api/client';
 
-const auth = vi.hoisted(() => ({ enabled: true, update: true }));
+const auth = vi.hoisted(() => ({ enabled: true, update: true, settings: true }));
 vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ authEnabled: auth.enabled, hasPermission: (permission: string) => permission === 'printers:update' && auth.update }),
+  useAuth: () => ({
+    authEnabled: auth.enabled,
+    hasPermission: (permission: string) =>
+      (permission === 'printers:update' && auth.update) || (permission === 'settings:update' && auth.settings),
+  }),
 }));
 vi.mock('../../components/ConfirmModal', () => ({
-  ConfirmModal: ({ title, message, onConfirm, onCancel }: { title: string; message: string; onConfirm: () => void; onCancel: () => void }) => <div role="dialog"><h2>{title}</h2><p>{message}</p><button onClick={onConfirm}>Confirm and bind</button><button onClick={onCancel}>Cancel</button></div>,
+  ConfirmModal: ({ title, message, confirmText, onConfirm, onCancel }: { title: string; message: string; confirmText: string; onConfirm: () => void; onCancel: () => void }) => <div role="dialog"><h2>{title}</h2><p>{message}</p><button onClick={onConfirm}>{confirmText}</button><button onClick={onCancel}>Cancel</button></div>,
 }));
 
 const printer = (id: number, name: string, model: string | null, provider: Printer['provider'] = 'bambu') => ({ id, name, model, provider, is_active: true } as Printer);
@@ -46,6 +53,22 @@ const emptyGroups = {
   incompatible: [],
 };
 const statusWithNozzle = (diameter: string) => ({ nozzles: [{ nozzle_type: 'stainless_steel', nozzle_diameter: diameter }] }) as unknown as PrinterStatus;
+const emptySlot = { printer: [], process: [], filament: [] };
+const standardPresets = (printers: UnifiedPreset[]) =>
+  ({ orca_cloud: emptySlot, cloud: emptySlot, local: emptySlot, standard: { ...emptySlot, printer: printers } }) as unknown as UnifiedPresetsResponse;
+const standardPreset = (name: string): UnifiedPreset => ({ id: name, name, source: 'standard' });
+const standardP1S04 = { ...profile, profile_id: 77, revision_id: 501, source: 'standard', account_id: 9, remote_profile_id: 'std-p1s-04', display_name: 'Bambu Lab P1S 0.4 nozzle' } as const;
+const standardBatch = (status: SlicerCatalogReviewBatch['status']): SlicerCatalogReviewBatch => ({
+  id: 3,
+  status,
+  summary: { profiles: 1, revisions: 1 },
+  revisions: [{ id: 501, profile_id: 77, display_name: 'Bambu Lab P1S 0.4 nozzle' }],
+  sync_cursor_before: null,
+  sync_cursor_after: 'cursor-1',
+  reviewed_at: null,
+  created_at: '2026-10-25T00:00:00Z',
+});
+const addP1S04 = 'Add Bambu Lab P1S 0.4 nozzle from the standard library';
 
 function renderPanel(printers: Printer[], url = '/') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -56,12 +79,14 @@ describe('PrinterSlicerBindings', () => {
   beforeEach(() => {
     auth.enabled = true;
     auth.update = true;
+    auth.settings = true;
     vi.restoreAllMocks();
     vi.spyOn(api, 'listSlicerCatalogProfiles').mockResolvedValue([profile]);
     vi.spyOn(api, 'listSlicerCatalogBindings').mockResolvedValue([]);
     vi.spyOn(api, 'getSlicerCatalogGroups').mockResolvedValue(emptyGroups);
     vi.spyOn(api, 'getSlicerCatalogBindingSuggestion').mockResolvedValue({ printer_id: 1, suggested_profile_ids: [10], requires_confirmation: true, readiness: 'acknowledgement_required' });
     vi.spyOn(api, 'getPrinterStatus').mockResolvedValue(statusWithNozzle('0.4'));
+    vi.spyOn(api, 'getSlicerPresets').mockResolvedValue(standardPresets([]));
   });
 
   it('offers a P1S suggestion inline with its profile name', async () => {
@@ -256,5 +281,89 @@ describe('PrinterSlicerBindings', () => {
     expect(await screen.findByText('Offline')).toBeInTheDocument();
     expect(await screen.findByText('Ready')).toBeInTheDocument();
     expect(screen.getAllByRole('alert')).toHaveLength(1);
+  });
+
+  describe('standard library import', () => {
+    // Stateful stand-in for the catalog: the preset is only listed and suggested after the import activates it.
+    let activated: boolean;
+    let approved: boolean;
+    beforeEach(() => {
+      activated = false;
+      approved = false;
+      vi.spyOn(api, 'getSlicerPresets').mockResolvedValue(
+        standardPresets([standardPreset('Bambu Lab P1S 0.4 nozzle'), standardPreset('Bambu Lab P1S 0.6 nozzle')]),
+      );
+      vi.spyOn(api, 'listSlicerCatalogProfiles').mockImplementation(async (options) =>
+        options?.search || activated ? [standardP1S04] : [],
+      );
+      vi.spyOn(api, 'getSlicerCatalogBindingSuggestion').mockImplementation(async (printerId) => ({
+        printer_id: printerId,
+        suggested_profile_ids: activated ? [77] : [],
+        requires_confirmation: true,
+        readiness: activated ? 'acknowledgement_required' : 'setup_required',
+      }));
+      vi.spyOn(api, 'syncStandardCatalog').mockResolvedValue({ account_id: 9, review_batch_id: 3, revision_ids: [501], cursor: 'cursor-1' });
+      vi.spyOn(api, 'listSlicerCatalogReviews').mockImplementation(async () => [standardBatch(approved ? 'approved' : 'pending')]);
+      vi.spyOn(api, 'reviewSlicerCatalogBatch').mockImplementation(async (batchId) => {
+        approved = true;
+        return { id: batchId, status: 'approved' };
+      });
+      vi.spyOn(api, 'listSlicerCatalogProfileRevisions').mockImplementation(async () => [
+        { id: 501, content_hash: 'hash-501', review_state: approved ? 'approved' : 'pending', created_at: '2026-10-25T00:00:00Z', active: activated },
+      ]);
+      vi.spyOn(api, 'activateSlicerCatalogRevision').mockImplementation(async (profileId, revisionId) => {
+        activated = true;
+        return { profile_id: profileId, revision_id: revisionId };
+      });
+    });
+
+    it('offers the standard preset matching the reported nozzle when the catalog has no P1S printer profile', async () => {
+      renderPanel([printer(1, 'P1S', 'P1S')]);
+      expect(await screen.findByRole('button', { name: addP1S04 })).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Profiles' })).toHaveAttribute('href', '/profiles');
+    });
+
+    it('prefers the standard preset for the reported nozzle over the 0.4 default', async () => {
+      vi.spyOn(api, 'getPrinterStatus').mockResolvedValue(statusWithNozzle('0.6'));
+      renderPanel([printer(1, 'P1S', 'P1S')]);
+      expect(await screen.findByRole('button', { name: 'Add Bambu Lab P1S 0.6 nozzle from the standard library' })).toBeInTheDocument();
+    });
+
+    it('adds the preset after confirmation and then offers it as the suggestion', async () => {
+      renderPanel([printer(1, 'P1S', 'P1S')]);
+      fireEvent.click(await screen.findByRole('button', { name: addP1S04 }));
+      expect(screen.getByRole('dialog')).toHaveTextContent('This adds the standard printer, process and filament library to the shared catalog; it may take a while.');
+      fireEvent.click(screen.getByRole('button', { name: 'Add to catalog' }));
+
+      expect(await screen.findByRole('button', { name: 'Use suggestion' })).toBeInTheDocument();
+      expect(screen.getByText('Suggested: Bambu Lab P1S 0.4 nozzle · 0.4 mm')).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: addP1S04 })).not.toBeInTheDocument();
+    });
+
+    it('shows the import failure inline and retries the import', async () => {
+      vi.mocked(api.syncStandardCatalog).mockRejectedValueOnce(new Error('Internal Server Error'));
+      renderPanel([printer(1, 'P1S', 'P1S')]);
+      fireEvent.click(await screen.findByRole('button', { name: addP1S04 }));
+      fireEvent.click(screen.getByRole('button', { name: 'Add to catalog' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent('Import failed: Internal Server Error');
+      fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+      expect(await screen.findByRole('button', { name: 'Use suggestion' })).toBeInTheDocument();
+    });
+
+    it('keeps the Profiles import text without SETTINGS_UPDATE because the import endpoints need it', async () => {
+      auth.settings = false;
+      renderPanel([printer(1, 'P1S', 'P1S')]);
+      expect(await screen.findByText(/No P1S printer profile is in the catalog yet/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /from the standard library/ })).not.toBeInTheDocument();
+    });
+
+    it('falls back to the Profiles import text when the standard library has no P1S printer preset', async () => {
+      vi.spyOn(api, 'getSlicerPresets').mockResolvedValue(standardPresets([standardPreset('Voron 0.4 nozzle')]));
+      renderPanel([printer(1, 'P1S', 'P1S')]);
+      expect(await screen.findByText(/No P1S printer profile is in the catalog yet/)).toBeInTheDocument();
+      expect(screen.getByRole('link', { name: 'Profiles' })).toHaveAttribute('href', '/profiles');
+      expect(screen.queryByRole('button', { name: /from the standard library/ })).not.toBeInTheDocument();
+    });
   });
 });

@@ -10,6 +10,7 @@ import {
   type SlicerCatalogBindingInput,
   type SlicerCatalogClassification,
   type SlicerCatalogProfile,
+  type UnifiedPreset,
 } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 import { useAuth } from '../contexts/AuthContext';
@@ -45,12 +46,55 @@ function reportedNozzle(status: PrinterStatus | undefined): number | null {
   return Number.isFinite(diameter) && diameter > 0 ? diameter : null;
 }
 
+// Standard preset names carry their nozzle, e.g. "Bambu Lab P1S 0.4 nozzle".
+function presetNozzle(name: string): number | null {
+  const match = /(\d+(?:\.\d+)?)\s*nozzle/i.exec(name);
+  return match ? Number(match[1]) : null;
+}
+
+// Prefers the printer's reported nozzle, then the 0.4 default, then any preset for the model.
+function standardPresetFor(presets: UnifiedPreset[], model: string, nozzle: number) {
+  const needle = model.toLowerCase();
+  const matches = presets.filter((preset) => preset.name.toLowerCase().includes(needle));
+  return matches.find((preset) => presetNozzle(preset.name) === nozzle)
+    ?? matches.find((preset) => presetNozzle(preset.name) === DEFAULT_NOZZLE_MM)
+    ?? matches[0];
+}
+
+// The standard library enters the catalog as pending review, and a preset is listed only once its
+// revision is approved and activated. The sync has no filter, so the approved batch covers the whole
+// library, while only the chosen preset is activated.
+async function importStandardPreset(presetName: string) {
+  await api.syncStandardCatalog();
+  const match = (await api.listSlicerCatalogProfiles({ includeInactive: true, search: presetName })).find(
+    (profile) =>
+      profile.source === 'standard'
+      && profile.profile_type === 'printer'
+      && profile.display_name === presetName
+      && !profile.tombstoned,
+  );
+  if (!match) throw new Error(`${presetName} is not in the standard library`);
+  const pendingBatches = (await api.listSlicerCatalogReviews(match.account_id)).filter(
+    (batch) => batch.status === 'pending' && batch.revisions.some((revision) => revision.profile_id === match.profile_id),
+  );
+  for (const batch of pendingBatches) {
+    await api.reviewSlicerCatalogBatch(batch.id, true);
+  }
+  const approved = (await api.listSlicerCatalogProfileRevisions(match.profile_id))
+    .filter((revision) => revision.review_state === 'approved')
+    .sort((a, b) => b.id - a.id)[0];
+  if (!approved) throw new Error(`${presetName} has no approved revision`);
+  await api.activateSlicerCatalogRevision(match.profile_id, approved.id);
+}
+
 export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
   const { t } = useTranslation();
   const location = useLocation();
   const { hasPermission, authEnabled } = useAuth();
   const queryClient = useQueryClient();
   const canUpdate = !authEnabled || hasPermission('printers:update');
+  // The sync, review and activation endpoints that back the standard-library import require settings:update.
+  const canImportStandard = canUpdate && (!authEnabled || hasPermission('settings:update'));
   const activePrinters = printers.filter((printer) => printer.is_active);
   useEffect(() => {
     const target = printers.find((printer) => printer.is_active && location.hash === `#slicer-binding-${printer.id}`);
@@ -59,6 +103,7 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
   const [draft, setDraft] = useState<SlicerCatalogBindingInput | null>(null);
   const [suggestedDraft, setSuggestedDraft] = useState<SlicerCatalogBindingInput | null>(null);
   const [advancedOpen, setAdvancedOpen] = useState(false);
+  const [importCandidate, setImportCandidate] = useState<{ printerId: number; presetName: string } | null>(null);
 
   const profiles = useQuery({
     queryKey: ['slicerCatalogProfiles'],
@@ -119,6 +164,14 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
       api.disableSlicerCatalogBinding(bindingId),
     onSuccess: (_, variables) => refreshPrinter(variables.printerId),
   });
+  const importStandard = useMutation({
+    mutationFn: ({ presetName }: { printerId: number; presetName: string }) => importStandardPreset(presetName),
+    onSettled: () => {
+      queryClient.invalidateQueries({ queryKey: ['slicerCatalogProfiles'] });
+      queryClient.invalidateQueries({ queryKey: ['slicerCatalogSuggestion'] });
+      queryClient.invalidateQueries({ queryKey: ['slicerCatalogBindings'] });
+    },
+  });
 
   const printerProfiles = (profiles.data ?? []).filter(
     (profile) => profile.profile_type === 'printer' && !profile.tombstoned,
@@ -138,6 +191,28 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
     });
   };
 
+  const suggestedProfileFor = (printer: Printer) => {
+    const index = p1sPrinters.findIndex((item) => item.id === printer.id);
+    const suggestion = index >= 0 ? suggestionQueries[index]?.data : undefined;
+    return printerProfiles.find((profile) => profile.profile_id === suggestion?.suggested_profile_ids[0]);
+  };
+  const needsCatalogImport = (printer: Printer) => {
+    const model = printer.model?.trim() ?? '';
+    return profiles.isSuccess
+      && printer.provider === 'bambu'
+      && model !== ''
+      && !suggestedProfileFor(printer)
+      && !printerProfiles.some((profile) => profileMatchesModel(profile, model));
+  };
+  const standardPresetsNeeded = activePrinters.some(
+    (printer, index) => needsCatalogImport(printer) && !(bindingQueries[index]?.data ?? []).some((binding) => binding.is_active),
+  );
+  const standardPresets = useQuery({
+    queryKey: ['slicer-presets'],
+    queryFn: () => api.getSlicerPresets(),
+    enabled: standardPresetsNeeded && canImportStandard,
+  });
+
   if (!activePrinters.length) return null;
   return (
     <Card>
@@ -154,18 +229,19 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
           {activePrinters.map((printer, printerIndex) => {
             const query = bindingQueries[printerIndex];
             const bindings = (query.data ?? []).filter((binding) => binding.is_active);
-            const suggestionIndex = p1sPrinters.findIndex((item) => item.id === printer.id);
-            const suggestion = suggestionIndex >= 0 ? suggestionQueries[suggestionIndex]?.data : undefined;
-            const suggestedProfile = printerProfiles.find(
-              (profile) => profile.profile_id === suggestion?.suggested_profile_ids[0],
-            );
+            const suggestedProfile = suggestedProfileFor(printer);
             const setupRequired = printer.provider === 'moonraker' && bindings.length === 0;
             const model = printer.model?.trim() ?? '';
-            const needsCatalogImport = profiles.isSuccess
-              && printer.provider === 'bambu'
-              && model !== ''
-              && !suggestedProfile
-              && !printerProfiles.some((profile) => profileMatchesModel(profile, model));
+            const importNeeded = needsCatalogImport(printer);
+            const standardPreset = importNeeded && canImportStandard
+              ? standardPresetFor(standardPresets.data?.standard.printer ?? [], model, nozzleFor(printer.id))
+              : undefined;
+            const pendingImport = importStandard.isPending && importStandard.variables?.printerId === printer.id
+              ? importStandard.variables
+              : null;
+            const failedImport = importStandard.isError && importStandard.variables?.printerId === printer.id
+              ? importStandard.variables
+              : null;
 
             return (
               <section id={`slicer-binding-${printer.id}`} key={printer.id} className="scroll-mt-4 rounded-lg border border-bambu-dark-tertiary p-3">
@@ -176,7 +252,7 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
                   </span>
                   {setupRequired && <span className="text-xs text-amber-400">{t('printerSlicerBindings.setupRequired')}</span>}
                   <div className="ml-auto flex gap-2">
-                    {canUpdate && !needsCatalogImport && (
+                    {canUpdate && !importNeeded && (
                       <Button variant="secondary" size="sm" onClick={() => startDraft(printer.id)} disabled={!printerProfiles.length}>
                         {t('printerSlicerBindings.chooseProfile')}
                       </Button>
@@ -185,16 +261,51 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
                 </div>
 
                 {query.error && <p role="alert" className="mt-2 text-sm text-red-400">{errorMessage(query.error, t('printerSlicerBindings.requestFailed'))}</p>}
-                {!query.isLoading && !query.error && bindings.length === 0 && needsCatalogImport && (
-                  <p className="mt-2 text-sm text-bambu-gray">
-                    <Trans
-                      i18nKey="printerSlicerBindings.importProfile"
-                      values={{ model }}
-                      components={{ profiles: <Link to="/profiles" className="text-bambu-green hover:underline" /> }}
-                    />
-                  </p>
+                {!query.isLoading && !query.error && bindings.length === 0 && importNeeded && (
+                  <div className="mt-2 space-y-2 text-sm text-bambu-gray">
+                    {standardPresets.isLoading && <p role="status">{t('printerSlicerBindings.checkingStandard')}</p>}
+                    {!standardPresets.isLoading && standardPreset && (
+                      <>
+                        <Button
+                          size="sm"
+                          disabled={pendingImport !== null}
+                          onClick={() => setImportCandidate({ printerId: printer.id, presetName: standardPreset.name })}
+                        >
+                          {t('printerSlicerBindings.addStandardPreset', { preset: standardPreset.name })}
+                        </Button>
+                        <p>
+                          <Trans
+                            i18nKey="printerSlicerBindings.importFromProfiles"
+                            components={{ profiles: <Link to="/profiles" className="text-bambu-green hover:underline" /> }}
+                          />
+                        </p>
+                      </>
+                    )}
+                    {!standardPresets.isLoading && !standardPreset && (
+                      <p>
+                        <Trans
+                          i18nKey="printerSlicerBindings.importProfile"
+                          values={{ model }}
+                          components={{ profiles: <Link to="/profiles" className="text-bambu-green hover:underline" /> }}
+                        />
+                      </p>
+                    )}
+                    {pendingImport && (
+                      <p role="status">{t('printerSlicerBindings.addingStandardPreset', { preset: pendingImport.presetName })}</p>
+                    )}
+                    {failedImport && (
+                      <p role="alert">
+                        {t('printerSlicerBindings.importFailed', {
+                          detail: errorMessage(importStandard.error, t('printerSlicerBindings.requestFailed')),
+                        })}
+                        <Button className="ml-2" size="sm" variant="secondary" onClick={() => importStandard.mutate(failedImport)}>
+                          {t('common.retry')}
+                        </Button>
+                      </p>
+                    )}
+                  </div>
                 )}
-                {!query.isLoading && !query.error && bindings.length === 0 && !needsCatalogImport && (
+                {!query.isLoading && !query.error && bindings.length === 0 && !importNeeded && (
                   <p className="mt-2 text-sm text-bambu-gray">{t('printerSlicerBindings.notSetUp', { printer: printer.name })}</p>
                 )}
                 {suggestedProfile && (
@@ -323,6 +434,19 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
               </CardContent>
             </Card>
           </div>
+        )}
+
+        {importCandidate && (
+          <ConfirmModal
+            title={t('printerSlicerBindings.confirmImportTitle', { preset: importCandidate.presetName })}
+            message={t('printerSlicerBindings.confirmImportMessage', { preset: importCandidate.presetName })}
+            confirmText={t('printerSlicerBindings.confirmImportAction')}
+            onConfirm={() => {
+              importStandard.mutate(importCandidate);
+              setImportCandidate(null);
+            }}
+            onCancel={() => setImportCandidate(null)}
+          />
         )}
 
         {suggestedDraft && (
