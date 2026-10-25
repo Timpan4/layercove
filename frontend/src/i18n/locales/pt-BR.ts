@@ -1594,6 +1594,8 @@ export default {
     periodFilament: 'Filamento usado',
     periodCost: 'Custo',
     avgPerPrint: 'Média por impressão',
+    notTracked: 'Não rastreado',
+    fromSpoolTracking: 'do rastreamento de carretéis',
     usageOverTime: 'Uso ao longo do tempo',
     filamentByWeight: 'Peso',
     printDuration: 'Duração da impressão',
