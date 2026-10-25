@@ -3700,6 +3700,7 @@ export default {
     subtitle: 'Organisez vos fichiers d\'impression',
     uploadFiles: 'Téléverser fichiers',
     newFolder: 'Nouveau dossier',
+    moreActions: 'Plus',
     folderName: 'Nom du dossier',
     folderNamePlaceholder: 'ex: Pièces Utiles',
     renameFile: 'Renommer fichier',

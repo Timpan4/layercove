@@ -3523,6 +3523,7 @@ export default {
     subtitle: '인쇄 파일 정리 및 관리',
     uploadFiles: '파일 업로드',
     newFolder: '새 폴더',
+    moreActions: '더보기',
     folderName: '폴더 이름',
     folderNamePlaceholder: '예: 기능성 부품',
     renameFile: '파일 이름 바꾸기',

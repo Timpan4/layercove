@@ -14,7 +14,7 @@
  */
 
 import React from 'react';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { screen, waitFor, fireEvent } from '@testing-library/react';
 import { render } from '../utils';
 import { SpoolFormModal } from '../../components/SpoolFormModal';
@@ -141,8 +141,20 @@ describe('validateForm with quickAdd', () => {
 });
 
 describe('SpoolFormModal quick-add toggle', () => {
+  let storage: Record<string, string>;
+
   beforeEach(() => {
     vi.clearAllMocks();
+    storage = {};
+    vi.mocked(localStorage.getItem).mockImplementation((key) => storage[key] ?? null);
+    vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
+      storage[key] = String(value);
+    });
+  });
+
+  afterEach(() => {
+    vi.mocked(localStorage.getItem).mockReset();
+    vi.mocked(localStorage.setItem).mockReset();
   });
 
   it('shows quick-add toggle in create mode', async () => {
@@ -180,7 +192,7 @@ describe('SpoolFormModal quick-add toggle', () => {
     expect(screen.queryByText('Quick Add (Stock)')).not.toBeInTheDocument();
   });
 
-  it('hides PA Profile tab when quick-add is enabled', async () => {
+  it('opens create mode with quick-add on and only the basic fields', async () => {
     render(
       <SpoolFormModal
         isOpen={true}
@@ -194,22 +206,18 @@ describe('SpoolFormModal quick-add toggle', () => {
       expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
     });
 
-    // PA Profile tab should be visible initially
-    expect(screen.getByText('PA Profile')).toBeInTheDocument();
-
-    fireEvent.click(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true }));
-
-    // PA Profile tab should be hidden
-    await waitFor(() => {
-      expect(screen.queryByText('PA Profile')).not.toBeInTheDocument();
-    });
+    expect(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByText('PA Profile')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: /slicer preset/i })).not.toBeInTheDocument();
+    expect(screen.getByText('Quantity')).toBeInTheDocument();
   });
 
-  it('hides quantity field by default (non-quick-add)', async () => {
-    render(
+  it('restores a turned-off quick-add after close and reopen', async () => {
+    const onClose = vi.fn();
+    const { rerender } = render(
       <SpoolFormModal
         isOpen={true}
-        onClose={vi.fn()}
+        onClose={onClose}
         mode="create"
         currencySymbol="$"
       />,
@@ -219,11 +227,64 @@ describe('SpoolFormModal quick-add toggle', () => {
       expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
     });
 
-    // Quantity field should NOT be visible in normal create mode
+    fireEvent.click(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true }));
+    expect(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('PA Profile')).toBeInTheDocument();
+
+    rerender(
+      <SpoolFormModal
+        isOpen={false}
+        onClose={onClose}
+        mode="create"
+        currencySymbol="$"
+      />,
+    );
+    rerender(
+      <SpoolFormModal
+        isOpen={true}
+        onClose={onClose}
+        mode="create"
+        currencySymbol="$"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('PA Profile')).toBeInTheDocument();
     expect(screen.queryByText('Quantity')).not.toBeInTheDocument();
   });
 
-  it('shows quantity field only in quick-add mode', async () => {
+  it('opens with quick-add on when localStorage reads throw', async () => {
+    vi.mocked(localStorage.getItem).mockImplementation((key) => {
+      if (key === 'layercove.spoolForm.quickAdd') throw new DOMException('Storage blocked', 'SecurityError');
+      return storage[key] ?? null;
+    });
+
+    render(
+      <SpoolFormModal
+        isOpen={true}
+        onClose={vi.fn()}
+        mode="create"
+        currencySymbol="$"
+      />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('keeps the toggle working when localStorage writes throw', async () => {
+    vi.mocked(localStorage.setItem).mockImplementation((key, value) => {
+      if (key === 'layercove.spoolForm.quickAdd') throw new DOMException('Storage blocked', 'QuotaExceededError');
+      storage[key] = String(value);
+    });
+
     render(
       <SpoolFormModal
         isOpen={true}
@@ -239,9 +300,30 @@ describe('SpoolFormModal quick-add toggle', () => {
 
     fireEvent.click(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true }));
 
-    // Quantity field should now be visible
+    expect(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true })).toHaveAttribute('aria-checked', 'false');
+    expect(screen.getByText('PA Profile')).toBeInTheDocument();
+  });
+
+  it('shows the quantity field only while quick-add is on', async () => {
+    render(
+      <SpoolFormModal
+        isOpen={true}
+        onClose={vi.fn()}
+        mode="create"
+        currencySymbol="$"
+      />,
+    );
+
     await waitFor(() => {
-      expect(screen.getByText('Quantity')).toBeInTheDocument();
+      expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
+    });
+
+    expect(screen.getByText('Quantity')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true }));
+
+    await waitFor(() => {
+      expect(screen.queryByText('Quantity')).not.toBeInTheDocument();
     });
   });
 
@@ -278,9 +360,7 @@ describe('SpoolFormModal quick-add toggle', () => {
       expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
     });
 
-    fireEvent.click(screen.getByRole('switch', { name: 'Quick Add (Stock)', exact: true }));
-
-    // Brand and Subtype should be visible (without asterisk = optional)
+    // Quick-add is on by default, so Brand and Subtype are optional (no asterisk)
     await waitFor(() => {
       const brandLabel = screen.getByText('Brand');
       expect(brandLabel).toBeInTheDocument();

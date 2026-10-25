@@ -3740,6 +3740,7 @@ export default {
     subtitle: 'Organize and manage your print files',
     uploadFiles: 'Upload Files',
     newFolder: 'New Folder',
+    moreActions: 'More',
     folderName: 'Folder Name',
     folderNamePlaceholder: 'e.g., Functional Parts',
     renameFile: 'Rename File',

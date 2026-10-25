@@ -3714,6 +3714,7 @@ export default {
     subtitle: 'Organice y gestione sus archivos de impresión',
     uploadFiles: 'Subir archivos',
     newFolder: 'Nueva carpeta',
+    moreActions: 'Más',
     folderName: 'Nombre de la carpeta',
     folderNamePlaceholder: 'p. ej., Piezas funcionales',
     renameFile: 'Renombrar archivo',

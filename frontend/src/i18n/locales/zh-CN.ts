@@ -3699,6 +3699,7 @@ export default {
     subtitle: '组织和管理您的打印文件',
     uploadFiles: '上传文件',
     newFolder: '新建文件夹',
+    moreActions: '更多',
     folderName: '文件夹名称',
     folderNamePlaceholder: '例如：功能零件',
     renameFile: '重命名文件',
