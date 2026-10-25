@@ -3649,6 +3649,7 @@ export default {
     subtitle: '組織和管理您的列印檔案',
     uploadFiles: '上傳檔案',
     newFolder: '新增資料夾',
+    moreActions: '更多',
     folderName: '資料夾名稱',
     folderNamePlaceholder: '例如：功能零件',
     renameFile: '重新命名檔案',

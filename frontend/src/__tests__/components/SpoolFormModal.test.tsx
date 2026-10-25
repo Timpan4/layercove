@@ -472,12 +472,7 @@ describe('SpoolFormModal weightTouched', () => {
       expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
     });
 
-    // Enable Quick Add mode so the quantity field appears
-    const quickAddRow = screen.getByText('Quick Add (Stock)').closest('div[class*="justify-between"]');
-    const toggleButton = quickAddRow?.querySelector('button[type="button"]');
-    expect(toggleButton).toBeTruthy();
-    fireEvent.click(toggleButton!);
-
+    // Quick Add is on by default, so the quantity field is already shown.
     // Set quantity to 3 (triggers bulkCreateMutation instead of createMutation)
     const quantityContainer = screen.getByText('Quantity').closest('div');
     const quantityInput = quantityContainer?.querySelector('input[type="number"]');
@@ -526,12 +521,7 @@ describe('SpoolFormModal weightTouched', () => {
       expect(screen.getByRole('heading', { name: 'Add Spool' })).toBeInTheDocument();
     });
 
-    // Enable Quick Add mode so the quantity field appears
-    const quickAddRow = screen.getByText('Quick Add (Stock)').closest('div[class*="justify-between"]');
-    const toggleButton = quickAddRow?.querySelector('button[type="button"]');
-    expect(toggleButton).toBeTruthy();
-    fireEvent.click(toggleButton!);
-
+    // Quick Add is on by default, so the quantity field is already shown.
     // Set quantity to 3
     const quantityContainer = screen.getByText('Quantity').closest('div');
     const quantityInput = quantityContainer?.querySelector('input[type="number"]');

@@ -3657,6 +3657,7 @@ export default {
     subtitle: 'Baskı dosyalarınızı organize edin ve yönetin',
     uploadFiles: 'Dosya Yükle',
     newFolder: 'Yeni Klasör',
+    moreActions: 'Daha fazla',
     folderName: 'Klasör Adı',
     folderNamePlaceholder: 'örn., Fonksiyonel Parçalar',
     renameFile: 'Dosyayı Yeniden Adlandır',

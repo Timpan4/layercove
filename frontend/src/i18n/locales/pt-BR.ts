@@ -3649,6 +3649,7 @@ export default {
     subtitle: 'Organize e gerencie seus arquivos de impressão',
     uploadFiles: 'Enviar Arquivos',
     newFolder: 'Nova Pasta',
+    moreActions: 'Mais',
     folderName: 'Nome da Pasta',
     folderNamePlaceholder: 'ex.: Peças Funcionais',
     renameFile: 'Renomear Arquivo',

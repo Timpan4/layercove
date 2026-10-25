@@ -3649,6 +3649,7 @@ export default {
     subtitle: 'Organizza e gestisci i tuoi file di stampa',
     uploadFiles: 'Carica file',
     newFolder: 'Nuova cartella',
+    moreActions: 'Altro',
     folderName: 'Nome cartella',
     folderNamePlaceholder: 'es., Parti funzionali',
     renameFile: 'Rinomina file',

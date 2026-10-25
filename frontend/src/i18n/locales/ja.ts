@@ -3661,6 +3661,7 @@ export default {
     subtitle: '印刷ファイルの整理と管理',
     uploadFiles: 'ファイルをアップロード',
     newFolder: '新しいフォルダ',
+    moreActions: 'その他',
     folderName: 'フォルダ名',
     folderNamePlaceholder: '例: 機能パーツ',
     renameFile: 'ファイル名を変更',

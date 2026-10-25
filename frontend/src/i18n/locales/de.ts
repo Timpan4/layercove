@@ -3661,6 +3661,7 @@ export default {
     subtitle: 'Organisieren und verwalten Sie Ihre Druckdateien',
     uploadFiles: 'Dateien hochladen',
     newFolder: 'Neuer Ordner',
+    moreActions: 'Mehr',
     folderName: 'Ordnername',
     folderNamePlaceholder: 'z.B. Funktionsteile',
     renameFile: 'Datei umbenennen',
