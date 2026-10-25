@@ -58,6 +58,7 @@ export default {
     setupRequired: "Configuración requerida",
     chooseProfile: "Elegir perfil",
     notSetUp: "Aún no está configurada. El laminado para {{printer}} no está disponible hasta elegir un perfil.",
+    importProfile: "Aún no hay ningún perfil de impresora {{model}} en el catálogo. Importa uno desde <profiles>Perfiles</profiles> y elígelo aquí.",
     suggestion: "Sugerido: {{profile}} · {{nozzle}} mm",
     useSuggestion: "Usar sugerencia",
     bindingSummary: "{{nozzle}} mm · herramienta {{tool}}",

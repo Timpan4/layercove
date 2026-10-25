@@ -58,6 +58,7 @@ export default {
     setupRequired: "Configuração necessária",
     chooseProfile: "Escolher perfil",
     notSetUp: "Ainda não configurado. O fatiamento para {{printer}} fica indisponível até que um perfil seja escolhido.",
+    importProfile: "Ainda não há um perfil de impressora {{model}} no catálogo. Importe um em <profiles>Perfis</profiles> e depois escolha-o aqui.",
     suggestion: "Sugerido: {{profile}} · {{nozzle}} mm",
     useSuggestion: "Usar sugestão",
     bindingSummary: "{{nozzle}} mm · ferramenta {{tool}}",

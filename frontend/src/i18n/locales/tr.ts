@@ -58,6 +58,7 @@ export default {
     setupRequired: "Kurulum gerekli",
     chooseProfile: "Profil seç",
     notSetUp: "Henüz kurulmadı. Bir profil seçilene kadar {{printer}} için dilimleme kullanılamaz.",
+    importProfile: "Kataloğda henüz {{model}} yazıcı profili yok. <profiles>Profiller</profiles> bölümünden bir tane içe aktarıp burada seçin.",
     suggestion: "Önerilen: {{profile}} · {{nozzle}} mm",
     useSuggestion: "Öneriyi kullan",
     bindingSummary: "{{nozzle}} mm · takım {{tool}}",

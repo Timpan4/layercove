@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
-import { useLocation } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
+import { Link, useLocation } from 'react-router-dom';
+import { Trans, useTranslation } from 'react-i18next';
 import {
   api,
   type Printer,
@@ -9,6 +9,7 @@ import {
   type SlicerCatalogBinding,
   type SlicerCatalogBindingInput,
   type SlicerCatalogClassification,
+  type SlicerCatalogProfile,
 } from '../api/client';
 import { queryKeys } from '../api/queryKeys';
 import { useAuth } from '../contexts/AuthContext';
@@ -27,6 +28,16 @@ function errorMessage(error: unknown, fallback: string) {
 
 function isP1S(printer: Printer) {
   return printer.provider === 'bambu' && /p1s/i.test(`${printer.model ?? ''} ${printer.name}`);
+}
+
+// `model` must be non-empty: an empty needle would match every profile.
+function profileMatchesModel(profile: SlicerCatalogProfile, model: string) {
+  const metadata = profile.compatibility_metadata;
+  const metadataModel = metadata.model ?? metadata.printer_model;
+  const needle = model.toLowerCase();
+  return [profile.display_name, metadataModel].some(
+    (value) => typeof value === 'string' && value.toLowerCase().includes(needle),
+  );
 }
 
 function reportedNozzle(status: PrinterStatus | undefined): number | null {
@@ -149,6 +160,12 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
               (profile) => profile.profile_id === suggestion?.suggested_profile_ids[0],
             );
             const setupRequired = printer.provider === 'moonraker' && bindings.length === 0;
+            const model = printer.model?.trim() ?? '';
+            const needsCatalogImport = profiles.isSuccess
+              && printer.provider === 'bambu'
+              && model !== ''
+              && !suggestedProfile
+              && !printerProfiles.some((profile) => profileMatchesModel(profile, model));
 
             return (
               <section id={`slicer-binding-${printer.id}`} key={printer.id} className="scroll-mt-4 rounded-lg border border-bambu-dark-tertiary p-3">
@@ -159,7 +176,7 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
                   </span>
                   {setupRequired && <span className="text-xs text-amber-400">{t('printerSlicerBindings.setupRequired')}</span>}
                   <div className="ml-auto flex gap-2">
-                    {canUpdate && (
+                    {canUpdate && !needsCatalogImport && (
                       <Button variant="secondary" size="sm" onClick={() => startDraft(printer.id)} disabled={!printerProfiles.length}>
                         {t('printerSlicerBindings.chooseProfile')}
                       </Button>
@@ -168,7 +185,16 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
                 </div>
 
                 {query.error && <p role="alert" className="mt-2 text-sm text-red-400">{errorMessage(query.error, t('printerSlicerBindings.requestFailed'))}</p>}
-                {!query.isLoading && !query.error && bindings.length === 0 && (
+                {!query.isLoading && !query.error && bindings.length === 0 && needsCatalogImport && (
+                  <p className="mt-2 text-sm text-bambu-gray">
+                    <Trans
+                      i18nKey="printerSlicerBindings.importProfile"
+                      values={{ model }}
+                      components={{ profiles: <Link to="/profiles" className="text-bambu-green hover:underline" /> }}
+                    />
+                  </p>
+                )}
+                {!query.isLoading && !query.error && bindings.length === 0 && !needsCatalogImport && (
                   <p className="mt-2 text-sm text-bambu-gray">{t('printerSlicerBindings.notSetUp', { printer: printer.name })}</p>
                 )}
                 {suggestedProfile && (
