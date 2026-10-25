@@ -466,3 +466,44 @@ it.each(['libraryFile', 'archive'] as const)('uses the physical Moonraker provid
   const submit = kind === 'libraryFile' ? mockApi.sliceLibraryFile : mockApi.sliceArchive;
   await waitFor(() => expect(submit).toHaveBeenCalledWith(100, expect.objectContaining({ destination_artifact_kind: 'klipper_gcode' })));
 });
+
+describe('SliceModal build plate', () => {
+  // Build plate names are Bambu-only. Klipper output ignores bed_type, so the
+  // control must not appear unless the selected physical printer is Bambu.
+  const buildPlate = () => screen.queryByRole('combobox', { name: /Build plate/ });
+
+  it('hides the build plate control when no printer is selected', async () => {
+    renderModal();
+    // Wait for the printer list so the control would already be on screen if it rendered unconditionally.
+    await screen.findByRole('option', { name: /^P1S ·/ });
+    expect(screen.getByRole('combobox', { name: 'Physical printer' })).toHaveValue('');
+    expect(buildPlate()).not.toBeInTheDocument();
+  });
+
+  it('hides the build plate control and omits bed_type for a Moonraker printer', async () => {
+    mockApi.getPrinters.mockResolvedValue([{ id: 1, name: 'P1S', model: 'P1S', provider: 'moonraker', is_active: true }]);
+    renderModal();
+    const user = await chooseTarget();
+    const slice = screen.getByRole('button', { name: 'Slice' });
+    await waitFor(() => expect(slice).toBeEnabled());
+    expect(buildPlate()).not.toBeInTheDocument();
+
+    await user.click(slice);
+    await waitFor(() => expect(mockApi.sliceLibraryFile).toHaveBeenCalledTimes(1));
+    expect(mockApi.sliceLibraryFile.mock.calls[0][1]).not.toHaveProperty('bed_type');
+  });
+
+  it('shows the build plate control for a Bambu printer and sends the chosen plate', async () => {
+    renderModal();
+    const user = await chooseTarget();
+    const plate = await screen.findByRole('combobox', { name: /Build plate/ });
+    expect(plate).toHaveValue('');
+    await user.selectOptions(plate, 'Textured PEI Plate');
+
+    const slice = screen.getByRole('button', { name: 'Slice' });
+    await waitFor(() => expect(slice).toBeEnabled());
+    await user.click(slice);
+    await waitFor(() => expect(mockApi.sliceLibraryFile).toHaveBeenCalledWith(100,
+      expect.objectContaining({ bed_type: 'Textured PEI Plate' })));
+  });
+});
