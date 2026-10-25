@@ -1592,6 +1592,8 @@ export default {
     periodFilament: 'フィラメント使用量',
     periodCost: 'コスト',
     avgPerPrint: '1印刷あたりの平均',
+    notTracked: '未追跡',
+    fromSpoolTracking: 'スプール追跡より',
     usageOverTime: '時間推移',
     filamentByWeight: '重量',
     printDuration: '印刷時間分布',

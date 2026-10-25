@@ -19,6 +19,7 @@ import {
   inventoryData,
   inventoryQueryKeys,
   invalidateInventory,
+  totalConsumedGrams,
   useInventorySource,
 } from '../api/inventoryData';
 import { Button } from '../components/Button';
@@ -933,18 +934,12 @@ function InventoryPage() {
   // currently in active inventory and stay active-only.
   const stats = useMemo(() => {
     if (!spools) return null;
+    const totalConsumed = totalConsumedGrams(spools);
     let totalWeight = 0;
-    let totalConsumed = 0;
     let lowStock = 0;
     let activeCount = 0;
     const byMaterial: Record<string, { count: number; weight: number }> = {};
     for (const s of spools) {
-      // "Total Consumed" is the resettable counter (weight_used - baseline)
-      // rather than raw weight_used so the per-spool / bulk eraser zeroes
-      // the stat without inflating remaining back to label_weight (#1390).
-      // Computed before the archived-skip below so archived consumption
-      // stays in the running total.
-      totalConsumed += Math.max(0, s.weight_used - (s.weight_used_baseline ?? 0));
       if (s.archived_at) continue;
       activeCount++;
       const remaining = Math.max(0, s.label_weight - s.weight_used);

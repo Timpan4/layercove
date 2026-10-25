@@ -1594,6 +1594,8 @@ export default {
     periodFilament: 'Dönem Filamenti',
     periodCost: 'Dönem Maliyeti',
     avgPerPrint: 'Baskı Başına Ort.',
+    notTracked: 'Takip edilmiyor',
+    fromSpoolTracking: 'makara takibinden',
     usageOverTime: 'Zaman İçinde Kullanım',
     filamentByWeight: 'Ağırlık',
     printDuration: 'Baskı Süresi',

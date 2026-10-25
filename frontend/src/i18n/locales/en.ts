@@ -1609,6 +1609,8 @@ export default {
     periodFilament: 'Period Filament',
     periodCost: 'Period Cost',
     avgPerPrint: 'Avg per Print',
+    notTracked: 'Not tracked',
+    fromSpoolTracking: 'from spool tracking',
     usageOverTime: 'Usage Over Time',
     filamentByWeight: 'Weight',
     printDuration: 'Print Duration',

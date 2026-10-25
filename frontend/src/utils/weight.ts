@@ -9,3 +9,11 @@ export function formatWeight(grams: number): string {
   }
   return `${Math.round(grams)}g`;
 }
+
+// Archives store 0 g for prints archived without a 3MF, so filament totals fall
+// back to spool consumption. Null means neither source has any weight.
+export function resolveFilamentGrams(archiveGrams: number, spoolGrams: number): { grams: number; fromSpool: boolean } | null {
+  if (archiveGrams > 0) return { grams: archiveGrams, fromSpool: false };
+  if (spoolGrams > 0) return { grams: spoolGrams, fromSpool: true };
+  return null;
+}

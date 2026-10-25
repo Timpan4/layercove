@@ -1593,6 +1593,8 @@ export default {
     periodFilament: 'Filament utilisé',
     periodCost: 'Coût',
     avgPerPrint: 'Moy. par impression',
+    notTracked: 'Non suivi',
+    fromSpoolTracking: 'depuis le suivi des bobines',
     usageOverTime: 'Utilisation dans le temps',
     filamentByWeight: 'Poids',
     printDuration: 'Durée d\'impression',

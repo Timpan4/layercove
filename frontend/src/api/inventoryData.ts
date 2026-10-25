@@ -81,6 +81,13 @@ export function inventoryData(source: InventorySource) {
   return source === 'spoolman' ? spoolmanInventory : localInventory;
 }
 
+// Running total across every spool, archived included. Inventory's "Total Consumed"
+// and the Statistics filament fallback both read this sum. It uses the resettable
+// counter (weight_used - baseline), so the eraser zeroes it without inflating remaining (#1390).
+export function totalConsumedGrams(spools: InventorySpool[]) {
+  return spools.reduce((sum, s) => sum + Math.max(0, s.weight_used - (s.weight_used_baseline ?? 0)), 0);
+}
+
 export function normalizeBulkCreate(result: InventorySpool[] | SpoolmanBulkCreateResult) {
   if ('created' in result) {
     return { created: result.created, requested: result.requested_count, failed: result.failed_count };

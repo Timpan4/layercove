@@ -1593,6 +1593,8 @@ export default {
     periodFilament: '期間耗材',
     periodCost: '期間成本',
     avgPerPrint: '每次列印平均',
+    notTracked: '未追蹤',
+    fromSpoolTracking: '來自耗材卷追蹤',
     usageOverTime: '隨時間的使用量',
     filamentByWeight: '重量',
     printDuration: '列印時長',
