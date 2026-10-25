@@ -1225,8 +1225,8 @@ export default {
     dragToReorder: 'Arraste para reordenar (apenas ASAP)',
     reorderHint: 'A posição afeta apenas itens ASAP. Itens agendados são executados no horário definido.',
     sjf: {
-      label: 'SJF',
-      tooltip: 'Trabalho mais curto primeiro — o agendador prioriza impressões mais curtas',
+      label: 'Mais curto primeiro',
+      name: 'Trabalho mais curto primeiro',
     },
     addedBy: 'Adicionado por {{name}}',
     nextInQueue: 'Próximo na fila',
@@ -1331,7 +1331,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: 'Abra {{archives}}, escolha {{print}} para um arquivo e selecione {{queue}}.',
+      activeGuidance: 'Enfileire uma impressão dos seus arquivos ou envie um arquivo novo.',
+      addFromArchives: 'Adicionar dos Arquivos',
+      uploadFile: 'Enviar um arquivo',
       noMatches: 'Nenhuma impressão corresponde aos filtros atuais',
       title: 'Nenhuma impressão agendada',
       description: 'Agende uma impressão a partir da página de Arquivos usando a opção "Agendar" no menu de contexto, ou arraste e solte arquivos para começar.',

@@ -1225,8 +1225,8 @@ export default {
     dragToReorder: 'Trascina per riordinare (solo ASAP)',
     reorderHint: 'La posizione influisce solo sugli elementi ASAP. Quelli programmati partono all\'orario.',
     sjf: {
-      label: 'SJF',
-      tooltip: 'Lavoro più breve prima — lo scheduler dà priorità alle stampe più brevi',
+      label: 'Più breve prima',
+      name: 'Lavoro più breve prima',
     },
     addedBy: 'Aggiunto da {{name}}',
     nextInQueue: 'Prossimo in coda',
@@ -1331,7 +1331,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: 'Apri {{archives}}, scegli {{print}} per un file, poi seleziona {{queue}}.',
+      activeGuidance: 'Metti in coda una stampa dagli archivi o carica un nuovo file.',
+      addFromArchives: 'Aggiungi da Archivi',
+      uploadFile: 'Carica un file',
       noMatches: 'Nessuna stampa corrisponde ai filtri attuali',
       title: 'Nessuna stampa programmata',
       description: 'Programma una stampa dalla pagina Archivi usando l\'opzione "Programma" nel menu contestuale, o trascina i file per iniziare.',

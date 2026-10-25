@@ -1225,8 +1225,8 @@ export default {
     dragToReorder: 'Glisser pour réordonner (ASAP uniquement)',
     reorderHint: 'La position n\'affecte que les éléments ASAP.',
     sjf: {
-      label: 'SJF',
-      tooltip: 'Travail le plus court en premier — le planificateur priorise les impressions plus courtes',
+      label: 'Le plus court d\'abord',
+      name: 'Travail le plus court en premier',
     },
     addedBy: 'Ajouté par {{name}}',
     nextInQueue: 'Prochain en file',
@@ -1331,7 +1331,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: 'Ouvrez {{archives}}, choisissez {{print}} pour un fichier, puis sélectionnez {{queue}}.',
+      activeGuidance: 'Ajoutez une impression depuis vos archives ou importez un nouveau fichier.',
+      addFromArchives: 'Ajouter depuis Archives',
+      uploadFile: 'Importer un fichier',
       noMatches: 'Aucune impression ne correspond aux filtres actuels',
       title: 'Aucune impression prévue',
       description: 'Planifiez depuis les Archives ou glissez des fichiers ici.',

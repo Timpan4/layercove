@@ -70,16 +70,16 @@ for (const width of [1440, 390]) {
     });
 
     for (const state of ['empty', 'history'] as const) {
-      test(`${state} records explain the active queue and lead to the existing Queue form`, async ({ page }) => {
+      test(`${state} queue offers Archives and upload actions without writing`, async ({ page }) => {
         queueState = state;
         await page.goto('/queue');
         await expect(page.getByRole('heading', { name: 'No prints scheduled', exact: true })).toBeVisible();
-        await expect(page.getByText('Open Archives, choose Print for a file, then select Queue.', { exact: true })).toBeVisible();
+        await expect(page.getByText('Queue a print from your archives, or upload a new file.', { exact: true })).toBeVisible();
+        await expect(page.getByRole('button', { name: 'Shortest job first', exact: true })).toContainText('Shortest first');
         await page.getByTitle('Group by Printer', { exact: true }).click();
         await expect(page.getByRole('heading', { name: 'No prints scheduled', exact: true })).toBeVisible();
-        const link = page.getByRole('main').getByRole('link', { name: 'Archives', exact: true });
-        await expect(link).toHaveAttribute('href', '/archives');
-        await link.click();
+        const addFromArchives = page.getByRole('main').getByRole('button', { name: 'Add from Archives', exact: true });
+        await addFromArchives.click();
         await expect(page).toHaveURL(/\/archives$/);
         await expect(page.getByRole('heading', { name: 'Archives', exact: true })).toBeVisible();
         await page.getByTitle('Right-click for more options', { exact: true }).click();
@@ -89,6 +89,13 @@ for (const width of [1440, 390]) {
         await expect(page.getByText('Print will be added to the back of the queue.', { exact: true })).toBeVisible();
         await expect(page.locator('form button[type="submit"]')).toHaveText('Queue');
         await page.getByRole('button', { name: 'Cancel', exact: true }).click();
+        await page.goBack();
+        await expect(page).toHaveURL(/\/queue$/);
+        await expect(page.getByRole('heading', { name: 'No prints scheduled', exact: true })).toBeVisible();
+        const uploadFile = page.getByRole('main').getByRole('button', { name: 'Upload a file', exact: true });
+        await uploadFile.click();
+        await expect(page).toHaveURL(/\/files$/);
+        expect(writes).toEqual([]);
       });
     }
 
