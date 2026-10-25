@@ -1247,8 +1247,8 @@ export default {
     dragToReorder: 'Drag to reorder (ASAP only)',
     reorderHint: 'Position only affects ASAP items. Scheduled items run at their set time.',
     sjf: {
-      label: 'SJF',
-      tooltip: 'Shortest Job First — scheduler prioritizes shorter prints',
+      label: 'Shortest first',
+      name: 'Shortest job first',
     },
     addedBy: 'Added by {{name}}',
     nextInQueue: 'Next in queue',
@@ -1359,7 +1359,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: 'Open {{archives}}, choose {{print}} for a file, then select {{queue}}.',
+      activeGuidance: 'Queue a print from your archives, or upload a new file.',
+      addFromArchives: 'Add from Archives',
+      uploadFile: 'Upload a file',
       noMatches: 'No prints match the current filters',
       title: 'No prints scheduled',
       description: 'Schedule a print from the Archives page using the "Schedule" option in the context menu, or drag and drop files to get started.',

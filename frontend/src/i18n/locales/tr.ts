@@ -1238,8 +1238,8 @@ export default {
     dragToReorder: 'Yeniden sıralamak için sürükleyin (yalnızca ASAP)',
     reorderHint: 'Konum yalnızca ASAP öğelerini etkiler. Zamanlanmış öğeler belirlenen zamanlarında çalışır.',
     sjf: {
-      label: 'SJF',
-      tooltip: 'En Kısa İş İlk — planlayıcı daha kısa baskılara öncelik verir',
+      label: 'En kısa önce',
+      name: 'En kısa iş ilk',
     },
     addedBy: '{{name}} tarafından eklendi',
     nextInQueue: 'Kuyrukta sıradaki',
@@ -1344,7 +1344,9 @@ export default {
     },
     // Boş durum
     empty: {
-      activeDescription: '{{archives}} bölümünü açın, bir dosya için {{print}} seçin, ardından {{queue}} seçin.',
+      activeGuidance: 'Arşivlerden bir baskıyı kuyruğa ekleyin veya yeni bir dosya yükleyin.',
+      addFromArchives: 'Arşivlerden ekle',
+      uploadFile: 'Dosya yükle',
       noMatches: 'Geçerli filtrelerle eşleşen baskı yok',
       title: 'Zamanlanmış baskı yok',
       description: 'Bağlam menüsündeki "Zamanla" seçeneğini kullanarak Arşivler sayfasından bir baskı zamanlayın veya başlamak için dosyaları sürükleyip bırakın.',

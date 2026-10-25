@@ -1238,8 +1238,8 @@ export default {
     dragToReorder: '拖动以重新排序（仅限尽快）',
     reorderHint: '位置仅影响"尽快"项目。排程项目按设定时间运行。',
     sjf: {
-      label: 'SJF',
-      tooltip: '最短任务优先 — 调度器优先处理较短的打印任务',
+      label: '最短优先',
+      name: '最短任务优先',
     },
     addedBy: '由 {{name}} 添加',
     nextInQueue: '队列中的下一个',
@@ -1344,7 +1344,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: '打开{{archives}}，选择文件的{{print}}，然后选择{{queue}}。',
+      activeGuidance: '从归档中将打印加入队列，或上传新文件。',
+      addFromArchives: '从归档添加',
+      uploadFile: '上传文件',
       noMatches: '没有符合当前筛选条件的打印',
       title: '没有排程的打印',
       description: '从归档页面使用右键菜单中的"排程"选项来排程打印，或拖放文件开始。',

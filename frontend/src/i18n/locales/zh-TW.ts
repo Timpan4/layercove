@@ -1238,8 +1238,8 @@ export default {
     dragToReorder: '拖曳以重新排序（僅限盡快）',
     reorderHint: '位置僅影響"儘快"項目。排程項目按設定時間執行。',
     sjf: {
-      label: 'SJF',
-      tooltip: '最短任務優先 — 排程器優先處理較短的列印任務',
+      label: '最短優先',
+      name: '最短任務優先',
     },
     addedBy: '由 {{name}} 新增',
     nextInQueue: '佇列中的下一個',
@@ -1344,7 +1344,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: '開啟{{archives}}，選擇檔案的{{print}}，然後選擇{{queue}}。',
+      activeGuidance: '從歸檔將列印加入佇列，或上傳新檔案。',
+      addFromArchives: '從歸檔新增',
+      uploadFile: '上傳檔案',
       noMatches: '沒有符合目前篩選條件的列印',
       title: '沒有排程的列印',
       description: '從歸檔頁面使用右鍵選單中的"排程"選項來排程列印，或拖放檔案開始。',

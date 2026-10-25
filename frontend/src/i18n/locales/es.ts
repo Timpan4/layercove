@@ -1238,8 +1238,8 @@ export default {
     dragToReorder: 'Arrastre para reordenar (solo elementos «lo antes posible»)',
     reorderHint: 'La posición solo afecta a los elementos «lo antes posible». Los elementos programados se ejecutan a su hora establecida.',
     sjf: {
-      label: 'SJF',
-      tooltip: 'Trabajo más corto primero — el planificador prioriza las impresiones más cortas',
+      label: 'Más corto primero',
+      name: 'Trabajo más corto primero',
     },
     addedBy: 'Añadido por {{name}}',
     nextInQueue: 'Siguiente en la cola',
@@ -1344,7 +1344,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: 'Abra {{archives}}, elija {{print}} para un archivo y seleccione {{queue}}.',
+      activeGuidance: 'Programe una impresión desde sus archivos o suba un archivo nuevo.',
+      addFromArchives: 'Añadir desde Archivos',
+      uploadFile: 'Subir un archivo',
       noMatches: 'Ninguna impresión coincide con los filtros actuales',
       title: 'No hay impresiones programadas',
       description: 'Programe una impresión desde la página de Archivos con la opción «Programar» del menú contextual, o arrastre y suelte archivos para empezar.',

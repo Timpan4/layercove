@@ -1238,8 +1238,8 @@ export default {
     dragToReorder: 'Ziehen zum Neuordnen (nur Sofort)',
     reorderHint: 'Position betrifft nur Sofort-Elemente. Geplante Elemente werden zur festgelegten Zeit ausgeführt.',
     sjf: {
-      label: 'SJF',
-      tooltip: 'Kürzester Auftrag zuerst — Scheduler bevorzugt kürzere Drucke',
+      label: 'Kürzester zuerst',
+      name: 'Kürzester Auftrag zuerst',
     },
     addedBy: 'Hinzugefügt von {{name}}',
     nextInQueue: 'Nächster in der Warteschlange',
@@ -1344,7 +1344,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: 'Öffnen Sie {{archives}}, wählen Sie {{print}} für eine Datei und anschließend {{queue}}.',
+      activeGuidance: 'Starten Sie einen Druck aus Ihrem Archiv oder laden Sie eine neue Datei hoch.',
+      addFromArchives: 'Aus Archiv hinzufügen',
+      uploadFile: 'Datei hochladen',
       noMatches: 'Keine Drucke entsprechen den aktuellen Filtern',
       title: 'Keine Drucke geplant',
       description: 'Planen Sie einen Druck von der Archivseite über die Option "Planen" im Kontextmenü oder ziehen Sie Dateien hierher.',

@@ -1237,8 +1237,8 @@ export default {
     dragToReorder: 'ドラッグして並べ替え（ASAPのみ）',
     reorderHint: '順番はASAPアイテムのみに影響します。スケジュール済みアイテムは設定時刻に実行されます。',
     sjf: {
-      label: 'SJF',
-      tooltip: '短いジョブ優先 — スケジューラーが短い印刷を優先します',
+      label: '最短順',
+      name: '短いジョブ優先',
     },
     addedBy: '{{name}} が追加',
     nextInQueue: '次のキュー',
@@ -1343,7 +1343,9 @@ export default {
     },
     // Empty state
     empty: {
-      activeDescription: '{{archives}}を開き、ファイルの{{print}}を選択してから{{queue}}を選択してください。',
+      activeGuidance: 'アーカイブから印刷をキューに追加するか、新しいファイルをアップロードしてください。',
+      addFromArchives: 'アーカイブから追加',
+      uploadFile: 'ファイルをアップロード',
       noMatches: '現在のフィルターに一致する印刷はありません',
       title: 'スケジュールされた印刷はありません',
       description: 'アーカイブページのコンテキストメニューから「スケジュール」オプションを使用するか、ファイルをドラッグ＆ドロップして始めましょう。',

@@ -1181,8 +1181,8 @@ export default {
     dragToReorder: '드래그하여 순서 변경 (즉시만)',
     reorderHint: '위치는 즉시 항목에만 영향을 줍니다. 예약된 항목은 설정된 시간에 실행됩니다.',
     sjf: {
-      label: 'SJF',
-      tooltip: '최단 작업 우선 — 스케줄러가 짧은 인쇄를 우선합니다'
+      label: '짧은 작업 우선',
+      name: '최단 작업 우선',
     },
     addedBy: '{{name}}님이 추가함',
     nextInQueue: '다음 대기',
@@ -1279,7 +1279,9 @@ export default {
       gcodeInjection: 'G코드'
     },
     empty: {
-      activeDescription: '{{archives}}에서 파일의 {{print}}를 선택한 다음 {{queue}}를 선택하세요.',
+      activeGuidance: '아카이브에서 인쇄를 대기열에 추가하거나 새 파일을 업로드하세요.',
+      addFromArchives: '아카이브에서 추가',
+      uploadFile: '파일 업로드',
       noMatches: '현재 필터와 일치하는 인쇄가 없습니다',
       title: '예약된 인쇄 없음',
       description: '아카이브 페이지의 컨텍스트 메뉴에서 "예약" 옵션을 사용하거나 파일을 드래그 앤 드롭하여 시작하세요.'
