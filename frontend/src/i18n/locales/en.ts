@@ -58,6 +58,7 @@ export default {
     setupRequired: "Setup required",
     chooseProfile: "Choose profile",
     notSetUp: "Not set up yet. Slicing for {{printer}} is unavailable until a profile is chosen.",
+    importProfile: "No {{model}} printer profile is in the catalog yet. Import one from <profiles>Profiles</profiles>, then choose it here.",
     suggestion: "Suggested: {{profile}} · {{nozzle}} mm",
     useSuggestion: "Use suggestion",
     bindingSummary: "{{nozzle}} mm · tool {{tool}}",

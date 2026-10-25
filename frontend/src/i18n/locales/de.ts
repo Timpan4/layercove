@@ -58,6 +58,7 @@ export default {
     setupRequired: "Einrichtung erforderlich",
     chooseProfile: "Profil wählen",
     notSetUp: "Noch nicht eingerichtet. Slicen für {{printer}} ist nicht verfügbar, bis ein Profil gewählt wird.",
+    importProfile: "Noch kein {{model}}-Druckerprofil im Katalog. Importiere eines unter <profiles>Profile</profiles> und wähle es dann hier aus.",
     suggestion: "Vorschlag: {{profile}} · {{nozzle}} mm",
     useSuggestion: "Vorschlag verwenden",
     bindingSummary: "{{nozzle}} mm · Werkzeug {{tool}}",

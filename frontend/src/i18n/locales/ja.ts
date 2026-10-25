@@ -58,6 +58,7 @@ export default {
     setupRequired: "設定が必要",
     chooseProfile: "プロファイルを選択",
     notSetUp: "まだ設定されていません。プロファイルを選択するまで {{printer}} のスライスは利用できません。",
+    importProfile: "{{model}} のプリンタープロファイルはまだカタログにありません。<profiles>プロファイル</profiles>からインポートしてから、ここで選択してください。",
     suggestion: "候補: {{profile}} · {{nozzle}} mm",
     useSuggestion: "候補を使用",
     bindingSummary: "{{nozzle}} mm · ツール {{tool}}",

@@ -58,6 +58,7 @@ export default {
     setupRequired: "설정 필요",
     chooseProfile: "프로필 선택",
     notSetUp: "아직 설정되지 않았습니다. 프로필을 선택하기 전까지 {{printer}}용 슬라이싱을 사용할 수 없습니다.",
+    importProfile: "카탈로그에 {{model}} 프린터 프로필이 아직 없습니다. <profiles>프로필</profiles>에서 가져온 다음 여기에서 선택하세요.",
     suggestion: "추천: {{profile}} · {{nozzle}} mm",
     useSuggestion: "추천 사용",
     bindingSummary: "{{nozzle}} mm · 툴 {{tool}}",

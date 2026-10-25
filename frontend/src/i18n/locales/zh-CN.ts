@@ -58,6 +58,7 @@ export default {
     setupRequired: "需要设置",
     chooseProfile: "选择配置文件",
     notSetUp: "尚未设置。在选择配置文件之前，无法为 {{printer}} 切片。",
+    importProfile: "目录中尚无 {{model}} 打印机配置文件。请先在<profiles>配置文件</profiles>中导入，然后在此处选择。",
     suggestion: "建议：{{profile}} · {{nozzle}} mm",
     useSuggestion: "使用建议",
     bindingSummary: "{{nozzle}} mm · 工具 {{tool}}",

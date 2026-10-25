@@ -21,6 +21,8 @@ vi.mock('../../components/ConfirmModal', () => ({
 
 const printer = (id: number, name: string, model: string | null, provider: Printer['provider'] = 'bambu') => ({ id, name, model, provider, is_active: true } as Printer);
 const profile = { profile_id: 10, revision_id: 1, source: 'local', account_id: 1, account_name: null, remote_profile_id: 'p', profile_type: 'printer', display_name: 'P1S profile', content_hash: 'hash', compatibility_metadata: {}, tombstoned: false, stale: false, sharing_state: 'private' } as const;
+const voronProfile ={ ...profile, profile_id: 11, remote_profile_id: 'voron', display_name: 'Voron 0.4 profile' } as const;
+const p1sMetadataProfile = { ...profile, profile_id: 12, remote_profile_id: 'p1s-meta', display_name: 'Bambu PLA Basic', compatibility_metadata: { model: 'P1S' } } as const;
 const binding = (id: number, profileName: string): SlicerCatalogBinding => ({
   id,
   printer_id: 1,
@@ -105,6 +107,36 @@ describe('PrinterSlicerBindings', () => {
     renderPanel([printer(1, 'P1S', 'P1S')]);
     expect(await screen.findByText('Not set up yet. Slicing for P1S is unavailable until a profile is chosen.')).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Use suggestion' })).not.toBeInTheDocument();
+  });
+
+  it('asks for a catalog import instead of Choose profile when only other printers have profiles', async () => {
+    vi.spyOn(api, 'listSlicerCatalogProfiles').mockResolvedValue([voronProfile]);
+    vi.spyOn(api, 'getSlicerCatalogBindingSuggestion').mockResolvedValue({ printer_id: 1, suggested_profile_ids: [], requires_confirmation: true, readiness: 'setup_required' });
+    renderPanel([printer(1, 'P1S', 'P1S')]);
+
+    const message = await screen.findByText(/No P1S printer profile is in the catalog yet/);
+    expect(message).toHaveTextContent('No P1S printer profile is in the catalog yet. Import one from Profiles, then choose it here.');
+    expect(screen.getByRole('link', { name: 'Profiles' })).toHaveAttribute('href', '/profiles');
+    expect(screen.queryByRole('button', { name: 'Choose profile' })).not.toBeInTheDocument();
+  });
+
+  it('keeps Choose profile when a catalog profile name matches the printer model', async () => {
+    vi.spyOn(api, 'getSlicerCatalogBindingSuggestion').mockResolvedValue({ printer_id: 1, suggested_profile_ids: [], requires_confirmation: true, readiness: 'setup_required' });
+    renderPanel([printer(1, 'P1S', 'P1S')]);
+
+    await screen.findByText('Not set up yet. Slicing for P1S is unavailable until a profile is chosen.');
+    expect(screen.getByRole('button', { name: 'Choose profile' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Profiles' })).not.toBeInTheDocument();
+  });
+
+  it('keeps Choose profile when a catalog profile metadata model matches the printer model', async () => {
+    vi.spyOn(api, 'listSlicerCatalogProfiles').mockResolvedValue([voronProfile, p1sMetadataProfile]);
+    vi.spyOn(api, 'getSlicerCatalogBindingSuggestion').mockResolvedValue({ printer_id: 1, suggested_profile_ids: [], requires_confirmation: true, readiness: 'setup_required' });
+    renderPanel([printer(1, 'P1S', 'P1S')]);
+
+    await screen.findByText('Not set up yet. Slicing for P1S is unavailable until a profile is chosen.');
+    expect(screen.getByRole('button', { name: 'Choose profile' })).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: 'Profiles' })).not.toBeInTheDocument();
   });
 
   it('lands a setup link on the selected printer binding card', async () => {

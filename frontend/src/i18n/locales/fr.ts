@@ -58,6 +58,7 @@ export default {
     setupRequired: "Configuration requise",
     chooseProfile: "Choisir le profil",
     notSetUp: "Pas encore configurée. Le tranchage pour {{printer}} est indisponible tant qu'aucun profil n'est choisi.",
+    importProfile: "Aucun profil d'imprimante {{model}} n'est encore dans le catalogue. Importez-en un depuis <profiles>Profils</profiles>, puis choisissez-le ici.",
     suggestion: "Suggéré : {{profile}} · {{nozzle}} mm",
     useSuggestion: "Utiliser la suggestion",
     bindingSummary: "{{nozzle}} mm · outil {{tool}}",
