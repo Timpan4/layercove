@@ -406,6 +406,8 @@ function ArchiveCard({
   };
 
   const isGcodeFile = isSlicedFile(archive);
+  // time_accuracy is estimated / actual * 100, so values below 100 mean the print ran long.
+  const timeDeviation = archive.time_accuracy ? Math.round(archive.time_accuracy - 100) : 0;
 
   const contextMenuItems: ContextMenuItem[] = [
     // For gcode files: show Print option
@@ -838,7 +840,7 @@ function ArchiveCard({
         </button>
         {(archive.status === 'failed' || archive.status === 'aborted') && (
           <div className="absolute top-2 left-12 px-2 py-1 rounded text-xs bg-status-error/80 text-white">
-            {archive.status === 'aborted' ? t('archives.card.cancelled') : t('archives.card.failed')}
+            {archive.status === 'aborted' ? t('archives.log.statuses.cancelled') : t('archives.log.statuses.failed')}
           </div>
         )}
         {/* Duplicate badge */}
@@ -1045,7 +1047,7 @@ function ArchiveCard({
             }>
               <Clock className="w-3 h-3" />
               {formatDuration(archive.actual_time_seconds || archive.print_time_seconds || 0)}
-              {archive.time_accuracy && (
+              {timeDeviation !== 0 && archive.time_accuracy && (
                 <span className={`text-[10px] px-1 rounded ${
                   archive.time_accuracy >= 95 && archive.time_accuracy <= 105
                     ? 'bg-bambu-green/20 text-bambu-green'
@@ -1053,7 +1055,9 @@ function ArchiveCard({
                       ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400'
                       : 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400'
                 }`}>
-                  {archive.time_accuracy > 100 ? '+' : ''}{(archive.time_accuracy - 100).toFixed(0)}%
+                  {timeDeviation > 0
+                    ? t('archives.card.fasterThanEstimate', { percent: timeDeviation })
+                    : t('archives.card.slowerThanEstimate', { percent: -timeDeviation })}
                 </span>
               )}
             </div>
@@ -1154,7 +1158,7 @@ function ArchiveCard({
                 {archive.created_by_username ?? archive.reprinted_by_username}
               </span>
             )}
-            <span>{formatFileSize(archive.file_size)}</span>
+            <span>{archive.file_size ? formatFileSize(archive.file_size) : t('archives.card.noFile')}</span>
           </div>
         </div>
 
@@ -2125,7 +2129,7 @@ function ArchiveListRow({
             <p className="min-w-0 text-white text-sm break-words md:truncate">{archive.print_name || archive.filename}</p>
             {(archive.status === 'failed' || archive.status === 'aborted') && (
               <span className="px-1.5 py-0.5 rounded text-[10px] leading-tight bg-status-error/80 text-white flex-shrink-0">
-                {archive.status === 'aborted' ? t('archives.card.cancelled') : t('archives.card.failed')}
+                {archive.status === 'aborted' ? t('archives.log.statuses.cancelled') : t('archives.log.statuses.failed')}
               </span>
             )}
             {archive.duplicate_count > 0 && duplicateSequence > 0 && originalArchiveId && (
@@ -2214,7 +2218,7 @@ function ArchiveListRow({
           )}
         </div>
         <div className="col-start-2 md:col-start-auto md:col-span-1 text-sm text-bambu-gray">
-          {formatFileSize(archive.file_size)}
+          {archive.file_size ? formatFileSize(archive.file_size) : t('archives.card.noFile')}
         </div>
         <div className="col-span-2 flex flex-wrap md:flex-nowrap justify-start md:justify-end gap-1">
           {isSlicedFile(archive) && (
