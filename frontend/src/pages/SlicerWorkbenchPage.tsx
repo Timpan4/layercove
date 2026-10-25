@@ -431,6 +431,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
 }
 
 function SavedSliceResult({ model, onBack }: { model: ReturnType<typeof useSlicerWorkbench>; onBack: () => void }) {
+  const { t } = useTranslation();
   const [showPrint, setShowPrint] = useState(false);
   const job = model.jobState!;
   const request = job.request_snapshot;
@@ -483,7 +484,7 @@ function SavedSliceResult({ model, onBack }: { model: ReturnType<typeof useSlice
       </aside>
       <section aria-label="Saved toolpath preview" className="relative h-[60dvh] min-h-80 min-w-0 flex-1 lg:h-auto">
         {model.previewUrl ? <GcodeViewer buildVolume={bed ?? undefined} showBuildPlate={Boolean(bed && !bed.outline)} gcodeUrl={model.previewUrl} className="h-full w-full" /> : <p>Saved toolpath is unavailable.</p>}
-        {!bed && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">Bed geometry unavailable. Preview only; printer fit and placement are unverified.</p>}
+        {!bed && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">{t('slicerBed.unverified')}</p>}
       </section>
     </div>
     <HistoricalReslice model={model} />

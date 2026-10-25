@@ -181,7 +181,8 @@ describe('bed geometry in the actual workbench', () => {
     expect(screen.getByText('Loading selected bed…')).toBeInTheDocument();
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.getByTestId('model-bed')).toHaveAttribute('data-bed', 'false');
-    expect(screen.getByText(/printer fit and placement are unverified/)).toBeInTheDocument();
+    // The fit warning is reserved for a loaded profile without geometry; a pending load shows only the loading status.
+    expect(screen.queryByText(/printer fit and placement are unverified/)).not.toBeInTheDocument();
     await act(async () => finish(revision));
     expect(await screen.findByTestId('model-bed')).toHaveTextContent(JSON.stringify(bed));
   });
