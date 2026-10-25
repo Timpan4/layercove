@@ -74,7 +74,7 @@ async function installFixture(page: Page, width: number) {
 
 for (const width of [1280, 390]) {
   for (const context of ['Quick Slice', 'workbench']) {
-    test(`${context} explains required material confirmation at ${width}px`, async ({ page }) => {
+    test(`${context} states the ready combination at ${width}px`, async ({ page }) => {
       const writes = await installFixture(page, width);
       if (context === 'Quick Slice') {
         await page.goto('/files');
@@ -87,9 +87,10 @@ for (const width of [1280, 390]) {
       await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
       await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
       const slice = page.getByRole('button', { name: context === 'Quick Slice' ? 'Slice' : 'Slice plate', exact: true });
-      await expect(page.getByText('Filament material is unverified. Check the loaded material and confirm before slicing.', { exact: true })).toBeVisible();
+      await expect(page.getByText('Ready to slice for Tim Voron with Generic PLA.', { exact: true })).toBeVisible();
       await expect(page.getByText(/Readiness:|material_unverified|acknowledgement_required/)).toHaveCount(0);
-      await expect(slice).toBeDisabled();
+      await expect(page.getByRole('checkbox', { name: /Slice anyway/ })).toHaveCount(0);
+      await expect(slice).toBeEnabled();
       await expect(page.getByRole('combobox', { name: 'Exact slicer binding', exact: true })).toHaveValue('5');
       await expect(page.getByRole('option', { name: `${printerProfile} · 0.4 mm · tool 0`, exact: true })).toBeAttached();
       if (context === 'workbench') {
@@ -97,8 +98,6 @@ for (const width of [1280, 390]) {
         await expect(page.getByText('OrcaSlicer 2.4.2', { exact: true })).toHaveCount(1);
         await expect(page.getByText('Ready', { exact: true })).toHaveCount(0);
       }
-      await page.getByRole('checkbox', { name: /Confirm filament materials/ }).check();
-      await expect(slice).toBeEnabled();
       expect(writes).toEqual([]);
     });
   }

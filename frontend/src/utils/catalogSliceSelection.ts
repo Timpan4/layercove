@@ -133,6 +133,11 @@ export function pickCatalogFilament(
   spoolmanAssignments: SpoolmanSlotAssignment[],
   preferenceProfileId: number | null | undefined,
 ): CatalogProfileChoice | null {
+  // Rule, metadata and binding-default candidates auto-select only when their verified material equals the slot.
+  // An unknown slot material therefore leaves them unselected; a saved preference is the one exception.
+  const material = canonicalFilamentType(slot.type);
+  const materialMatches = (candidate: SlicerCatalogClassification) => material !== ''
+    && candidateFilamentMaterial(profiles, candidate) === material;
   const assignment = unique(assignments.filter((item) => sameSlot(slot, item)));
   if (assignment) {
     const spoolman = spoolmanAssignments.find(
@@ -153,11 +158,10 @@ export function pickCatalogFilament(
           )
           .map((rule) => rule.filament_profile_id),
       );
-      if (exact) return { id: exact.profile_id, reason: 'exact_external_assignment', manual: false };
+      if (exact && materialMatches(exact)) return { id: exact.profile_id, reason: 'exact_external_assignment', manual: false };
     }
   }
 
-  const material = canonicalFilamentType(slot.type);
   if (material) {
     const signature = oneCandidateProfile(
       groups,
@@ -178,7 +182,7 @@ export function pickCatalogFilament(
         })
         .map((rule) => rule.filament_profile_id),
     );
-    if (signature) return { id: signature.profile_id, reason: 'promoted_signature', manual: false };
+    if (signature && materialMatches(signature)) return { id: signature.profile_id, reason: 'promoted_signature', manual: false };
 
     const metadataMatches = (groups?.selected_printer ?? []).filter((candidate) => {
       if (candidate.profile_type !== 'filament' || !candidate.classification.auto_selectable) return false;
@@ -202,8 +206,16 @@ export function pickCatalogFilament(
   const preference = autoCandidate(groups, preferenceProfileId, 'filament');
   if (preference) return { id: preference.profile_id, reason: 'user_preference', manual: false };
   const fallback = autoCandidate(groups, binding.default_filament_profile_id, 'filament');
-  if (fallback) return { id: fallback.profile_id, reason: 'binding_default', manual: false };
+  if (fallback && materialMatches(fallback)) {
+    return { id: fallback.profile_id, reason: 'binding_default', manual: false };
+  }
   return null;
+}
+
+function candidateFilamentMaterial(profiles: SlicerCatalogProfile[], candidate: SlicerCatalogClassification) {
+  const profile = profiles.find((item) => item.profile_id === candidate.profile_id
+    && item.revision_id === candidate.revision_id);
+  return catalogFilamentMaterial(profile);
 }
 
 export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
@@ -212,25 +224,29 @@ export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
       || profile.classification.group === 'unclassified');
 }
 
+export interface CatalogMaterialWarning {
+  reason: 'material_mismatch';
+  /** One-based slot number. */
+  slot: number;
+  /** Canonical source material. */
+  source: string;
+  /** Canonical material of the selected profile revision. */
+  profile: string;
+}
+
+/** Only a known source material that differs from a known selected material needs confirmation. */
 export function catalogMaterialWarnings(
   slots: Array<{ type: string }>,
   profiles: Array<SlicerCatalogProfile | undefined>,
   revisions: Array<number | null | undefined>,
-) {
+): CatalogMaterialWarning[] {
   return slots.flatMap((slot, index) => {
     const profile = profiles[index];
     if (!profile) return [];
-    const declared = canonicalFilamentType(slot.type.trim());
-    const metadata = profile.compatibility_metadata ?? {};
-    const profileType = metadata.filament_type ?? metadata.material_type;
-    const selected = profile.revision_id === revisions[index] && typeof profileType === 'string'
-      ? canonicalFilamentType(profileType.trim()) : '';
-    if (declared && selected && declared === selected) return [];
-    const reason = declared && selected ? 'material_mismatch' : 'material_unverified';
-    const detail = declared
-      ? `project ${declared}, selected ${selected || 'profile material unknown'}`
-      : `source material unknown, selected ${selected || 'profile material unknown'}`;
-    return [{ reason, message: `Filament ${index + 1}: ${detail}` }];
+    const source = canonicalFilamentType(slot.type.trim());
+    const selected = profile.revision_id === revisions[index] ? catalogFilamentMaterial(profile) : '';
+    if (!source || !selected || source === selected) return [];
+    return [{ reason: 'material_mismatch', slot: index + 1, source, profile: selected }];
   });
 }
 
