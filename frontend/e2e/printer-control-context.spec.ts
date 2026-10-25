@@ -47,7 +47,7 @@ for (const width of [1280, 390]) {
     const card = page.locator('#printer-card-1');
     await expect(card.getByRole('heading', { name: 'Tim Voron' })).toBeInViewport();
     await expect(card.getByText('Nozzle', { exact: true })).toBeInViewport();
-    const bindingHeading = page.getByRole('heading', { name: 'Installed printer slicer bindings' });
+    const bindingHeading = page.getByRole('heading', { name: 'Slicer profile', exact: true });
     const cardBounds = await card.boundingBox();
     const bindingBounds = await bindingHeading.boundingBox();
     expect(bindingBounds!.y).toBeGreaterThan(cardBounds!.y + cardBounds!.height);

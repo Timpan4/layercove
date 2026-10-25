@@ -3,7 +3,13 @@ import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PrinterSlicerBindings } from '../../components/PrinterSlicerBindings';
-import { api, type Printer, type SlicerCatalogBinding, type SlicerCatalogClassification } from '../../api/client';
+import {
+  api,
+  type Printer,
+  type PrinterStatus,
+  type SlicerCatalogBinding,
+  type SlicerCatalogClassification,
+} from '../../api/client';
 
 const auth = vi.hoisted(() => ({ enabled: true, update: true }));
 vi.mock('../../contexts/AuthContext', () => ({
@@ -37,6 +43,7 @@ const emptyGroups = {
   unclassified: [],
   incompatible: [],
 };
+const statusWithNozzle = (diameter: string) => ({ nozzles: [{ nozzle_type: 'stainless_steel', nozzle_diameter: diameter }] }) as unknown as PrinterStatus;
 
 function renderPanel(printers: Printer[], url = '/') {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -52,25 +59,63 @@ describe('PrinterSlicerBindings', () => {
     vi.spyOn(api, 'listSlicerCatalogBindings').mockResolvedValue([]);
     vi.spyOn(api, 'getSlicerCatalogGroups').mockResolvedValue(emptyGroups);
     vi.spyOn(api, 'getSlicerCatalogBindingSuggestion').mockResolvedValue({ printer_id: 1, suggested_profile_ids: [10], requires_confirmation: true, readiness: 'acknowledgement_required' });
+    vi.spyOn(api, 'getPrinterStatus').mockResolvedValue(statusWithNozzle('0.4'));
   });
 
-  it('requires explicit confirmation for a P1S suggestion', async () => {
+  it('offers a P1S suggestion inline with its profile name', async () => {
     renderPanel([printer(1, 'P1S', 'P1S')]);
-    fireEvent.click(await screen.findByRole('button', { name: /Use suggested profile/i }));
+    expect(await screen.findByText('Suggested: P1S profile · 0.4 mm')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Use suggestion' })).toBeInTheDocument();
+  });
+
+  it('requires explicit confirmation before a suggestion opens the create dialog', async () => {
+    renderPanel([printer(1, 'P1S', 'P1S')]);
+    fireEvent.click(await screen.findByRole('button', { name: 'Use suggestion' }));
     expect(screen.getByRole('dialog')).toHaveTextContent(/Confirm suggested slicer binding/);
     fireEvent.click(screen.getByRole('button', { name: 'Confirm and bind' }));
-    expect(await screen.findByRole('heading', { name: 'Create slicer binding' })).toBeInTheDocument();
+    expect(await screen.findByRole('heading', { name: 'Choose slicer profile' })).toBeInTheDocument();
+  });
+
+  it('keeps Tool index and rollout behind Advanced in the create dialog', async () => {
+    renderPanel([printer(1, 'P1S', 'P1S')]);
+    const chooseButton = await screen.findByRole('button', { name: 'Choose profile' });
+    await waitFor(() => expect(chooseButton).toBeEnabled());
+    fireEvent.click(chooseButton);
+
+    expect(screen.getByRole('combobox', { name: 'Printer profile' })).toBeInTheDocument();
+    expect(screen.getByRole('spinbutton', { name: 'Nozzle' })).toBeInTheDocument();
+    expect(screen.queryByRole('spinbutton', { name: 'Tool index' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('combobox', { name: 'Rollout' })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: 'Advanced' }));
+    expect(screen.getByRole('spinbutton', { name: 'Tool index' })).toBeInTheDocument();
+    expect(screen.getByRole('combobox', { name: 'Rollout' })).toBeInTheDocument();
+  });
+
+  it('prefills the create dialog nozzle from the printer reported nozzle', async () => {
+    vi.spyOn(api, 'getPrinterStatus').mockResolvedValue(statusWithNozzle('0.6'));
+    renderPanel([printer(1, 'P1S', 'P1S')]);
+    expect(await screen.findByText('Suggested: P1S profile · 0.6 mm')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose profile' }));
+    expect(screen.getByRole('spinbutton', { name: 'Nozzle' })).toHaveValue(0.6);
+  });
+
+  it('shows the setup empty state with the printer name when nothing is bound', async () => {
+    vi.spyOn(api, 'getSlicerCatalogBindingSuggestion').mockResolvedValue({ printer_id: 1, suggested_profile_ids: [], requires_confirmation: true, readiness: 'setup_required' });
+    renderPanel([printer(1, 'P1S', 'P1S')]);
+    expect(await screen.findByText('Not set up yet. Slicing for P1S is unavailable until a profile is chosen.')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Use suggestion' })).not.toBeInTheDocument();
   });
 
   it('lands a setup link on the selected printer binding card', async () => {
     renderPanel([printer(1, 'P1S', 'P1S'), printer(2, 'Voron', null, 'moonraker')], '/#slicer-binding-1');
-    expect(await screen.findAllByRole('button', { name: 'Add binding' })).toHaveLength(2);
+    expect(await screen.findAllByRole('button', { name: 'Choose profile' })).toHaveLength(2);
     expect(document.getElementById('slicer-binding-1')).toHaveTextContent('P1S');
   });
 
-  it('shows setup_required for an unbound Moonraker printer with no model', async () => {
+  it('shows Setup required for an unbound Moonraker printer with no model', async () => {
     renderPanel([printer(2, 'Voron', null, 'moonraker')]);
-    expect((await screen.findAllByText(/setup_required/)).length).toBeGreaterThan(0);
+    expect((await screen.findAllByText(/Setup required/)).length).toBeGreaterThan(0);
   });
 
   it('renders every exact binding and still allows another', async () => {
@@ -82,8 +127,8 @@ describe('PrinterSlicerBindings', () => {
 
     expect(await screen.findByTestId('binding-1')).toHaveTextContent('P1S 0.4 profile');
     expect(screen.getByTestId('binding-2')).toHaveTextContent('P1S 0.6 profile');
-    fireEvent.click(screen.getByRole('button', { name: 'Add binding' }));
-    expect(screen.getByRole('heading', { name: 'Create slicer binding' })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Choose profile' }));
+    expect(screen.getByRole('heading', { name: 'Choose slicer profile' })).toBeInTheDocument();
   });
 
   it.each(['blocked', 'ready'] as const)('keeps an unknown readiness reason unverified when the server state is %s', async (state) => {
@@ -154,10 +199,10 @@ describe('PrinterSlicerBindings', () => {
     vi.spyOn(api, 'createSlicerCatalogBinding').mockRejectedValue(new Error('Exact binding already exists'));
     renderPanel([printer(1, 'P1S', 'P1S'), printer(2, 'Ready', 'P1S')]);
 
-    const addButtons = await screen.findAllByRole('button', { name: 'Add binding' });
-    await waitFor(() => expect(addButtons[0]).toBeEnabled());
-    fireEvent.click(addButtons[0]);
-    fireEvent.click(screen.getByRole('button', { name: 'Bind' }));
+    const chooseButtons = await screen.findAllByRole('button', { name: 'Choose profile' });
+    await waitFor(() => expect(chooseButtons[0]).toBeEnabled());
+    fireEvent.click(chooseButtons[0]);
+    fireEvent.click(screen.getByRole('button', { name: 'Save profile' }));
     expect(await screen.findByRole('alert')).toHaveTextContent('Exact binding already exists');
     expect(screen.getByText('Ready')).toBeInTheDocument();
   });
@@ -166,7 +211,8 @@ describe('PrinterSlicerBindings', () => {
     auth.update = false;
     renderPanel([printer(1, 'P1S', 'P1S')]);
     expect(await screen.findByText(/Binding changes require PRINTERS_UPDATE/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'Bind' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Choose profile' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Use suggestion' })).not.toBeInTheDocument();
   });
 
   it('keeps one printer readable when another binding request fails', async () => {
