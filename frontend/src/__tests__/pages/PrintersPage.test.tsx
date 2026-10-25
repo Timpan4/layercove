@@ -84,7 +84,7 @@ const openPrinterControls = async (printerName = 'X1 Carbon') => {
 };
 
 const openFleetControls = async () => {
-  await screen.findByRole('heading', { name: 'Command deck' });
+  await screen.findByRole('heading', { name: 'Printers' });
   window.history.replaceState(null, '', '/#slicer-binding-1');
   fireEvent.popState(window);
   await screen.findByRole('heading', { name: 'Printers' });
@@ -142,7 +142,7 @@ describe('PrintersPage', () => {
       render(<PrintersPage />);
 
       await waitFor(() => {
-        expect(screen.getByRole('heading', { name: 'Command deck' })).toBeInTheDocument();
+        expect(screen.getByRole('heading', { name: 'Printers' })).toBeInTheDocument();
       });
     });
 

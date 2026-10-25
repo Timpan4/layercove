@@ -162,6 +162,7 @@ export default {
     addedBy: '{{username}} tarafından eklendi',
     prints: 'baskı',
     more: '+{{count}} daha',
+    moreActions: 'Diğer işlemler',
     ascending: 'Artan',
     descending: 'Azalan',
     back: 'Geri',
@@ -722,7 +723,7 @@ export default {
     },
     // HMS hataları
     clickToViewHmsErrors: 'HMS hatalarını görüntülemek için tıklayın',
-    estimatedCompletion: 'Tahmini tamamlanma süresi',
+    hmsStatusOk: 'HMS: Sorun yok',    estimatedCompletion: 'Tahmini tamamlanma süresi',
     plateNumber: 'Plaka {{number}}',
     slotOptions: 'Yuva seçenekleri',
     // AMS hover popup

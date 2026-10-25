@@ -45,7 +45,7 @@ for (const width of [1280, 390]) {
     await expect(page.getByText('Set Nozzle Temperature', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Set Bed Temperature', { exact: true })).toHaveCount(0);
     await expect(page.getByText('Set Chamber Temperature', { exact: true })).toHaveCount(0);
-    await expect(page.getByRole('button', { name: 'OK', exact: true })).toHaveCount(0);
+    await expect(page.getByRole('button', { name: 'HMS: OK', exact: true })).toHaveCount(0);
 
     missingBed = true;
     await page.reload();

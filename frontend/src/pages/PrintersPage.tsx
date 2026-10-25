@@ -3038,7 +3038,7 @@ function PrinterCard({
         variant="secondary"
         size="sm"
         onClick={() => setShowMenu(!showMenu)}
-        title={t('common.more', 'More')}
+        title={t('common.moreActions')}
         className={footerIconButtonClass}
       >
         <MoreVertical className="w-4 h-4" />
@@ -3283,14 +3283,15 @@ function PrinterCard({
                   {printer.model || 'Unknown Model'}
                   {/* Nozzle Info - only in expanded */}
                   {viewMode === 'expanded' && status?.nozzles && status.nozzles[0]?.nozzle_diameter && (
-                    <span className="ml-1.5 text-bambu-gray" title={status.nozzles[0].nozzle_type || 'Nozzle'}>
-                      • {status.nozzles[0].nozzle_diameter}mm
+                    <span className="text-bambu-gray" title={status.nozzles[0].nozzle_type || 'Nozzle'}>
+                      {` · ${status.nozzles[0].nozzle_diameter} mm`}
                     </span>
                   )}
                   {viewMode === 'expanded' && maintenanceInfo && maintenanceInfo.total_print_hours > 0 && (
-                    <span className="ml-2 text-bambu-gray">
+                    <span className="text-bambu-gray">
+                      {' · '}
                       <Clock className="w-3 h-3 inline-block mr-1" />
-                      {Math.round(maintenanceInfo.total_print_hours)}h
+                      {`${Math.round(maintenanceInfo.total_print_hours)} h`}
                     </span>
                   )}
                 </p>
@@ -3386,7 +3387,8 @@ function PrinterCard({
                           : 'bg-status-warning/20 text-status-warning'
                         : 'bg-status-ok/20 text-status-ok'
                     }`}
-                    title={t('printers.clickToViewHmsErrors')}
+                    title={knownErrors.length > 0 ? t('printers.clickToViewHmsErrors') : t('printers.hmsStatusOk')}
+                    aria-label={knownErrors.length > 0 ? undefined : t('printers.hmsStatusOk')}
                   >
                     <AlertTriangle className="w-3 h-3" />
                     {knownErrors.length > 0 ? knownErrors.length : 'OK'}
@@ -3407,6 +3409,11 @@ function PrinterCard({
                   title={
                     maintenanceInfo.due_count > 0 || maintenanceInfo.warning_count > 0
                       ? `${maintenanceInfo.due_count > 0 ? `${maintenanceInfo.due_count} maintenance due` : ''}${maintenanceInfo.due_count > 0 && maintenanceInfo.warning_count > 0 ? ', ' : ''}${maintenanceInfo.warning_count > 0 ? `${maintenanceInfo.warning_count} due soon` : ''} - Click to view`
+                      : t('printers.maintenanceUpToDate')
+                  }
+                  aria-label={
+                    maintenanceInfo.due_count > 0 || maintenanceInfo.warning_count > 0
+                      ? undefined
                       : t('printers.maintenanceUpToDate')
                   }
                 >

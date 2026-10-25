@@ -162,6 +162,7 @@ export default {
     addedBy: '由 {{username}} 新增',
     prints: '次列印',
     more: '還有 {{count}} 個',
+    moreActions: '更多操作',
     ascending: '升序',
     descending: '降序',
     back: '返回',
@@ -722,7 +723,7 @@ export default {
     },
     // HMS errors
     clickToViewHmsErrors: '點選檢視 HMS 錯誤',
-    estimatedCompletion: '預計完成時間',
+    hmsStatusOk: 'HMS: 正常',    estimatedCompletion: '預計完成時間',
     plateNumber: '板 {{number}}',
     slotOptions: '槽位選項',
     // AMS hover popup

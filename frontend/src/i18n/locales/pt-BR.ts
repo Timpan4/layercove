@@ -162,6 +162,7 @@ export default {
     addedBy: 'Adicionado por {{username}}',
     prints: 'impressões',
     more: '+{{count}} mais',
+    moreActions: 'Mais ações',
     ascending: 'Crescente',
     descending: 'Decrescente',
     back: 'Voltar',
@@ -722,7 +723,7 @@ export default {
     },
     // HMS errors
     clickToViewHmsErrors: 'Clique para ver erros do HMS',
-    estimatedCompletion: 'Tempo estimado de conclusão',
+    hmsStatusOk: 'HMS: tudo certo',    estimatedCompletion: 'Tempo estimado de conclusão',
     plateNumber: 'Placa {{number}}',
     slotOptions: 'Opções de slot',
     // AMS hover popup

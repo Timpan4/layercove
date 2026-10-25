@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { useTranslation } from 'react-i18next';
 import {
   AlertTriangle,
   ArrowLeft,
@@ -389,6 +390,11 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
   if (knownHmsCount) notices.push(`${knownHmsCount} machine ${knownHmsCount === 1 ? 'alert' : 'alerts'}`);
   if (status?.awaiting_plate_clear && (state === 'idle' || state === 'finished')) notices.push('Build plate needs clearing');
   if (doorOpen === true) notices.push('Enclosure door open');
+  // Null means nothing to do, so the next action row is hidden. A running print only needs monitoring.
+  const nextAction = state === 'finished' || (state === 'idle' && status?.awaiting_plate_clear) ? 'Clear plate and prepare next job'
+    : active ? null
+    : state === 'offline' ? 'Check printer connection'
+    : 'Choose a file to print';
 
   return (
     <section className={`lc-glass overflow-hidden rounded-[1.75rem] border border-white/10 shadow-[0_30px_80px_rgba(0,0,0,0.3)] ${compact ? '' : 'min-h-[42rem]'}`}>
@@ -462,8 +468,12 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
 
         <aside className="flex flex-col gap-3">
           <div className="rounded-[1.375rem] border border-white/[0.07] bg-bambu-dark-tertiary/25 dark:bg-black/25 p-5">
-            <p className="text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray">Next best action</p>
-            <p className="mt-3 text-base font-medium text-white">{state === 'finished' || (state === 'idle' && status?.awaiting_plate_clear) ? 'Clear plate and prepare next job' : active ? 'Monitor this print' : state === 'offline' ? 'Check printer connection' : 'Choose a file to print'}</p>
+            {nextAction && (
+              <>
+                <p className="text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray">Next best action</p>
+                <p className="mt-3 text-base font-medium text-white">{nextAction}</p>
+              </>
+            )}
             <div className="mt-4 grid grid-cols-2 gap-2 text-xs">
               <span className="rounded-lg bg-white/[0.05] px-2.5 py-2 text-bambu-gray"><HardDrive className="mr-1.5 inline h-3.5 w-3.5" />{status?.firmware_version || 'Firmware unknown'}</span>
               {doorOpen !== null && <span className="rounded-lg bg-white/[0.05] px-2.5 py-2 text-bambu-gray"><DoorOpen className="mr-1.5 inline h-3.5 w-3.5" />{doorOpen ? 'Door open' : 'Door closed'}</span>}
@@ -482,10 +492,12 @@ function FocusDetail({ item, onAction, onOpenControls, compact = false, onClose 
             ) : <p className="mt-3 text-sm text-bambu-gray">External spool or no AMS telemetry.</p>}
           </div>
 
-          <div className={`rounded-[1.375rem] border p-4 ${notices.length ? 'border-amber-400/20 bg-amber-400/[0.07]' : 'border-white/[0.07] bg-bambu-dark-tertiary/25 dark:bg-black/25'}`}>
-            <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray"><AlertTriangle className={`h-4 w-4 ${notices.length ? 'text-amber-300' : 'text-emerald-300'}`} />Machine state</p>
-            <p className="mt-2 text-sm font-medium text-white">{notices.length ? notices.join(' · ') : 'No action needed'}</p>
-          </div>
+          {notices.length > 0 && (
+            <div className="rounded-[1.375rem] border border-amber-400/20 bg-amber-400/[0.07] p-4">
+              <p className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[0.12em] text-bambu-gray"><AlertTriangle className="h-4 w-4 text-amber-300" />Machine state</p>
+              <p className="mt-2 text-sm font-medium text-white">{notices.join(' · ')}</p>
+            </div>
+          )}
         </aside>
       </div>
     </section>
@@ -532,6 +544,7 @@ function InlineDeckVariant(props: PrintersPagePrototypeProps & { onAction: () =>
 }
 
 function CommandDeckVariant(props: PrintersPagePrototypeProps & { onAction: () => void }) {
+  const { t } = useTranslation();
   const [selectedId, setSelectedId] = useState<number | null>(props.initialSelectedPrinterId ?? props.printers[0]?.printer.id ?? null);
   const selected = props.printers.find((item) => item.printer.id === selectedId) ?? props.printers[0];
 
@@ -548,8 +561,7 @@ function CommandDeckVariant(props: PrintersPagePrototypeProps & { onAction: () =
       <div className="lc-ambient" aria-hidden="true" />
       <header className="relative mb-6 flex flex-col justify-between gap-5 lg:flex-row lg:items-end">
         <div>
-          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.16em] text-bambu-green">Fleet plus focus</p>
-          <h1 className="text-3xl font-semibold tracking-[-0.035em] text-white md:text-[2.5rem] md:leading-none">Command deck</h1>
+          <h1 className="text-3xl font-semibold tracking-[-0.035em] text-white md:text-[2.5rem] md:leading-none">{t('printers.title')}</h1>
           <div className="mt-3"><Summary printers={props.printers} /></div>
         </div>
         <ReadOnlyAction onAction={props.onAddPrinter ?? props.onAction} primary disabled={!props.canAdd}><Plus className="h-4 w-4" />Add printer</ReadOnlyAction>

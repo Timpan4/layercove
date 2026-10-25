@@ -159,6 +159,7 @@ export default {
     addedBy: '{{username}}님이 추가함',
     prints: '인쇄',
     more: '+{{count}}개 더',
+    moreActions: '추가 작업',
     ascending: '오름차순',
     descending: '내림차순',
     back: '뒤로',
@@ -678,7 +679,7 @@ export default {
       chamber: '챔버 팬'
     },
     clickToViewHmsErrors: 'HMS 오류 보기 클릭',
-    estimatedCompletion: '예상 완료 시간',
+    hmsStatusOk: 'HMS: 이상 없음',    estimatedCompletion: '예상 완료 시간',
     plateNumber: '플레이트 {{number}}',
     slotOptions: '슬롯 옵션',
     amsPopup: {

@@ -109,7 +109,7 @@ async function openCommandDeck(page: Page, width: number) {
   });
 
   await page.goto('/');
-  await expect(page.getByRole('heading', { name: 'Command deck', exact: true })).toBeVisible();
+  await expect(page.getByRole('heading', { name: 'Printers', exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Inspect Fixture Voron', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Inspect Fixture Voron', exact: true })).toHaveAttribute('aria-current', 'true');
   return blockedWrites;
@@ -280,12 +280,14 @@ for (const width of [390, 1440]) {
     await expect(detailProgress).toBeVisible();
     expect.soft(await detailProgress.evaluate((element) => getComputedStyle(element).color))
       .toBe(rgbFromHex(lightTokens.primaryText));
-    for (const text of ['No active job', '28°', '23°', 'Online', 'Choose a file to print', 'No action needed']) {
+    for (const text of ['No active job', '28°', '23°', 'Online', 'Choose a file to print']) {
       const content = detail.getByText(text, { exact: true });
       await expect(content).toBeVisible();
       expect.soft(await content.evaluate((element) => getComputedStyle(element).color))
         .toBe(rgbFromHex(lightTokens.primaryText));
     }
+    // With nothing needing attention, the machine state row is hidden entirely.
+    await expect(detail.getByText('Machine state', { exact: true })).toHaveCount(0);
     expect.soft(await detail.getByText('Next best action', { exact: true }).evaluate((element) => getComputedStyle(element).color))
       .toBe(rgbFromHex(lightTokens.mutedText));
     await expect(detail.getByRole('heading', { name: 'Fixture Bambu', exact: true })).toBeVisible();

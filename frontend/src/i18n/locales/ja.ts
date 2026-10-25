@@ -162,6 +162,7 @@ export default {
     addedBy: '{{username}}が追加',
     prints: 'プリント',
     more: '+{{count}}件',
+    moreActions: 'その他の操作',
     ascending: '昇順',
     descending: '降順',
     back: '戻る',
@@ -721,7 +722,7 @@ export default {
     },
     // HMS errors
     clickToViewHmsErrors: 'クリックしてHMSエラーを表示',
-    estimatedCompletion: '完了予定時刻',
+    hmsStatusOk: 'HMS: 問題なし',    estimatedCompletion: '完了予定時刻',
     plateNumber: 'プレート {{number}}',
     slotOptions: 'スロットオプション',
     // AMS hover popup
