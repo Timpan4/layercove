@@ -3943,6 +3943,10 @@ export default {
     printJobs: 'Print jobs (plates)',
     partsPrinted: 'Parts printed',
     failedParts: 'Failed parts',
+    partsOfTarget: '{{done}} of {{target}} parts printed',
+    partsCount: '{{count}} parts printed',
+    platesOfTarget: '{{done}} of {{target}} plates',
+    platesCount: '{{count}} plates',
     // Actions
     import: 'Import',
     export: 'Export',

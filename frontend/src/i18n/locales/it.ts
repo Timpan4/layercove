@@ -3902,6 +3902,10 @@ export default {
     printJobs: 'Job di stampa (piatti)',
     partsPrinted: 'Parti stampate',
     failedParts: 'Parti fallite',
+    partsOfTarget: '{{done}} di {{target}} parti stampate',
+    partsCount: '{{count}} parti stampate',
+    platesOfTarget: '{{done}} di {{target}} piatti',
+    platesCount: '{{count}} piatti',
     // Actions
     import: 'Importa',
     export: 'Esporta',
