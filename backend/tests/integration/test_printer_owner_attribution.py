@@ -233,3 +233,78 @@ async def test_owner_change_requires_rights_over_all_archives(async_client, user
     )
     assert rename.status_code == 200
     assert rename.json()["owner_id"] is None
+
+
+@pytest.mark.asyncio
+async def test_owner_credited_print_names_owner_in_print_log(async_client, test_engine, users, printer):
+    """The Print Log filters on the stored username, and a print started outside
+    LayerCove has no print user, so the run names the archive's owner."""
+    import asyncio
+
+    from backend.app.main import _active_prints, on_print_complete
+    from backend.app.services.bambu_ftp import DeleteResult
+
+    maker = async_sessionmaker(test_engine, class_=AsyncSession, expire_on_commit=False)
+    async with maker() as db:
+        archive = PrintArchive(
+            printer_id=printer.id,
+            filename="Benchy.3mf",
+            file_path="",
+            file_size=0,
+            print_name="Benchy",
+            status="printing",
+            created_by_id=users["operator"]["id"],
+        )
+        db.add(archive)
+        await db.commit()
+    _active_prints[(printer.id, "Benchy.3mf")] = archive.id
+
+    tasks_before = set(asyncio.all_tasks())
+    with ExitStack() as stack:
+        for target in ("notification_service", "smart_plug_manager", "ws_manager", "mqtt_relay"):
+            stack.enter_context(patch(f"backend.app.main.{target}", AsyncMock()))
+        printer_manager = stack.enter_context(patch("backend.app.main.printer_manager"))
+        printer_manager.get_printer.return_value = None
+        printer_manager.get_current_print_user.return_value = None
+        stack.enter_context(
+            patch("backend.app.services.bambu_ftp.delete_file_async", AsyncMock(return_value=DeleteResult.NOT_FOUND))
+        )
+        await on_print_complete(
+            printer.id,
+            {"status": "completed", "filename": "Benchy.3mf", "subtask_name": "Benchy", "timelapse_was_active": False},
+        )
+        # Let background tasks finish inside the mocks so SQLite teardown is not locked.
+        await asyncio.gather(*(asyncio.all_tasks() - tasks_before - {asyncio.current_task()}), return_exceptions=True)
+
+    async with maker() as db:
+        runs = (await db.execute(select(PrintLogEntry).where(PrintLogEntry.archive_id == archive.id))).scalars().all()
+    assert [(r.created_by_id, r.created_by_username) for r in runs] == [(users["operator"]["id"], "doggeday")]
+
+
+@pytest.mark.asyncio
+async def test_owner_must_be_an_active_user(async_client, db_session, users, printer):
+    from backend.app.models.user import User
+
+    inactive = User(username="gone", password_hash="x", is_active=False)
+    db_session.add(inactive)
+    await db_session.commit()
+
+    for owner_id in (inactive.id, 999999):
+        response = await async_client.patch(
+            f"/api/v1/printers/{printer.id}", headers=_bearer(users["admin_token"]), json={"owner_id": owner_id}
+        )
+        assert response.status_code == 400
+
+
+@pytest.mark.asyncio
+async def test_deleting_the_owner_leaves_the_printer_without_owner(async_client, users, printer):
+    headers = _bearer(users["admin_token"])
+    await async_client.patch(
+        f"/api/v1/printers/{printer.id}", headers=headers, json={"owner_id": users["operator"]["id"]}
+    )
+
+    deleted = await async_client.delete(f"/api/v1/users/{users['operator']['id']}", headers=headers)
+    assert deleted.status_code in (200, 204)
+
+    response = await async_client.get(f"/api/v1/printers/{printer.id}", headers=headers)
+    assert response.json()["owner_id"] is None

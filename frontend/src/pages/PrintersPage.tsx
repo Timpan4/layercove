@@ -7593,9 +7593,15 @@ function EditPrinterModal({
 
   const updateMutation = useMutation({
     mutationFn: (data: Partial<PrinterCreate>) => api.updatePrinter(printer.id, data),
-    onSuccess: () => {
+    onSuccess: (_printer, data) => {
       queryClient.invalidateQueries({ queryKey: ['printers'] });
       queryClient.invalidateQueries({ queryKey: queryKeys.printerStatus(printer.id) });
+      // Credited prints move to the owner, so archive and stats views refetch.
+      if (data.assign_unowned_prints) {
+        for (const queryKey of [['archives'], ['archivesSlim'], ['print-log'], ['failureAnalysis'], queryKeys.archiveStats()]) {
+          queryClient.invalidateQueries({ queryKey });
+        }
+      }
       onClose();
     },
     onError: (error: Error) => showToast(error.message || t('printers.toast.failedToUpdate'), 'error'),
