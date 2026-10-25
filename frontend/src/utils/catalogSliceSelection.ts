@@ -218,6 +218,36 @@ function candidateFilamentMaterial(profiles: SlicerCatalogProfile[], candidate: 
   return catalogFilamentMaterial(profile);
 }
 
+const knownFilamentMaterials: readonly string[] = ['PLA', 'PETG', 'ABS', 'ASA', 'TPU'];
+
+export type FilamentGroupKey = 'loaded' | 'PLA' | 'PETG' | 'ABS' | 'ASA' | 'TPU' | 'other' | 'unknown';
+
+const filamentGroupOrder: FilamentGroupKey[] = ['loaded', 'PLA', 'PETG', 'ABS', 'ASA', 'TPU', 'other', 'unknown'];
+
+/**
+ * Splits filament candidates into material groups, keeping each group in the order given.
+ * A candidate whose material a loaded spool supplies goes to the leading "loaded" group only.
+ * For a known source material, only a loaded spool of that material counts.
+ */
+export function groupFilamentCandidates<T extends { material: string }>(
+  candidates: T[],
+  slotMaterial: string,
+  loadedMaterials: string[],
+): Array<{ key: FilamentGroupKey; items: T[] }> {
+  const loaded = new Set(slotMaterial ? loadedMaterials.filter((material) => material === slotMaterial) : loadedMaterials);
+  const buckets = new Map<FilamentGroupKey, T[]>(filamentGroupOrder.map((key) => [key, []]));
+  for (const candidate of candidates) {
+    const key: FilamentGroupKey = loaded.has(candidate.material) ? 'loaded'
+      : !candidate.material ? 'unknown'
+        : knownFilamentMaterials.includes(candidate.material) ? candidate.material as FilamentGroupKey
+          : 'other';
+    buckets.get(key)!.push(candidate);
+  }
+  return filamentGroupOrder
+    .map((key) => ({ key, items: buckets.get(key)! }))
+    .filter((group) => group.items.length > 0);
+}
+
 export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
   return profile.classification.selectable
     && (profile.classification.group === 'selected_printer'
