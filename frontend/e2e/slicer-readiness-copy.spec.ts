@@ -93,7 +93,8 @@ for (const width of [1280, 390]) {
       await expect(page.getByRole('combobox', { name: 'Exact slicer binding', exact: true })).toHaveValue('5');
       await expect(page.getByRole('option', { name: `${printerProfile} · 0.4 mm · tool 0`, exact: true })).toBeAttached();
       if (context === 'workbench') {
-        await expect(page.getByText('Editor loaded', { exact: true })).toBeVisible();
+        await expect(page.getByText('Editor loaded', { exact: true })).toHaveCount(0);
+        await expect(page.getByText('OrcaSlicer 2.4.2', { exact: true })).toHaveCount(1);
         await expect(page.getByText('Ready', { exact: true })).toHaveCount(0);
       }
       await page.getByRole('checkbox', { name: /Confirm filament materials/ }).check();
