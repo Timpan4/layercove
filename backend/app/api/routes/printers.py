@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import FileResponse, Response
 from python_multipart.exceptions import MultipartParseError
 from python_multipart.multipart import parse_options_header
-from sqlalchemy import func, select
+from sqlalchemy import func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from starlette.background import BackgroundTask
@@ -30,9 +30,11 @@ from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.core.tasks import spawn_background_task
 from backend.app.models.ams_label import AmsLabel
+from backend.app.models.archive import PrintArchive
 from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.models.network_site import NetworkSite
-from backend.app.models.printer import Printer
+from backend.app.models.print_log import PrintLogEntry
+from backend.app.models.printer import Printer, PrinterOwner
 from backend.app.models.slot_preset import SlotPresetMapping
 from backend.app.models.user import User
 from backend.app.schemas.network_site import magic_dns_hostname
@@ -111,6 +113,43 @@ def _require_inventory_for_spoolman_fields(caller, fields_set: set[str]) -> None
         Permission.INVENTORY_READ.value, Permission.INVENTORY_UPDATE.value
     ):
         raise HTTPException(403, "Missing required permissions: inventory:read, inventory:update")
+
+
+async def _apply_printer_owner(
+    db: AsyncSession, caller, printer: Printer, owner_id: int | None, assign_unowned_prints: bool
+) -> None:
+    """Set the user credited with prints that start on this printer outside LayerCove.
+
+    Those prints are stored with the owner as ``created_by_id``, which grants
+    edit and delete rights over them, so changing the owner needs the right to
+    edit every archive. The edit form resends the stored owner, so an
+    unchanged owner without a backfill request needs no extra permission.
+    """
+    if owner_id == printer.owner_id and not assign_unowned_prints:
+        return
+    if isinstance(caller, User) and not caller.has_permission(Permission.ARCHIVES_UPDATE_ALL.value):
+        raise HTTPException(403, "Missing required permission: archives:update_all")
+    if owner_id is None:
+        printer.owner_link = None
+        return
+    owner = await db.get(User, owner_id)
+    if owner is None or not owner.is_active:
+        raise HTTPException(400, "Printer owner must be an active user")
+    if printer.owner_link is None:
+        printer.owner_link = PrinterOwner(user_id=owner_id)
+    else:
+        printer.owner_link.user_id = owner_id
+    if assign_unowned_prints:
+        await db.execute(
+            update(PrintArchive)
+            .where(PrintArchive.printer_id == printer.id, PrintArchive.created_by_id.is_(None))
+            .values(created_by_id=owner_id)
+        )
+        await db.execute(
+            update(PrintLogEntry)
+            .where(PrintLogEntry.printer_id == printer.id, PrintLogEntry.created_by_id.is_(None))
+            .values(created_by_id=owner_id, created_by_username=owner.username)
+        )
 
 
 # Seconds the /hms/execute-action route waits for a printer status push
@@ -543,6 +582,9 @@ async def update_printer(
     update_data = printer_data.model_dump(exclude_unset=True)
     if "access_code" in update_data:
         update_data["access_code"] = printer_data.access_code_value
+    assign_unowned_prints = update_data.pop("assign_unowned_prints", False)
+    if "owner_id" in update_data:
+        await _apply_printer_owner(db, caller, printer, update_data.pop("owner_id"), assign_unowned_prints)
 
     bambu_connection_fields = {"ip_address", "access_code"}
     supplied_bambu_fields = bambu_connection_fields.intersection(update_data)

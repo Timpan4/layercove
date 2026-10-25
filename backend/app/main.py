@@ -3312,6 +3312,8 @@ async def on_print_start(printer_id: int, data: dict):
                     filament_type=mqtt_filament_meta.get("filament_type"),
                     filament_color=mqtt_filament_meta.get("filament_color"),
                     extra_data={"no_3mf_available": True, "original_subtask": subtask_name, "_print_data": data},
+                    # Started outside LayerCove, so credit the printer's owner.
+                    created_by_id=printer.owner_id,
                 )
 
                 db.add(fallback_archive)
@@ -3391,6 +3393,8 @@ async def on_print_start(printer_id: int, data: dict):
                 source_file=temp_path,
                 print_data={**data, "status": "printing"},
                 subtask_id=subtask_id,
+                # Started outside LayerCove, so credit the printer's owner.
+                created_by_id=printer.owner_id,
             )
 
             if archive:

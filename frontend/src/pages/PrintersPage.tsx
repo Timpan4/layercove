@@ -7534,10 +7534,21 @@ function EditPrinterModal({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
+  const { authEnabled, hasPermission } = useAuth();
   const { data: networkSites = [], isPending: networkSitesLoading } = useQuery({
     queryKey: ['networkSites'],
     queryFn: api.getNetworkSites,
   });
+  // The owner is credited with (and may edit) prints started outside LayerCove,
+  // so choosing one needs the right to edit every archive.
+  const canSetOwner = authEnabled && hasPermission('archives:update_all') && hasPermission('users:read');
+  const { data: users = [] } = useQuery({
+    queryKey: ['users'],
+    queryFn: api.getUsers,
+    enabled: canSetOwner,
+  });
+  const [ownerId, setOwnerId] = useState(printer.owner_id ? String(printer.owner_id) : '');
+  const [assignUnownedPrints, setAssignUnownedPrints] = useState(false);
   const [networkSiteId, setNetworkSiteId] = useState(printer.network_site_id ? String(printer.network_site_id) : '');
   const [networkSiteLanIp, setNetworkSiteLanIp] = useState(printer.network_site_lan_ip || '');
   const [networkSiteError, setNetworkSiteError] = useState('');
@@ -7626,6 +7637,10 @@ function EditPrinterModal({
     // Only include access_code if it was changed
     if (form.access_code) {
       data.access_code = form.access_code;
+    }
+    if (canSetOwner) {
+      data.owner_id = ownerId ? Number(ownerId) : null;
+      data.assign_unowned_prints = Boolean(ownerId) && assignUnownedPrints;
     }
     if (isMoonraker) {
       const siteUrls = selectedNetworkSite && networkHost
@@ -7842,6 +7857,39 @@ function EditPrinterModal({
               />
               <p className="text-xs text-bambu-gray mt-1">{t('printers.locationHelp')}</p>
             </div>
+            {canSetOwner && (
+              <div>
+                <label htmlFor="edit_printer_owner" className="block text-sm text-bambu-gray mb-1">
+                  {t('printers.modal.ownerLabel')}
+                </label>
+                <select
+                  id="edit_printer_owner"
+                  className="w-full px-3 py-2 bg-bambu-dark border border-bambu-dark-tertiary rounded-lg text-white focus:border-bambu-green focus:outline-none"
+                  value={ownerId}
+                  onChange={(e) => setOwnerId(e.target.value)}
+                >
+                  <option value="">{t('printers.modal.ownerNone')}</option>
+                  {users.filter((u) => u.is_active || u.id === printer.owner_id).map((u) => (
+                    <option key={u.id} value={String(u.id)}>{u.username}</option>
+                  ))}
+                </select>
+                <p className="text-xs text-bambu-gray mt-1">{t('printers.modal.ownerHelp')}</p>
+                {ownerId && (
+                  <div className="flex items-center gap-2 mt-2">
+                    <input
+                      type="checkbox"
+                      id="edit_assign_unowned_prints"
+                      checked={assignUnownedPrints}
+                      onChange={(e) => setAssignUnownedPrints(e.target.checked)}
+                      className="rounded border-bambu-dark-tertiary bg-bambu-dark text-bambu-green focus:ring-bambu-green"
+                    />
+                    <label htmlFor="edit_assign_unowned_prints" className="text-sm text-bambu-gray">
+                      {t('printers.modal.assignUnownedPrints')}
+                    </label>
+                  </div>
+                )}
+              </div>
+            )}
             <div className="flex items-center gap-2">
               <input
                 type="checkbox"

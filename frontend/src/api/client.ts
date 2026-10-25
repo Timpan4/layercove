@@ -369,6 +369,7 @@ export interface Printer {
   updated_at: string;
   capabilities: PrinterCapabilities;
   moonraker_config: MoonrakerPrinterConfigResponse | null;
+  owner_id: number | null;  // User credited with prints started outside LayerCove
 }
 
 export interface PrinterCamera {
@@ -672,6 +673,9 @@ export interface PrinterCreate {
   camera_rotation?: number;
   plate_detection_enabled?: boolean;
   plate_detection_roi?: PlateDetectionROI;
+  // Update only: needs archives:update_all, because the owner gets edit rights over those prints.
+  owner_id?: number | null;
+  assign_unowned_prints?: boolean;
 }
 
 // Plate Detection

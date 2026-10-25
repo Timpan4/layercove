@@ -30,6 +30,7 @@ from backend.app.models.long_lived_token import LongLivedToken
 from backend.app.models.oidc_provider import UserOIDCLink
 from backend.app.models.print_batch import PrintBatch
 from backend.app.models.print_queue import PrintQueueItem
+from backend.app.models.printer import PrinterOwner
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
 from backend.app.models.user_otp_code import UserOTPCode
@@ -452,6 +453,8 @@ async def delete_user(
     await db.execute(delete(UserTOTP).where(UserTOTP.user_id == user_id))
     await db.execute(delete(UserOTPCode).where(UserOTPCode.user_id == user_id))
     await db.execute(delete(LongLivedToken).where(LongLivedToken.user_id == user_id))
+    # Printers the user owned go back to crediting no one.
+    await db.execute(delete(PrinterOwner).where(PrinterOwner.user_id == user_id))
 
     await db.delete(user)
     await db.commit()
