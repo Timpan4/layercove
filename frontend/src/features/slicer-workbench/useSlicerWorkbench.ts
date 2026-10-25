@@ -154,6 +154,8 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
     return slots.length > 0 ? slots : [{ slot_id: 1, type: '', color: '' }];
   }, [selectedPlateMetadata]);
   const catalogSelection = useCatalogSliceSelection({ filamentSlots, embeddedProcess });
+  // Build plate names are Bambu-only; Klipper output ignores bed_type (as in SliceModal).
+  const showBedType = catalogSelection.destinationArtifactKind === 'bambu_3mf';
 
   useEffect(() => {
     if (selectedPlate === null && platesQuery.data?.plates[0]) {
@@ -241,7 +243,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
       catalog_acknowledgement: catalog.acknowledgement,
       catalog_selection_evidence: catalog.evidence,
       ...(selectedPlate !== null ? { plate: selectedPlate } : {}),
-      ...(bedType ? { bed_type: bedType } : {}),
+      ...(showBedType && bedType ? { bed_type: bedType } : {}),
       schema_hash: schemaHash,
       ...(Object.keys(processOverrides).length > 0 ? { process_overrides: processOverrides } : {}),
       ...(supportsModelState && (modelObjects.length > 0 || layFlatObjectIds.length > 0)
@@ -255,7 +257,7 @@ export function useSlicerWorkbench(source: WorkbenchSource, initialJobId: number
           }
         : {}),
     };
-  }, [arrange, bedType, catalogSelection.resolvedSelection, layFlatObjectIds, objects, processOverrides, schemaQuery.data?.schema_hash, selectedPlate, supportsModelState]);
+  }, [arrange, bedType, catalogSelection.resolvedSelection, layFlatObjectIds, objects, processOverrides, schemaQuery.data?.schema_hash, selectedPlate, showBedType, supportsModelState]);
 
   useEffect(() => {
     let cancelled = false;

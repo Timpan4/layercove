@@ -1,11 +1,11 @@
-import { useState } from 'react';
+import { useId, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { FilamentProfileEditor } from './FilamentProfileEditor';
 import type { SlicerCatalogClassification, SlicerCatalogGroups } from '../api/client';
 import type { CatalogSliceSelectionState } from '../hooks/useCatalogSliceSelection';
-import { catalogFilamentMaterial } from '../utils/catalogSliceSelection';
+import { catalogFilamentMaterial, groupFilamentCandidates, type FilamentGroupKey } from '../utils/catalogSliceSelection';
 import { canonicalFilamentType } from '../utils/amsHelpers';
 import { displayedSlicerReadiness, slicerReadinessReasons } from '../utils/slicerReadiness';
 
@@ -22,6 +22,12 @@ const groupLabels: Record<keyof SlicerCatalogGroups, string> = {
   unclassified: 'Unclassified',
   incompatible: 'Incompatible',
 };
+const sourceTierKey = {
+  local: 'slice.tier.local',
+  orca_cloud: 'slice.tier.orcaCloud',
+  cloud: 'slice.tier.cloud',
+  standard: 'slice.tier.standard',
+} as const;
 
 export function CatalogSliceSelector({
   selection,
@@ -107,7 +113,6 @@ export function CatalogSliceSelector({
       </label>
       <ProfileGroups
         legend="Process profile"
-        profileType="process"
         groups={selection.groups}
         selectedId={selectedProcessId}
         search={search}
@@ -116,13 +121,13 @@ export function CatalogSliceSelector({
       />
       {filamentSlots.map((slot, index) => (
         <div key={`${slot.slot_id ?? index}-${index}`}>
-        <ProfileGroups
+        <FilamentProfileGroups
           legend={filamentSlots.length === 1 ? 'Filament profile' : `Filament ${index + 1} · ${slot.type || 'unknown material'}`}
-          profileType="filament"
           groups={selection.groups}
           profiles={selection.catalogProfiles}
           material={slot.type}
           hint={!canonicalFilamentType(slot.type) && !selection.filamentChoices[index] ? t('slicerReadiness.chooseFilamentSource') : undefined}
+          loadedMaterials={selection.loadedFilamentMaterials}
           selectedId={selection.filamentChoices[index]?.id ?? null}
           search={search}
           disabled={disabled || slot.used_in_plate === false}
@@ -201,24 +206,21 @@ function profileNameMatch(name: string, search: string) {
   return search ? new RegExp(search.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'iu').exec(name) : null;
 }
 
+function MatchedName({ name, match }: { name: string; match: RegExpExecArray | null }) {
+  if (!match) return <>{name}</>;
+  return <>{name.slice(0, match.index)}<mark className="rounded-sm bg-bambu-green/20 text-inherit">{match[0]}</mark>{name.slice(match.index + match[0].length)}</>;
+}
+
 function ProfileGroups({
   legend,
-  profileType,
   groups,
-  profiles,
-  material,
-  hint,
   selectedId,
   search,
   disabled,
   onChoose,
 }: {
   legend: string;
-  profileType: 'process' | 'filament';
   groups: SlicerCatalogGroups | undefined;
-  profiles?: CatalogSliceSelectionState['catalogProfiles'];
-  material?: string;
-  hint?: string;
   selectedId: number | null;
   search: string;
   disabled: boolean;
@@ -226,39 +228,20 @@ function ProfileGroups({
 }) {
   const term = search.trim();
   const matches = (profile: SlicerCatalogClassification) =>
-    profile.profile_type === profileType
+    profile.profile_type === 'process'
     && (!term || profileNameMatch(profile.display_name, term) !== null);
-  const selected = Object.values(groups ?? {}).flat().find((profile) => profile.profile_id === selectedId && profile.profile_type === profileType);
-  const materialKey = canonicalFilamentType(material);
-  const materialMatches = materialKey && profiles
-    ? [groups?.selected_printer ?? [], groups?.unclassified ?? []].flat().filter((profile) =>
-      profile.profile_type === 'filament' && profile.classification.selectable
-      && catalogFilamentMaterial(profiles.find((item) => item.profile_id === profile.profile_id
-        && item.revision_id === profile.revision_id)) === materialKey)
-    : [];
-  const visibleMaterialMatches = materialMatches.filter(matches);
-  const matchedIds = new Set(materialMatches.map((profile) => profile.profile_id));
+  const selected = Object.values(groups ?? {}).flat().find((profile) => profile.profile_id === selectedId && profile.profile_type === 'process');
   const groupedProfiles = groupOrder
     .map((group) => ({
       group,
-      profiles: (groups?.[group] ?? []).filter((profile) => matches(profile) && !matchedIds.has(profile.profile_id)),
+      profiles: (groups?.[group] ?? []).filter(matches),
     }))
     .filter((entry) => entry.profiles.length > 0);
 
   return <fieldset className="rounded border border-bambu-dark-tertiary p-2">
     <legend className="px-1 text-xs font-medium text-white">{legend}</legend>
     <p className="mb-1 break-words text-xs text-white" aria-live="polite">Selected: {selected?.display_name ?? 'None'}</p>
-    {hint && <p className="mb-1 break-words text-xs text-amber-300">{hint}</p>}
     <div className="space-y-2">
-      {visibleMaterialMatches.length > 0 && <ProfileList
-        label={`${material} matches (${visibleMaterialMatches.length})`}
-        group={null}
-        profiles={visibleMaterialMatches}
-        search={term}
-        selectedId={selectedId}
-        disabled={disabled}
-        onChoose={onChoose}
-      />}
       {groupedProfiles.map(({ group, profiles }) => {
         if (group === 'selected_printer') {
           return <ProfileList
@@ -286,7 +269,7 @@ function ProfileGroups({
           />
         </details>;
       })}
-      {visibleMaterialMatches.length === 0 && groupedProfiles.length === 0 && <p className="text-xs text-bambu-gray">No profiles</p>}
+      {groupedProfiles.length === 0 && <p className="text-xs text-bambu-gray">No profiles</p>}
     </div>
   </fieldset>;
 }
@@ -301,7 +284,7 @@ function ProfileList({
   onChoose,
 }: {
   label?: string;
-  group: keyof SlicerCatalogGroups | null;
+  group: keyof SlicerCatalogGroups;
   profiles: SlicerCatalogClassification[];
   search: string;
   selectedId: number | null;
@@ -313,8 +296,7 @@ function ProfileList({
     {profiles.length === 0 && <p className="text-xs text-bambu-gray">No profiles</p>}
     {profiles.map((profile) => {
       const match = profileNameMatch(profile.display_name, search);
-      const profileGroup = group ?? profile.classification.group;
-      const profileDisabled = disabled || profileGroup === 'other_installed_printers' || profileGroup === 'incompatible' || !profile.classification.selectable;
+      const profileDisabled = disabled || group === 'other_installed_printers' || group === 'incompatible' || !profile.classification.selectable;
       return <label key={profile.profile_id} className={`flex items-start gap-2 rounded px-1 py-1 text-xs ${profileDisabled ? 'text-bambu-gray/60' : 'text-white'}`}>
         <input
           type="radio"
@@ -323,10 +305,10 @@ function ProfileList({
           onChange={() => onChoose(profile)}
         />
         <span className="min-w-0 flex-1 break-words">
-          <span className="block">{!match ? profile.display_name : <>{profile.display_name.slice(0, match.index)}<mark className="rounded-sm bg-bambu-green/20 text-inherit">{match[0]}</mark>{profile.display_name.slice(match.index + match[0].length)}</>} · {profile.source}</span>
+          <span className="block"><MatchedName name={profile.display_name} match={match} /> · {profile.source}</span>
           {profile.classification.reason_details.length > 0 && (
-            <span className={profileGroup === 'unclassified' ? 'text-amber-300' : 'text-bambu-gray'}>
-              {profileGroup === 'unclassified' ? 'Manual confirmation required · ' : ''}
+            <span className={group === 'unclassified' ? 'text-amber-300' : 'text-bambu-gray'}>
+              {group === 'unclassified' ? 'Manual confirmation required · ' : ''}
               {profile.classification.reason_details.join(', ')}
             </span>
           )}
@@ -334,4 +316,144 @@ function ProfileList({
       </label>;
     })}
   </div>;
+}
+
+type FilamentCompatibility = 'compatible' | 'confirm' | 'other_printer' | 'incompatible';
+
+function filamentCompatibility(profile: SlicerCatalogClassification): FilamentCompatibility {
+  const { group, selectable, acknowledgement_required: acknowledgementRequired } = profile.classification;
+  if (group === 'other_installed_printers') return 'other_printer';
+  if (group === 'incompatible' || !selectable) return 'incompatible';
+  return acknowledgementRequired || group === 'unclassified' ? 'confirm' : 'compatible';
+}
+
+function filamentGroupLabel(t: TFunction, key: FilamentGroupKey): string {
+  switch (key) {
+    case 'loaded': return t('slicerReadiness.loadedInPrinter');
+    case 'other': return t('slicerReadiness.materialOther');
+    case 'unknown': return t('slicerReadiness.unknownMaterial');
+    default: return key;
+  }
+}
+
+function filamentReason(t: TFunction, profile: SlicerCatalogClassification): string {
+  const details = profile.classification.reason_details.join(', ');
+  if (profile.classification.group !== 'unclassified') return details;
+  return [t('slicerReadiness.manualConfirmation'), details].filter(Boolean).join(' · ');
+}
+
+function FilamentProfileGroups({
+  legend,
+  groups,
+  profiles,
+  material,
+  hint,
+  loadedMaterials,
+  selectedId,
+  search,
+  disabled,
+  onChoose,
+}: {
+  legend: string;
+  groups: SlicerCatalogGroups | undefined;
+  profiles: CatalogSliceSelectionState['catalogProfiles'];
+  material: string;
+  hint?: string;
+  loadedMaterials: string[];
+  selectedId: number | null;
+  search: string;
+  disabled: boolean;
+  onChoose: (profile: SlicerCatalogClassification) => void;
+}) {
+  const { t } = useTranslation();
+  const term = search.trim();
+  const selected = Object.values(groups ?? {}).flat().find((profile) => profile.profile_id === selectedId && profile.profile_type === 'filament');
+  const candidates = groupOrder.flatMap((group) => (groups?.[group] ?? [])
+    .filter((profile) => profile.profile_type === 'filament' && (!term || profileNameMatch(profile.display_name, term) !== null))
+    .map((profile) => ({
+      profile,
+      material: catalogFilamentMaterial(profiles?.find((item) => item.profile_id === profile.profile_id && item.revision_id === profile.revision_id)),
+    })));
+  const sections = groupFilamentCandidates(candidates, canonicalFilamentType(material), loadedMaterials);
+
+  return <fieldset className="rounded border border-bambu-dark-tertiary p-2">
+    <legend className="px-1 text-xs font-medium text-white">{legend}</legend>
+    <p className="mb-1 break-words text-xs text-white" aria-live="polite">Selected: {selected?.display_name ?? 'None'}</p>
+    {hint && <p className="mb-1 break-words text-xs text-amber-300">{hint}</p>}
+    <div className="space-y-2">
+      {sections.map(({ key, items }) => {
+        const label = `${filamentGroupLabel(t, key)} (${items.length})`;
+        return <div key={key} role="group" aria-label={label} className="space-y-1 py-1">
+          <p className="text-xs font-medium text-bambu-gray-light">{label}</p>
+          {items.map((item) => <FilamentRow
+            key={item.profile.profile_id}
+            profile={item.profile}
+            material={item.material}
+            selectedId={selectedId}
+            search={term}
+            disabled={disabled}
+            onChoose={onChoose}
+          />)}
+        </div>;
+      })}
+      {sections.length === 0 && <p className="text-xs text-bambu-gray">No profiles</p>}
+    </div>
+  </fieldset>;
+}
+
+function FilamentRow({
+  profile,
+  material,
+  selectedId,
+  search,
+  disabled,
+  onChoose,
+}: {
+  profile: SlicerCatalogClassification;
+  material: string;
+  selectedId: number | null;
+  search: string;
+  disabled: boolean;
+  onChoose: (profile: SlicerCatalogClassification) => void;
+}) {
+  const { t } = useTranslation();
+  const reasonId = useId();
+  const match = profileNameMatch(profile.display_name, search);
+  const compatibility = filamentCompatibility(profile);
+  const rowDisabled = disabled || compatibility === 'other_printer' || compatibility === 'incompatible';
+  const reason = filamentReason(t, profile);
+  const compatibilityLabel = {
+    compatible: t('slicerReadiness.rowCompatible'),
+    confirm: t('slicerReadiness.rowNeedsConfirmation'),
+    other_printer: t('slicerReadiness.rowOtherPrinter'),
+    incompatible: t('slicerReadiness.rowIncompatible'),
+  }[compatibility];
+  const compatibilityTone = {
+    compatible: 'text-green-300',
+    confirm: 'text-amber-300',
+    other_printer: 'text-bambu-gray',
+    incompatible: 'text-red-300',
+  }[compatibility];
+
+  return <label
+    title={reason || undefined}
+    className={`flex items-start gap-2 rounded px-1 py-1 text-xs ${rowDisabled ? 'text-bambu-gray/60' : 'text-white'}`}
+  >
+    <input
+      type="radio"
+      checked={selectedId === profile.profile_id}
+      disabled={rowDisabled}
+      aria-describedby={reason ? reasonId : undefined}
+      onChange={() => onChoose(profile)}
+    />
+    <span className="min-w-0 flex-1 break-words">
+      <span className="block"><MatchedName name={profile.display_name} match={match} /></span>
+      <span className="mt-0.5 flex flex-wrap items-center gap-x-2 gap-y-0.5 text-[11px]">
+        <span className="rounded border border-white/15 px-1 font-medium uppercase text-white">{material || t('slicerReadiness.unknownMaterial')}</span>
+        <span className="text-bambu-gray">{t(sourceTierKey[profile.source])}</span>
+        <span className={compatibilityTone}>{compatibilityLabel}</span>
+      </span>
+    </span>
+    {reason && <span id={reasonId} hidden>{reason}</span>}
+  </label>;
 }

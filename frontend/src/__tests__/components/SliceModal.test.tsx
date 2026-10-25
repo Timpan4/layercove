@@ -298,7 +298,7 @@ describe('SliceModal catalog selection', () => {
     renderModal();
     const user = await chooseTarget();
     const slots = [1, 2, 3].map((index) => screen.getByRole('group', { name: `Filament ${index} · PLA` }));
-    expect(within(slots[0]).getByText('PLA matches (1)')).toBeVisible();
+    expect(within(slots[0]).getByRole('group', { name: 'PLA (1)' })).toBeVisible();
     expect(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ })).toBeVisible();
     expect(within(slots[0]).getByText(/Selected: None/)).toBeVisible();
 
@@ -336,8 +336,8 @@ describe('SliceModal catalog selection', () => {
     renderModal();
     const user = await chooseTarget();
     const firstSlot = screen.getByRole('group', { name: 'Filament 1 · PLA' });
-    expect(within(firstSlot).queryByText('PLA matches (1)')).not.toBeInTheDocument();
-    await user.click(within(firstSlot).getByText('Unclassified (1)'));
+    expect(within(firstSlot).queryByRole('group', { name: 'PLA (1)' })).not.toBeInTheDocument();
+    expect(within(firstSlot).getByRole('group', { name: 'Unknown material (1)' })).toBeVisible();
     await user.click(within(firstSlot).getByRole('radio', { name: /Former PLA profile/ }));
     expect(screen.queryByRole('button', { name: /Apply Former PLA profile/ })).not.toBeInTheDocument();
     await waitFor(() => expect(mockApi.listSlicerCatalogProfiles).toHaveBeenCalledTimes(2));

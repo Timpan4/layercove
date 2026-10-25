@@ -140,6 +140,11 @@ export function useCatalogSliceSelection({
     : selectedPrinter?.provider === 'bambu' ? 'bambu_3mf' as const : null;
   const processPreferenceId = preferenceProfileId(preferencesQuery.data, 'process_profile');
   const filamentPreferenceId = preferenceProfileId(preferencesQuery.data, 'filament_profile');
+  // Spools assigned to the selected printer's slots are loaded; pending slots are not yet.
+  const loadedFilamentMaterials = useMemo(() => [...new Set((assignmentsQuery.data ?? [])
+    .filter((assignment) => assignment.spool && !assignment.pending_config)
+    .map((assignment) => canonicalFilamentType(assignment.spool?.material))
+    .filter(Boolean))], [assignmentsQuery.data]);
 
   const setPrinterId = useCallback((next: number | null) => {
     setPrinterIdState(next);
@@ -423,6 +428,7 @@ export function useCatalogSliceSelection({
     activeBindings,
     printerBindings,
     destinationArtifactKind,
+    loadedFilamentMaterials,
     printerId,
     setPrinterId,
     bindingId,

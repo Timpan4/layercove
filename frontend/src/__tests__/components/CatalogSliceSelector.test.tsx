@@ -1,8 +1,8 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { MemoryRouter } from 'react-router-dom';
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { api, type Printer, type SlicerCatalogBinding, type SlicerCatalogClassification, type SlicerCatalogGroups, type SlicerCatalogProfile } from '../../api/client';
+import { api, type Printer, type SlicerCatalogBinding, type SlicerCatalogClassification, type SlicerCatalogGroups, type SlicerCatalogProfile, type SpoolAssignment } from '../../api/client';
 import { CatalogSliceSelector } from '../../components/CatalogSliceSelector';
 import { useCatalogSliceSelection, type CatalogSliceSelectionState } from '../../hooks/useCatalogSliceSelection';
 
@@ -18,7 +18,7 @@ function renderReadySelection(reason: string) {
   };
   const selection: CatalogSliceSelectionState = {
     activePrinters: [], activeBindings: [binding], printerBindings: [binding],
-    destinationArtifactKind: 'klipper_gcode', printerId: 1, bindingId: 5, selectedBinding: binding,
+    destinationArtifactKind: 'klipper_gcode', loadedFilamentMaterials: [], printerId: 1, bindingId: 5, selectedBinding: binding,
     setPrinterId: vi.fn(), setBindingId: vi.fn(), groups: undefined, catalogProfiles: [],
     allClassifications: [], processChoice: null, filamentChoices: [], selectedPrinterPreset: null,
     selectedPrinterProfile: undefined, selectedFilamentProfiles: [], equivalentFilamentSlotCounts: [],
@@ -76,20 +76,52 @@ function selectable(profileId: number, profileType: SlicerCatalogClassification[
   };
 }
 
+function candidate(
+  profileId: number,
+  displayName: string,
+  group: keyof SlicerCatalogGroups,
+  reasonDetails: string[] = [],
+): SlicerCatalogClassification {
+  return {
+    profile_id: profileId, revision_id: profileId, profile_type: 'filament', display_name: displayName,
+    source: 'local', account_id: 1, account_name: null, stale: false,
+    classification: {
+      group, compatibility: group === 'selected_printer' ? 'match' : 'unknown',
+      readiness: group === 'unclassified' ? 'acknowledgement_required' : group === 'selected_printer' ? 'ready' : 'blocked',
+      reason_codes: [], reason_details: reasonDetails,
+      selectable: group === 'selected_printer' || group === 'unclassified',
+      auto_selectable: group === 'selected_printer', acknowledgement_required: group === 'unclassified',
+    },
+  };
+}
+
+function loadedSpool(material: string, trayId: number): SpoolAssignment {
+  return {
+    id: trayId, spool_id: 900 + trayId, printer_id: 1, printer_name: 'P1S', ams_id: 0, tray_id: trayId,
+    fingerprint_color: null, fingerprint_type: material, configured: true, created_at: '2026-10-25T00:00:00Z',
+    spool: { id: 900 + trayId, material, brand: null, rgba: null } as NonNullable<SpoolAssignment['spool']>,
+  };
+}
+
 function mockCatalog({
   filaments,
   filamentGroup,
   defaultFilamentProfileId = null,
+  extraGroups = {},
+  assignments = [],
 }: {
   filaments: SlicerCatalogProfile[];
   filamentGroup: SlicerCatalogClassification[];
   defaultFilamentProfileId?: number | null;
+  extraGroups?: Partial<SlicerCatalogGroups>;
+  assignments?: SpoolAssignment[];
 }) {
   const groups: SlicerCatalogGroups = {
     selected_printer: [selectable(12, 'process', 'P1S process'), ...filamentGroup],
     other_installed_printers: [],
     unclassified: [],
     incompatible: [],
+    ...extraGroups,
   };
   vi.spyOn(api, 'getPrinters').mockResolvedValue([printer]);
   vi.spyOn(api, 'listSlicerCatalogProfiles').mockResolvedValue([
@@ -101,7 +133,7 @@ function mockCatalog({
   vi.spyOn(api, 'listSlicerCatalogBindings').mockResolvedValue([{ ...binding, default_filament_profile_id: defaultFilamentProfileId }]);
   vi.spyOn(api, 'getSlicerCatalogGroups').mockResolvedValue(groups);
   vi.spyOn(api, 'listSlicerCatalogPreferences').mockResolvedValue([]);
-  vi.spyOn(api, 'getAssignments').mockResolvedValue([]);
+  vi.spyOn(api, 'getAssignments').mockResolvedValue(assignments);
   vi.spyOn(api, 'getSpoolmanSlotAssignments').mockResolvedValue([]);
 }
 
@@ -188,5 +220,104 @@ describe('CatalogSliceSelector filament choice', () => {
     expect(await screen.findByText('Filament 1: source says PLA, profile is TPU. Slice anyway?')).toBeInTheDocument();
     expect(screen.getByRole('checkbox', { name: /Slice anyway\?/ })).not.toBeChecked();
     expect(screen.getByText('Confirm the warning below before slicing.')).toBeInTheDocument();
+  });
+});
+
+function filamentSection() {
+  return screen.getByRole('group', { name: 'Filament profile' });
+}
+
+function filamentSections() {
+  return within(filamentSection()).getAllByRole('group').map((section) => section.getAttribute('aria-label'));
+}
+
+describe('CatalogSliceSelector filament groups', () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const materialCatalog = (assignments: SpoolAssignment[] = []) => mockCatalog({
+    filaments: [
+      profileRecord(22, 'filament', 'Voron Generic PLA', 'PLA'),
+      profileRecord(23, 'filament', 'Voron PETG Basic', 'PETG'),
+      profileRecord(24, 'filament', 'Inslogic 95A TPU', 'TPU'),
+      profileRecord(25, 'filament', 'Polymaker PC', 'PC'),
+      profileRecord(26, 'filament', 'Unlabelled template'),
+    ],
+    filamentGroup: [
+      candidate(22, 'Voron Generic PLA', 'selected_printer', ['administrator mapping', 'nozzle match']),
+      candidate(23, 'Voron PETG Basic', 'selected_printer'),
+    ],
+    extraGroups: {
+      unclassified: [
+        candidate(24, 'Inslogic 95A TPU', 'unclassified', ['compatibility unknown', 'nozzle match']),
+        candidate(26, 'Unlabelled template', 'unclassified'),
+      ],
+      other_installed_printers: [candidate(25, 'Polymaker PC', 'other_installed_printers', ['bound to another printer'])],
+    },
+    assignments,
+  });
+
+  // Failure mode: 28 unsorted rows under "Unclassified" make PLA hard to find; the
+  // groups must follow material, with unknown material last and empty groups hidden.
+  it('groups filament candidates by material with unknown material last', async () => {
+    materialCatalog();
+    await renderFlow(stlSlots);
+
+    await screen.findByRole('radio', { name: /Voron Generic PLA/ });
+    await waitFor(() => expect(filamentSections()).toEqual(['PLA (1)', 'PETG (1)', 'TPU (1)', 'Other (1)', 'Unknown material (1)']));
+    const pla = within(filamentSection()).getByRole('group', { name: 'PLA (1)' });
+    expect(within(pla).getByRole('radio', { name: /Voron Generic PLA/ })).toBeInTheDocument();
+    expect(within(pla).getByText('PLA', { exact: true })).toBeInTheDocument();
+    expect(within(pla).getByText('Imported', { exact: true })).toBeInTheDocument();
+    expect(within(filamentSection()).getByRole('group', { name: 'Other (1)' }).querySelector('input')).toBeDisabled();
+  });
+
+  // Failure mode: provenance and compatibility reasons are printed inline, so each row reads
+  // as a sentence of jargon. The reasons must stay available but out of the visible text.
+  it('keeps compatibility reasons in the tooltip and accessible description, not in visible text', async () => {
+    materialCatalog();
+    await renderFlow(stlSlots);
+
+    const tpu = await screen.findByRole('radio', { name: /Inslogic 95A TPU/ });
+    expect(tpu).toHaveAccessibleDescription('Manual confirmation required · compatibility unknown, nozzle match');
+    expect(screen.getByRole('radio', { name: /Voron Generic PLA/ })).toHaveAccessibleDescription('administrator mapping, nozzle match');
+    expect(screen.getByTitle('Manual confirmation required · compatibility unknown, nozzle match')).toBeInTheDocument();
+    const reasonText = screen.queryAllByText(/Manual confirmation required|administrator mapping|compatibility unknown/);
+    reasonText.forEach((element) => expect(element).not.toBeVisible());
+  });
+
+  // Failure mode: the printer already holds the source material, but its profiles sit
+  // among 28 other rows, so the user has to search for the spool they already loaded.
+  it('lists profiles for the loaded spool of the source material first without repeating them', async () => {
+    materialCatalog([loadedSpool('PLA', 0)]);
+    await renderFlow(plaSlots);
+
+    await waitFor(() => expect(filamentSections()).toEqual(['Loaded in printer (1)', 'PETG (1)', 'TPU (1)', 'Other (1)', 'Unknown material (1)']));
+    const loaded = within(filamentSection()).getByRole('group', { name: 'Loaded in printer (1)' });
+    expect(within(loaded).getByRole('radio', { name: /Voron Generic PLA/ })).toBeInTheDocument();
+  });
+
+  // Failure mode: a loaded PETG spool is offered for a PLA slot, which would invite a
+  // material mismatch that the readiness check then has to reject.
+  it('does not offer a loaded spool of another material for the source slot', async () => {
+    materialCatalog([loadedSpool('PETG', 1)]);
+    await renderFlow(plaSlots);
+
+    await screen.findByRole('radio', { name: /Voron Generic PLA/ });
+    await waitFor(() => expect(filamentSections()).toEqual(['PLA (1)', 'PETG (1)', 'TPU (1)', 'Other (1)', 'Unknown material (1)']));
+  });
+
+  // Failure mode: search keeps matching profiles in every group, so a name search narrows the
+  // grouped list instead of leaving headers for empty groups.
+  it('filters profiles by name across the material groups', async () => {
+    materialCatalog();
+    await renderFlow(stlSlots);
+
+    await screen.findByRole('radio', { name: /Voron Generic PLA/ });
+    fireEvent.change(screen.getByRole('searchbox', { name: 'Search catalog profiles' }), { target: { value: 'petg' } });
+
+    await waitFor(() => expect(filamentSections()).toEqual(['PETG (1)']));
+    expect(screen.queryByRole('radio', { name: /Voron Generic PLA/ })).not.toBeInTheDocument();
   });
 });

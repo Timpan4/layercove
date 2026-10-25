@@ -180,6 +180,7 @@ const DE_COGNATES = [
 
 // French cognates — many UI labels overlap with English exactly.
 const FR_COGNATES = [
+  'Compatible', 'Incompatible',  // real French words (slicer profile compatibility labels)
   'Bambu Cloud', 'Orca Cloud',  // brand names — same in every locale
   'AMS Filament Backup',  // Bambu Lab product/firmware feature name
   'Status', 'Tag', 'Tags', 'Online', 'Offline', 'Standard', 'Filament',
@@ -347,6 +348,7 @@ const KO_COGNATES = [
 const ES_COGNATES = [
   'Bambu Cloud', 'Orca Cloud',  // brand names — same in every locale
   'AMS Filament Backup',  // Bambu Lab product/firmware feature name
+  'Compatible', 'Incompatible',  // real Spanish words (slicer profile compatibility labels)
   'Pipeline', 'Pipelines',  // #1425 — Slicer Pipelines (ES)
   'round robin',  // borrowed English term used as-is in Spanish tech contexts
   'Error', 'Firmware', 'General', 'Control', 'Total', 'total', 'Material',

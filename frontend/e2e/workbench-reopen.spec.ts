@@ -111,7 +111,7 @@ for (const width of [1280, 390]) {
     await expect(page.getByText('Selected: 0.20mm Standard @Voron', { exact: true })).toBeVisible();
     await expect(page.getByText('Selected: Inslogic 95A TPU', { exact: true })).toBeVisible();
     const filaments = page.getByRole('group', { name: 'Filament profile', exact: true });
-    await filaments.getByText('Unclassified (3)', { exact: true }).click();
+    await expect(filaments.getByRole('group', { name: 'Unknown material (3)', exact: true })).toBeVisible();
     await expect(filaments.getByRole('radio', { name: /Generic ABS template/ })).toBeVisible();
     await expect(filaments.getByRole('radio', { name: /Generic PLA/ })).toBeVisible();
     await expect(filaments.locator('mark')).toHaveText(['pla', 'PLA', 'PLA']);
@@ -222,7 +222,7 @@ for (const width of [1280, 390]) {
     expect(fixture.sliceRequests).toBe(0);
   });
 
-  test(`quick slicing keeps full filament names and compatibility reasons readable at ${width}px`, async ({ page }) => {
+  test(`quick slicing keeps full filament names readable and compatibility reasons in the tooltip at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await installFixture(page, { fresh: true, longFilament: true });
     await page.goto('/files');
@@ -232,10 +232,12 @@ for (const width of [1280, 390]) {
     await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
     await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
     const filamentGroup = page.getByRole('group', { name: 'Filament profile', exact: true });
-    await filamentGroup.getByText('Unclassified (1)', { exact: true }).click();
-    const name = filamentGroup.getByText(`${longFilamentName} · orca_cloud`, { exact: true });
-    const reason = filamentGroup.getByText(`Manual confirmation required · ${longCompatibilityReason}`, { exact: true });
-    for (const text of [name, reason]) {
+    await expect(filamentGroup.getByRole('group', { name: 'Unknown material (2)', exact: true })).toBeVisible();
+    const name = filamentGroup.getByText(longFilamentName, { exact: true });
+    const row = filamentGroup.getByRole('radio', { name: new RegExp(longFilamentName) });
+    await expect(row).toHaveAccessibleDescription(`Manual confirmation required · ${longCompatibilityReason}`);
+    await expect(filamentGroup.getByTitle(`Manual confirmation required · ${longCompatibilityReason}`, { exact: true })).toBeVisible();
+    for (const text of [name]) {
       await expect(text).toBeVisible();
       const fits = await text.evaluate((element) => {
         const range = document.createRange();
