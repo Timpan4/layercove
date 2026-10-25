@@ -37,9 +37,9 @@ import { Button } from '../components/Button';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import { api, type ArchiveSlim } from '../api/client';
-import { inventoryData, inventoryQueryKeys, totalConsumedGrams, useInventorySource } from '../api/inventoryData';
+import { consumedGramsByMaterial, inventoryData, inventoryQueryKeys, totalConsumedGrams, useInventorySource } from '../api/inventoryData';
 import { PrintCalendar } from '../components/PrintCalendar';
-import { FilamentTrends } from '../components/FilamentTrends';
+import { FilamentTrends, type SpoolFallback } from '../components/FilamentTrends';
 import { Dashboard, type DashboardWidget } from '../components/Dashboard';
 import { getCurrencySymbol } from '../utils/currency';
 import { formatWeight, resolveFilamentGrams } from '../utils/weight';
@@ -133,7 +133,7 @@ type QuickStatItem = {
 function QuickStatsWidget({
   stats,
   currency,
-  spoolConsumedGrams,
+  spoolFallback,
   showEnergy,
 }: {
   stats: {
@@ -148,14 +148,15 @@ function QuickStatsWidget({
     energy_data_warming_up?: boolean;
   } | undefined;
   currency: string;
-  spoolConsumedGrams: number;
+  spoolFallback: SpoolFallback | undefined;
   showEnergy: boolean;
 }) {
   const { t } = useTranslation();
 
   const warmingUp = stats?.energy_data_warming_up === true;
   const warmingUpTooltip = warmingUp ? t('stats.energyWarmingUpTooltip') : undefined;
-  const filament = resolveFilamentGrams(stats?.total_filament_grams || 0, spoolConsumedGrams);
+  const filament = resolveFilamentGrams(stats?.total_filament_grams || 0, spoolFallback?.grams);
+  const untrackedLabel = spoolFallback ? t('stats.notTracked') : t('stats.notTrackedForRange');
 
   const coreItems: QuickStatItem[] = [
     { icon: Package, color: 'text-bambu-green', label: t('stats.totalPrints'), value: `${stats?.total_prints || 0}` },
@@ -164,7 +165,7 @@ function QuickStatsWidget({
       icon: Package,
       color: 'text-orange-600 dark:text-orange-400',
       label: t('stats.filamentUsed'),
-      value: filament ? formatWeight(filament.grams) : t('stats.notTracked'),
+      value: filament ? formatWeight(filament.grams) : untrackedLabel,
       caption: filament?.fromSpool ? t('stats.fromSpoolTracking') : undefined,
     },
     { icon: DollarSign, color: 'text-green-600 dark:text-green-400', label: t('stats.filamentCost'), value: `${currency} ${stats?.total_cost?.toFixed(2) ?? '0.00'}` },
@@ -756,13 +757,13 @@ function FilamentTrendsWidget({
   currency,
   dateFrom,
   dateTo,
-  spoolConsumedGrams,
+  spoolFallback,
 }: {
   archives: Parameters<typeof FilamentTrends>[0]['archives'];
   currency: string;
   dateFrom?: string;
   dateTo?: string;
-  spoolConsumedGrams: number;
+  spoolFallback?: SpoolFallback;
 }) {
   const { t } = useTranslation();
   if (!archives || archives.length === 0) {
@@ -774,7 +775,7 @@ function FilamentTrendsWidget({
       currency={currency}
       dateFrom={dateFrom}
       dateTo={dateTo}
-      spoolConsumedGrams={spoolConsumedGrams}
+      spoolFallback={spoolFallback}
     />
   );
 }
@@ -1100,7 +1101,10 @@ export function StatsPage() {
     queryFn: inventoryData(source).getSpools,
     enabled: sourceReady,
   });
-  const spoolConsumedGrams = totalConsumedGrams(spools ?? []);
+  // Spool counters are all-time and not per user, so they stand in for archive weight only in the all-time, all-users view.
+  const spoolFallback: SpoolFallback | undefined = timeframe.preset === 'all-time' && selectedUserId === null
+    ? { grams: totalConsumedGrams(spools ?? []), gramsByMaterial: consumedGramsByMaterial(spools ?? []) }
+    : undefined;
 
   const { data: smartPlugs } = useQuery({
     queryKey: ['smart-plugs'],
@@ -1179,7 +1183,7 @@ export function StatsPage() {
     {
       id: 'quick-stats',
       title: t('stats.quickStats'),
-      component: <QuickStatsWidget stats={stats} currency={currency} spoolConsumedGrams={spoolConsumedGrams} showEnergy={showEnergy} />,
+      component: <QuickStatsWidget stats={stats} currency={currency} spoolFallback={spoolFallback} showEnergy={showEnergy} />,
       defaultSize: 2,
     },
     {
@@ -1221,7 +1225,7 @@ export function StatsPage() {
     {
       id: 'filament-trends',
       title: t('stats.filamentTrends'),
-      component: <FilamentTrendsWidget archives={archives || []} currency={currency} dateFrom={effectiveDateRange.dateFrom} dateTo={effectiveDateRange.dateTo} spoolConsumedGrams={spoolConsumedGrams} />,
+      component: <FilamentTrendsWidget archives={archives || []} currency={currency} dateFrom={effectiveDateRange.dateFrom} dateTo={effectiveDateRange.dateTo} spoolFallback={spoolFallback} />,
       defaultSize: 4,
     },
   ];

@@ -7,6 +7,7 @@ interface StatsFixture {
   archiveGrams: number;
   spools: unknown[];
   smartPlugs: unknown[];
+  authEnabled?: boolean;
 }
 
 const archiveStats = (totalFilamentGrams: number) => ({
@@ -16,24 +17,27 @@ const archiveStats = (totalFilamentGrams: number) => ({
   time_accuracy_by_printer: null, total_energy_kwh: 0, total_energy_cost: 0,
 });
 
-// Bambu prints archived without a 3MF carry no filament weight.
-const archivedPrints = [1, 2].map((id) => ({
+// Bambu prints archived without a 3MF carry no filament weight. Otherwise the
+// archive grams are split across the two prints, as the trend cards sum them.
+const archivedPrints = (archiveGrams: number) => [1, 2].map((id) => ({
   id, created_at: '2026-10-01T10:00:00Z', started_at: '2026-10-01T10:00:00Z',
   completed_at: '2026-10-01T11:00:00Z', print_name: `Bambu print ${id}`, status: 'completed',
-  printer_id: 1, filament_type: 'PLA', filament_color: '#00FF00', filament_used_grams: 0,
+  printer_id: 1, filament_type: 'PLA', filament_color: '#00FF00', filament_used_grams: archiveGrams / 2,
   actual_time_seconds: 3600, print_time_seconds: 3600, cost: 0, quantity: 1,
 }));
 
-const spool = (weightUsed: number, archivedAt: string | null = null) => ({
-  id: 1, material: 'PLA', brand: 'Bambu Lab', color_name: 'Black', rgba: '000000FF',
+const spool = (weightUsed: number, archivedAt: string | null = null, material = 'PLA') => ({
+  id: 1, material, brand: 'Bambu Lab', color_name: 'Black', rgba: '000000FF',
   label_weight: 1000, weight_used: weightUsed, weight_used_baseline: 0,
   archived_at: archivedAt, created_at: '2026-01-01T00:00:00Z', updated_at: '2026-01-01T00:00:00Z',
 });
 
 async function openStats(page: Page, fixture: StatsFixture) {
-  await page.addInitScript(() => {
+  const authEnabled = fixture.authEnabled === true;
+  await page.addInitScript((authEnabled: boolean) => {
     localStorage.removeItem('bambusy-stats-timeframe');
-  });
+    if (authEnabled) localStorage.setItem('auth_token', 'fictional-spool-token');
+  }, authEnabled);
   await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/\/$/, '');
@@ -41,10 +45,12 @@ async function openStats(page: Page, fixture: StatsFixture) {
       return route.fulfill({ status: 405, json: { detail: 'Read-only spool fallback fixture' } });
     }
     let body: unknown = [];
-    if (path === '/api/v1/auth/status') body = { auth_enabled: false, requires_setup: false };
+    if (path === '/api/v1/auth/status') body = { auth_enabled: authEnabled, requires_setup: false };
+    if (path === '/api/v1/auth/me') body = { id: 901, username: 'Fixture Alice', permissions: ['stats:read', 'stats:filter_by_user', 'archives:read_all'], groups: [] };
+    if (path === '/api/v1/users') body = [{ id: 901, username: 'Fixture Alice' }, { id: 902, username: 'Fixture Bob' }];
     if (path === '/api/v1/settings') body = { check_updates: false };
     if (path === '/api/v1/archives/stats') body = archiveStats(fixture.archiveGrams);
-    if (path === '/api/v1/archives/slim') body = archivedPrints;
+    if (path === '/api/v1/archives/slim') body = archivedPrints(fixture.archiveGrams);
     if (path === '/api/v1/archives/analysis/failures') body = {
       period_days: 30, total_prints: 0, outcome_prints: 0, failed_prints: 0,
       failure_rate: 0, failures_by_reason: {}, failures_by_filament: {},
@@ -61,10 +67,27 @@ async function openStats(page: Page, fixture: StatsFixture) {
   await page.waitForLoadState('networkidle');
 }
 
+async function applyCustomRange(page: Page) {
+  await page.getByRole('button', { name: 'All Time', exact: true }).click();
+  await page.getByRole('button', { name: 'Custom Range', exact: true }).click();
+  await page.getByLabel('From', { exact: true }).fill('2026-10-01');
+  await page.getByLabel('To', { exact: true }).fill('2026-10-31');
+  await page.getByRole('button', { name: 'Apply', exact: true }).click();
+  await page.waitForLoadState('networkidle');
+}
+
+async function filterByUser(page: Page, username: string) {
+  await page.getByRole('button', { name: 'All Users', exact: true }).click();
+  await page.getByRole('button', { name: username, exact: true }).click();
+  await page.waitForLoadState('networkidle');
+}
+
 // Quick Stats tiles: the label's parent holds the label, the value and any caption.
 const tile = (page: Page, label: string) => page.getByText(label, { exact: true }).locator('xpath=..');
 // Filament Trends cards: the caption sits below the header row, so use the card.
 const card = (page: Page, label: string) => page.getByText(label, { exact: true }).locator('xpath=../..');
+// By Material's header is an h4 inside the card's header row.
+const byMaterial = (page: Page) => page.getByRole('heading', { name: 'By Material', exact: true }).locator('xpath=../..');
 
 test.describe('Statistics filament fallback to spool tracking', () => {
   test('shows spool consumption with a caption when archives report no filament weight', async ({ page }) => {
@@ -103,6 +126,84 @@ test.describe('Statistics filament fallback to spool tracking', () => {
     const filament = tile(page, 'Filament Used');
     await expect(filament).toContainText('5.5kg');
     await expect(filament).not.toContainText('from spool tracking');
+  });
+
+  test('keeps Period Filament and By Material on archive weight when archives report filament', async ({ page }) => {
+    await openStats(page, { archiveGrams: 5500, spools: [spool(840)], smartPlugs: [] });
+
+    const period = card(page, 'Period Filament');
+    await expect(period).toContainText('5.5kg');
+    await expect(period).not.toContainText('from spool tracking');
+
+    const materials = byMaterial(page);
+    await expect(materials).toContainText('5.5kg');
+    await expect(materials).not.toContainText('from spool tracking');
+  });
+
+  test('shows Period Filament and By Material from spool consumption when archives report no weight', async ({ page }) => {
+    await openStats(page, {
+      archiveGrams: 0,
+      spools: [spool(500), spool(340, '2026-09-01T00:00:00Z', 'PETG')],
+      smartPlugs: [],
+    });
+
+    const period = card(page, 'Period Filament');
+    await expect(period).toContainText('840g');
+    await expect(period).toContainText('from spool tracking');
+
+    const materials = byMaterial(page);
+    await expect(materials).toContainText('PLA');
+    await expect(materials).toContainText('500g');
+    await expect(materials).toContainText('PETG');
+    await expect(materials).toContainText('340g');
+    await expect(materials).toContainText('from spool tracking');
+  });
+
+  test('shows Not tracked in Period Filament and By Material when neither source reports filament', async ({ page }) => {
+    await openStats(page, { archiveGrams: 0, spools: [spool(0)], smartPlugs: [] });
+
+    const period = card(page, 'Period Filament');
+    await expect(period).toContainText('Not tracked');
+    await expect(period).not.toContainText('0g');
+    await expect(period).not.toContainText('for this range');
+
+    const materials = byMaterial(page);
+    await expect(materials).toContainText('Not tracked');
+    await expect(materials).not.toContainText('PLA');
+    await expect(materials).not.toContainText('from spool tracking');
+  });
+
+  test('shows Not tracked for this range instead of the all-time spool total under a custom range', async ({ page }) => {
+    await openStats(page, {
+      archiveGrams: 0,
+      spools: [spool(500), spool(340, '2026-09-01T00:00:00Z', 'PETG')],
+      smartPlugs: [],
+    });
+    await applyCustomRange(page);
+
+    const filament = tile(page, 'Filament Used');
+    await expect(filament).toContainText('Not tracked for this range');
+    await expect(filament).not.toContainText('840g');
+    await expect(filament).not.toContainText('from spool tracking');
+
+    await expect(card(page, 'Avg per Print')).toContainText('Not tracked for this range');
+    await expect(card(page, 'Period Filament')).toContainText('Not tracked for this range');
+
+    const materials = byMaterial(page);
+    await expect(materials).toContainText('Not tracked for this range');
+    await expect(materials).not.toContainText('from spool tracking');
+  });
+
+  test('shows Not tracked for this range instead of the all-time spool total under a user filter', async ({ page }) => {
+    await openStats(page, { archiveGrams: 0, spools: [spool(840)], smartPlugs: [], authEnabled: true });
+    await filterByUser(page, 'Fixture Alice');
+
+    const filament = tile(page, 'Filament Used');
+    await expect(filament).toContainText('Not tracked for this range');
+    await expect(filament).not.toContainText('840g');
+    await expect(filament).not.toContainText('from spool tracking');
+
+    await expect(card(page, 'Period Filament')).toContainText('Not tracked for this range');
   });
 });
 

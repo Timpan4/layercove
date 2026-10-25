@@ -1610,6 +1610,7 @@ export default {
     periodCost: 'Coste del periodo',
     avgPerPrint: 'Promedio por impresión',
     notTracked: 'Sin registrar',
+    notTrackedForRange: 'Sin registrar en este periodo',
     fromSpoolTracking: 'del seguimiento de carretes',
     usageOverTime: 'Uso a lo largo del tiempo',
     filamentByWeight: 'Peso',

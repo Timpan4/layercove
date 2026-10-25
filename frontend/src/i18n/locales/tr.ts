@@ -1611,6 +1611,7 @@ export default {
     periodCost: 'Dönem Maliyeti',
     avgPerPrint: 'Baskı Başına Ort.',
     notTracked: 'Takip edilmiyor',
+    notTrackedForRange: 'Bu dönem için takip edilmiyor',
     fromSpoolTracking: 'makara takibinden',
     usageOverTime: 'Zaman İçinde Kullanım',
     filamentByWeight: 'Ağırlık',

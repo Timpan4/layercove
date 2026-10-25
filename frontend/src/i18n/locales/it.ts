@@ -1610,6 +1610,7 @@ export default {
     periodCost: 'Costo',
     avgPerPrint: 'Media per stampa',
     notTracked: 'Non tracciato',
+    notTrackedForRange: 'Non tracciato per questo periodo',
     fromSpoolTracking: 'dal tracciamento delle bobine',
     usageOverTime: 'Utilizzo nel tempo',
     filamentByWeight: 'Peso',

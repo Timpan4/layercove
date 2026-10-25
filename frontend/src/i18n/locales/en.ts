@@ -1626,6 +1626,7 @@ export default {
     periodCost: 'Period Cost',
     avgPerPrint: 'Avg per Print',
     notTracked: 'Not tracked',
+    notTrackedForRange: 'Not tracked for this range',
     fromSpoolTracking: 'from spool tracking',
     usageOverTime: 'Usage Over Time',
     filamentByWeight: 'Weight',
