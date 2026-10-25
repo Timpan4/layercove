@@ -5,10 +5,12 @@ import { useTranslation } from 'react-i18next';
 import {
   api,
   type Printer,
+  type PrinterStatus,
   type SlicerCatalogBinding,
   type SlicerCatalogBindingInput,
   type SlicerCatalogClassification,
 } from '../api/client';
+import { queryKeys } from '../api/queryKeys';
 import { useAuth } from '../contexts/AuthContext';
 import { Button } from './Button';
 import { Card, CardContent } from './Card';
@@ -17,16 +19,23 @@ import { displayedSlicerReadiness, slicerReadinessReasons, slicerReadinessState 
 
 const selectClass = 'rounded border border-bambu-dark-tertiary bg-bambu-dark px-2 py-1 text-white';
 const inputClass = `${selectClass} w-24`;
+const DEFAULT_NOZZLE_MM = 0.4;
 
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'Binding request failed';
+function errorMessage(error: unknown, fallback: string) {
+  return error instanceof Error ? error.message : fallback;
 }
 
 function isP1S(printer: Printer) {
   return printer.provider === 'bambu' && /p1s/i.test(`${printer.model ?? ''} ${printer.name}`);
 }
 
+function reportedNozzle(status: PrinterStatus | undefined): number | null {
+  const diameter = Number(status?.nozzles?.[0]?.nozzle_diameter);
+  return Number.isFinite(diameter) && diameter > 0 ? diameter : null;
+}
+
 export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
+  const { t } = useTranslation();
   const location = useLocation();
   const { hasPermission, authEnabled } = useAuth();
   const queryClient = useQueryClient();
@@ -38,6 +47,7 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
   }, [printers, location.hash]);
   const [draft, setDraft] = useState<SlicerCatalogBindingInput | null>(null);
   const [suggestedDraft, setSuggestedDraft] = useState<SlicerCatalogBindingInput | null>(null);
+  const [advancedOpen, setAdvancedOpen] = useState(false);
 
   const profiles = useQuery({
     queryKey: ['slicerCatalogProfiles'],
@@ -47,6 +57,13 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
     queries: activePrinters.map((printer) => ({
       queryKey: ['slicerCatalogBindings', printer.id],
       queryFn: () => api.listSlicerCatalogBindings(printer.id),
+    })),
+  });
+  const statusQueries = useQueries({
+    queries: activePrinters.map((printer) => ({
+      queryKey: queryKeys.printerStatus(printer.id),
+      queryFn: () => api.getPrinterStatus(printer.id),
+      staleTime: 30 * 1000,
     })),
   });
   const p1sPrinters = activePrinters.filter(isP1S);
@@ -95,11 +112,16 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
   const printerProfiles = (profiles.data ?? []).filter(
     (profile) => profile.profile_type === 'printer' && !profile.tombstoned,
   );
+  const nozzleFor = (printerId: number) => {
+    const index = activePrinters.findIndex((printer) => printer.id === printerId);
+    return reportedNozzle(statusQueries[index]?.data) ?? DEFAULT_NOZZLE_MM;
+  };
   const startDraft = (printerId: number, profileId = printerProfiles[0]?.profile_id ?? 0) => {
+    setAdvancedOpen(false);
     setDraft({
       printer_id: printerId,
       profile_id: profileId,
-      expected_nozzle_diameter: 0.4,
+      expected_nozzle_diameter: nozzleFor(printerId),
       tool_index: 0,
       enforcement_state: 'shadow',
     });
@@ -111,12 +133,10 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
       <CardContent>
         <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
           <div>
-            <h2 className="text-lg font-semibold text-white">Installed printer slicer bindings</h2>
-            <p className="text-sm text-bambu-gray">
-              Exact printer profile, nozzle, tool, compatible defaults, and rollout state.
-            </p>
+            <h2 className="text-lg font-semibold text-white">{t('printerSlicerBindings.title')}</h2>
+            <p className="text-sm text-bambu-gray">{t('printerSlicerBindings.subtitle')}</p>
           </div>
-          {!canUpdate && <span className="text-sm text-amber-400">Binding changes require PRINTERS_UPDATE.</span>}
+          {!canUpdate && <span className="text-sm text-amber-400">{t('printerSlicerBindings.permissionRequired')}</span>}
         </div>
 
         <div className="space-y-4">
@@ -125,6 +145,9 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
             const bindings = (query.data ?? []).filter((binding) => binding.is_active);
             const suggestionIndex = p1sPrinters.findIndex((item) => item.id === printer.id);
             const suggestion = suggestionIndex >= 0 ? suggestionQueries[suggestionIndex]?.data : undefined;
+            const suggestedProfile = printerProfiles.find(
+              (profile) => profile.profile_id === suggestion?.suggested_profile_ids[0],
+            );
             const setupRequired = printer.provider === 'moonraker' && bindings.length === 0;
 
             return (
@@ -132,38 +155,41 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
                 <div className="flex flex-wrap items-center gap-2">
                   <h3 className="font-medium text-white">{printer.name}</h3>
                   <span className="text-xs text-bambu-gray">
-                    {printer.provider} · {printer.model || 'model unknown'}
+                    {printer.provider} · {printer.model || t('printerSlicerBindings.modelUnknown')}
                   </span>
-                  {setupRequired && <span className="text-xs text-amber-400">setup_required</span>}
+                  {setupRequired && <span className="text-xs text-amber-400">{t('printerSlicerBindings.setupRequired')}</span>}
                   <div className="ml-auto flex gap-2">
-                    {canUpdate && suggestion?.suggested_profile_ids[0] && (
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          setSuggestedDraft({
-                            printer_id: printer.id,
-                            profile_id: suggestion.suggested_profile_ids[0],
-                            expected_nozzle_diameter: 0.4,
-                            tool_index: 0,
-                            enforcement_state: 'shadow',
-                          })
-                        }
-                      >
-                        Use suggested profile
-                      </Button>
-                    )}
                     {canUpdate && (
-                      <Button size="sm" onClick={() => startDraft(printer.id)} disabled={!printerProfiles.length}>
-                        Add binding
+                      <Button variant="secondary" size="sm" onClick={() => startDraft(printer.id)} disabled={!printerProfiles.length}>
+                        {t('printerSlicerBindings.chooseProfile')}
                       </Button>
                     )}
                   </div>
                 </div>
 
-                {query.error && <p role="alert" className="mt-2 text-sm text-red-400">{errorMessage(query.error)}</p>}
+                {query.error && <p role="alert" className="mt-2 text-sm text-red-400">{errorMessage(query.error, t('printerSlicerBindings.requestFailed'))}</p>}
                 {!query.isLoading && !query.error && bindings.length === 0 && (
-                  <p className="mt-2 text-sm text-bambu-gray">No active slicer binding.</p>
+                  <p className="mt-2 text-sm text-bambu-gray">{t('printerSlicerBindings.notSetUp', { printer: printer.name })}</p>
+                )}
+                {suggestedProfile && (
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
+                    <span className="text-bambu-gray">
+                      {t('printerSlicerBindings.suggestion', { profile: suggestedProfile.display_name, nozzle: nozzleFor(printer.id) })}
+                    </span>
+                    {canUpdate && (
+                      <Button size="sm" onClick={() =>
+                        setSuggestedDraft({
+                          printer_id: printer.id,
+                          profile_id: suggestedProfile.profile_id,
+                          expected_nozzle_diameter: nozzleFor(printer.id),
+                          tool_index: 0,
+                          enforcement_state: 'shadow',
+                        })
+                      }>
+                        {t('printerSlicerBindings.useSuggestion')}
+                      </Button>
+                    )}
+                  </div>
                 )}
                 <div className="mt-3 space-y-3">
                   {bindings.map((binding) => (
@@ -190,12 +216,12 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
           <div role="dialog" aria-modal="true" className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 p-4">
             <Card className="w-full max-w-lg">
               <CardContent>
-                <h3 className="text-lg font-semibold text-white">Create slicer binding</h3>
+                <h3 className="text-lg font-semibold text-white">{t('printerSlicerBindings.createTitle')}</h3>
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
                   <label className="text-sm text-bambu-gray">
-                    Printer profile
+                    {t('printerSlicerBindings.printerProfile')}
                     <select
-                      aria-label="Printer profile"
+                      aria-label={t('printerSlicerBindings.printerProfile')}
                       className={`${selectClass} mt-1 w-full`}
                       value={draft.profile_id}
                       onChange={(event) => setDraft({ ...draft, profile_id: Number(event.target.value) })}
@@ -206,9 +232,9 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
                     </select>
                   </label>
                   <label className="text-sm text-bambu-gray">
-                    Expected nozzle
+                    {t('printerSlicerBindings.nozzle')}
                     <input
-                      aria-label="Expected nozzle"
+                      aria-label={t('printerSlicerBindings.nozzle')}
                       className={`${inputClass} mt-1 block`}
                       type="number"
                       min="0.01"
@@ -217,26 +243,55 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
                       onChange={(event) => setDraft({ ...draft, expected_nozzle_diameter: Number(event.target.value) })}
                     />
                   </label>
-                  <label className="text-sm text-bambu-gray">
-                    Tool index
-                    <input
-                      aria-label="Tool index"
-                      className={`${inputClass} mt-1 block`}
-                      type="number"
-                      min="0"
-                      value={draft.tool_index ?? 0}
-                      onChange={(event) => setDraft({ ...draft, tool_index: Number(event.target.value) })}
-                    />
-                  </label>
                 </div>
-                {create.error && <p role="alert" className="mt-3 text-sm text-red-400">{errorMessage(create.error)}</p>}
+                <Button
+                  className="mt-4"
+                  size="sm"
+                  variant="secondary"
+                  aria-expanded={advancedOpen}
+                  onClick={() => setAdvancedOpen((open) => !open)}
+                >
+                  {t('printerSlicerBindings.advanced')}
+                </Button>
+                {advancedOpen && (
+                  <div className="mt-3 space-y-3">
+                    <div className="grid gap-3 sm:grid-cols-2">
+                      <label className="text-sm text-bambu-gray">
+                        {t('printerSlicerBindings.toolIndex')}
+                        <input
+                          aria-label={t('printerSlicerBindings.toolIndex')}
+                          className={`${inputClass} mt-1 block`}
+                          type="number"
+                          min="0"
+                          value={draft.tool_index ?? 0}
+                          onChange={(event) => setDraft({ ...draft, tool_index: Number(event.target.value) })}
+                        />
+                      </label>
+                      <label className="text-sm text-bambu-gray">
+                        {t('printerSlicerBindings.rollout')}
+                        <select
+                          aria-label={t('printerSlicerBindings.rollout')}
+                          className={`${selectClass} mt-1 block w-full`}
+                          value={draft.enforcement_state ?? 'shadow'}
+                          onChange={(event) => setDraft({ ...draft, enforcement_state: event.target.value as 'shadow' | 'enforced' })}
+                        >
+                          <option value="shadow">{t('printerSlicerBindings.rolloutShadow')}</option>
+                          <option value="enforced">{t('printerSlicerBindings.rolloutEnforced')}</option>
+                        </select>
+                      </label>
+                    </div>
+                    <p className="text-xs text-bambu-gray">{t('printerSlicerBindings.rolloutShadowHelp')}</p>
+                    <p className="text-xs text-bambu-gray">{t('printerSlicerBindings.rolloutEnforcedHelp')}</p>
+                  </div>
+                )}
+                {create.error && <p role="alert" className="mt-3 text-sm text-red-400">{errorMessage(create.error, t('printerSlicerBindings.requestFailed'))}</p>}
                 <div className="mt-4 flex justify-end gap-2">
-                  <Button variant="secondary" onClick={() => setDraft(null)}>Cancel</Button>
+                  <Button variant="secondary" onClick={() => setDraft(null)}>{t('common.cancel')}</Button>
                   <Button
                     onClick={() => create.mutate(draft)}
                     disabled={create.isPending || !draft.profile_id || draft.expected_nozzle_diameter <= 0}
                   >
-                    Bind
+                    {t('printerSlicerBindings.save')}
                   </Button>
                 </div>
               </CardContent>
@@ -246,9 +301,9 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
 
         {suggestedDraft && (
           <ConfirmModal
-            title="Confirm suggested slicer binding"
-            message="Suggestion uses printer identity only. Confirm exact printer profile and nozzle before saving."
-            confirmText="Confirm and bind"
+            title={t('printerSlicerBindings.confirmTitle')}
+            message={t('printerSlicerBindings.confirmMessage')}
+            confirmText={t('printerSlicerBindings.confirmAction')}
             onConfirm={() => {
               setDraft(suggestedDraft);
               setSuggestedDraft(null);
@@ -296,69 +351,71 @@ function BindingEditor({
     <div className="rounded border border-bambu-dark-tertiary p-3" data-testid={`binding-${binding.id}`}>
       <div className="flex flex-wrap items-center gap-2 text-sm">
         <strong className="text-white">{binding.profile_name}</strong>
-        <span className="text-bambu-gray">{binding.expected_nozzle_diameter} mm · tool {binding.tool_index}</span>
+        <span className="text-bambu-gray">
+          {t('printerSlicerBindings.bindingSummary', { nozzle: binding.expected_nozzle_diameter, tool: binding.tool_index })}
+        </span>
         <span className={displayedReadiness === 'ready' ? 'text-green-400' : 'text-amber-400'}>
           {readinessText}
         </span>
         {slicerReadinessReasons(t, binding.readiness.reason_codes).filter((reason) => reason !== readinessText).map((reason) => <span key={reason} className="text-xs text-bambu-gray">{reason}</span>)}
         {canUpdate && (
           <Button className="ml-auto" size="sm" variant="danger" disabled={disablePending} onClick={onDisable}>
-            Disable
+            {t('printerSlicerBindings.disable')}
           </Button>
         )}
       </div>
       <div className="mt-3 flex flex-wrap gap-3">
         <label className="text-sm text-bambu-gray">
-          Process default
+          {t('printerSlicerBindings.processDefault')}
           <select
-            aria-label={`Process default for ${binding.profile_name}`}
+            aria-label={t('printerSlicerBindings.processDefaultFor', { name: binding.profile_name })}
             className={`${selectClass} ml-2`}
             value={binding.default_process_profile_id ?? ''}
             disabled={!canUpdate || updatePending || classificationsLoading}
             onChange={(event) => onUpdate({ default_process_profile_id: event.target.value ? Number(event.target.value) : null })}
           >
-            <option value="">None</option>
+            <option value="">{t('printerSlicerBindings.noDefault')}</option>
             {missingProcessDefault && (
               <option value={binding.default_process_profile_id ?? ''}>
-                Unavailable profile #{binding.default_process_profile_id}
+                {t('printerSlicerBindings.unavailableDefault', { id: binding.default_process_profile_id })}
               </option>
             )}
             {processProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.display_name}</option>)}
           </select>
         </label>
         <label className="text-sm text-bambu-gray">
-          Filament default
+          {t('printerSlicerBindings.filamentDefault')}
           <select
-            aria-label={`Filament default for ${binding.profile_name}`}
+            aria-label={t('printerSlicerBindings.filamentDefaultFor', { name: binding.profile_name })}
             className={`${selectClass} ml-2`}
             value={binding.default_filament_profile_id ?? ''}
             disabled={!canUpdate || updatePending || classificationsLoading}
             onChange={(event) => onUpdate({ default_filament_profile_id: event.target.value ? Number(event.target.value) : null })}
           >
-            <option value="">None</option>
+            <option value="">{t('printerSlicerBindings.noDefault')}</option>
             {missingFilamentDefault && (
               <option value={binding.default_filament_profile_id ?? ''}>
-                Unavailable profile #{binding.default_filament_profile_id}
+                {t('printerSlicerBindings.unavailableDefault', { id: binding.default_filament_profile_id })}
               </option>
             )}
             {filamentProfiles.map((profile) => <option key={profile.profile_id} value={profile.profile_id}>{profile.display_name}</option>)}
           </select>
         </label>
         <label className="text-sm text-bambu-gray">
-          Rollout
+          {t('printerSlicerBindings.rollout')}
           <select
-            aria-label={`Rollout for ${binding.profile_name}`}
+            aria-label={t('printerSlicerBindings.rolloutFor', { name: binding.profile_name })}
             className={`${selectClass} ml-2`}
             value={binding.enforcement_state}
             disabled={!canUpdate || updatePending}
             onChange={(event) => onUpdate({ enforcement_state: event.target.value as 'shadow' | 'enforced' })}
           >
-            <option value="shadow">Shadow</option>
-            <option value="enforced">Enforced</option>
+            <option value="shadow">{t('printerSlicerBindings.rolloutShadow')}</option>
+            <option value="enforced">{t('printerSlicerBindings.rolloutEnforced')}</option>
           </select>
         </label>
       </div>
-      {updateError != null && <p role="alert" className="mt-2 text-sm text-red-400">{errorMessage(updateError)}</p>}
+      {updateError != null && <p role="alert" className="mt-2 text-sm text-red-400">{errorMessage(updateError, t('printerSlicerBindings.requestFailed'))}</p>}
     </div>
   );
 }
