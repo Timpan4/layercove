@@ -32,6 +32,14 @@ export default {
     catalog: "프로필을 불러올 수 없습니다. 슬라이싱 전에 다시 불러오세요.",
     materialMismatch: "필라멘트 재료가 다릅니다. 원본과 선택한 필라멘트를 점검한 후 슬라이싱 전에 확인하세요.",
     materialUnverified: "필라멘트 재료가 확인되지 않았습니다. 장착된 재료를 점검하고 슬라이싱 전에 확인하세요.",
+    chooseFilamentSource: "출력에 사용할 필라멘트를 선택하세요.",
+    choosePrinter: "프린터를 선택하세요.",
+    setupBinding: "{{printer}}의 슬라이서 바인딩을 설정하세요.",
+    ready: "{{printer}}에서 {{filament}}(으)로 슬라이싱할 준비가 되었습니다.",
+    pickFilamentSlot: "슬롯 {{slot}}의 필라멘트 프로파일을 선택하세요.",
+    confirmWarning: "슬라이싱 전에 아래 경고를 확인하세요.",
+    materialMismatchConfirm: "필라멘트 {{slot}}: 원본은 {{source}}, 프로파일은 {{profile}}입니다. 그래도 슬라이싱할까요?",
+    confirmTargetNozzle: "슬라이싱 전에 현재 대상과 노즐을 확인하세요.",
   },
   slicerBed: {
     parentIssues: {

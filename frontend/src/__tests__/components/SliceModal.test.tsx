@@ -194,7 +194,7 @@ describe('SliceModal catalog selection', () => {
     await screen.findByRole('option', { name: 'P1S' });
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Physical printer' }), '1');
 
-    expect(await screen.findByText('P1S has no active slicer binding. Add one before slicing.')).toBeInTheDocument();
+    expect(await screen.findByText('Set up a slicer binding for P1S.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Set up P1S binding' })).toHaveAttribute('href', '/#slicer-binding-1');
     expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
     expect(mockApi.sliceLibraryFile).not.toHaveBeenCalled();
@@ -219,27 +219,34 @@ describe('SliceModal catalog selection', () => {
 
     await waitFor(() => expect(screen.getAllByRole('radio', { name: /Inslogic 95A TPU/ })).toHaveLength(3));
     expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
-    expect(screen.getByText(/Filament 1: project PLA, selected TPU/)).toBeInTheDocument();
-    expect(screen.getByText(/Filament 2: project PLA, selected TPU/)).toBeInTheDocument();
-    expect(screen.getByText(/Filament 3: project PLA, selected TPU/)).toBeInTheDocument();
-    expect(screen.getByText(/Filament 1: project PLA, selected TPU/).closest('label'))
+    for (const index of [1, 2, 3]) {
+      await user.click(within(screen.getByRole('group', { name: `Filament ${index} · PLA` })).getByRole('radio', { name: /Inslogic 95A TPU/ }));
+    }
+    for (const index of [1, 2, 3]) {
+      expect(screen.getByText(`Filament ${index}: source says PLA, profile is TPU. Slice anyway?`)).toBeInTheDocument();
+    }
+    expect(screen.getByText('Filament 1: source says PLA, profile is TPU. Slice anyway?').closest('label'))
       .toHaveClass('text-amber-900', 'dark:text-amber-200');
 
-    await user.click(screen.getByRole('checkbox', { name: /Confirm filament materials before slicing/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Slice anyway/ }));
     expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
   });
 
-  it('requires material confirmation for a standalone STL without declared material', async () => {
+  // Failure mode: an unknown source material auto-selects a profile, so the slot looks chosen before the user picks one.
+  it('leaves an STL without declared material unselected until the user chooses a filament', async () => {
     mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
       file_id: 100, filename: 'Cube.stl', plate_id: 1, filaments: [],
     });
     renderModal();
     const user = await chooseTarget();
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: /PLA profile/ })).toBeChecked());
+    expect(await screen.findByText('Choose the filament you will print with.')).toBeInTheDocument();
+    expect(screen.getByText('Pick a filament profile for slot 1.')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /PLA profile/ })).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
-    expect(screen.getByText(/Filament 1: source material unknown, selected PLA/)).toBeInTheDocument();
-    await user.click(screen.getByRole('checkbox', { name: /Confirm filament materials before slicing/ }));
+    expect(screen.queryByRole('checkbox', { name: /Slice anyway/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: /PLA profile/ }));
     expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
   });
 
@@ -293,7 +300,7 @@ describe('SliceModal catalog selection', () => {
     const slots = [1, 2, 3].map((index) => screen.getByRole('group', { name: `Filament ${index} · PLA` }));
     expect(within(slots[0]).getByText('PLA matches (1)')).toBeVisible();
     expect(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ })).toBeVisible();
-    expect(within(slots[0]).getByText(/Selected: Inslogic 95A TPU/)).toBeVisible();
+    expect(within(slots[0]).getByText(/Selected: None/)).toBeVisible();
 
     await user.click(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ }));
     await user.click(screen.getByRole('button', { name: 'Apply Voron Generic PLA to 2 other PLA slots' }));

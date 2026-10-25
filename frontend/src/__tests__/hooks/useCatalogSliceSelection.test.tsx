@@ -82,7 +82,7 @@ const groups: SlicerCatalogGroups = {
 };
 
 describe('useCatalogSliceSelection', () => {
-  it('requires confirmation when material metadata belongs to an older profile revision', async () => {
+  it('treats material metadata from an older profile revision as unverified without a material checkbox', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -92,6 +92,8 @@ describe('useCatalogSliceSelection', () => {
     act(() => result.current.setPrinterId(1));
     await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
     act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.groups).toEqual(groups));
+    act(() => result.current.chooseFilament(0, classification(22, 'filament')));
     await waitFor(() => expect(result.current.selectionReadiness.state).toBe('ready'));
 
     act(() => client.setQueryData(['slicerCatalogGroups', 1, 5], {
@@ -100,8 +102,8 @@ describe('useCatalogSliceSelection', () => {
         item.profile_id === 22 ? { ...item, revision_id: item.revision_id + 1 } : item),
     }));
 
-    await waitFor(() => expect(result.current.selectionReadiness.reason_codes).toContain('material_unverified'));
-    expect(result.current.resolvedSelection).toBeNull();
+    await waitFor(() => expect(result.current.groups?.selected_printer.find((item) => item.profile_id === 22)?.revision_id).toBe(23));
+    expect(result.current.selectionReadiness).toEqual({ state: 'ready', reason_codes: [] });
   });
 
   it('invalidates material confirmation when the project slot material changes', async () => {
@@ -121,6 +123,8 @@ describe('useCatalogSliceSelection', () => {
     act(() => result.current.setPrinterId(1));
     await waitFor(() => expect(result.current.activeBindings).toHaveLength(1));
     act(() => result.current.setBindingId(5));
+    await waitFor(() => expect(result.current.groups).toEqual(groups));
+    act(() => result.current.chooseFilament(0, classification(22, 'filament')));
     await waitFor(() => expect(result.current.selectionReadiness.reason_codes).toContain('material_mismatch'));
     act(() => result.current.setAcknowledged(true));
     expect(result.current.selectionReadiness.state).toBe('ready');

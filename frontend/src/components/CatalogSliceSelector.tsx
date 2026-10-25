@@ -1,12 +1,13 @@
 import { useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import { FilamentProfileEditor } from './FilamentProfileEditor';
 import type { SlicerCatalogClassification, SlicerCatalogGroups } from '../api/client';
 import type { CatalogSliceSelectionState } from '../hooks/useCatalogSliceSelection';
 import { catalogFilamentMaterial } from '../utils/catalogSliceSelection';
 import { canonicalFilamentType } from '../utils/amsHelpers';
-import { displayedSlicerReadiness, slicerReadinessReasons, slicerReadinessState } from '../utils/slicerReadiness';
+import { displayedSlicerReadiness, slicerReadinessReasons } from '../utils/slicerReadiness';
 
 const fieldClass = 'min-h-9 w-full rounded border border-bambu-dark-tertiary bg-bambu-dark px-2 text-sm text-white';
 const groupOrder: Array<keyof SlicerCatalogGroups> = [
@@ -33,14 +34,14 @@ export function CatalogSliceSelector({
 }) {
   const { t } = useTranslation();
   const displayedReadiness = displayedSlicerReadiness(selection.selectionReadiness.state, selection.selectionReadiness.reason_codes);
-  const readinessText = slicerReadinessState(t, displayedReadiness);
   const [search, setSearch] = useState('');
   const [editingSlot, setEditingSlot] = useState<number | null>(null);
   const selectedProcessId = selection.processChoice?.id ?? null;
   const selectedPrinter = selection.activePrinters.find((printer) => printer.id === selection.printerId);
-  const otherAcknowledgementReasons = selection.acknowledgementReasons.filter(
-    (reason) => reason !== 'material_mismatch' && reason !== 'material_unverified',
-  );
+  const otherAcknowledgementReasons = selection.acknowledgementReasons.filter((reason) => reason !== 'material_mismatch');
+  const firstPendingSlot = Math.max(1, filamentSlots.findIndex((_, index) => !selection.filamentChoices[index]) + 1);
+  const readinessTone = displayedReadiness === 'blocked' ? 'border-red-500/40 text-red-300'
+    : displayedReadiness === 'ready' ? 'border-green-500/30 text-green-300' : 'border-amber-400/40 text-amber-300';
 
   return <div className="space-y-3" aria-label="Installed printer slicer selection">
     <label className="block text-xs text-bambu-gray">
@@ -83,21 +84,15 @@ export function CatalogSliceSelector({
       </select>
     </label>}
 
-    {selectedPrinter && !selection.loading && !selection.error && selection.activeBindings.length === 0 && (
-      <p role="status" className="rounded border border-amber-500/40 bg-amber-500/10 p-2 text-xs text-amber-800 dark:text-amber-200">
-        {selectedPrinter.name} has no active slicer binding. Add one before slicing.{' '}
+    {!selection.loading && <p role="status" className={`rounded border px-2 py-1.5 text-xs ${readinessTone}`}>
+      <span>{readinessSentence(t, selection, displayedReadiness, firstPendingSlot)}</span>
+      {selectedPrinter && selection.activeBindings.length === 0 && !selection.error && <>
+        {' '}
         <Link className="rounded-sm font-medium underline underline-offset-2 focus-visible:ring-2 focus-visible:ring-bambu-green" to={`/#slicer-binding-${selectedPrinter.id}`}>
           Set up {selectedPrinter.name} binding
         </Link>
-      </p>
-    )}
-
-    {selection.selectedBinding && <div className={`rounded border px-2 py-1.5 text-xs ${displayedReadiness === 'blocked' ? 'border-red-500/40 text-red-300' : displayedReadiness === 'ready' ? 'border-green-500/30 text-green-300' : 'border-amber-400/40 text-amber-300'}`}>
-      <p>{readinessText}</p>
-      {slicerReadinessReasons(t, selection.selectionReadiness.reason_codes).filter((reason) => reason !== readinessText).map((reason) => <p key={reason}>{reason}</p>)}
-      Nozzle {selection.selectedBinding.nozzle.status}
-      {selection.selectedBinding.nozzle.diameter != null && ` ${selection.selectedBinding.nozzle.diameter} mm`}
-    </div>}
+      </>}
+    </p>}
 
     {selection.bindingId !== null && <>
       <label className="block text-xs text-bambu-gray">
@@ -127,6 +122,7 @@ export function CatalogSliceSelector({
           groups={selection.groups}
           profiles={selection.catalogProfiles}
           material={slot.type}
+          hint={!canonicalFilamentType(slot.type) && !selection.filamentChoices[index] ? t('slicerReadiness.chooseFilamentSource') : undefined}
           selectedId={selection.filamentChoices[index]?.id ?? null}
           search={search}
           disabled={disabled || slot.used_in_plate === false}
@@ -159,10 +155,10 @@ export function CatalogSliceSelector({
         onChange={(event) => selection.setAcknowledged(event.target.checked)}
       />
       <span>
-        {selection.materialWarnings.length > 0
-          ? `Confirm filament materials${otherAcknowledgementReasons.length > 0 ? ' and current target/nozzle' : ''} before slicing.`
-          : 'Confirm current target and nozzle before slicing.'}
-        {selection.materialWarnings.map((warning) => <span key={warning.message} className="block">{warning.message}</span>)}
+        {selection.materialWarnings.map((warning) => <span key={warning.slot} className="block">{t('slicerReadiness.materialMismatchConfirm', {
+          slot: warning.slot, source: warning.source, profile: warning.profile,
+        })}</span>)}
+        {otherAcknowledgementReasons.length > 0 && <span className="block">{t('slicerReadiness.confirmTargetNozzle')}</span>}
         {otherAcknowledgementReasons.length > 0 && <span className="block">{slicerReadinessReasons(t, otherAcknowledgementReasons).join(' ')}</span>}
       </span>
     </label>}
@@ -170,6 +166,35 @@ export function CatalogSliceSelector({
       {selection.error instanceof Error ? selection.error.message : 'Catalog selection could not load.'}
     </p>}
   </div>;
+}
+
+/** One sentence: the next action, or the ready combination. */
+function readinessSentence(
+  t: TFunction,
+  selection: CatalogSliceSelectionState,
+  displayedReadiness: string,
+  pendingSlot: number,
+): string {
+  const reasons = selection.selectionReadiness.reason_codes;
+  const printer = selection.activePrinters.find((item) => item.id === selection.printerId);
+  if (displayedReadiness === 'unknown') return t('slicerReadiness.unknown');
+  if (reasons.includes('catalog_unavailable')) return slicerReadinessReasons(t, ['catalog_unavailable'])[0];
+  if (!printer) return t('slicerReadiness.choosePrinter');
+  if (!selection.selectedBinding) {
+    return selection.activeBindings.length === 0
+      ? t('slicerReadiness.setupBinding', { printer: printer.name })
+      : t('slicerReadiness.binding');
+  }
+  if (selection.selectionReadiness.state === 'ready') {
+    const filaments = selection.filamentChoices
+      .map((choice) => selection.allClassifications.find((item) => item.profile_id === choice?.id)?.display_name)
+      .filter(Boolean);
+    return t('slicerReadiness.ready', { printer: printer.name, filament: filaments.join(', ') });
+  }
+  if (selection.selectionReadiness.state === 'acknowledgement_required') return t('slicerReadiness.confirmWarning');
+  const [reason] = reasons;
+  if (reason === 'filament_selection_required') return t('slicerReadiness.pickFilamentSlot', { slot: pendingSlot });
+  return reason ? slicerReadinessReasons(t, [reason])[0] : t('slicerReadiness.unknown');
 }
 
 function profileNameMatch(name: string, search: string) {
@@ -182,6 +207,7 @@ function ProfileGroups({
   groups,
   profiles,
   material,
+  hint,
   selectedId,
   search,
   disabled,
@@ -192,6 +218,7 @@ function ProfileGroups({
   groups: SlicerCatalogGroups | undefined;
   profiles?: CatalogSliceSelectionState['catalogProfiles'];
   material?: string;
+  hint?: string;
   selectedId: number | null;
   search: string;
   disabled: boolean;
@@ -211,10 +238,17 @@ function ProfileGroups({
     : [];
   const visibleMaterialMatches = materialMatches.filter(matches);
   const matchedIds = new Set(materialMatches.map((profile) => profile.profile_id));
+  const groupedProfiles = groupOrder
+    .map((group) => ({
+      group,
+      profiles: (groups?.[group] ?? []).filter((profile) => matches(profile) && !matchedIds.has(profile.profile_id)),
+    }))
+    .filter((entry) => entry.profiles.length > 0);
 
   return <fieldset className="rounded border border-bambu-dark-tertiary p-2">
     <legend className="px-1 text-xs font-medium text-white">{legend}</legend>
     <p className="mb-1 break-words text-xs text-white" aria-live="polite">Selected: {selected?.display_name ?? 'None'}</p>
+    {hint && <p className="mb-1 break-words text-xs text-amber-300">{hint}</p>}
     <div className="space-y-2">
       {visibleMaterialMatches.length > 0 && <ProfileList
         label={`${material} matches (${visibleMaterialMatches.length})`}
@@ -225,8 +259,7 @@ function ProfileGroups({
         disabled={disabled}
         onChoose={onChoose}
       />}
-      {groupOrder.map((group) => {
-        const profiles = (groups?.[group] ?? []).filter((profile) => matches(profile) && !matchedIds.has(profile.profile_id));
+      {groupedProfiles.map(({ group, profiles }) => {
         if (group === 'selected_printer') {
           return <ProfileList
             key={group}
@@ -253,6 +286,7 @@ function ProfileGroups({
           />
         </details>;
       })}
+      {visibleMaterialMatches.length === 0 && groupedProfiles.length === 0 && <p className="text-xs text-bambu-gray">No profiles</p>}
     </div>
   </fieldset>;
 }

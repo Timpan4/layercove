@@ -32,6 +32,14 @@ export default {
     catalog: "プロファイルを読み込めませんでした。スライス前に再読み込みしてください。",
     materialMismatch: "フィラメントの材料が異なります。元データと選択したフィラメントを調べ、スライス前に確認してください。",
     materialUnverified: "フィラメントの材料は未確認です。装填された材料を調べ、スライス前に確認してください。",
+    chooseFilamentSource: "印刷に使うフィラメントを選択してください。",
+    choosePrinter: "プリンターを選択してください。",
+    setupBinding: "{{printer}} のスライサーバインディングを設定してください。",
+    ready: "{{printer}} で {{filament}} を使ってスライスできます。",
+    pickFilamentSlot: "スロット {{slot}} のフィラメントプロファイルを選択してください。",
+    confirmWarning: "スライス前に下の警告を確認してください。",
+    materialMismatchConfirm: "フィラメント {{slot}}: 元データは {{source}}、プロファイルは {{profile}} です。それでもスライスしますか？",
+    confirmTargetNozzle: "スライス前に現在の対象とノズルを確認してください。",
   },
   slicerBed: {
     parentIssues: {

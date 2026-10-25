@@ -32,6 +32,14 @@ export default {
     catalog: "Les profils n’ont pas pu être chargés. Rechargez-les avant le tranchage.",
     materialMismatch: "Les matériaux des filaments diffèrent. Vérifiez la source et le filament sélectionné, puis confirmez avant le tranchage.",
     materialUnverified: "Le matériau du filament n’est pas vérifié. Vérifiez le matériau chargé et confirmez avant le tranchage.",
+    chooseFilamentSource: "Choisissez le filament avec lequel vous imprimerez.",
+    choosePrinter: "Choisissez une imprimante.",
+    setupBinding: "Configurez une liaison de trancheur pour {{printer}}.",
+    ready: "Prêt à trancher pour {{printer}} avec {{filament}}.",
+    pickFilamentSlot: "Choisissez un profil de filament pour l’emplacement {{slot}}.",
+    confirmWarning: "Confirmez l’avertissement ci-dessous avant le tranchage.",
+    materialMismatchConfirm: "Filament {{slot}} : la source indique {{source}}, le profil est {{profile}}. Trancher quand même ?",
+    confirmTargetNozzle: "Confirmez la cible et la buse actuelles avant le tranchage.",
   },
   slicerBed: {
     parentIssues: {

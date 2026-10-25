@@ -77,12 +77,10 @@ async function selectMachine() {
   render(<MemoryRouter initialEntries={['/slicer?library_file=42']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
   fireEvent.change(await screen.findByRole('combobox', { name: 'Physical printer' }), { target: { value: '1' } });
   fireEvent.change(await screen.findByRole('combobox', { name: 'Exact slicer binding' }), { target: { value: '5' } });
-  const acknowledgement = await screen.findByRole('checkbox', { name: /Confirm filament materials/ });
-  fireEvent.click(acknowledgement);
+  fireEvent.click(await screen.findByRole('radio', { name: /Cloud filament/ }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Slice plate' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Slice plate' }));
   await screen.findByRole('button', { name: 'Slice again' });
-  fireEvent.click(acknowledgement);
 }
 
 describe('bed geometry in the actual workbench', () => {
@@ -92,7 +90,7 @@ describe('bed geometry in the actual workbench', () => {
     render(<MemoryRouter initialEntries={['/slicer?library_file=42']}><QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}><SlicerWorkbenchPage /></QueryClientProvider></MemoryRouter>);
     fireEvent.change(await screen.findByRole('combobox', { name: 'Physical printer' }), { target: { value: '1' } });
 
-    expect(await screen.findByText("DOGGE'S PRINTER has no active slicer binding. Add one before slicing.")).toBeInTheDocument();
+    expect(await screen.findByText("Set up a slicer binding for DOGGE'S PRINTER.")).toBeInTheDocument();
     expect(screen.getByRole('link', { name: "Set up DOGGE'S PRINTER binding" })).toHaveAttribute('href', '/#slicer-binding-1');
     expect(screen.getByRole('button', { name: 'Slice plate' })).toBeDisabled();
   });
@@ -114,8 +112,7 @@ describe('bed geometry in the actual workbench', () => {
   it('renders Prepare and Preview for a Ready cloud profile with serialized coordinates', async () => {
     await selectMachine();
     expect(await screen.findByTestId('model-bed')).toHaveTextContent(JSON.stringify(bed));
-    expect(screen.getByText('Confirmation required before slicing.')).toBeInTheDocument();
-    expect(screen.getByText(/Filament 1: source material unknown, selected profile material unknown/)).toBeInTheDocument();
+    expect(screen.getByText('Ready to slice for Physical device with Cloud filament.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: /^preview$/i }));
     expect(await screen.findByTestId('gcode-bed')).toHaveTextContent(JSON.stringify(bed));
     expect(screen.queryByText(/Select a printer profile with bed geometry/)).not.toBeInTheDocument();

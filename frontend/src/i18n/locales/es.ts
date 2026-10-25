@@ -32,6 +32,14 @@ export default {
     catalog: "No se pudieron cargar los perfiles. Recárguelos antes de laminar.",
     materialMismatch: "Los materiales de filamento difieren. Compruebe el origen y el filamento seleccionado y confirme antes de laminar.",
     materialUnverified: "El material del filamento no está verificado. Compruebe el material cargado y confirme antes de laminar.",
+    chooseFilamentSource: "Elija el filamento con el que imprimirá.",
+    choosePrinter: "Elija una impresora.",
+    setupBinding: "Configure un enlace de laminador para {{printer}}.",
+    ready: "Listo para laminar {{printer}} con {{filament}}.",
+    pickFilamentSlot: "Elija un perfil de filamento para la ranura {{slot}}.",
+    confirmWarning: "Confirme la advertencia de abajo antes de laminar.",
+    materialMismatchConfirm: "Filamento {{slot}}: el origen indica {{source}}, el perfil es {{profile}}. ¿Laminar igualmente?",
+    confirmTargetNozzle: "Confirme el destino y la boquilla actuales antes de laminar.",
   },
   slicerBed: {
     parentIssues: {

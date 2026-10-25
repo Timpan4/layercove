@@ -168,7 +168,7 @@ describe('catalog slice defaulting', () => {
 
     expect(pickCatalogFilament(
       choices,
-      [profile(21, 'PLA')],
+      [profile(20, 'PLA'), profile(21, 'PLA')],
       [rule],
       binding,
       { type: 'PLA', color: '#ff0000' },
@@ -176,6 +176,55 @@ describe('catalog slice defaulting', () => {
       [{ printer_id: 1, ams_id: 0, tray_id: 0, spoolman_spool_id: 42 }],
       22,
     )).toEqual({ id: 20, reason: 'exact_external_assignment', manual: false });
+  });
+
+  // Failure mode: an exact Spoolman link to a PETG profile is auto-selected for a PLA slot.
+  it('does not auto-select an exact Spoolman assignment whose material differs from the slot', () => {
+    const choices = groups([classified(20, 'filament', 'Exact PETG')]);
+    const assignment = {
+      printer_id: 1,
+      ams_id: 0,
+      tray_id: 0,
+      spool: { material: 'PLA', rgba: '#ff0000', brand: 'Vendor' },
+    } as SpoolAssignment;
+    const rule = {
+      id: 1,
+      scope: 'exact_external',
+      filament_profile_id: 20,
+      binding_id: 5,
+      external_source: 'spoolman',
+      external_identity: 'spool:42',
+      material_type: null,
+      vendor: null,
+      nozzle_diameter_min: null,
+      nozzle_diameter_max: null,
+      is_active: true,
+    } as SlicerFilamentRule;
+
+    expect(pickCatalogFilament(
+      choices,
+      [profile(20, 'PETG')],
+      [rule],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PLA', color: '#ff0000' },
+      [assignment],
+      [{ printer_id: 1, ams_id: 0, tray_id: 0, spoolman_spool_id: 42 }],
+      null,
+    )).toBeNull();
+  });
+
+  // Failure mode: a binding default is selected for an unknown source material, leaving the slot looking chosen.
+  it('leaves an unknown source material unselected even when the binding default is a candidate', () => {
+    expect(pickCatalogFilament(
+      groups([classified(22, 'filament', 'Default TPU')]),
+      [profile(22, 'TPU')],
+      [],
+      binding,
+      { type: '', color: '' },
+      [],
+      [],
+      null,
+    )).toBeNull();
   });
 
   it('leaves ambiguous metadata unresolved instead of picking list order', () => {

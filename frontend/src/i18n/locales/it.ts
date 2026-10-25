@@ -32,6 +32,14 @@ export default {
     catalog: "Impossibile caricare i profili. Ricaricali prima dello slicing.",
     materialMismatch: "I materiali dei filamenti differiscono. Controlla la sorgente e il filamento selezionato, poi conferma prima dello slicing.",
     materialUnverified: "Il materiale del filamento non è verificato. Controlla il materiale caricato e conferma prima dello slicing.",
+    chooseFilamentSource: "Scegli il filamento con cui stamperai.",
+    choosePrinter: "Scegli una stampante.",
+    setupBinding: "Configura un collegamento slicer per {{printer}}.",
+    ready: "Pronto per lo slicing di {{printer}} con {{filament}}.",
+    pickFilamentSlot: "Scegli un profilo filamento per lo slot {{slot}}.",
+    confirmWarning: "Conferma l’avviso qui sotto prima dello slicing.",
+    materialMismatchConfirm: "Filamento {{slot}}: la sorgente indica {{source}}, il profilo è {{profile}}. Vuoi comunque eseguire lo slicing?",
+    confirmTargetNozzle: "Conferma destinazione e ugello attuali prima dello slicing.",
   },
   slicerBed: {
     parentIssues: {
