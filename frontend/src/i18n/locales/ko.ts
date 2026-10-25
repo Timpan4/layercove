@@ -1532,6 +1532,7 @@ export default {
     periodCost: '기간 비용',
     avgPerPrint: '인쇄당 평균',
     notTracked: '추적 안 됨',
+    notTrackedForRange: '이 기간은 추적 안 됨',
     fromSpoolTracking: '스풀 추적 기준',
     usageOverTime: '시간별 사용량',
     filamentByWeight: '무게',

@@ -17,12 +17,18 @@ import { MetricToggle, type Metric } from './MetricToggle';
 import { parseUTCDate } from '../utils/date';
 import { formatWeight, resolveFilamentGrams } from '../utils/weight';
 
+// Spool consumption that stands in for archive weight. Only the all-time, all-users view has one.
+export interface SpoolFallback {
+  grams: number;
+  gramsByMaterial: Map<string, number>;
+}
+
 interface FilamentTrendsProps {
   archives: ArchiveSlim[];
   currency?: string;
   dateFrom?: string;
   dateTo?: string;
-  spoolConsumedGrams?: number;
+  spoolFallback?: SpoolFallback;
 }
 
 const COLORS = ['#00ae42', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899', '#14b8a6', '#f97316'];
@@ -30,7 +36,7 @@ const COLORS = ['#00ae42', '#3b82f6', '#f59e0b', '#ef4444', '#8b5cf6', '#ec4899'
 const DAY_NAMES = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
 const HOUR_SUFFIXES = ['12am', '1am', '2am', '3am', '4am', '5am', '6am', '7am', '8am', '9am', '10am', '11am', '12pm', '1pm', '2pm', '3pm', '4pm', '5pm', '6pm', '7pm', '8pm', '9pm', '10pm', '11pm'];
 
-export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spoolConsumedGrams = 0 }: FilamentTrendsProps) {
+export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spoolFallback }: FilamentTrendsProps) {
   const { t } = useTranslation();
   const [filamentTypeMetric, setFilamentTypeMetric] = useState<Metric>('weight');
   const [colorMetric, setColorMetric] = useState<Metric>('weight');
@@ -230,18 +236,31 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
       .sort((a, b) => b.value - a.value);
   }, [archives, colorMetric]);
 
+  // Spool consumption per material, shown by By Material when archives carry no weight.
+  const spoolMaterialData = useMemo(() => {
+    if (!spoolFallback) return [];
+    return Array.from(spoolFallback.gramsByMaterial.entries())
+      .filter(([, grams]) => grams > 0)
+      .map(([name, grams]) => ({ name, value: Math.round(grams) }))
+      .sort((a, b) => b.value - a.value);
+  }, [spoolFallback]);
+
+  const totalFilament = archives.reduce((sum, a) => sum + (a.filament_used_grams || 0), 0);
+  const filament = resolveFilamentGrams(totalFilament, spoolFallback?.grams);
+  const weightByMaterial = filament?.fromSpool ? spoolMaterialData : filamentTypeData;
   const activeFilamentTypeData =
-    filamentTypeMetric === 'weight' ? filamentTypeData :
+    filamentTypeMetric === 'weight' ? weightByMaterial :
     filamentTypeMetric === 'prints' ? filamentTypePrintData :
     filamentTypeTimeData;
+  const materialUntracked = filamentTypeMetric === 'weight' && filament === null && filamentTypeData.length > 0;
+  const materialFromSpool = filamentTypeMetric === 'weight' && filament?.fromSpool === true;
 
   const chartData = spanDays <= 7 && hourlyData.length > 0 ? hourlyData : weeklyData;
-  const totalFilament = archives.reduce((sum, a) => sum + (a.filament_used_grams || 0), 0);
   const totalCost = archives.reduce((sum, a) => sum + (a.cost || 0), 0);
   const totalPrints = archives.reduce((sum, a) => sum + (a.quantity || 1), 0);
   const printerCount = new Set(archives.map(a => a.printer_id).filter(Boolean)).size;
-  const filament = resolveFilamentGrams(totalFilament, spoolConsumedGrams);
   const averageGrams = filament && totalPrints > 0 ? filament.grams / totalPrints : null;
+  const untrackedLabel = spoolFallback ? t('stats.notTracked') : t('stats.notTrackedForRange');
 
   return (
     <div className="space-y-4">
@@ -250,9 +269,12 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
         <div className="bg-bambu-dark rounded-lg p-4">
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm text-bambu-gray leading-none">{t('stats.periodFilament')}</p>
-            <p className="text-2xl font-bold text-white leading-none">{formatWeight(totalFilament)}</p>
+            <p className="text-2xl font-bold text-white leading-none">
+              {filament ? formatWeight(filament.grams) : untrackedLabel}
+            </p>
           </div>
           <p className="text-xs text-bambu-gray">{printerCount} {t('nav.printers').toLowerCase()}</p>
+          {filament?.fromSpool && <p className="text-xs text-bambu-gray">{t('stats.fromSpoolTracking')}</p>}
         </div>
         <div className="bg-bambu-dark rounded-lg p-4">
           <div className="flex items-center justify-between gap-2">
@@ -265,7 +287,7 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
           <div className="flex items-center justify-between gap-2">
             <p className="text-sm text-bambu-gray leading-none">{t('stats.avgPerPrint')}</p>
             <p className="text-2xl font-bold text-white leading-none">
-              {averageGrams !== null ? `${averageGrams.toFixed(0)}g` : t('stats.notTracked')}
+              {averageGrams !== null ? `${averageGrams.toFixed(0)}g` : untrackedLabel}
             </p>
           </div>
           <p className="text-xs text-bambu-gray">
@@ -335,7 +357,11 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
             <h4 className="text-sm font-medium text-bambu-gray">{t('stats.byMaterial')}</h4>
             <MetricToggle label={t('stats.byMaterial')} value={filamentTypeMetric} onChange={setFilamentTypeMetric} />
           </div>
-          {activeFilamentTypeData.length > 0 ? (
+          {materialUntracked ? (
+            <div className="h-[160px] flex items-center justify-center text-bambu-gray">
+              {untrackedLabel}
+            </div>
+          ) : activeFilamentTypeData.length > 0 ? (
             <div className="flex items-center gap-4">
               <ResponsiveContainer width={160} height={160}>
                 <PieChart>
@@ -393,6 +419,7 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
               {t('stats.noFilamentData')}
             </div>
           )}
+          {materialFromSpool && <p className="text-xs text-bambu-gray mt-3">{t('stats.fromSpoolTracking')}</p>}
         </div>
 
         {/* Success by Material */}

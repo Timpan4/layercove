@@ -1602,6 +1602,7 @@ export default {
     periodCost: 'Custo',
     avgPerPrint: 'Média por impressão',
     notTracked: 'Não rastreado',
+    notTrackedForRange: 'Não rastreado neste período',
     fromSpoolTracking: 'do rastreamento de carretéis',
     usageOverTime: 'Uso ao longo do tempo',
     filamentByWeight: 'Peso',

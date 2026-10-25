@@ -1601,6 +1601,7 @@ export default {
     periodCost: 'コスト',
     avgPerPrint: '1印刷あたりの平均',
     notTracked: '未追跡',
+    notTrackedForRange: 'この期間は未追跡',
     fromSpoolTracking: 'スプール追跡より',
     usageOverTime: '時間推移',
     filamentByWeight: '重量',

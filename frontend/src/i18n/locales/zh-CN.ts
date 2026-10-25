@@ -1602,6 +1602,7 @@ export default {
     periodCost: '期间成本',
     avgPerPrint: '每次打印平均',
     notTracked: '未追踪',
+    notTrackedForRange: '此时段未追踪',
     fromSpoolTracking: '来自耗材卷追踪',
     usageOverTime: '随时间的使用量',
     filamentByWeight: '重量',
