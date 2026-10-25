@@ -54,3 +54,15 @@ describe('SlicerSettingsSidebar scroll ownership', () => {
     expect(screen.getByRole('button', { name: 'Hide Part' }).parentElement!.parentElement!).not.toHaveClass('overflow-auto');
   });
 });
+
+describe('SlicerSettingsSidebar enum choices', () => {
+  it('shows schema enum values as readable labels and submits the raw value', () => {
+    const onSettingChange = vi.fn();
+    render(<SlicerSettingsSidebar {...props} onSettingChange={onSettingChange}
+      pages={[{ id: 'quality', label: 'Quality', groups: [{ id: 'seam', label: 'Seam', options: ['seam_position'] }] }]}
+      settings={[{ key: 'seam_position', label: 'Seam position', mode: 'simple', scope: 'global', kind: 'select', value: 'nearest', choices: [{ value: 'nearest', label: 'nearest' }, { value: 'aligned_back', label: 'aligned_back' }] }]} />);
+    expect(screen.getByRole('option', { name: 'Aligned back' })).toHaveValue('aligned_back');
+    fireEvent.change(screen.getByLabelText(/Seam position/), { target: { value: 'aligned_back' } });
+    expect(onSettingChange).toHaveBeenCalledWith('seam_position', 'aligned_back');
+  });
+});
