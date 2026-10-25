@@ -3901,6 +3901,10 @@ export default {
     printJobs: 'Trabalhos de impressão (placas)',
     partsPrinted: 'Peças impressas',
     failedParts: 'Peças falhadas',
+    partsOfTarget: '{{done}} de {{target}} peças impressas',
+    partsCount: '{{count}} peças impressas',
+    platesOfTarget: '{{done}} de {{target}} placas',
+    platesCount: '{{count}} placas',
     // Actions
     import: 'Importar',
     export: 'Exportar',

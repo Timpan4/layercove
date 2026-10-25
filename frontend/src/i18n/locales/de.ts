@@ -3913,6 +3913,10 @@ export default {
     printJobs: 'Druckaufträge (Platten)',
     partsPrinted: 'Gedruckte Teile',
     failedParts: 'Fehlgeschlagene Teile',
+    partsOfTarget: '{{done}} von {{target}} Teilen gedruckt',
+    partsCount: '{{count}} Teile gedruckt',
+    platesOfTarget: '{{done}} von {{target}} Platten',
+    platesCount: '{{count}} Platten',
     // Actions
     import: 'Importieren',
     export: 'Exportieren',

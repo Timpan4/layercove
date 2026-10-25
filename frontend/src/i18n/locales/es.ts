@@ -3916,6 +3916,10 @@ export default {
     printJobs: 'Trabajos de impresión (camas)',
     partsPrinted: 'Piezas impresas',
     failedParts: 'Piezas fallidas',
+    partsOfTarget: '{{done}} de {{target}} piezas impresas',
+    partsCount: '{{count}} piezas impresas',
+    platesOfTarget: '{{done}} de {{target}} camas',
+    platesCount: '{{count}} camas',
     // Actions
     import: 'Importar',
     export: 'Exportar',

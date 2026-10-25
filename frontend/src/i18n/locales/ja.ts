@@ -3913,6 +3913,10 @@ export default {
     printJobs: '印刷ジョブ',
     partsPrinted: '印刷済みパーツ',
     failedParts: '失敗パーツ',
+    partsOfTarget: '印刷済みパーツ {{done}}/{{target}}',
+    partsCount: '印刷済みパーツ {{count}}',
+    platesOfTarget: 'プレート {{done}}/{{target}}',
+    platesCount: 'プレート {{count}}',
     // Actions
     import: 'インポート',
     export: 'エクスポート',

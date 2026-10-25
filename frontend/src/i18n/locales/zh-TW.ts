@@ -3901,6 +3901,10 @@ export default {
     printJobs: '列印任務（板）',
     partsPrinted: '已列印零件',
     failedParts: '失敗零件',
+    partsOfTarget: '已列印零件 {{done}}/{{target}}',
+    partsCount: '已列印零件 {{count}}',
+    platesOfTarget: '板 {{done}}/{{target}}',
+    platesCount: '{{count}} 板',
     // Actions
     import: '匯入',
     export: '匯出',
