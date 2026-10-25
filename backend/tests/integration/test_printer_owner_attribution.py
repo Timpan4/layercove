@@ -6,7 +6,9 @@ printer starts on its own (sent from OrcaSlicer, or the touchscreen) carries no
 LayerCove user, so the archive was stored with ``created_by_id = NULL``.
 """
 
+import zipfile
 from contextlib import ExitStack
+from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -14,6 +16,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from backend.app.core.config import settings as app_settings
 from backend.app.models.archive import PrintArchive
 from backend.app.models.print_log import PrintLogEntry
 from backend.app.models.printer import Printer
@@ -68,11 +71,12 @@ async def _archives_on(test_engine, printer_id: int) -> list[PrintArchive]:
         return list((await db.execute(select(PrintArchive).where(PrintArchive.printer_id == printer_id))).scalars())
 
 
-async def _start_print_from_printer(printer_id: int, filename: str) -> None:
+async def _start_print_from_printer(printer_id: int, filename: str, cached_3mf: Path | None = None) -> None:
     """Drive the print-start callback as if the printer reported a new job.
 
-    The printer's FTP has no copy of the file (common on P1/A1 firmware), so
-    LayerCove records the print without the 3MF.
+    With ``cached_3mf`` LayerCove archives that 3MF. Without it the printer's
+    FTP has no copy of the file (common on P1/A1 firmware), so LayerCove
+    records the print without the 3MF.
     """
     from backend.app.main import on_print_start
 
@@ -88,7 +92,7 @@ async def _start_print_from_printer(printer_id: int, filename: str) -> None:
             "backend.app.main._record_energy_start": AsyncMock(),
             "backend.app.main._store_spoolman_print_data": AsyncMock(),
             "backend.app.main._maybe_start_layer_timelapse": MagicMock(),
-            "backend.app.main.get_cached_3mf": MagicMock(return_value=None),
+            "backend.app.main.get_cached_3mf": MagicMock(return_value=cached_3mf),
             "backend.app.main.get_ftp_retry_settings": AsyncMock(return_value=(False, 0, 0, 1)),
             "backend.app.main.download_file_async": AsyncMock(return_value=False),
             "backend.app.services.bambu_ftp.list_files_async": AsyncMock(return_value=[]),
@@ -98,7 +102,10 @@ async def _start_print_from_printer(printer_id: int, filename: str) -> None:
 
 
 @pytest.mark.asyncio
-async def test_print_started_outside_layercove_is_credited_to_printer_owner(async_client, test_engine, users, printer):
+@pytest.mark.parametrize("has_3mf", [True, False], ids=["with-3mf", "without-3mf"])
+async def test_print_started_outside_layercove_is_credited_to_printer_owner(
+    async_client, test_engine, users, printer, has_3mf, tmp_path, monkeypatch
+):
     response = await async_client.patch(
         f"/api/v1/printers/{printer.id}",
         headers=_bearer(users["admin_token"]),
@@ -107,7 +114,15 @@ async def test_print_started_outside_layercove_is_credited_to_printer_owner(asyn
     assert response.status_code == 200
     assert response.json()["owner_id"] == users["operator"]["id"]
 
-    await _start_print_from_printer(printer.id, "Benchy")
+    cached_3mf = None
+    if has_3mf:
+        monkeypatch.setattr(app_settings, "base_dir", tmp_path)
+        monkeypatch.setattr(app_settings, "archive_dir", tmp_path / "archive")
+        cached_3mf = tmp_path / "Benchy.gcode.3mf"
+        with zipfile.ZipFile(cached_3mf, "w") as zf:
+            zf.writestr("Metadata/slice_info.config", "<config/>")
+
+    await _start_print_from_printer(printer.id, "Benchy", cached_3mf)
 
     [archive] = await _archives_on(test_engine, printer.id)
     assert archive.created_by_id == users["operator"]["id"]
@@ -194,6 +209,11 @@ async def test_setting_owner_can_move_past_no_user_prints_to_owner(async_client,
 
     # Only the owned printer's prints move; the shared printer's stay unassigned.
     assert (await total_prints(operator_id), await total_prints(-1)) == (1, 1)
+    # The print-log list filters on the stored username, so it moves too.
+    owned_id, shared_id = printer.id, other_printer.id
+    db_session.expire_all()
+    runs = (await db_session.execute(select(PrintLogEntry.printer_id, PrintLogEntry.created_by_username))).all()
+    assert dict(runs) == {owned_id: "doggeday", shared_id: None}
 
 
 @pytest.mark.asyncio

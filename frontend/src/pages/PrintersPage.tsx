@@ -7534,14 +7534,15 @@ function EditPrinterModal({
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { authEnabled, hasPermission } = useAuth();
+  const { hasPermission } = useAuth();
   const { data: networkSites = [], isPending: networkSitesLoading } = useQuery({
     queryKey: ['networkSites'],
     queryFn: api.getNetworkSites,
   });
   // The owner is credited with (and may edit) prints started outside LayerCove,
-  // so choosing one needs the right to edit every archive.
-  const canSetOwner = authEnabled && hasPermission('archives:update_all') && hasPermission('users:read');
+  // so choosing one needs the right to edit every archive. With auth disabled
+  // hasPermission allows everything, matching the backend.
+  const canSetOwner = hasPermission('archives:update_all') && hasPermission('users:read');
   const { data: users = [] } = useQuery({
     queryKey: ['users'],
     queryFn: api.getUsers,

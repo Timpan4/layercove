@@ -110,6 +110,15 @@ describe('EditPrinterModal owner', () => {
     expect(updateBody).toMatchObject({ owner_id: 7, assign_unowned_prints: true });
   });
 
+  it('offers the owner when authentication is disabled', async () => {
+    await openEditModal();
+
+    await userEvent.selectOptions(await screen.findByLabelText('Owner'), '7');
+    await userEvent.click(screen.getByRole('button', { name: /save changes/i }));
+
+    await waitFor(() => expect(updateBody).toMatchObject({ owner_id: 7, assign_unowned_prints: false }));
+  });
+
   it('hides the owner from users who cannot edit every archive', async () => {
     signInWith([...PRINTER_PERMISSIONS, 'users:read']);
     await openEditModal();
