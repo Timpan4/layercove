@@ -49,8 +49,9 @@ export function catalogClassification(
 
 export function catalogFilamentMaterial(profile: SlicerCatalogProfile | undefined): string {
   const metadata = profile?.compatibility_metadata ?? {};
-  // `||`, like the backend's `or`: an empty filament_type defers to material_type.
-  const material = metadata.filament_type || metadata.material_type;
+  // `??` on purpose: an empty filament_type reads as unknown rather than deferring to material_type, so the
+  // API can set it to '' when the revision content states no single material and this side agrees.
+  const material = metadata.filament_type ?? metadata.material_type;
   return typeof material === 'string' ? canonicalFilamentType(material.trim()) : '';
 }
 
@@ -274,10 +275,12 @@ export interface CatalogMaterialWarning {
 // Mirrors the backend gate in slicer_catalog_selection.py: a slice passes without acknowledgement only
 // when the source and the selected profile both state a material and they agree. A plain STL states none,
 // so the backend answers 409 unless the user confirms the filament here.
-// Known gap: the backend reads the profile material from revision content and treats a content
-// filament_type with zero or several distinct values as unknown, while the API only overwrites the synced
-// metadata when the content yields exactly one. Such a profile reads as known here and unknown there, so
-// the backend still answers 409 for it; closing that needs the API to blank the metadata value too.
+// Known gap: `_profile_material` in slicer_catalog_selection.py reads the material from the revision
+// content and returns unknown when the content filament_type key yields no single canonical material,
+// while `_compatibility_metadata` in slicer_catalog.py overwrites the synced metadata only when the content
+// yields exactly one raw value. A profile whose synced metadata states a material but whose content does
+// not resolve to one reads as known here and unknown there, so the backend answers 409 with no checkbox
+// for a file that states a material. Closing it needs the API to set that metadata value to ''.
 export function catalogMaterialWarnings(
   slots: Array<{ type: string }>,
   profiles: Array<SlicerCatalogProfile | undefined>,
