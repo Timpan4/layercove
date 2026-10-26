@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest';
 import {
   buildCompatibilityIndex,
   matchesPrinterModelSuffix,
+  nameRefersToPrinterModel,
   presetCompatibility,
   EMPTY_COMPATIBILITY_INDEX,
 } from '../../utils/slicerPrinterMatch';
@@ -330,6 +331,37 @@ describe('matchesPrinterModelSuffix (#1649)', () => {
 
   it('does NOT match unrelated models', () => {
     expect(matchesPrinterModelSuffix('X1C', 'P1S')).toBe(false);
+  });
+});
+
+describe('nameRefersToPrinterModel', () => {
+  it('matches a standard preset name and a catalog display name by whole words', () => {
+    expect(nameRefersToPrinterModel('Bambu Lab P1S 0.4 nozzle', 'P1S')).toBe(true);
+    expect(nameRefersToPrinterModel('P1S profile', 'p1s')).toBe(true);
+    expect(nameRefersToPrinterModel('P1S', 'P1S')).toBe(true);
+  });
+
+  it('does not let A1 claim the A1 mini presets or the A1M alias', () => {
+    expect(nameRefersToPrinterModel('Bambu Lab A1 mini 0.4 nozzle', 'A1')).toBe(false);
+    expect(nameRefersToPrinterModel('Bambu Lab A1M 0.4 nozzle', 'A1')).toBe(false);
+    expect(nameRefersToPrinterModel('Bambu Lab A1 0.4 nozzle', 'A1')).toBe(true);
+  });
+
+  it('matches A1 Mini against its long form and the A1M alias', () => {
+    expect(nameRefersToPrinterModel('Bambu Lab A1 mini 0.4 nozzle', 'A1 Mini')).toBe(true);
+    expect(nameRefersToPrinterModel('Bambu Lab A1M 0.4 nozzle', 'A1 Mini')).toBe(true);
+    expect(nameRefersToPrinterModel('Bambu Lab A1 0.4 nozzle', 'A1 Mini')).toBe(false);
+  });
+
+  it('keeps X1 apart from X1 Carbon and X1C, and H2D apart from H2D Pro', () => {
+    expect(nameRefersToPrinterModel('Bambu Lab X1 Carbon 0.4 nozzle', 'X1')).toBe(false);
+    expect(nameRefersToPrinterModel('Bambu Lab X1C 0.4 nozzle', 'X1')).toBe(false);
+    expect(nameRefersToPrinterModel('Bambu Lab H2D Pro 0.4 nozzle', 'H2D')).toBe(false);
+    expect(nameRefersToPrinterModel('Bambu Lab H2D 0.4 nozzle', 'H2D')).toBe(true);
+  });
+
+  it('matches nothing for an empty model', () => {
+    expect(nameRefersToPrinterModel('Bambu Lab P1S 0.4 nozzle', '')).toBe(false);
   });
 });
 

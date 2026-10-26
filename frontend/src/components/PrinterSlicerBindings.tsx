@@ -18,6 +18,7 @@ import { Button } from './Button';
 import { Card, CardContent } from './Card';
 import { ConfirmModal } from './ConfirmModal';
 import { displayedSlicerReadiness, slicerReadinessReasons, slicerReadinessState } from '../utils/slicerReadiness';
+import { nameRefersToPrinterModel } from '../utils/slicerPrinterMatch';
 
 const selectClass = 'rounded border border-bambu-dark-tertiary bg-bambu-dark px-2 py-1 text-white';
 const inputClass = `${selectClass} w-24`;
@@ -31,13 +32,12 @@ function isP1S(printer: Printer) {
   return printer.provider === 'bambu' && /p1s/i.test(`${printer.model ?? ''} ${printer.name}`);
 }
 
-// `model` must be non-empty: an empty needle would match every profile.
+// `model` must be non-empty: an empty model matches no profile.
 function profileMatchesModel(profile: SlicerCatalogProfile, model: string) {
   const metadata = profile.compatibility_metadata;
   const metadataModel = metadata.model ?? metadata.printer_model;
-  const needle = model.toLowerCase();
   return [profile.display_name, metadataModel].some(
-    (value) => typeof value === 'string' && value.toLowerCase().includes(needle),
+    (value) => typeof value === 'string' && nameRefersToPrinterModel(value, model),
   );
 }
 
@@ -54,8 +54,7 @@ function presetNozzle(name: string): number | null {
 
 // Prefers the printer's reported nozzle, then the 0.4 default, then any preset for the model.
 function standardPresetFor(presets: UnifiedPreset[], model: string, nozzle: number) {
-  const needle = model.toLowerCase();
-  const matches = presets.filter((preset) => preset.name.toLowerCase().includes(needle));
+  const matches = presets.filter((preset) => nameRefersToPrinterModel(preset.name, model));
   return matches.find((preset) => presetNozzle(preset.name) === nozzle)
     ?? matches.find((preset) => presetNozzle(preset.name) === DEFAULT_NOZZLE_MM)
     ?? matches[0];

@@ -254,8 +254,11 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
   const totalCost = archives.reduce((sum, a) => sum + (a.cost || 0), 0);
   const totalPrints = archives.reduce((sum, a) => sum + (a.quantity || 1), 0);
   const printerCount = new Set(archives.map(a => a.printer_id).filter(Boolean)).size;
-  const averageGrams = filament && totalPrints > 0 ? filament.grams / totalPrints : null;
+  // Spool counters cover consumption outside the archived prints too, so they support neither a
+  // per-print average nor a time or color breakdown; those read as untracked when the total is spool-based.
+  const averageGrams = filament && !filament.fromSpool && totalPrints > 0 ? filament.grams / totalPrints : null;
   const untrackedLabel = untrackedFilamentLabel(t, spoolFallback);
+  const breakdownUntracked = filament?.fromSpool === true;
 
   return (
     <div className="space-y-4">
@@ -288,14 +291,16 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
           <p className="text-xs text-bambu-gray">
             {currency}{totalPrints > 0 ? (totalCost / totalPrints).toFixed(2) : '0.00'} avg
           </p>
-          {averageGrams !== null && filament?.fromSpool && (
-            <p className="text-xs text-bambu-gray">{t('stats.fromSpoolTracking')}</p>
-          )}
         </div>
       </div>
 
       {/* Usage Over Time Chart */}
-      {chartData.length > 0 ? (
+      {breakdownUntracked ? (
+        <div className="bg-bambu-dark rounded-lg p-4">
+          <h4 className="text-sm font-medium text-bambu-gray mb-4">{t('stats.usageOverTime')}</h4>
+          <div className="h-[250px] flex items-center justify-center text-bambu-gray">{untrackedLabel}</div>
+        </div>
+      ) : chartData.length > 0 ? (
         <div className="bg-bambu-dark rounded-lg p-4">
           <h4 className="text-sm font-medium text-bambu-gray mb-4">{t('stats.usageOverTime')}</h4>
           <ResponsiveContainer width="100%" height={250}>
@@ -455,7 +460,9 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
             <h4 className="text-sm font-medium text-bambu-gray">{t('stats.colorDistribution')}</h4>
             <MetricToggle label={t('stats.colorDistribution')} value={colorMetric} onChange={setColorMetric} exclude={['time']} />
           </div>
-          {colorData.length > 0 ? (() => {
+          {colorMetric === 'weight' && breakdownUntracked ? (
+            <div className="h-[160px] flex items-center justify-center text-bambu-gray">{untrackedLabel}</div>
+          ) : colorData.length > 0 ? (() => {
             const colorTotal = colorData.reduce((sum, e) => sum + e.value, 0);
             return (
               <div>

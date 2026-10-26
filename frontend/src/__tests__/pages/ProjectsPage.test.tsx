@@ -436,11 +436,24 @@ describe('ProjectsPage', () => {
       expect(screen.getAllByText('0 of 1 parts printed · 0 of 1 plates')).toHaveLength(1);
     });
 
+    it('marks a target as met only when the counts reach it, not when they round to 100%', async () => {
+      server.use(http.get('/api/v1/projects/', () => HttpResponse.json([
+        { ...projectWithTargets, id: 10, name: 'Nearly There', target_parts_count: 200, target_count: null, completed_count: 199 },
+        { ...projectWithTargets, id: 11, name: 'All Done', target_parts_count: 200, target_count: null, completed_count: 200 },
+      ])));
+
+      render(<ProjectsPage />);
+
+      expect(await screen.findByText(/199 of 200 parts printed/)).not.toHaveClass('text-bambu-green');
+      expect(await screen.findByText(/200 of 200 parts printed/)).toHaveClass('text-bambu-green');
+    });
+
     it('shows card placeholders in a busy list while projects load', async () => {
       server.use(http.get('/api/v1/projects/', () => new Promise(() => {})));
 
       render(<ProjectsPage />);
 
+      expect(await screen.findByRole('status')).toHaveTextContent('Loading projects...');
       const list = await waitFor(() => {
         const busy = document.querySelector('[aria-busy="true"]');
         expect(busy).not.toBeNull();

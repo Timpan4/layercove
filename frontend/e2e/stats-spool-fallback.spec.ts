@@ -10,6 +10,8 @@ interface StatsFixture {
   authEnabled?: boolean;
   // HTTP status for the spools request; the default fulfils it with `spools`.
   spoolsStatus?: number;
+  // No archived prints at all, as on a fresh install that only tracks spools.
+  noArchives?: boolean;
 }
 
 const archiveStats = (totalFilamentGrams: number) => ({
@@ -51,8 +53,12 @@ async function openStats(page: Page, fixture: StatsFixture) {
     if (path === '/api/v1/auth/me') body = { id: 901, username: 'Fixture Alice', permissions: ['stats:read', 'stats:filter_by_user', 'archives:read_all'], groups: [] };
     if (path === '/api/v1/users') body = [{ id: 901, username: 'Fixture Alice' }, { id: 902, username: 'Fixture Bob' }];
     if (path === '/api/v1/settings') body = { check_updates: false };
-    if (path === '/api/v1/archives/stats') body = archiveStats(fixture.archiveGrams);
-    if (path === '/api/v1/archives/slim') body = archivedPrints(fixture.archiveGrams);
+    if (path === '/api/v1/archives/stats') {
+      body = fixture.noArchives
+        ? { ...archiveStats(0), total_prints: 0, successful_prints: 0, total_print_time_hours: 0, prints_by_printer: {} }
+        : archiveStats(fixture.archiveGrams);
+    }
+    if (path === '/api/v1/archives/slim') body = fixture.noArchives ? [] : archivedPrints(fixture.archiveGrams);
     if (path === '/api/v1/archives/analysis/failures') body = {
       period_days: 30, total_prints: 0, outcome_prints: 0, failed_prints: 0,
       failure_rate: 0, failures_by_reason: {}, failures_by_filament: {},
@@ -108,10 +114,28 @@ test.describe('Statistics filament fallback to spool tracking', () => {
     await expect(filament).toContainText('840g');
     await expect(filament).toContainText('from spool tracking');
 
-    // Two archived prints share the 840 g, so the per-print weight uses the same source.
+    // Spool counters include prints that were never archived, so no per-print average, time
+    // series or color split can be derived from them.
     const average = card(page, 'Avg per Print');
-    await expect(average).toContainText('420g');
-    await expect(average).toContainText('from spool tracking');
+    await expect(average).toContainText('Not tracked');
+    await expect(average).not.toContainText('420g');
+    await expect(page.getByRole('heading', { name: 'Usage Over Time', exact: true }).locator('xpath=..')).toContainText('Not tracked');
+    await expect(page.getByRole('heading', { name: 'Color Distribution', exact: true }).locator('xpath=../..')).toContainText('Not tracked');
+  });
+
+  test('shows the spool total and material split when no print was archived', async ({ page }) => {
+    await openStats(page, {
+      archiveGrams: 0,
+      spools: [spool(500), spool(340, '2026-09-01T00:00:00Z', 'PETG')],
+      smartPlugs: [],
+      noArchives: true,
+    });
+
+    await expect(tile(page, 'Filament Used')).toContainText('840g');
+    await expect(card(page, 'Period Filament')).toContainText('840g');
+    const materials = byMaterial(page);
+    await expect(materials).toContainText('500g');
+    await expect(materials).toContainText('340g');
   });
 
   test('shows Not tracked instead of 0g when neither archives nor spools report filament', async ({ page }) => {

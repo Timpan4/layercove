@@ -85,6 +85,11 @@ for (const width of [1280, 390]) {
     await page.getByRole('button', { name: 'Add Spool', exact: true }).first().click();
     const dialog = page.getByRole('dialog', { name: 'Add Spool', exact: true });
     await expect(dialog).toBeVisible();
+    // Quick Add is on by default for a new spool; the full field set appears once it is switched off.
+    const quick = dialog.getByRole('switch', { name: 'Quick Add (Stock)', exact: true });
+    await expect(quick).toBeChecked();
+    await quick.click();
+    await expect(quick).not.toBeChecked();
     for (const name of [/^Slicer Preset/, /^Material/, /^Brand/, /^Subtype/, 'Label Weight', 'Empty Spool Weight', 'Remaining Weight', 'Measured Weight', 'Cost per kg', 'Color Name', 'Hex Color', 'Note', 'Extra colors', 'Effect']) {
       await expect(dialog.getByLabel(name)).toHaveCount(1);
     }
@@ -99,8 +104,6 @@ for (const width of [1280, 390]) {
     await dialog.getByLabel('Category', { exact: true }).fill('Draft');
     await dialog.getByLabel('Low-stock threshold (this spool)', { exact: true }).fill('10');
     await dialog.getByLabel('Storage Location', { exact: true }).selectOption('1');
-    const quick = dialog.getByRole('switch', { name: 'Quick Add (Stock)', exact: true });
-    await expect(quick).not.toBeChecked();
     await quick.click();
     await expect(quick).toBeChecked();
     await dialog.getByLabel('Quantity', { exact: true }).fill('2');

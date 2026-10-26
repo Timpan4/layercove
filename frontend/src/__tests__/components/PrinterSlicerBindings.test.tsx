@@ -392,6 +392,13 @@ describe('PrinterSlicerBindings', () => {
       expect(screen.queryByRole('button', { name: /from the standard library/ })).not.toBeInTheDocument();
     });
 
+    it('does not offer the A1 mini preset to an A1 printer', async () => {
+      vi.spyOn(api, 'getSlicerPresets').mockResolvedValue(standardPresets([standardPreset('Bambu Lab A1 mini 0.4 nozzle')]));
+      renderPanel([printer(1, 'Desk A1', 'A1')]);
+      expect(await screen.findByText(/No A1 printer profile is in the catalog yet/)).toBeInTheDocument();
+      expect(screen.queryByRole('button', { name: /from the standard library/ })).not.toBeInTheDocument();
+    });
+
     it('falls back to the Profiles import text when the standard library has no P1S printer preset', async () => {
       vi.spyOn(api, 'getSlicerPresets').mockResolvedValue(standardPresets([standardPreset('Voron 0.4 nozzle')]));
       renderPanel([printer(1, 'P1S', 'P1S')]);

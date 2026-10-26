@@ -42,6 +42,39 @@ const PRINTER_MODEL_SUFFIX_ALIASES: Record<string, readonly string[]> = {
   'A1 MINI': ['A1M'],
 };
 
+// Words that turn a model name into a different printer in the backend
+// PRINTER_MODEL_MAP long names: "A1 Mini", "X1 Carbon", "H2D Pro". A name that
+// continues with one of these after the model is not that model.
+const PRINTER_MODEL_QUALIFIERS = new Set(['MINI', 'CARBON', 'PRO']);
+
+const tokens = (value: string) => value.toUpperCase().split(/[^A-Z0-9]+/).filter(Boolean);
+
+/**
+ * True when a free-form name (a standard preset such as "Bambu Lab A1 mini 0.4
+ * nozzle", a catalog display name, or profile metadata) refers to
+ * ``printerModel``. The model must appear as whole words, the alias table
+ * applies, and "A1" never matches "A1 mini" or "A1M".
+ */
+export function nameRefersToPrinterModel(name: string, printerModel: string): boolean {
+  const model = printerModel.toUpperCase().trim();
+  if (!model) return false;
+  const forms = new Set([model, ...(PRINTER_MODEL_SUFFIX_ALIASES[model] ?? [])]);
+  for (const [longForm, shortForms] of Object.entries(PRINTER_MODEL_SUFFIX_ALIASES)) {
+    if (shortForms.includes(model)) forms.add(longForm);
+  }
+  const words = tokens(name);
+  return [...forms].some((form) => {
+    const formWords = tokens(form);
+    for (let start = 0; start + formWords.length <= words.length; start += 1) {
+      const matched = formWords.every((word, offset) => words[start + offset] === word);
+      if (!matched) continue;
+      const next = words[start + formWords.length];
+      if (next === undefined || !PRINTER_MODEL_QUALIFIERS.has(next)) return true;
+    }
+    return false;
+  });
+}
+
 /**
  * True when ``presetSuffix`` (the token extracted from a "@BBL <code>" or
  * preset-name suffix) refers to the same printer as ``printerModel``

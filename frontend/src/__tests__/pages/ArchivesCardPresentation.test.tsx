@@ -46,10 +46,12 @@ const fixtureArchives = [
   { ...baseArchive, id: 105, print_name: 'Failed Vase', status: 'failed' },
   { ...baseArchive, id: 106, print_name: 'Aborted Hinge', status: 'aborted' },
   { ...baseArchive, id: 107, print_name: 'Sized Mount', file_size: 2097152 },
+  // Accuracy 50 means the print took twice its estimate: 100% slower, not 50%.
+  { ...baseArchive, id: 108, print_name: 'Double Time', time_accuracy: 50, actual_time_seconds: 7200 },
 ];
 
 // Archives in fixtureArchives with file_size 0 (no file pulled from the printer).
-const archivesWithoutFile = 6;
+const archivesWithoutFile = 7;
 
 describe.each(['grid', 'list'] as const)('ArchivesPage card presentation (%s view)', (viewMode) => {
   beforeEach(() => {
@@ -147,7 +149,14 @@ describe('ArchivesPage time-accuracy badge (grid view)', () => {
   it('labels an above-100 accuracy as faster than estimate', async () => {
     render(<ArchivesPage />);
 
-    expect(await screen.findByText('10% faster than estimate')).toBeInTheDocument();
+    // 110 means the estimate was 10% above the actual time, so the actual time was 9% below the estimate.
+    expect(await screen.findByText('9% faster than estimate')).toBeInTheDocument();
+  });
+
+  it('reports the change in actual time, so an accuracy of 50 reads as 100% slower', async () => {
+    render(<ArchivesPage />);
+
+    expect(await screen.findByText('100% slower than estimate')).toBeInTheDocument();
   });
 
   it('never renders a bare signed percent such as "-2%" or "+10%"', async () => {
@@ -161,8 +170,8 @@ describe('ArchivesPage time-accuracy badge (grid view)', () => {
     render(<ArchivesPage />);
 
     await screen.findByText('Rounds Lid');
-    // Only the 98 and 110 archives have a deviation. The 100 and 99.6 archives must not get a badge.
+    // Only the 98, 110 and 50 archives have a deviation. The 100 and 99.6 archives must not get a badge.
     expect(screen.queryByText(/^[+-]?0%$/)).not.toBeInTheDocument();
-    expect(screen.getAllByText(/ than estimate$/)).toHaveLength(2);
+    expect(screen.getAllByText(/ than estimate$/)).toHaveLength(3);
   });
 });

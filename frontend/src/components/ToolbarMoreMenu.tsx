@@ -72,7 +72,12 @@ export function ToolbarMoreMenu({ label, children }: ToolbarMoreMenuProps) {
           role="menu"
           aria-label={label}
           onKeyDown={handleKeyDown}
-          onClick={() => setOpen(false)}
+          // An item click unmounts the focused item; the trigger takes focus back so keyboard users keep
+          // their place. A dialog or navigation that the action opens moves focus again afterwards.
+          onClick={() => {
+            setOpen(false);
+            triggerRef.current?.focus();
+          }}
           className="absolute right-0 z-30 mt-1 flex w-52 flex-col gap-0.5 rounded-lg border border-bambu-dark-tertiary bg-bambu-dark-secondary p-1 shadow-lg"
         >
           {children}

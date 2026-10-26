@@ -510,14 +510,6 @@ interface ProjectCardProps {
 }
 
 function ProjectCard({ project, onClick, onEdit, onDelete, hasPermission, t }: ProjectCardProps) {
-  // Plates progress: archive_count / target_count
-  const platesProgressPercent = project.target_count
-    ? Math.round((project.archive_count / project.target_count) * 100)
-    : 0;
-  // Parts progress: completed_count / target_parts_count
-  const partsProgressPercent = project.target_parts_count
-    ? Math.round((project.completed_count / project.target_parts_count) * 100)
-    : 0;
   const isCompleted = project.status === 'completed';
   const isArchived = project.status === 'archived';
   const [showActions, setShowActions] = useState(false);
@@ -539,9 +531,10 @@ function ProjectCard({ project, onClick, onEdit, onDelete, hasPermission, t }: P
     || project.completed_count > 0
     || project.failed_count > 0
     || project.queue_count > 0;
+  // Compare the counts, not the rounded percentages: 199 of 200 rounds to 100% but is not met.
   const isTargetMet = hasTargets
-    && (!project.target_parts_count || partsProgressPercent >= 100)
-    && (!project.target_count || platesProgressPercent >= 100);
+    && (!project.target_parts_count || project.completed_count >= project.target_parts_count)
+    && (!project.target_count || project.archive_count >= project.target_count);
   const partsSummary = project.target_parts_count
     ? t('projects.partsOfTarget', { done: project.completed_count, target: project.target_parts_count })
     : t('projects.partsCount', { count: project.completed_count });
@@ -1055,7 +1048,7 @@ export function ProjectsPage() {
       {/* Content */}
       {isLoading ? (
         <>
-          <span className="sr-only">{t('projects.loading')}</span>
+          <span role="status" className="sr-only">{t('projects.loading')}</span>
           <div aria-busy="true" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
             {[0, 1, 2].map((index) => (
               <ProjectCardSkeleton key={index} />

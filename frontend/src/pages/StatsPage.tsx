@@ -767,7 +767,8 @@ function FilamentTrendsWidget({
   spoolFallback?: SpoolFallback;
 }) {
   const { t } = useTranslation();
-  if (!archives || archives.length === 0) {
+  // Spool consumption can stand in for weight even when no print was archived.
+  if ((!archives || archives.length === 0) && (spoolFallbackGrams(spoolFallback) ?? 0) <= 0) {
     return <p className="text-bambu-gray text-center py-4">{t('stats.noPrintData')}</p>;
   }
   return (

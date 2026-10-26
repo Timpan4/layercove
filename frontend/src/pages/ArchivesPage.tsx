@@ -406,8 +406,9 @@ function ArchiveCard({
   };
 
   const isGcodeFile = isSlicedFile(archive);
-  // time_accuracy is estimated / actual * 100, so values below 100 mean the print ran long.
-  const timeDeviation = archive.time_accuracy ? Math.round(archive.time_accuracy - 100) : 0;
+  // time_accuracy is estimated / actual * 100. The badge reports how much longer or shorter the
+  // actual time was relative to the estimate, so an accuracy of 50 is 100% slower, not 50%.
+  const timeDeviation = archive.time_accuracy ? Math.round(10000 / archive.time_accuracy - 100) : 0;
 
   const contextMenuItems: ContextMenuItem[] = [
     // For gcode files: show Print option
@@ -1055,9 +1056,9 @@ function ArchiveCard({
                       ? 'bg-blue-100 dark:bg-blue-500/20 text-blue-700 dark:text-blue-400'
                       : 'bg-orange-100 dark:bg-orange-500/20 text-orange-700 dark:text-orange-400'
                 }`}>
-                  {timeDeviation > 0
-                    ? t('archives.card.fasterThanEstimate', { percent: timeDeviation })
-                    : t('archives.card.slowerThanEstimate', { percent: -timeDeviation })}
+                  {timeDeviation < 0
+                    ? t('archives.card.fasterThanEstimate', { percent: -timeDeviation })
+                    : t('archives.card.slowerThanEstimate', { percent: timeDeviation })}
                 </span>
               )}
             </div>

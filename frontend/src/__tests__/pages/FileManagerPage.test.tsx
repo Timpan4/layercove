@@ -569,6 +569,8 @@ describe('FileManagerPage', () => {
       await waitFor(() => {
         expect(thumbnailRequests).toBe(1);
       });
+      // The menu closed and unmounted the focused item, so the trigger takes focus back.
+      expect(screen.getByRole('button', { name: 'More' })).toHaveFocus();
     });
 
     it('shows STL file without thumbnail in file list', async () => {
