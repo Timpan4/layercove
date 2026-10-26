@@ -72,6 +72,29 @@ class Printer(Base):
     )
     cameras: Mapped[list["PrinterCamera"]] = relationship(back_populates="printer", cascade="all, delete-orphan")
     network_site: Mapped["NetworkSite | None"] = relationship(back_populates="printers")
+    owner_link: Mapped["PrinterOwner | None"] = relationship(
+        back_populates="printer", cascade="all, delete-orphan", uselist=False, lazy="selectin"
+    )
+
+    @property
+    def owner_id(self) -> int | None:
+        """User credited with prints that start on this printer without a LayerCove user."""
+        return self.owner_link.user_id if self.owner_link else None
+
+
+class PrinterOwner(Base):
+    """The user a printer belongs to, for attributing externally started prints.
+
+    A separate table rather than a ``printers`` column because ``create_all``
+    adds new tables to existing databases but never adds columns to them.
+    """
+
+    __tablename__ = "printer_owners"
+
+    printer_id: Mapped[int] = mapped_column(ForeignKey("printers.id", ondelete="CASCADE"), primary_key=True)
+    user_id: Mapped[int] = mapped_column(ForeignKey("users.id", ondelete="CASCADE"), index=True)
+
+    printer: Mapped[Printer] = relationship(back_populates="owner_link")
 
 
 from backend.app.models.ams_history import AMSSensorHistory  # noqa: E402

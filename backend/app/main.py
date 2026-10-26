@@ -3312,6 +3312,8 @@ async def on_print_start(printer_id: int, data: dict):
                     filament_type=mqtt_filament_meta.get("filament_type"),
                     filament_color=mqtt_filament_meta.get("filament_color"),
                     extra_data={"no_3mf_available": True, "original_subtask": subtask_name, "_print_data": data},
+                    # Started outside LayerCove, so credit the printer's owner.
+                    created_by_id=printer.owner_id,
                 )
 
                 db.add(fallback_archive)
@@ -3391,6 +3393,8 @@ async def on_print_start(printer_id: int, data: dict):
                 source_file=temp_path,
                 print_data={**data, "status": "printing"},
                 subtask_id=subtask_id,
+                # Started outside LayerCove, so credit the printer's owner.
+                created_by_id=printer.owner_id,
             )
 
             if archive:
@@ -4936,6 +4940,15 @@ async def on_print_complete(printer_id: int, data: dict):
                 if _run_cost is None and _run_status == "completed":
                     _run_cost = archive.cost
 
+                _run_username = _print_user_info.get("username") if _print_user_info else None
+                if _run_username is None and archive.created_by_id is not None:
+                    # A print started outside LayerCove has no print user; name
+                    # the archive's owner so the username matches created_by_id.
+                    from backend.app.models.user import User
+
+                    _archive_owner = await db.get(User, archive.created_by_id)
+                    _run_username = _archive_owner.username if _archive_owner else None
+
                 await write_log_entry(
                     db,
                     archive_id=archive.id,
@@ -4952,7 +4965,7 @@ async def on_print_complete(printer_id: int, data: dict):
                     failure_reason=archive.failure_reason,
                     thumbnail_path=archive.thumbnail_path,
                     created_by_id=archive.created_by_id,
-                    created_by_username=_print_user_info.get("username") if _print_user_info else None,
+                    created_by_username=_run_username,
                 )
                 await db.commit()
                 logger.info("[PRINT_LOG] Log entry written for archive %s", archive_id)

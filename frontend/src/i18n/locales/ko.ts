@@ -488,6 +488,10 @@ export default {
       locationGroup: '위치 / 그룹 (선택사항)',
       locationPlaceholder: '예: 작업실, 사무실, 지하실',
       autoArchiveLabel: '완료된 인쇄 자동 아카이브',
+      ownerLabel: '소유자',
+      ownerNone: '소유자 없음',
+      ownerHelp: '데스크톱 슬라이서나 프린터 화면 등 LayerCove 외부에서 시작된 인쇄는 이 사용자에게 귀속됩니다.',
+      assignUnownedPrints: '이 프린터의 사용자 없는 이전 인쇄도 소유자에게 귀속',
       fromPrinterSettings: '프린터 설정에서',
       modelOptional: '모델 (선택사항)',
       saveChanges: '변경사항 저장'

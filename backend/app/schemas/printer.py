@@ -261,6 +261,10 @@ class PrinterUpdate(BaseModel):
     plate_detection_enabled: bool | None = None
     plate_detection_roi: PlateDetectionROI | None = None
     moonraker_config: MoonrakerPrinterConfigInput | None = None
+    # User credited with prints started outside LayerCove; null clears it.
+    owner_id: int | None = Field(default=None, ge=1)
+    # With a new owner_id, also give this printer's past ownerless prints to that user.
+    assign_unowned_prints: bool = False
 
     @field_validator("access_code_valid")
     @classmethod
@@ -292,6 +296,7 @@ class PrinterResponse(PrinterBase):
     capabilities: PrinterCapabilities = Field(default_factory=lambda: capabilities_for_provider(PrinterProvider.BAMBU))
     moonraker_config: MoonrakerPrinterConfigResponse | None = None
     network_site: NetworkSiteSummary | None = None
+    owner_id: int | None = None
 
     class Config:
         from_attributes = True
@@ -324,6 +329,7 @@ class PrinterResponse(PrinterBase):
             "nozzle_count": printer.nozzle_count,
             "print_hours_offset": printer.print_hours_offset,
             "plate_detection_enabled": printer.plate_detection_enabled,
+            "owner_id": printer.owner_id,
             "created_at": printer.created_at,
             "updated_at": printer.updated_at,
             "capabilities": capabilities_for_provider(
