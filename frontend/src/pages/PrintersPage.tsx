@@ -3388,7 +3388,7 @@ function PrinterCard({
                         : 'bg-status-ok/20 text-status-ok'
                     }`}
                     title={knownErrors.length > 0 ? t('printers.clickToViewHmsErrors') : t('printers.hmsStatusOk')}
-                    aria-label={knownErrors.length > 0 ? undefined : t('printers.hmsStatusOk')}
+                    aria-label={knownErrors.length > 0 ? t('printers.viewHmsErrors', { count: knownErrors.length }) : t('printers.hmsStatusOk')}
                   >
                     <AlertTriangle className="w-3 h-3" />
                     {knownErrors.length > 0 ? knownErrors.length : 'OK'}

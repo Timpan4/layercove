@@ -351,6 +351,40 @@ describe('PrinterSlicerBindings', () => {
       expect(await screen.findByRole('button', { name: 'Use suggestion' })).toBeInTheDocument();
     });
 
+    it('disables every import button while one import runs, since they share the sync and batch approval', async () => {
+      let finishSync: () => void = () => {};
+      vi.mocked(api.syncStandardCatalog).mockImplementationOnce(() => new Promise((resolve) => {
+        finishSync = () => resolve({ account_id: 9, review_batch_id: 3, revision_ids: [501], cursor: 'cursor-1' });
+      }));
+      renderPanel([printer(1, 'P1S', 'P1S'), printer(2, 'Second P1S', 'P1S')]);
+      const buttons = await screen.findAllByRole('button', { name: addP1S04 });
+      expect(buttons).toHaveLength(2);
+      fireEvent.click(buttons[0]);
+      fireEvent.click(screen.getByRole('button', { name: 'Add to catalog' }));
+
+      await waitFor(() => {
+        for (const button of screen.getAllByRole('button', { name: addP1S04 })) expect(button).toBeDisabled();
+      });
+      finishSync();
+      expect(await screen.findAllByRole('button', { name: 'Use suggestion' })).toHaveLength(2);
+    });
+
+    it('explains that a rejected standard revision cannot be re-added instead of offering a hopeless retry', async () => {
+      vi.mocked(api.listSlicerCatalogReviews).mockResolvedValue([standardBatch('rejected')]);
+      vi.mocked(api.listSlicerCatalogProfileRevisions).mockResolvedValue([
+        { id: 501, content_hash: 'hash-501', review_state: 'rejected', created_at: '2026-10-25T00:00:00Z', active: false },
+      ]);
+      renderPanel([printer(1, 'P1S', 'P1S')]);
+      fireEvent.click(await screen.findByRole('button', { name: addP1S04 }));
+      fireEvent.click(screen.getByRole('button', { name: 'Add to catalog' }));
+
+      expect(await screen.findByRole('alert')).toHaveTextContent(
+        'Import failed: Bambu Lab P1S 0.4 nozzle was rejected in an earlier catalog review, so it cannot be added from here',
+      );
+      expect(api.reviewSlicerCatalogBatch).not.toHaveBeenCalled();
+      expect(api.activateSlicerCatalogRevision).not.toHaveBeenCalled();
+    });
+
     it('keeps the Profiles import text without SETTINGS_UPDATE because the import endpoints need it', async () => {
       auth.settings = false;
       renderPanel([printer(1, 'P1S', 'P1S')]);

@@ -2113,7 +2113,8 @@ export function QueuePage() {
                 : 'bg-bambu-dark-secondary border-bambu-dark-tertiary text-bambu-gray hover:text-white hover:border-bambu-gray'
             }`}
             title={t('queue.sjf.name')}
-            aria-label={t('queue.sjf.name')}
+            aria-label={t('queue.sjf.label')}
+            aria-pressed={settings?.queue_shortest_first ?? false}
           >
             <Snail className="w-4 h-4" />
             <span className="hidden sm:inline">{t('queue.sjf.label')}</span>

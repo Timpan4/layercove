@@ -8,6 +8,8 @@ interface StatsFixture {
   spools: unknown[];
   smartPlugs: unknown[];
   authEnabled?: boolean;
+  // HTTP status for the spools request; the default fulfils it with `spools`.
+  spoolsStatus?: number;
 }
 
 const archiveStats = (totalFilamentGrams: number) => ({
@@ -56,7 +58,12 @@ async function openStats(page: Page, fixture: StatsFixture) {
       failure_rate: 0, failures_by_reason: {}, failures_by_filament: {},
       failures_by_printer: {}, failures_by_hour: {}, recent_failures: [], trend: [],
     };
-    if (path === '/api/v1/inventory/spools') body = fixture.spools;
+    if (path === '/api/v1/inventory/spools') {
+      if (fixture.spoolsStatus !== undefined) {
+        return route.fulfill({ status: fixture.spoolsStatus, json: { detail: 'Fixture denied the spools request' } });
+      }
+      body = fixture.spools;
+    }
     if (path === '/api/v1/smart-plugs') body = fixture.smartPlugs;
     await route.fulfill({ json: body });
   });
@@ -171,6 +178,15 @@ test.describe('Statistics filament fallback to spool tracking', () => {
     await expect(materials).toContainText('Not tracked');
     await expect(materials).not.toContainText('PLA');
     await expect(materials).not.toContainText('from spool tracking');
+  });
+
+  test('shows Unavailable instead of Not tracked when the spools cannot be read', async ({ page }) => {
+    await openStats(page, { archiveGrams: 0, spools: [], smartPlugs: [], spoolsStatus: 403 });
+
+    await expect(tile(page, 'Filament Used')).toContainText('Unavailable');
+    await expect(card(page, 'Avg per Print')).toContainText('Unavailable');
+    await expect(card(page, 'Period Filament')).toContainText('Unavailable');
+    await expect(page.getByText('Not tracked', { exact: true })).toHaveCount(0);
   });
 
   test('shows Not tracked for this range instead of the all-time spool total under a custom range', async ({ page }) => {

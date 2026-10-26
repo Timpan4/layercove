@@ -75,7 +75,10 @@ for (const width of [1440, 390]) {
         await page.goto('/queue');
         await expect(page.getByRole('heading', { name: 'No prints scheduled', exact: true })).toBeVisible();
         await expect(page.getByText('Queue a print from your archives, or upload a new file.', { exact: true })).toBeVisible();
-        await expect(page.getByRole('button', { name: 'Shortest job first', exact: true })).toContainText('Shortest first');
+        const shortestFirst = page.getByRole('button', { name: 'Shortest first', exact: true });
+        await expect(shortestFirst).toContainText('Shortest first');
+        await expect(shortestFirst).toHaveAttribute('aria-pressed', 'false');
+        await expect(shortestFirst).toHaveAttribute('title', 'Shortest job first');
         await page.getByTitle('Group by Printer', { exact: true }).click();
         await expect(page.getByRole('heading', { name: 'No prints scheduled', exact: true })).toBeVisible();
         const addFromArchives = page.getByRole('main').getByRole('button', { name: 'Add from Archives', exact: true });

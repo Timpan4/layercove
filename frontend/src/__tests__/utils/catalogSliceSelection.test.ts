@@ -227,6 +227,45 @@ describe('catalog slice defaulting', () => {
     )).toBeNull();
   });
 
+  // Failure mode: a PETG preference saved from one slot auto-selects for a PLA slot with only a warning to explain it.
+  it('skips a saved preference whose material differs from the slot', () => {
+    // Two PETG profiles keep the metadata match ambiguous, so the preference is what decides the PETG slot.
+    const choices = groups([classified(20, 'filament', 'Preferred PETG'), classified(21, 'filament', 'Other PETG')]);
+    expect(pickCatalogFilament(
+      choices,
+      [profile(20, 'PETG'), profile(21, 'PETG')],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PLA', color: '' },
+      [],
+      [],
+      20,
+    )).toBeNull();
+    expect(pickCatalogFilament(
+      choices,
+      [profile(20, 'PETG'), profile(21, 'PETG')],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PETG', color: '' },
+      [],
+      [],
+      20,
+    )).toEqual({ id: 20, reason: 'user_preference', manual: false });
+  });
+
+  it('keeps a saved preference when the slot material is unknown', () => {
+    expect(pickCatalogFilament(
+      groups([classified(20, 'filament', 'Preferred PETG')]),
+      [profile(20, 'PETG')],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: '', color: '' },
+      [],
+      [],
+      20,
+    )).toEqual({ id: 20, reason: 'user_preference', manual: false });
+  });
+
   it('leaves ambiguous metadata unresolved instead of picking list order', () => {
     const choices = groups([
       classified(20, 'filament', 'PLA one'),

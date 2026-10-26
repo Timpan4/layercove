@@ -122,4 +122,18 @@ describe('Printer detail copy', () => {
     const maintenanceChip = await screen.findByRole('button', { name: 'All maintenance up to date - Click to view' });
     expect(maintenanceChip).toHaveAttribute('title', 'All maintenance up to date - Click to view');
   });
+
+  it('names the HMS chip by its error count instead of a bare number', async () => {
+    server.use(
+      http.get('/api/v1/printers/:id/status', () => HttpResponse.json({
+        ...mockPrinterStatus,
+        hms_errors: [{ code: '0x0300', attr: 0, module: 3, severity: 2, actions: ['CHECK_FILAMENT'] }],
+      })),
+    );
+    render(<PrintersPage />);
+    await openPrinterControls('Bench P1S');
+
+    const hmsChip = await screen.findByRole('button', { name: 'View 1 HMS error(s)' });
+    expect(hmsChip).toHaveTextContent('1');
+  });
 });

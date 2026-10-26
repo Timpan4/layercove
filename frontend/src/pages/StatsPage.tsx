@@ -39,7 +39,8 @@ import { useAuth } from '../contexts/AuthContext';
 import { api, type ArchiveSlim } from '../api/client';
 import { consumedGramsByMaterial, inventoryData, inventoryQueryKeys, totalConsumedGrams, useInventorySource } from '../api/inventoryData';
 import { PrintCalendar } from '../components/PrintCalendar';
-import { FilamentTrends, type SpoolFallback } from '../components/FilamentTrends';
+import { FilamentTrends } from '../components/FilamentTrends';
+import { spoolFallbackGrams, untrackedFilamentLabel, type SpoolFallback } from '../utils/spoolFallback';
 import { Dashboard, type DashboardWidget } from '../components/Dashboard';
 import { getCurrencySymbol } from '../utils/currency';
 import { formatWeight, resolveFilamentGrams } from '../utils/weight';
@@ -155,8 +156,8 @@ function QuickStatsWidget({
 
   const warmingUp = stats?.energy_data_warming_up === true;
   const warmingUpTooltip = warmingUp ? t('stats.energyWarmingUpTooltip') : undefined;
-  const filament = resolveFilamentGrams(stats?.total_filament_grams || 0, spoolFallback?.grams);
-  const untrackedLabel = spoolFallback ? t('stats.notTracked') : t('stats.notTrackedForRange');
+  const filament = resolveFilamentGrams(stats?.total_filament_grams || 0, spoolFallbackGrams(spoolFallback));
+  const untrackedLabel = untrackedFilamentLabel(t, spoolFallback);
 
   const coreItems: QuickStatItem[] = [
     { icon: Package, color: 'text-bambu-green', label: t('stats.totalPrints'), value: `${stats?.total_prints || 0}` },
@@ -1096,15 +1097,20 @@ export function StatsPage() {
 
   // Spool consumption backs the filament tiles when archives carry no weight.
   const { source, isReady: sourceReady } = useInventorySource();
-  const { data: spools } = useQuery({
+  const allTimeAllUsers = timeframe.preset === 'all-time' && selectedUserId === null;
+  const spoolsQuery = useQuery({
     queryKey: inventoryQueryKeys.spools(source),
     queryFn: inventoryData(source).getSpools,
-    enabled: sourceReady,
+    enabled: sourceReady && allTimeAllUsers,
   });
+  const spools = spoolsQuery.isSuccess ? spoolsQuery.data : undefined;
   // Spool counters are all-time and not per user, so they stand in for archive weight only in the all-time, all-users view.
-  const spoolFallback: SpoolFallback | undefined = timeframe.preset === 'all-time' && selectedUserId === null
-    ? { grams: totalConsumedGrams(spools ?? []), gramsByMaterial: consumedGramsByMaterial(spools ?? []) }
-    : undefined;
+  // Until they load, or when the viewer cannot read the inventory, the tiles must not claim "Not tracked".
+  const spoolFallback = useMemo<SpoolFallback | undefined>(() => {
+    if (!allTimeAllUsers) return undefined;
+    if (!spools) return { status: 'unavailable' };
+    return { status: 'ready', grams: totalConsumedGrams(spools), gramsByMaterial: consumedGramsByMaterial(spools) };
+  }, [allTimeAllUsers, spools]);
 
   const { data: smartPlugs } = useQuery({
     queryKey: ['smart-plugs'],

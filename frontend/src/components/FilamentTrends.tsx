@@ -16,12 +16,7 @@ import type { ArchiveSlim } from '../api/client';
 import { MetricToggle, type Metric } from './MetricToggle';
 import { parseUTCDate } from '../utils/date';
 import { formatWeight, resolveFilamentGrams } from '../utils/weight';
-
-// Spool consumption that stands in for archive weight. Only the all-time, all-users view has one.
-export interface SpoolFallback {
-  grams: number;
-  gramsByMaterial: Map<string, number>;
-}
+import { spoolFallbackGrams, untrackedFilamentLabel, type SpoolFallback } from '../utils/spoolFallback';
 
 interface FilamentTrendsProps {
   archives: ArchiveSlim[];
@@ -238,7 +233,7 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
 
   // Spool consumption per material, shown by By Material when archives carry no weight.
   const spoolMaterialData = useMemo(() => {
-    if (!spoolFallback) return [];
+    if (spoolFallback?.status !== 'ready') return [];
     return Array.from(spoolFallback.gramsByMaterial.entries())
       .filter(([, grams]) => grams > 0)
       .map(([name, grams]) => ({ name, value: Math.round(grams) }))
@@ -246,7 +241,7 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
   }, [spoolFallback]);
 
   const totalFilament = archives.reduce((sum, a) => sum + (a.filament_used_grams || 0), 0);
-  const filament = resolveFilamentGrams(totalFilament, spoolFallback?.grams);
+  const filament = resolveFilamentGrams(totalFilament, spoolFallbackGrams(spoolFallback));
   const weightByMaterial = filament?.fromSpool ? spoolMaterialData : filamentTypeData;
   const activeFilamentTypeData =
     filamentTypeMetric === 'weight' ? weightByMaterial :
@@ -260,7 +255,7 @@ export function FilamentTrends({ archives, currency = '$', dateFrom, dateTo, spo
   const totalPrints = archives.reduce((sum, a) => sum + (a.quantity || 1), 0);
   const printerCount = new Set(archives.map(a => a.printer_id).filter(Boolean)).size;
   const averageGrams = filament && totalPrints > 0 ? filament.grams / totalPrints : null;
-  const untrackedLabel = spoolFallback ? t('stats.notTracked') : t('stats.notTrackedForRange');
+  const untrackedLabel = untrackedFilamentLabel(t, spoolFallback);
 
   return (
     <div className="space-y-4">
