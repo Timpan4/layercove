@@ -134,8 +134,8 @@ export function pickCatalogFilament(
   preferenceProfileId: number | null | undefined,
 ): CatalogProfileChoice | null {
   // Rule, metadata and binding-default candidates auto-select only when their verified material equals the slot.
-  // An unknown slot material therefore leaves them unselected; a saved preference is the one exception, and it
-  // still steps aside when the slot reports a different material.
+  // An unknown slot material therefore leaves them unselected. A saved preference is the one exception: the user
+  // chose it, so it applies unless both materials are known and differ.
   const material = canonicalFilamentType(slot.type);
   const materialMatches = (candidate: SlicerCatalogClassification) => material !== ''
     && candidateFilamentMaterial(profiles, candidate) === material;
@@ -205,8 +205,10 @@ export function pickCatalogFilament(
   }
 
   const preference = autoCandidate(groups, preferenceProfileId, 'filament');
-  if (preference && (material === '' || materialMatches(preference))) {
-    return { id: preference.profile_id, reason: 'user_preference', manual: false };
+  if (preference) {
+    const preferenceMaterial = candidateFilamentMaterial(profiles, preference);
+    const conflicts = material !== '' && preferenceMaterial !== '' && preferenceMaterial !== material;
+    if (!conflicts) return { id: preference.profile_id, reason: 'user_preference', manual: false };
   }
   const fallback = autoCandidate(groups, binding.default_filament_profile_id, 'filament');
   if (fallback && materialMatches(fallback)) {

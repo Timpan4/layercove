@@ -57,7 +57,8 @@ const tokens = (value: string) => value.toUpperCase().split(/[^A-Z0-9]+/).filter
  */
 export function nameRefersToPrinterModel(name: string, printerModel: string): boolean {
   const model = printerModel.toUpperCase().trim();
-  if (!model) return false;
+  // A model without letters or digits has no words to match and must not match everything.
+  if (tokens(model).length === 0) return false;
   const forms = new Set([model, ...(PRINTER_MODEL_SUFFIX_ALIASES[model] ?? [])]);
   for (const [longForm, shortForms] of Object.entries(PRINTER_MODEL_SUFFIX_ALIASES)) {
     if (shortForms.includes(model)) forms.add(longForm);

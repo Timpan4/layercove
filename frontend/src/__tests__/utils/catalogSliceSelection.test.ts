@@ -253,6 +253,20 @@ describe('catalog slice defaulting', () => {
     )).toEqual({ id: 20, reason: 'user_preference', manual: false });
   });
 
+  it('keeps a saved preference whose profile has no material metadata', () => {
+    const untagged = { ...profile(20, 'PETG'), compatibility_metadata: {} };
+    expect(pickCatalogFilament(
+      groups([classified(20, 'filament', 'Preferred untagged')]),
+      [untagged],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PLA', color: '' },
+      [],
+      [],
+      20,
+    )).toEqual({ id: 20, reason: 'user_preference', manual: false });
+  });
+
   it('keeps a saved preference when the slot material is unknown', () => {
     expect(pickCatalogFilament(
       groups([classified(20, 'filament', 'Preferred PETG')]),

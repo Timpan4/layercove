@@ -383,6 +383,7 @@ describe('PrinterSlicerBindings', () => {
       );
       expect(api.reviewSlicerCatalogBatch).not.toHaveBeenCalled();
       expect(api.activateSlicerCatalogRevision).not.toHaveBeenCalled();
+      expect(screen.queryByRole('button', { name: 'Retry' })).not.toBeInTheDocument();
     });
 
     it('keeps the Profiles import text without SETTINGS_UPDATE because the import endpoints need it', async () => {

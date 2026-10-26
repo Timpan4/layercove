@@ -60,6 +60,13 @@ function standardPresetFor(presets: UnifiedPreset[], model: string, nozzle: numb
     ?? matches[0];
 }
 
+// A re-sync reuses a rejected revision by content digest and opens no new batch, so a retry cannot recover.
+class RejectedStandardRevisionError extends Error {
+  constructor(presetName: string) {
+    super(`${presetName} was rejected in an earlier catalog review, so it cannot be added from here`);
+  }
+}
+
 // The standard library enters the catalog as pending review, and a preset is listed only once its
 // revision is approved and activated. The sync has no filter, so the approved batch covers the whole
 // library, while only the chosen preset is activated.
@@ -84,10 +91,10 @@ async function importStandardPreset(presetName: string) {
     .filter((revision) => revision.review_state === 'approved')
     .sort((a, b) => b.id - a.id)[0];
   if (!approved) {
-    // A re-sync reuses a rejected revision by content digest and opens no new batch, so a retry cannot recover.
-    throw new Error(revisions.some((revision) => revision.review_state === 'rejected')
-      ? `${presetName} was rejected in an earlier catalog review, so it cannot be added from here`
-      : `${presetName} has no approved revision`);
+    if (revisions.some((revision) => revision.review_state === 'rejected')) {
+      throw new RejectedStandardRevisionError(presetName);
+    }
+    throw new Error(`${presetName} has no approved revision`);
   }
   await api.activateSlicerCatalogRevision(match.profile_id, approved.id);
 }
@@ -304,9 +311,11 @@ export function PrinterSlicerBindings({ printers }: { printers: Printer[] }) {
                         {t('printerSlicerBindings.importFailed', {
                           detail: errorMessage(importStandard.error, t('printerSlicerBindings.requestFailed')),
                         })}
-                        <Button className="ml-2" size="sm" variant="secondary" onClick={() => importStandard.mutate(failedImport)}>
-                          {t('common.retry')}
-                        </Button>
+                        {!(importStandard.error instanceof RejectedStandardRevisionError) && (
+                          <Button className="ml-2" size="sm" variant="secondary" onClick={() => importStandard.mutate(failedImport)}>
+                            {t('common.retry')}
+                          </Button>
+                        )}
                       </p>
                     )}
                   </div>

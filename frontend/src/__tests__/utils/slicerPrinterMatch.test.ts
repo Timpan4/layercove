@@ -360,8 +360,10 @@ describe('nameRefersToPrinterModel', () => {
     expect(nameRefersToPrinterModel('Bambu Lab H2D 0.4 nozzle', 'H2D')).toBe(true);
   });
 
-  it('matches nothing for an empty model', () => {
+  it('matches nothing for an empty model or one with no letters or digits', () => {
     expect(nameRefersToPrinterModel('Bambu Lab P1S 0.4 nozzle', '')).toBe(false);
+    expect(nameRefersToPrinterModel('Bambu Lab P1S 0.4 nozzle', '-')).toBe(false);
+    expect(nameRefersToPrinterModel('Bambu Lab P1S 0.4 nozzle', ' / ')).toBe(false);
   });
 });
 
