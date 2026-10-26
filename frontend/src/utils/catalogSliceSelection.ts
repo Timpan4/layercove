@@ -260,16 +260,19 @@ export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
 }
 
 export interface CatalogMaterialWarning {
-  reason: 'material_mismatch';
+  /** Both materials known and different, or at least one of them unknown. */
+  reason: 'material_mismatch' | 'material_unverified';
   /** One-based slot number. */
   slot: number;
-  /** Canonical source material. */
+  /** Canonical source material, or '' when the source does not state one (plain STL). */
   source: string;
-  /** Canonical material of the selected profile revision. */
+  /** Canonical material of the selected profile revision, or '' when unknown or stale. */
   profile: string;
 }
 
-/** Only a known source material that differs from a known selected material needs confirmation. */
+// Mirrors the backend gate in slicer_catalog_selection.py: a slice passes without acknowledgement only
+// when the source and the selected profile both state a material and they agree. A plain STL states none,
+// so the backend answers 409 unless the user confirms the filament here.
 export function catalogMaterialWarnings(
   slots: Array<{ type: string }>,
   profiles: Array<SlicerCatalogProfile | undefined>,
@@ -280,8 +283,13 @@ export function catalogMaterialWarnings(
     if (!profile) return [];
     const source = canonicalFilamentType(slot.type.trim());
     const selected = profile.revision_id === revisions[index] ? catalogFilamentMaterial(profile) : '';
-    if (!source || !selected || source === selected) return [];
-    return [{ reason: 'material_mismatch', slot: index + 1, source, profile: selected }];
+    if (source && selected && source === selected) return [];
+    return [{
+      reason: source && selected ? 'material_mismatch' : 'material_unverified',
+      slot: index + 1,
+      source,
+      profile: selected,
+    }];
   });
 }
 

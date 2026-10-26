@@ -78,6 +78,8 @@ async function selectMachine() {
   fireEvent.change(await screen.findByRole('combobox', { name: 'Physical printer' }), { target: { value: '1' } });
   fireEvent.change(await screen.findByRole('combobox', { name: 'Exact slicer binding' }), { target: { value: '5' } });
   fireEvent.click(await screen.findByRole('radio', { name: /Cloud filament/ }));
+  // cube.stl states no material and the cloud filament profile carries no metadata, so the gate asks first.
+  fireEvent.click(await screen.findByRole('checkbox', { name: 'Filament 1: the selected profile does not state its material. Slice anyway?' }));
   await waitFor(() => expect(screen.getByRole('button', { name: 'Slice plate' })).toBeEnabled());
   fireEvent.click(screen.getByRole('button', { name: 'Slice plate' }));
   await screen.findByRole('button', { name: 'Slice again' });

@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "Wählen Sie ein Filamentprofil für Slot {{slot}}.",
     confirmWarning: "Bestätigen Sie unten den Hinweis, bevor Sie slicen.",
     materialMismatchConfirm: "Filament {{slot}}: Die Quelle nennt {{source}}, das Profil ist {{profile}}. Trotzdem slicen?",
+    materialSourceUnknownConfirm: "Filament {{slot}}: Die Datei gibt kein Material an. Mit {{profile}} slicen?",
+    materialProfileUnknownConfirm: "Filament {{slot}}: Das gewählte Profil gibt kein Material an. Trotzdem slicen?",
     confirmTargetNozzle: "Bestätigen Sie vor dem Slicen Ziel und Düse.",
     loadedInPrinter: "Im Drucker geladen",
     unknownMaterial: "Unbekanntes Material",

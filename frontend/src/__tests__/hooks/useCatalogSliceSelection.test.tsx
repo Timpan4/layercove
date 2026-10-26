@@ -82,7 +82,7 @@ const groups: SlicerCatalogGroups = {
 };
 
 describe('useCatalogSliceSelection', () => {
-  it('treats material metadata from an older profile revision as unverified without a material checkbox', async () => {
+  it('treats material metadata from an older profile revision as unverified and asks for acknowledgement', async () => {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={client}>{children}</QueryClientProvider>
@@ -103,7 +103,9 @@ describe('useCatalogSliceSelection', () => {
     }));
 
     await waitFor(() => expect(result.current.groups?.selected_printer.find((item) => item.profile_id === 22)?.revision_id).toBe(23));
-    expect(result.current.selectionReadiness).toEqual({ state: 'ready', reason_codes: [] });
+    // The known PLA metadata belongs to revision 22, not the active 23, so the backend gate applies again.
+    expect(result.current.selectionReadiness).toEqual({ state: 'acknowledgement_required', reason_codes: ['material_unverified'] });
+    expect(result.current.materialWarnings).toEqual([{ reason: 'material_unverified', slot: 1, source: 'PLA', profile: '' }]);
   });
 
   it('invalidates material confirmation when the project slot material changes', async () => {

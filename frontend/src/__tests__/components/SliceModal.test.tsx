@@ -247,6 +247,10 @@ describe('SliceModal catalog selection', () => {
     expect(screen.queryByRole('checkbox', { name: /Slice anyway/ })).not.toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', { name: /PLA profile/ }));
+    // The backend refuses an STL slice without an acknowledgement, so the modal asks for one first.
+    const confirm = await screen.findByRole('checkbox', { name: 'Filament 1: the file does not say which material it needs. Slice with PLA?' });
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    await user.click(confirm);
     expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
   });
 

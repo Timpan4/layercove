@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "Choisissez un profil de filament pour l’emplacement {{slot}}.",
     confirmWarning: "Confirmez l’avertissement ci-dessous avant le tranchage.",
     materialMismatchConfirm: "Filament {{slot}} : la source indique {{source}}, le profil est {{profile}}. Trancher quand même ?",
+    materialSourceUnknownConfirm: "Filament {{slot}} : le fichier n’indique pas le matériau requis. Trancher avec {{profile}} ?",
+    materialProfileUnknownConfirm: "Filament {{slot}} : le profil sélectionné n’indique pas son matériau. Trancher quand même ?",
     confirmTargetNozzle: "Confirmez la cible et la buse actuelles avant le tranchage.",
     loadedInPrinter: "Chargé dans l'imprimante",
     unknownMaterial: "Matériau inconnu",

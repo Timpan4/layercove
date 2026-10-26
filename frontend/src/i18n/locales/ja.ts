@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "スロット {{slot}} のフィラメントプロファイルを選択してください。",
     confirmWarning: "スライス前に下の警告を確認してください。",
     materialMismatchConfirm: "フィラメント {{slot}}: 元データは {{source}}、プロファイルは {{profile}} です。それでもスライスしますか？",
+    materialSourceUnknownConfirm: "フィラメント {{slot}}: ファイルに必要な材料の指定がありません。{{profile}} でスライスしますか？",
+    materialProfileUnknownConfirm: "フィラメント {{slot}}: 選択したプロファイルに材料の指定がありません。それでもスライスしますか？",
     confirmTargetNozzle: "スライス前に現在の対象とノズルを確認してください。",
     loadedInPrinter: "プリンターに装填済み",
     unknownMaterial: "材質不明",

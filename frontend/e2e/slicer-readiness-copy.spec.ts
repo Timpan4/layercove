@@ -87,9 +87,12 @@ for (const width of [1280, 390]) {
       await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
       await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
       const slice = page.getByRole('button', { name: context === 'Quick Slice' ? 'Slice' : 'Slice plate', exact: true });
-      await expect(page.getByText('Ready to slice for Tim Voron with Generic PLA.', { exact: true })).toBeVisible();
+      // cube.stl states no material, so the backend requires an acknowledgement; the copy must say why.
+      await expect(page.getByText('Confirm the warning below before slicing.', { exact: true })).toBeVisible();
       await expect(page.getByText(/Readiness:|material_unverified|acknowledgement_required/)).toHaveCount(0);
-      await expect(page.getByRole('checkbox', { name: /Slice anyway/ })).toHaveCount(0);
+      const confirm = page.getByRole('checkbox', { name: 'Filament 1: the file does not say which material it needs. Slice with PLA?' });
+      await confirm.check();
+      await expect(page.getByText('Ready to slice for Tim Voron with Generic PLA.', { exact: true })).toBeVisible();
       await expect(slice).toBeEnabled();
       await expect(page.getByRole('combobox', { name: 'Exact slicer binding', exact: true })).toHaveValue('5');
       await expect(page.getByRole('option', { name: `${printerProfile} · 0.4 mm · tool 0`, exact: true })).toBeAttached();

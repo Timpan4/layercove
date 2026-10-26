@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "請為槽位 {{slot}} 選擇耗材設定檔。",
     confirmWarning: "切片前請確認下方的提示。",
     materialMismatchConfirm: "耗材 {{slot}}：來源檔案為 {{source}}，設定檔為 {{profile}}。仍要切片嗎？",
+    materialSourceUnknownConfirm: "耗材 {{slot}}：檔案未說明所需材料。使用 {{profile}} 切片嗎？",
+    materialProfileUnknownConfirm: "耗材 {{slot}}：所選設定檔未說明其材料。仍要切片嗎？",
     confirmTargetNozzle: "切片前請確認目前的目標與噴嘴。",
     loadedInPrinter: "已裝入印表機",
     unknownMaterial: "未知材料",

@@ -107,6 +107,8 @@ for (const width of [1280, 390]) {
     await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
     await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
     await page.getByRole('group', { name: 'Filament profile', exact: true }).getByRole('radio', { name: /Inslogic 95A TPU/ }).check();
+    // cube.stl states no material, so the backend gate needs an acknowledgement before Slice plate enables.
+    await page.getByRole('checkbox', { name: /Slice anyway\?/ }).check();
     await page.getByRole('searchbox', { name: 'Search catalog profiles', exact: true }).fill('PLA');
     await expect(page.getByText('Selected: 0.20mm Standard @Voron', { exact: true })).toBeVisible();
     await expect(page.getByText('Selected: Inslogic 95A TPU', { exact: true })).toBeVisible();
@@ -155,6 +157,7 @@ for (const width of [1280, 390]) {
         await expect(height).toHaveValue('0.28');
       }
       await page.getByRole('radio', { name: /Cloud filament/ }).check();
+      await page.getByRole('checkbox', { name: /Slice anyway\?/ }).check();
       await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
       expect(fixture.sliceRequests).toBe(1);
       expect(fixture.sliceRequest).toMatchObject(scope === 'global'
@@ -265,6 +268,7 @@ for (const width of [1280, 390]) {
     await page.getByRole('combobox', { name: 'Physical printer' }).selectOption('1');
     await page.getByRole('combobox', { name: 'Exact slicer binding' }).selectOption('5');
     await page.getByRole('radio', { name: /Cloud filament/ }).check();
+    await page.getByRole('checkbox', { name: /Slice anyway\?/ }).check();
     await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
     fixture.completeReslice();
     await expect(page.getByText('Saved to File Manager', { exact: true })).toBeVisible();

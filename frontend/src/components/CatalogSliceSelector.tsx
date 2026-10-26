@@ -5,7 +5,7 @@ import type { TFunction } from 'i18next';
 import { FilamentProfileEditor } from './FilamentProfileEditor';
 import type { SlicerCatalogClassification, SlicerCatalogGroups } from '../api/client';
 import type { CatalogSliceSelectionState } from '../hooks/useCatalogSliceSelection';
-import { catalogFilamentMaterial, groupFilamentCandidates, type FilamentGroupKey } from '../utils/catalogSliceSelection';
+import { catalogFilamentMaterial, groupFilamentCandidates, type CatalogMaterialWarning, type FilamentGroupKey } from '../utils/catalogSliceSelection';
 import { canonicalFilamentType } from '../utils/amsHelpers';
 import { displayedSlicerReadiness, slicerReadinessReasons } from '../utils/slicerReadiness';
 
@@ -44,7 +44,9 @@ export function CatalogSliceSelector({
   const [editingSlot, setEditingSlot] = useState<number | null>(null);
   const selectedProcessId = selection.processChoice?.id ?? null;
   const selectedPrinter = selection.activePrinters.find((printer) => printer.id === selection.printerId);
-  const otherAcknowledgementReasons = selection.acknowledgementReasons.filter((reason) => reason !== 'material_mismatch');
+  const otherAcknowledgementReasons = selection.acknowledgementReasons.filter(
+    (reason) => reason !== 'material_mismatch' && reason !== 'material_unverified',
+  );
   const firstPendingSlot = Math.max(1, filamentSlots.findIndex((_, index) => !selection.filamentChoices[index]) + 1);
   const readinessTone = displayedReadiness === 'blocked' ? 'border-red-500/40 text-red-300'
     : displayedReadiness === 'ready' ? 'border-green-500/30 text-green-300' : 'border-amber-400/40 text-amber-300';
@@ -160,9 +162,7 @@ export function CatalogSliceSelector({
         onChange={(event) => selection.setAcknowledged(event.target.checked)}
       />
       <span>
-        {selection.materialWarnings.map((warning) => <span key={warning.slot} className="block">{t('slicerReadiness.materialMismatchConfirm', {
-          slot: warning.slot, source: warning.source, profile: warning.profile,
-        })}</span>)}
+        {selection.materialWarnings.map((warning) => <span key={warning.slot} className="block">{materialConfirmation(t, warning)}</span>)}
         {otherAcknowledgementReasons.length > 0 && <span className="block">{t('slicerReadiness.confirmTargetNozzle')}</span>}
         {otherAcknowledgementReasons.length > 0 && <span className="block">{slicerReadinessReasons(t, otherAcknowledgementReasons).join(' ')}</span>}
       </span>
@@ -171,6 +171,15 @@ export function CatalogSliceSelector({
       {selection.error instanceof Error ? selection.error.message : 'Catalog selection could not load.'}
     </p>}
   </div>;
+}
+
+/** The question the checkbox asks for one slot: a known mismatch, or whichever side left its material unstated. */
+function materialConfirmation(t: TFunction, warning: CatalogMaterialWarning): string {
+  if (warning.reason === 'material_mismatch') {
+    return t('slicerReadiness.materialMismatchConfirm', { slot: warning.slot, source: warning.source, profile: warning.profile });
+  }
+  if (!warning.profile) return t('slicerReadiness.materialProfileUnknownConfirm', { slot: warning.slot });
+  return t('slicerReadiness.materialSourceUnknownConfirm', { slot: warning.slot, profile: warning.profile });
 }
 
 /** One sentence: the next action, or the ready combination. */

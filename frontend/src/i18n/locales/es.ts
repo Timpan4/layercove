@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "Elija un perfil de filamento para la ranura {{slot}}.",
     confirmWarning: "Confirme la advertencia de abajo antes de laminar.",
     materialMismatchConfirm: "Filamento {{slot}}: el origen indica {{source}}, el perfil es {{profile}}. ¿Laminar igualmente?",
+    materialSourceUnknownConfirm: "Filamento {{slot}}: el archivo no indica qué material necesita. ¿Laminar con {{profile}}?",
+    materialProfileUnknownConfirm: "Filamento {{slot}}: el perfil seleccionado no indica su material. ¿Laminar igualmente?",
     confirmTargetNozzle: "Confirme el destino y la boquilla actuales antes de laminar.",
     loadedInPrinter: "Cargado en la impresora",
     unknownMaterial: "Material desconocido",

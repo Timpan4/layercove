@@ -7,7 +7,7 @@ import type {
   SlicerCatalogProfile,
   SlicerFilamentRule,
 } from '../../api/client';
-import { catalogSelectionReadiness, pickCatalogFilament, pickCatalogProcess } from '../../utils/catalogSliceSelection';
+import { catalogMaterialWarnings, catalogSelectionReadiness, pickCatalogFilament, pickCatalogProcess } from '../../utils/catalogSliceSelection';
 
 const classified = (
   profileId: number,
@@ -339,6 +339,31 @@ describe('selected combination readiness', () => {
   it('preserves unavailable binding and incompatible profile blocks', () => {
     expect(evaluate({ ...noDefaults, readiness: { state: 'blocked', reason_codes: ['profile_unavailable'] } }).state).toBe('blocked');
     expect(catalogSelectionReadiness({ binding, process: classified(30, 'process', 'Other machine', 'incompatible'), filaments, filamentCount: 1 }).state).toBe('blocked');
+  });
+
+  // The backend (slicer_catalog_selection.py) answers 409 unless both materials are known and agree,
+  // so the frontend must raise the same warnings or the slice fails with no way to acknowledge it.
+  it('mirrors the backend material gate: only a known, matching pair passes without a warning', () => {
+    const pla = profile(20, 'PLA');
+    const untagged = { ...profile(21, 'PETG'), compatibility_metadata: {} };
+    expect(catalogMaterialWarnings([{ type: 'PLA' }], [pla], [20])).toEqual([]);
+    expect(catalogMaterialWarnings([{ type: 'TPU' }], [pla], [20])).toEqual([
+      { reason: 'material_mismatch', slot: 1, source: 'TPU', profile: 'PLA' },
+    ]);
+    // Plain STL: the source states no material.
+    expect(catalogMaterialWarnings([{ type: '' }], [pla], [20])).toEqual([
+      { reason: 'material_unverified', slot: 1, source: '', profile: 'PLA' },
+    ]);
+    // The profile states no material.
+    expect(catalogMaterialWarnings([{ type: 'PLA' }], [untagged], [21])).toEqual([
+      { reason: 'material_unverified', slot: 1, source: 'PLA', profile: '' },
+    ]);
+    // Metadata from a stale revision does not count as known.
+    expect(catalogMaterialWarnings([{ type: 'PLA' }], [pla], [19])).toEqual([
+      { reason: 'material_unverified', slot: 1, source: 'PLA', profile: '' },
+    ]);
+    // An empty slot has nothing to warn about yet.
+    expect(catalogMaterialWarnings([{ type: '' }], [undefined], [null])).toEqual([]);
   });
 
   it('requires explicit acknowledgement for unknown compatibility and stale telemetry', () => {

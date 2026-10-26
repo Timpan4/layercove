@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "슬롯 {{slot}}의 필라멘트 프로파일을 선택하세요.",
     confirmWarning: "슬라이싱 전에 아래 경고를 확인하세요.",
     materialMismatchConfirm: "필라멘트 {{slot}}: 원본은 {{source}}, 프로파일은 {{profile}}입니다. 그래도 슬라이싱할까요?",
+    materialSourceUnknownConfirm: "필라멘트 {{slot}}: 파일에 필요한 재료가 지정되어 있지 않습니다. {{profile}}(으)로 슬라이싱할까요?",
+    materialProfileUnknownConfirm: "필라멘트 {{slot}}: 선택한 프로파일에 재료가 지정되어 있지 않습니다. 그래도 슬라이싱할까요?",
     confirmTargetNozzle: "슬라이싱 전에 현재 대상과 노즐을 확인하세요.",
     loadedInPrinter: "프린터에 장착됨",
     unknownMaterial: "재료 알 수 없음",

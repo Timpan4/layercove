@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "{{slot}}. yuva için bir filament profili seçin.",
     confirmWarning: "Dilimlemeden önce aşağıdaki uyarıyı onaylayın.",
     materialMismatchConfirm: "Filament {{slot}}: kaynak {{source}} diyor, profil {{profile}}. Yine de dilimlensin mi?",
+    materialSourceUnknownConfirm: "Filament {{slot}}: dosya hangi malzemenin gerektiğini belirtmiyor. {{profile}} ile dilimlensin mi?",
+    materialProfileUnknownConfirm: "Filament {{slot}}: seçilen profil malzemesini belirtmiyor. Yine de dilimlensin mi?",
     confirmTargetNozzle: "Dilimlemeden önce mevcut hedefi ve nozulu onaylayın.",
     loadedInPrinter: "Yazıcıya yüklü",
     unknownMaterial: "Bilinmeyen malzeme",

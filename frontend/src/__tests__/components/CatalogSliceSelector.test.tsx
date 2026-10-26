@@ -221,6 +221,24 @@ describe('CatalogSliceSelector filament choice', () => {
     expect(screen.getByRole('checkbox', { name: /Slice anyway\?/ })).not.toBeChecked();
     expect(screen.getByText('Confirm the warning below before slicing.')).toBeInTheDocument();
   });
+
+  // Failure mode: a plain STL states no material, the selector reports "ready", and the backend
+  // answers 409 slicer_acknowledgement_required because no acknowledgement was sent.
+  it('asks to confirm the filament for a source that states no material, then reads as ready', async () => {
+    mockCatalog({
+      filaments: [profileRecord(22, 'filament', 'Voron Generic PLA', 'PLA')],
+      filamentGroup: [selectable(22, 'filament', 'Voron Generic PLA')],
+    });
+    await renderFlow(stlSlots);
+
+    await screen.findByText('Pick a filament profile for slot 1.');
+    fireEvent.click(screen.getByRole('radio', { name: /Voron Generic PLA/ }));
+
+    expect(await screen.findByText('Filament 1: the file does not say which material it needs. Slice with PLA?')).toBeInTheDocument();
+    expect(screen.getByText('Confirm the warning below before slicing.')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('checkbox', { name: /Slice with PLA\?/ }));
+    expect(await screen.findByText('Ready to slice for P1S with Voron Generic PLA.')).toBeInTheDocument();
+  });
 });
 
 function filamentSection() {

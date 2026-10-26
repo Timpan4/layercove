@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "Escolha um perfil de filamento para o slot {{slot}}.",
     confirmWarning: "Confirme o aviso abaixo antes de fatiar.",
     materialMismatchConfirm: "Filamento {{slot}}: a origem indica {{source}}, o perfil é {{profile}}. Fatiar mesmo assim?",
+    materialSourceUnknownConfirm: "Filamento {{slot}}: o arquivo não indica qual material precisa. Fatiar com {{profile}}?",
+    materialProfileUnknownConfirm: "Filamento {{slot}}: o perfil selecionado não indica seu material. Fatiar mesmo assim?",
     confirmTargetNozzle: "Confirme o destino e o bico atuais antes de fatiar.",
     loadedInPrinter: "Carregado na impressora",
     unknownMaterial: "Material desconhecido",

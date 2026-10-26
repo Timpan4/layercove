@@ -38,6 +38,8 @@ export default {
     pickFilamentSlot: "Pick a filament profile for slot {{slot}}.",
     confirmWarning: "Confirm the warning below before slicing.",
     materialMismatchConfirm: "Filament {{slot}}: source says {{source}}, profile is {{profile}}. Slice anyway?",
+    materialSourceUnknownConfirm: "Filament {{slot}}: the file does not say which material it needs. Slice with {{profile}}?",
+    materialProfileUnknownConfirm: "Filament {{slot}}: the selected profile does not state its material. Slice anyway?",
     confirmTargetNozzle: "Confirm current target and nozzle before slicing.",
     loadedInPrinter: "Loaded in printer",
     unknownMaterial: "Unknown material",
