@@ -81,6 +81,26 @@ export function inventoryData(source: InventorySource) {
   return source === 'spoolman' ? spoolmanInventory : localInventory;
 }
 
+// Resettable counter (weight_used - baseline), so the eraser zeroes it without inflating remaining (#1390).
+function consumedGrams(spool: InventorySpool) {
+  return Math.max(0, spool.weight_used - (spool.weight_used_baseline ?? 0));
+}
+
+// Running total across every spool, archived included. Inventory's "Total Consumed"
+// and the Statistics filament fallback both read this sum.
+export function totalConsumedGrams(spools: InventorySpool[]) {
+  return spools.reduce((sum, s) => sum + consumedGrams(s), 0);
+}
+
+// Same spools and counter as totalConsumedGrams, grouped by spool material.
+export function consumedGramsByMaterial(spools: InventorySpool[]) {
+  const grams = new Map<string, number>();
+  for (const s of spools) {
+    grams.set(s.material, (grams.get(s.material) ?? 0) + consumedGrams(s));
+  }
+  return grams;
+}
+
 export function normalizeBulkCreate(result: InventorySpool[] | SpoolmanBulkCreateResult) {
   if ('created' in result) {
     return { created: result.created, requested: result.requested_count, failed: result.failed_count };

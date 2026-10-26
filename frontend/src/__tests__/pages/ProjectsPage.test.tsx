@@ -379,4 +379,88 @@ describe('ProjectsPage', () => {
       expect(card).not.toBeNull();
     });
   });
+
+  // Regression: a project with one target part and one target plate rendered
+  // "0/1 parts", "0 / 1" twice, "0 plates" and "0 parts" on the same card.
+  describe('progress summary and loading state (regression)', () => {
+    const projectWithTargets = {
+      id: 9,
+      name: 'Gear Set',
+      description: null,
+      color: '#00ae42',
+      status: 'active',
+      url: null,
+      cover_image_filename: null,
+      target_count: 1,
+      target_parts_count: 1,
+      budget: null,
+      created_at: '2024-01-01T00:00:00Z',
+      archive_count: 0,
+      total_items: 0,
+      completed_count: 0,
+      failed_count: 0,
+      queue_count: 0,
+      progress_percent: 0,
+      archives: [],
+    };
+
+    /** Text of every element without child elements, e.g. each span in the card. */
+    function leafTexts(root: HTMLElement): string[] {
+      return Array.from(root.querySelectorAll('*'))
+        .filter((el) => el.children.length === 0)
+        .map((el) => el.textContent?.trim() ?? '')
+        .filter(Boolean);
+    }
+
+    async function findProjectCard(name: string): Promise<HTMLElement> {
+      const heading = await screen.findByRole('heading', { name });
+      return heading.closest('[class*="rounded-xl"]') as HTMLElement;
+    }
+
+    it('shows the counts on a single line of the project card', async () => {
+      server.use(http.get('/api/v1/projects/', () => HttpResponse.json([projectWithTargets])));
+
+      render(<ProjectsPage />);
+
+      const card = await findProjectCard('Gear Set');
+      const countTexts = leafTexts(card).filter((text) => /\d/.test(text));
+      expect(countTexts).toHaveLength(1);
+    });
+
+    it('shows one summary line with the parts and plates progress', async () => {
+      server.use(http.get('/api/v1/projects/', () => HttpResponse.json([projectWithTargets])));
+
+      render(<ProjectsPage />);
+
+      await findProjectCard('Gear Set');
+      expect(screen.getAllByText('0 of 1 parts printed · 0 of 1 plates')).toHaveLength(1);
+    });
+
+    it('marks a target as met only when the counts reach it, not when they round to 100%', async () => {
+      server.use(http.get('/api/v1/projects/', () => HttpResponse.json([
+        { ...projectWithTargets, id: 10, name: 'Nearly There', target_parts_count: 200, target_count: null, completed_count: 199 },
+        { ...projectWithTargets, id: 11, name: 'All Done', target_parts_count: 200, target_count: null, completed_count: 200 },
+      ])));
+
+      render(<ProjectsPage />);
+
+      expect(await screen.findByText(/199 of 200 parts printed/)).not.toHaveClass('text-bambu-green');
+      expect(await screen.findByText(/200 of 200 parts printed/)).toHaveClass('text-bambu-green');
+    });
+
+    it('shows card placeholders in a busy list while projects load', async () => {
+      server.use(http.get('/api/v1/projects/', () => new Promise(() => {})));
+
+      render(<ProjectsPage />);
+
+      expect(await screen.findByRole('status')).toHaveTextContent('Loading projects...');
+      const list = await waitFor(() => {
+        const busy = document.querySelector('[aria-busy="true"]');
+        expect(busy).not.toBeNull();
+        return busy as HTMLElement;
+      });
+      expect(list.children.length).toBeGreaterThanOrEqual(2);
+      expect(list.children.length).toBeLessThanOrEqual(3);
+    });
+  });
 });

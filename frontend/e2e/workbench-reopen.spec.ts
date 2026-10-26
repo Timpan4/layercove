@@ -106,12 +106,14 @@ for (const width of [1280, 390]) {
     if (width === 390) await page.getByRole('button', { name: 'settings', exact: true }).click();
     await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
     await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
-    await page.getByRole('checkbox', { name: /Confirm filament materials/ }).check();
+    await page.getByRole('group', { name: 'Filament profile', exact: true }).getByRole('radio', { name: /Inslogic 95A TPU/ }).check();
+    // cube.stl states no material, so the backend gate needs an acknowledgement before Slice plate enables.
+    await page.getByRole('checkbox', { name: /Slice anyway\?/ }).check();
     await page.getByRole('searchbox', { name: 'Search catalog profiles', exact: true }).fill('PLA');
     await expect(page.getByText('Selected: 0.20mm Standard @Voron', { exact: true })).toBeVisible();
     await expect(page.getByText('Selected: Inslogic 95A TPU', { exact: true })).toBeVisible();
     const filaments = page.getByRole('group', { name: 'Filament profile', exact: true });
-    await filaments.getByText('Unclassified (3)', { exact: true }).click();
+    await expect(filaments.getByRole('group', { name: 'Unknown material (3)', exact: true })).toBeVisible();
     await expect(filaments.getByRole('radio', { name: /Generic ABS template/ })).toBeVisible();
     await expect(filaments.getByRole('radio', { name: /Generic PLA/ })).toBeVisible();
     await expect(filaments.locator('mark')).toHaveText(['pla', 'PLA', 'PLA']);
@@ -154,7 +156,8 @@ for (const width of [1280, 390]) {
         await page.getByRole('button', { name: 'Redo', exact: true }).click();
         await expect(height).toHaveValue('0.28');
       }
-      await page.getByRole('checkbox', { name: /Confirm filament materials/ }).check();
+      await page.getByRole('radio', { name: /Cloud filament/ }).check();
+      await page.getByRole('checkbox', { name: /Slice anyway\?/ }).check();
       await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
       expect(fixture.sliceRequests).toBe(1);
       expect(fixture.sliceRequest).toMatchObject(scope === 'global'
@@ -222,7 +225,7 @@ for (const width of [1280, 390]) {
     expect(fixture.sliceRequests).toBe(0);
   });
 
-  test(`quick slicing keeps full filament names and compatibility reasons readable at ${width}px`, async ({ page }) => {
+  test(`quick slicing keeps full filament names readable and compatibility reasons in the tooltip at ${width}px`, async ({ page }) => {
     await page.setViewportSize({ width, height: 844 });
     await installFixture(page, { fresh: true, longFilament: true });
     await page.goto('/files');
@@ -232,10 +235,12 @@ for (const width of [1280, 390]) {
     await page.getByRole('combobox', { name: 'Physical printer', exact: true }).selectOption('1');
     await page.getByRole('combobox', { name: 'Exact slicer binding', exact: true }).selectOption('5');
     const filamentGroup = page.getByRole('group', { name: 'Filament profile', exact: true });
-    await filamentGroup.getByText('Unclassified (1)', { exact: true }).click();
-    const name = filamentGroup.getByText(`${longFilamentName} · orca_cloud`, { exact: true });
-    const reason = filamentGroup.getByText(`Manual confirmation required · ${longCompatibilityReason}`, { exact: true });
-    for (const text of [name, reason]) {
+    await expect(filamentGroup.getByRole('group', { name: 'Unknown material (2)', exact: true })).toBeVisible();
+    const name = filamentGroup.getByText(longFilamentName, { exact: true });
+    const row = filamentGroup.getByRole('radio', { name: new RegExp(longFilamentName) });
+    await expect(row).toHaveAccessibleDescription(`Manual confirmation required · ${longCompatibilityReason}`);
+    await expect(filamentGroup.getByTitle(`Manual confirmation required · ${longCompatibilityReason}`, { exact: true })).toBeVisible();
+    for (const text of [name]) {
       await expect(text).toBeVisible();
       const fits = await text.evaluate((element) => {
         const range = document.createRange();
@@ -262,7 +267,8 @@ for (const width of [1280, 390]) {
     if (width === 390) await page.getByRole('button', { name: 'settings', exact: true }).click();
     await page.getByRole('combobox', { name: 'Physical printer' }).selectOption('1');
     await page.getByRole('combobox', { name: 'Exact slicer binding' }).selectOption('5');
-    await page.getByRole('checkbox', { name: /Confirm filament materials/ }).check();
+    await page.getByRole('radio', { name: /Cloud filament/ }).check();
+    await page.getByRole('checkbox', { name: /Slice anyway\?/ }).check();
     await page.getByRole('button', { name: 'Slice plate', exact: true }).click();
     fixture.completeReslice();
     await expect(page.getByText('Saved to File Manager', { exact: true })).toBeVisible();

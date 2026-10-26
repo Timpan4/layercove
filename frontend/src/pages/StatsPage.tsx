@@ -37,11 +37,13 @@ import { Button } from '../components/Button';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
 import { api, type ArchiveSlim } from '../api/client';
+import { consumedGramsByMaterial, inventoryData, inventoryQueryKeys, totalConsumedGrams, useInventorySource } from '../api/inventoryData';
 import { PrintCalendar } from '../components/PrintCalendar';
 import { FilamentTrends } from '../components/FilamentTrends';
+import { spoolFallbackGrams, untrackedFilamentLabel, type SpoolFallback } from '../utils/spoolFallback';
 import { Dashboard, type DashboardWidget } from '../components/Dashboard';
 import { getCurrencySymbol } from '../utils/currency';
-import { formatWeight } from '../utils/weight';
+import { formatWeight, resolveFilamentGrams } from '../utils/weight';
 import { parseUTCDate, formatDuration } from '../utils/date';
 import { MetricToggle, type Metric } from '../components/MetricToggle';
 
@@ -119,9 +121,21 @@ const RECHARTS_TOOLTIP_STYLE = {
 };
 
 // Widget Components
+type QuickStatItem = {
+  icon: typeof Package;
+  color: string;
+  label: string;
+  value: string;
+  caption?: string;
+  warning?: boolean;
+  tooltip?: string;
+};
+
 function QuickStatsWidget({
   stats,
   currency,
+  spoolFallback,
+  showEnergy,
 }: {
   stats: {
     total_prints: number;
@@ -135,17 +149,30 @@ function QuickStatsWidget({
     energy_data_warming_up?: boolean;
   } | undefined;
   currency: string;
+  spoolFallback: SpoolFallback | undefined;
+  showEnergy: boolean;
 }) {
   const { t } = useTranslation();
 
   const warmingUp = stats?.energy_data_warming_up === true;
   const warmingUpTooltip = warmingUp ? t('stats.energyWarmingUpTooltip') : undefined;
+  const filament = resolveFilamentGrams(stats?.total_filament_grams || 0, spoolFallbackGrams(spoolFallback));
+  const untrackedLabel = untrackedFilamentLabel(t, spoolFallback);
 
-  const items = [
+  const coreItems: QuickStatItem[] = [
     { icon: Package, color: 'text-bambu-green', label: t('stats.totalPrints'), value: `${stats?.total_prints || 0}` },
     { icon: Clock, color: 'text-blue-600 dark:text-blue-400', label: t('stats.printTime'), value: `${stats?.total_print_time_hours?.toFixed(1) ?? '0'}h` },
-    { icon: Package, color: 'text-orange-600 dark:text-orange-400', label: t('stats.filamentUsed'), value: formatWeight(stats?.total_filament_grams || 0) },
+    {
+      icon: Package,
+      color: 'text-orange-600 dark:text-orange-400',
+      label: t('stats.filamentUsed'),
+      value: filament ? formatWeight(filament.grams) : untrackedLabel,
+      caption: filament?.fromSpool ? t('stats.fromSpoolTracking') : undefined,
+    },
     { icon: DollarSign, color: 'text-green-600 dark:text-green-400', label: t('stats.filamentCost'), value: `${currency} ${stats?.total_cost?.toFixed(2) ?? '0.00'}` },
+  ];
+
+  const energyItems: QuickStatItem[] = [
     {
       icon: Zap,
       color: 'text-yellow-600 dark:text-yellow-400',
@@ -164,6 +191,8 @@ function QuickStatsWidget({
     },
   ];
 
+  const items = showEnergy ? [...coreItems, ...energyItems] : coreItems;
+
   return (
     <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
       {items.map((item) => (
@@ -177,6 +206,7 @@ function QuickStatsWidget({
               {item.warning && <AlertTriangle className="w-3 h-3 text-yellow-600 dark:text-yellow-400" aria-label={item.tooltip} />}
             </p>
             <p className="text-xl font-bold text-white">{item.value}</p>
+            {item.caption && <p className="text-xs text-bambu-gray">{item.caption}</p>}
           </div>
         </div>
       ))}
@@ -728,17 +758,28 @@ function FilamentTrendsWidget({
   currency,
   dateFrom,
   dateTo,
+  spoolFallback,
 }: {
   archives: Parameters<typeof FilamentTrends>[0]['archives'];
   currency: string;
   dateFrom?: string;
   dateTo?: string;
+  spoolFallback?: SpoolFallback;
 }) {
   const { t } = useTranslation();
-  if (!archives || archives.length === 0) {
+  // Spool consumption can stand in for weight even when no print was archived.
+  if ((!archives || archives.length === 0) && (spoolFallbackGrams(spoolFallback) ?? 0) <= 0) {
     return <p className="text-bambu-gray text-center py-4">{t('stats.noPrintData')}</p>;
   }
-  return <FilamentTrends archives={archives} currency={currency} dateFrom={dateFrom} dateTo={dateTo} />;
+  return (
+    <FilamentTrends
+      archives={archives}
+      currency={currency}
+      dateFrom={dateFrom}
+      dateTo={dateTo}
+      spoolFallback={spoolFallback}
+    />
+  );
 }
 
 function FailureAnalysisWidget({ size = 1, dateFrom, dateTo, createdById }: {
@@ -1055,6 +1096,29 @@ export function StatsPage() {
     queryFn: api.getSettings,
   });
 
+  // Spool consumption backs the filament tiles when archives carry no weight.
+  const { source, isReady: sourceReady } = useInventorySource();
+  const allTimeAllUsers = timeframe.preset === 'all-time' && selectedUserId === null;
+  const spoolsQuery = useQuery({
+    queryKey: inventoryQueryKeys.spools(source),
+    queryFn: inventoryData(source).getSpools,
+    enabled: sourceReady && allTimeAllUsers,
+  });
+  const spools = spoolsQuery.isSuccess ? spoolsQuery.data : undefined;
+  // Spool counters are all-time and not per user, so they stand in for archive weight only in the all-time, all-users view.
+  // Until they load, or when the viewer cannot read the inventory, the tiles must not claim "Not tracked".
+  const spoolFallback = useMemo<SpoolFallback | undefined>(() => {
+    if (!allTimeAllUsers) return undefined;
+    if (!spools) return { status: 'unavailable' };
+    return { status: 'ready', grams: totalConsumedGrams(spools), gramsByMaterial: consumedGramsByMaterial(spools) };
+  }, [allTimeAllUsers, spools]);
+
+  const { data: smartPlugs } = useQuery({
+    queryKey: ['smart-plugs'],
+    queryFn: api.getSmartPlugs,
+  });
+  const showEnergy = (smartPlugs?.length ?? 0) > 0;
+
   const { data: users } = useQuery({
     queryKey: ['users'],
     queryFn: api.getUsers,
@@ -1126,7 +1190,7 @@ export function StatsPage() {
     {
       id: 'quick-stats',
       title: t('stats.quickStats'),
-      component: <QuickStatsWidget stats={stats} currency={currency} />,
+      component: <QuickStatsWidget stats={stats} currency={currency} spoolFallback={spoolFallback} showEnergy={showEnergy} />,
       defaultSize: 2,
     },
     {
@@ -1168,7 +1232,7 @@ export function StatsPage() {
     {
       id: 'filament-trends',
       title: t('stats.filamentTrends'),
-      component: <FilamentTrendsWidget archives={archives || []} currency={currency} dateFrom={effectiveDateRange.dateFrom} dateTo={effectiveDateRange.dateTo} />,
+      component: <FilamentTrendsWidget archives={archives || []} currency={currency} dateFrom={effectiveDateRange.dateFrom} dateTo={effectiveDateRange.dateTo} spoolFallback={spoolFallback} />,
       defaultSize: 4,
     },
   ];

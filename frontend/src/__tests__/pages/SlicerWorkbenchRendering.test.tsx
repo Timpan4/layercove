@@ -9,10 +9,10 @@ vi.mock('../../components/CatalogSliceSelector', () => ({ CatalogSliceSelector: 
 vi.mock('../../components/ModelViewer', () => ({ ModelViewer: ({ showBuildPlate }: { showBuildPlate?: boolean }) => <div data-testid="model" data-bed={showBuildPlate}>Model preview</div> }));
 vi.mock('../../components/GcodeViewer', () => ({ GcodeViewer: ({ showBuildPlate }: { showBuildPlate?: boolean }) => <div data-testid="gcode" data-bed={showBuildPlate}>Toolpath preview</div> }));
 
-function mockedModel(filename = 'cube.stl') {
+function mockedModel(filename = 'cube.stl', schemaHash = 'abc') {
   return {
     capabilitiesQuery: { data: { capabilities: { process_schema: true, model_state: false } } },
-    schemaQuery: { data: { pages: [], options: [], scopes: {}, samples: {}, engine: { name: 'OrcaSlicer', version: '2.4.2' }, schema_hash: 'abc' } },
+    schemaQuery: { data: { pages: [], options: [], scopes: {}, samples: {}, engine: { name: 'OrcaSlicer', version: '2.4.2' }, schema_hash: schemaHash } },
     sourceQuery: { data: { filename } }, platesQuery: { data: { plates: [] } },
     catalogSelection: {}, printerProfileQuery: {}, buildVolume: null, bedGeometry: { bed: null, issue: 'missingArea' },
     sourceName: 'cube.stl', modelUrl: '/cube.stl', previewUrl: '/cube.gcode',
@@ -86,13 +86,14 @@ describe('Workbench with missing bed metadata', () => {
   it('renders the model without inventing a printer bed', () => {
     open();
     expect(screen.getByTestId('model')).toHaveAttribute('data-bed', 'false');
-    expect(screen.getAllByText(/Bed geometry unavailable/).length).toBeGreaterThan(0);
+    expect(screen.getByText('Choose a printer to see its bed.')).toBeInTheDocument();
+    expect(screen.queryByText(/Bed geometry unavailable/)).not.toBeInTheDocument();
   });
 
-  it('does not describe a loaded STL with no object metadata as empty', () => {
+  it('does not describe a loaded STL with no object metadata as empty or unavailable', () => {
     open();
     expect(screen.queryByText('0 objects')).not.toBeInTheDocument();
-    expect(screen.getByText('Object count unavailable')).toBeInTheDocument();
+    expect(screen.queryByText(/Object count/)).not.toBeInTheDocument();
   });
 
   it('opens a completed toolpath even when the profile has no bed geometry', () => {
@@ -107,5 +108,33 @@ describe('Workbench with missing bed metadata', () => {
     open();
     expect(screen.getByText(/STEP source preview is unavailable/)).toBeInTheDocument();
     expect(screen.queryByTestId('model')).not.toBeInTheDocument();
+  });
+
+  it('warns that the bed is unverified once the selected printer profile loads without geometry', () => {
+    vi.mocked(useSlicerWorkbench).mockReturnValue({
+      ...mockedModel(),
+      catalogSelection: { selectedBinding: { profile_name: 'Voron 2.4' }, selectedPrinterProfile: { revision_id: 11 } },
+      printerProfileQuery: { isSuccess: true, isFetching: false, isError: false, data: {} },
+    } as unknown as ReturnType<typeof useSlicerWorkbench>);
+    open();
+    expect(screen.getByText('Bed geometry unavailable. Preview only; printer fit and placement are unverified.')).toBeInTheDocument();
+  });
+
+  it('shows the engine version once and keeps the schema hash out of visible text', () => {
+    vi.mocked(useSlicerWorkbench).mockReturnValue(mockedModel('cube.stl', '1e646235e4ffff'));
+    open();
+    expect(screen.getByText('OrcaSlicer 2.4.2')).toHaveAttribute('title', '1e646235e4ffff');
+    expect(screen.queryByText(/1e646235/)).not.toBeInTheDocument();
+  });
+
+  it('does not announce the editor as loaded in the footer before a slice starts', () => {
+    vi.mocked(useSlicerWorkbench).mockReturnValue({ ...mockedModel(), jobState: undefined });
+    open();
+    expect(screen.queryByText('Editor loaded')).not.toBeInTheDocument();
+  });
+
+  it('shows a readable slice state in the footer', () => {
+    open();
+    expect(screen.getByText('Completed')).toBeInTheDocument();
   });
 });

@@ -1,6 +1,6 @@
 import type { SlicerSetting, LocalPreset, BuiltinFilament } from '../../api/client';
 import type { ColorPreset, FilamentOption } from './types';
-import { KNOWN_VARIANTS, DEFAULT_BRANDS, RECENT_COLORS_KEY, MAX_RECENT_COLORS } from './constants';
+import { KNOWN_VARIANTS, DEFAULT_BRANDS, RECENT_COLORS_KEY, MAX_RECENT_COLORS, QUICK_ADD_KEY } from './constants';
 
 // Fallback filament presets when cloud is not available
 const FALLBACK_PRESETS: FilamentOption[] = [
@@ -289,6 +289,24 @@ export function saveRecentColor(color: ColorPreset, currentRecent: ColorPreset[]
   }
 
   return updated;
+}
+
+// Quick Add stays on for new spools unless the user last turned it off.
+// Unreadable or blocked storage falls back to the default.
+export function loadQuickAddPreference(): boolean {
+  try {
+    return localStorage.getItem(QUICK_ADD_KEY) !== 'false';
+  } catch {
+    return true;
+  }
+}
+
+export function saveQuickAddPreference(enabled: boolean): void {
+  try {
+    localStorage.setItem(QUICK_ADD_KEY, String(enabled));
+  } catch {
+    // Ignore errors: the toggle still works for the open modal
+  }
 }
 
 // Normalise a Bambu filament identifier to its bare filament_id form (#1688).

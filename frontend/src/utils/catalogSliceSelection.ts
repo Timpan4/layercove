@@ -49,6 +49,8 @@ export function catalogClassification(
 
 export function catalogFilamentMaterial(profile: SlicerCatalogProfile | undefined): string {
   const metadata = profile?.compatibility_metadata ?? {};
+  // `??` on purpose: an empty filament_type reads as unknown rather than deferring to material_type, so the
+  // API can set it to '' when the revision content states no single material and this side agrees.
   const material = metadata.filament_type ?? metadata.material_type;
   return typeof material === 'string' ? canonicalFilamentType(material.trim()) : '';
 }
@@ -133,6 +135,12 @@ export function pickCatalogFilament(
   spoolmanAssignments: SpoolmanSlotAssignment[],
   preferenceProfileId: number | null | undefined,
 ): CatalogProfileChoice | null {
+  // Rule, metadata and binding-default candidates auto-select only when their verified material equals the slot.
+  // An unknown slot material therefore leaves them unselected. A saved preference is the one exception: the user
+  // chose it, so it applies unless both materials are known and differ.
+  const material = canonicalFilamentType(slot.type);
+  const materialMatches = (candidate: SlicerCatalogClassification) => material !== ''
+    && candidateFilamentMaterial(profiles, candidate) === material;
   const assignment = unique(assignments.filter((item) => sameSlot(slot, item)));
   if (assignment) {
     const spoolman = spoolmanAssignments.find(
@@ -153,11 +161,10 @@ export function pickCatalogFilament(
           )
           .map((rule) => rule.filament_profile_id),
       );
-      if (exact) return { id: exact.profile_id, reason: 'exact_external_assignment', manual: false };
+      if (exact && materialMatches(exact)) return { id: exact.profile_id, reason: 'exact_external_assignment', manual: false };
     }
   }
 
-  const material = canonicalFilamentType(slot.type);
   if (material) {
     const signature = oneCandidateProfile(
       groups,
@@ -178,7 +185,7 @@ export function pickCatalogFilament(
         })
         .map((rule) => rule.filament_profile_id),
     );
-    if (signature) return { id: signature.profile_id, reason: 'promoted_signature', manual: false };
+    if (signature && materialMatches(signature)) return { id: signature.profile_id, reason: 'promoted_signature', manual: false };
 
     const metadataMatches = (groups?.selected_printer ?? []).filter((candidate) => {
       if (candidate.profile_type !== 'filament' || !candidate.classification.auto_selectable) return false;
@@ -200,10 +207,52 @@ export function pickCatalogFilament(
   }
 
   const preference = autoCandidate(groups, preferenceProfileId, 'filament');
-  if (preference) return { id: preference.profile_id, reason: 'user_preference', manual: false };
+  if (preference) {
+    const preferenceMaterial = candidateFilamentMaterial(profiles, preference);
+    const conflicts = material !== '' && preferenceMaterial !== '' && preferenceMaterial !== material;
+    if (!conflicts) return { id: preference.profile_id, reason: 'user_preference', manual: false };
+  }
   const fallback = autoCandidate(groups, binding.default_filament_profile_id, 'filament');
-  if (fallback) return { id: fallback.profile_id, reason: 'binding_default', manual: false };
+  if (fallback && materialMatches(fallback)) {
+    return { id: fallback.profile_id, reason: 'binding_default', manual: false };
+  }
   return null;
+}
+
+function candidateFilamentMaterial(profiles: SlicerCatalogProfile[], candidate: SlicerCatalogClassification) {
+  const profile = profiles.find((item) => item.profile_id === candidate.profile_id
+    && item.revision_id === candidate.revision_id);
+  return catalogFilamentMaterial(profile);
+}
+
+const knownFilamentMaterials: readonly string[] = ['PLA', 'PETG', 'ABS', 'ASA', 'TPU'];
+
+export type FilamentGroupKey = 'loaded' | 'PLA' | 'PETG' | 'ABS' | 'ASA' | 'TPU' | 'other' | 'unknown';
+
+const filamentGroupOrder: FilamentGroupKey[] = ['loaded', 'PLA', 'PETG', 'ABS', 'ASA', 'TPU', 'other', 'unknown'];
+
+/**
+ * Splits filament candidates into material groups, keeping each group in the order given.
+ * A candidate whose material a loaded spool supplies goes to the leading "loaded" group only.
+ * For a known source material, only a loaded spool of that material counts.
+ */
+export function groupFilamentCandidates<T extends { material: string }>(
+  candidates: T[],
+  slotMaterial: string,
+  loadedMaterials: string[],
+): Array<{ key: FilamentGroupKey; items: T[] }> {
+  const loaded = new Set(slotMaterial ? loadedMaterials.filter((material) => material === slotMaterial) : loadedMaterials);
+  const buckets = new Map<FilamentGroupKey, T[]>(filamentGroupOrder.map((key) => [key, []]));
+  for (const candidate of candidates) {
+    const key: FilamentGroupKey = loaded.has(candidate.material) ? 'loaded'
+      : !candidate.material ? 'unknown'
+        : knownFilamentMaterials.includes(candidate.material) ? candidate.material as FilamentGroupKey
+          : 'other';
+    buckets.get(key)!.push(candidate);
+  }
+  return filamentGroupOrder
+    .map((key) => ({ key, items: buckets.get(key)! }))
+    .filter((group) => group.items.length > 0);
 }
 
 export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
@@ -212,25 +261,43 @@ export function selectableCatalogProfile(profile: SlicerCatalogClassification) {
       || profile.classification.group === 'unclassified');
 }
 
+export interface CatalogMaterialWarning {
+  /** Both materials known and different, or at least one of them unknown. */
+  reason: 'material_mismatch' | 'material_unverified';
+  /** One-based slot number. */
+  slot: number;
+  /** Canonical source material, or '' when the source does not state one (plain STL). */
+  source: string;
+  /** Canonical material of the selected profile revision, or '' when unknown or stale. */
+  profile: string;
+}
+
+// Mirrors the backend gate in slicer_catalog_selection.py: a slice passes without acknowledgement only
+// when the source and the selected profile both state a material and they agree. A plain STL states none,
+// so the backend answers 409 unless the user confirms the filament here.
+// Known gap: `_profile_material` in slicer_catalog_selection.py reads the material from the revision
+// content and returns unknown when the content filament_type key yields no single canonical material,
+// while `_compatibility_metadata` in slicer_catalog.py overwrites the synced metadata only when the content
+// yields exactly one raw value. A profile whose synced metadata states a material but whose content does
+// not resolve to one reads as known here and unknown there, so the backend answers 409 with no checkbox
+// for a file that states a material. Closing it needs the API to set that metadata value to ''.
 export function catalogMaterialWarnings(
   slots: Array<{ type: string }>,
   profiles: Array<SlicerCatalogProfile | undefined>,
   revisions: Array<number | null | undefined>,
-) {
+): CatalogMaterialWarning[] {
   return slots.flatMap((slot, index) => {
     const profile = profiles[index];
     if (!profile) return [];
-    const declared = canonicalFilamentType(slot.type.trim());
-    const metadata = profile.compatibility_metadata ?? {};
-    const profileType = metadata.filament_type ?? metadata.material_type;
-    const selected = profile.revision_id === revisions[index] && typeof profileType === 'string'
-      ? canonicalFilamentType(profileType.trim()) : '';
-    if (declared && selected && declared === selected) return [];
-    const reason = declared && selected ? 'material_mismatch' : 'material_unverified';
-    const detail = declared
-      ? `project ${declared}, selected ${selected || 'profile material unknown'}`
-      : `source material unknown, selected ${selected || 'profile material unknown'}`;
-    return [{ reason, message: `Filament ${index + 1}: ${detail}` }];
+    const source = canonicalFilamentType(slot.type.trim());
+    const selected = profile.revision_id === revisions[index] ? catalogFilamentMaterial(profile) : '';
+    if (source && selected && source === selected) return [];
+    return [{
+      reason: source && selected ? 'material_mismatch' : 'material_unverified',
+      slot: index + 1,
+      source,
+      profile: selected,
+    }];
   });
 }
 

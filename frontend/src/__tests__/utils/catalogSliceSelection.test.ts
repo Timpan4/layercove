@@ -7,7 +7,7 @@ import type {
   SlicerCatalogProfile,
   SlicerFilamentRule,
 } from '../../api/client';
-import { catalogSelectionReadiness, pickCatalogFilament, pickCatalogProcess } from '../../utils/catalogSliceSelection';
+import { catalogMaterialWarnings, catalogSelectionReadiness, pickCatalogFilament, pickCatalogProcess } from '../../utils/catalogSliceSelection';
 
 const classified = (
   profileId: number,
@@ -168,7 +168,7 @@ describe('catalog slice defaulting', () => {
 
     expect(pickCatalogFilament(
       choices,
-      [profile(21, 'PLA')],
+      [profile(20, 'PLA'), profile(21, 'PLA')],
       [rule],
       binding,
       { type: 'PLA', color: '#ff0000' },
@@ -176,6 +176,108 @@ describe('catalog slice defaulting', () => {
       [{ printer_id: 1, ams_id: 0, tray_id: 0, spoolman_spool_id: 42 }],
       22,
     )).toEqual({ id: 20, reason: 'exact_external_assignment', manual: false });
+  });
+
+  // Failure mode: an exact Spoolman link to a PETG profile is auto-selected for a PLA slot.
+  it('does not auto-select an exact Spoolman assignment whose material differs from the slot', () => {
+    const choices = groups([classified(20, 'filament', 'Exact PETG')]);
+    const assignment = {
+      printer_id: 1,
+      ams_id: 0,
+      tray_id: 0,
+      spool: { material: 'PLA', rgba: '#ff0000', brand: 'Vendor' },
+    } as SpoolAssignment;
+    const rule = {
+      id: 1,
+      scope: 'exact_external',
+      filament_profile_id: 20,
+      binding_id: 5,
+      external_source: 'spoolman',
+      external_identity: 'spool:42',
+      material_type: null,
+      vendor: null,
+      nozzle_diameter_min: null,
+      nozzle_diameter_max: null,
+      is_active: true,
+    } as SlicerFilamentRule;
+
+    expect(pickCatalogFilament(
+      choices,
+      [profile(20, 'PETG')],
+      [rule],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PLA', color: '#ff0000' },
+      [assignment],
+      [{ printer_id: 1, ams_id: 0, tray_id: 0, spoolman_spool_id: 42 }],
+      null,
+    )).toBeNull();
+  });
+
+  // Failure mode: a binding default is selected for an unknown source material, leaving the slot looking chosen.
+  it('leaves an unknown source material unselected even when the binding default is a candidate', () => {
+    expect(pickCatalogFilament(
+      groups([classified(22, 'filament', 'Default TPU')]),
+      [profile(22, 'TPU')],
+      [],
+      binding,
+      { type: '', color: '' },
+      [],
+      [],
+      null,
+    )).toBeNull();
+  });
+
+  // Failure mode: a PETG preference saved from one slot auto-selects for a PLA slot with only a warning to explain it.
+  it('skips a saved preference whose material differs from the slot', () => {
+    // Two PETG profiles keep the metadata match ambiguous, so the preference is what decides the PETG slot.
+    const choices = groups([classified(20, 'filament', 'Preferred PETG'), classified(21, 'filament', 'Other PETG')]);
+    expect(pickCatalogFilament(
+      choices,
+      [profile(20, 'PETG'), profile(21, 'PETG')],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PLA', color: '' },
+      [],
+      [],
+      20,
+    )).toBeNull();
+    expect(pickCatalogFilament(
+      choices,
+      [profile(20, 'PETG'), profile(21, 'PETG')],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PETG', color: '' },
+      [],
+      [],
+      20,
+    )).toEqual({ id: 20, reason: 'user_preference', manual: false });
+  });
+
+  it('keeps a saved preference whose profile has no material metadata', () => {
+    const untagged = { ...profile(20, 'PETG'), compatibility_metadata: {} };
+    expect(pickCatalogFilament(
+      groups([classified(20, 'filament', 'Preferred untagged')]),
+      [untagged],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: 'PLA', color: '' },
+      [],
+      [],
+      20,
+    )).toEqual({ id: 20, reason: 'user_preference', manual: false });
+  });
+
+  it('keeps a saved preference when the slot material is unknown', () => {
+    expect(pickCatalogFilament(
+      groups([classified(20, 'filament', 'Preferred PETG')]),
+      [profile(20, 'PETG')],
+      [],
+      { ...binding, default_filament_profile_id: null },
+      { type: '', color: '' },
+      [],
+      [],
+      20,
+    )).toEqual({ id: 20, reason: 'user_preference', manual: false });
   });
 
   it('leaves ambiguous metadata unresolved instead of picking list order', () => {
@@ -237,6 +339,36 @@ describe('selected combination readiness', () => {
   it('preserves unavailable binding and incompatible profile blocks', () => {
     expect(evaluate({ ...noDefaults, readiness: { state: 'blocked', reason_codes: ['profile_unavailable'] } }).state).toBe('blocked');
     expect(catalogSelectionReadiness({ binding, process: classified(30, 'process', 'Other machine', 'incompatible'), filaments, filamentCount: 1 }).state).toBe('blocked');
+  });
+
+  // The backend (slicer_catalog_selection.py) answers 409 unless both materials are known and agree,
+  // so the frontend must raise the same warnings or the slice fails with no way to acknowledge it.
+  it('mirrors the backend material gate: only a known, matching pair passes without a warning', () => {
+    const pla = profile(20, 'PLA');
+    const untagged = { ...profile(21, 'PETG'), compatibility_metadata: {} };
+    expect(catalogMaterialWarnings([{ type: 'PLA' }], [pla], [20])).toEqual([]);
+    expect(catalogMaterialWarnings([{ type: 'TPU' }], [pla], [20])).toEqual([
+      { reason: 'material_mismatch', slot: 1, source: 'TPU', profile: 'PLA' },
+    ]);
+    // Plain STL: the source states no material.
+    expect(catalogMaterialWarnings([{ type: '' }], [pla], [20])).toEqual([
+      { reason: 'material_unverified', slot: 1, source: '', profile: 'PLA' },
+    ]);
+    // The profile states no material.
+    expect(catalogMaterialWarnings([{ type: 'PLA' }], [untagged], [21])).toEqual([
+      { reason: 'material_unverified', slot: 1, source: 'PLA', profile: '' },
+    ]);
+    // Metadata from a stale revision does not count as known.
+    expect(catalogMaterialWarnings([{ type: 'PLA' }], [pla], [19])).toEqual([
+      { reason: 'material_unverified', slot: 1, source: 'PLA', profile: '' },
+    ]);
+    // An empty slot has nothing to warn about yet.
+    expect(catalogMaterialWarnings([{ type: '' }], [undefined], [null])).toEqual([]);
+    // An empty filament_type reads as unknown even when material_type is set: the safe direction.
+    const blanked = { ...profile(22, 'PLA'), compatibility_metadata: { filament_type: '', material_type: 'PLA' } };
+    expect(catalogMaterialWarnings([{ type: 'PLA' }], [blanked], [22])).toEqual([
+      { reason: 'material_unverified', slot: 1, source: 'PLA', profile: '' },
+    ]);
   });
 
   it('requires explicit acknowledgement for unknown compatibility and stale telemetry', () => {

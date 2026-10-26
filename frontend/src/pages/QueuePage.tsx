@@ -3,7 +3,7 @@ import { queryKeys } from '../api/queryKeys';
 import { useState, useMemo, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/react-query';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import {
   DndContext,
   DragOverlay,
@@ -1204,6 +1204,7 @@ function HistorySection({
 
 export function QueuePage() {
   const { t } = useTranslation();
+  const navigate = useNavigate();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
   const { hasPermission, hasAnyPermission, canModify } = useAuth();
@@ -2111,10 +2112,12 @@ export function QueuePage() {
                 ? 'bg-bambu-green/20 border-bambu-green text-bambu-green'
                 : 'bg-bambu-dark-secondary border-bambu-dark-tertiary text-bambu-gray hover:text-white hover:border-bambu-gray'
             }`}
-            title={t('queue.sjf.tooltip', 'Shortest Job First — scheduler prioritizes shorter prints')}
+            title={t('queue.sjf.name')}
+            aria-label={t('queue.sjf.label')}
+            aria-pressed={settings?.queue_shortest_first ?? false}
           >
             <Snail className="w-4 h-4" />
-            <span className="hidden sm:inline">{t('queue.sjf.label', 'SJF')}</span>
+            <span className="hidden sm:inline">{t('queue.sjf.label')}</span>
             <span className={`w-1.5 h-1.5 rounded-full ${settings?.queue_shortest_first ? 'bg-bambu-green' : 'bg-bambu-gray'}`} />
           </button>
         </div>
@@ -2145,12 +2148,11 @@ export function QueuePage() {
             }}>{t('fileManager.clearFilters')}</Button>
           ) : (
             <>
-              <p className="text-bambu-gray max-w-md mx-auto mb-4">
-                {t('queue.empty.activeDescription', {
-                  archives: t('nav.archives'), print: t('common.print'), queue: t('printModal.queue'),
-                })}
-              </p>
-              <Link to="/archives" className="text-bambu-green hover:underline">{t('nav.archives')}</Link>
+              <p className="text-bambu-gray max-w-md mx-auto mb-6">{t('queue.empty.activeGuidance')}</p>
+              <div className="flex flex-wrap items-center justify-center gap-3">
+                <Button onClick={() => navigate('/archives')}>{t('queue.empty.addFromArchives')}</Button>
+                <Button variant="secondary" onClick={() => navigate('/files')}>{t('queue.empty.uploadFile')}</Button>
+              </div>
             </>
           )}
         </Card>

@@ -12,7 +12,6 @@ import {
   Archive,
   ListTodo,
   Package,
-  Layers,
   Clock,
   CheckCircle2,
   AlertTriangle,
@@ -511,14 +510,6 @@ interface ProjectCardProps {
 }
 
 function ProjectCard({ project, onClick, onEdit, onDelete, hasPermission, t }: ProjectCardProps) {
-  // Plates progress: archive_count / target_count
-  const platesProgressPercent = project.target_count
-    ? Math.round((project.archive_count / project.target_count) * 100)
-    : 0;
-  // Parts progress: completed_count / target_parts_count
-  const partsProgressPercent = project.target_parts_count
-    ? Math.round((project.completed_count / project.target_parts_count) * 100)
-    : 0;
   const isCompleted = project.status === 'completed';
   const isArchived = project.status === 'archived';
   const [showActions, setShowActions] = useState(false);
@@ -531,6 +522,25 @@ function ProjectCard({ project, onClick, onEdit, onDelete, hasPermission, t }: P
     return { icon: FolderKanban, color: 'text-bambu-gray', bg: 'bg-bambu-gray/10' };
   };
   const statusConfig = getStatusConfig();
+
+  // One progress summary line replaces the per-target bars, header badge and
+  // footer stats, so each count is rendered once.
+  const hasTargets = Boolean(project.target_count || project.target_parts_count);
+  const hasSummary = hasTargets
+    || project.archive_count > 0
+    || project.completed_count > 0
+    || project.failed_count > 0
+    || project.queue_count > 0;
+  // Compare the counts, not the rounded percentages: 199 of 200 rounds to 100% but is not met.
+  const isTargetMet = hasTargets
+    && (!project.target_parts_count || project.completed_count >= project.target_parts_count)
+    && (!project.target_count || project.archive_count >= project.target_count);
+  const partsSummary = project.target_parts_count
+    ? t('projects.partsOfTarget', { done: project.completed_count, target: project.target_parts_count })
+    : t('projects.partsCount', { count: project.completed_count });
+  const platesSummary = project.target_count
+    ? t('projects.platesOfTarget', { done: project.archive_count, target: project.target_count })
+    : t('projects.platesCount', { count: project.archive_count });
 
   return (
     <div
@@ -583,27 +593,6 @@ function ProjectCard({ project, onClick, onEdit, onDelete, hasPermission, t }: P
                     <ExternalLink className="w-3.5 h-3.5" />
                   </a>
                 )}
-                {project.target_parts_count ? (
-                  <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap font-medium ${
-                    partsProgressPercent >= 100
-                      ? 'bg-bambu-green/20 text-bambu-green'
-                      : 'bg-bambu-dark text-bambu-gray'
-                  }`}>
-                    {project.completed_count}/{project.target_parts_count} {t('projects.parts')}
-                  </span>
-                ) : project.target_count ? (
-                  <span className={`text-xs px-2 py-0.5 rounded-full whitespace-nowrap font-medium ${
-                    platesProgressPercent >= 100
-                      ? 'bg-bambu-green/20 text-bambu-green'
-                      : 'bg-bambu-dark text-bambu-gray'
-                  }`}>
-                    {project.archive_count}/{project.target_count} {t('projects.plates')}
-                  </span>
-                ) : project.completed_count > 0 ? (
-                  <span className="text-xs px-2 py-0.5 rounded-full whitespace-nowrap font-medium bg-bambu-dark text-bambu-gray">
-                    {project.completed_count} {t('projects.parts')}
-                  </span>
-                ) : null}
                 {isCompleted && (
                   <span className="text-xs bg-bambu-green/20 text-bambu-green px-2 py-0.5 rounded-full whitespace-nowrap">
                     {t('projects.done')}
@@ -708,91 +697,6 @@ function ProjectCard({ project, onClick, onEdit, onDelete, hasPermission, t }: P
           </div>
         </div>
 
-        {/* Progress section - show for all projects */}
-        <div className="mb-4">
-          {(project.target_count || project.target_parts_count) ? (
-            <div className="space-y-3">
-              {/* Plates progress */}
-              {project.target_count && (
-                <div>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-bambu-gray">{t('projects.plates')}</span>
-                    <span className={platesProgressPercent >= 100 ? 'text-bambu-green font-medium' : 'text-white'}>
-                      {project.archive_count} / {project.target_count}
-                    </span>
-                  </div>
-                  <div className="h-2 bg-bambu-dark/80 rounded-full overflow-hidden backdrop-blur-sm">
-                    <div
-                      className="h-full transition-all duration-500 ease-out rounded-full relative"
-                      style={{
-                        width: `${Math.min(platesProgressPercent, 100)}%`,
-                        background: platesProgressPercent >= 100
-                          ? 'linear-gradient(90deg, #22c55e, #4ade80)'
-                          : `linear-gradient(90deg, ${project.color || '#6b7280'}, ${project.color || '#6b7280'}cc)`,
-                        boxShadow: `0 0 8px ${platesProgressPercent >= 100 ? '#22c55e' : project.color || '#6b7280'}60`
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-              {/* Parts progress */}
-              {project.target_parts_count && (
-                <div>
-                  <div className="flex items-center justify-between text-xs mb-1">
-                    <span className="text-bambu-gray">{t('projects.parts')}</span>
-                    <span className={partsProgressPercent >= 100 ? 'text-bambu-green font-medium' : 'text-white'}>
-                      {project.completed_count} / {project.target_parts_count}
-                    </span>
-                  </div>
-                  <div className="h-2 bg-bambu-dark/80 rounded-full overflow-hidden backdrop-blur-sm">
-                    <div
-                      className="h-full transition-all duration-500 ease-out rounded-full relative"
-                      style={{
-                        width: `${Math.min(partsProgressPercent, 100)}%`,
-                        background: partsProgressPercent >= 100
-                          ? 'linear-gradient(90deg, #22c55e, #4ade80)'
-                          : `linear-gradient(90deg, ${project.color || '#6b7280'}, ${project.color || '#6b7280'}cc)`,
-                        boxShadow: `0 0 8px ${partsProgressPercent >= 100 ? '#22c55e' : project.color || '#6b7280'}60`
-                      }}
-                    />
-                  </div>
-                </div>
-              )}
-              {/* Failed count */}
-              {project.failed_count > 0 && (
-                <div className="text-xs text-red-600 dark:text-red-400">
-                  {project.failed_count} {t('projects.failed')}
-                </div>
-              )}
-            </div>
-          ) : project.completed_count > 0 || project.failed_count > 0 ? (
-            <div className="flex items-center gap-4 text-xs">
-              {project.completed_count > 0 && (
-                <div className="flex items-center gap-1.5 text-bambu-gray">
-                  <Archive className="w-3.5 h-3.5" />
-                  <span>{project.completed_count} {t('projects.completed')}</span>
-                </div>
-              )}
-              {project.failed_count > 0 && (
-                <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
-                  <AlertTriangle className="w-3.5 h-3.5" />
-                  <span>{project.failed_count} {t('projects.failed')}</span>
-                </div>
-              )}
-              {project.queue_count > 0 && (
-                <div className="flex items-center gap-1.5 text-blue-600 dark:text-blue-400">
-                  <Clock className="w-3.5 h-3.5" />
-                  <span>{project.queue_count} {t('projects.inQueue')}</span>
-                </div>
-              )}
-            </div>
-          ) : (
-            <div className="text-xs text-bambu-gray/60 italic">
-              {t('projects.noPrintsYet')}
-            </div>
-          )}
-        </div>
-
         {/* Archive thumbnails - compact 4-column grid */}
         {project.archives && project.archives.length > 0 && (
           <div className="mb-4">
@@ -830,32 +734,55 @@ function ProjectCard({ project, onClick, onEdit, onDelete, hasPermission, t }: P
           </div>
         )}
 
-        {/* Stats footer */}
-        <div className="flex items-center justify-between pt-3 border-t border-bambu-dark-tertiary">
-          <div className="flex items-center gap-4 text-xs text-bambu-gray">
-            <div className="flex items-center gap-1.5" title={t('projects.printJobs')}>
-              <Layers className="w-3.5 h-3.5 text-blue-600 dark:text-blue-400" />
-              <span>{project.archive_count} {t('projects.plates')}</span>
-            </div>
-            <div className="flex items-center gap-1.5" title={t('projects.partsPrinted')}>
-              <Package className="w-3.5 h-3.5 text-bambu-green" />
-              <span>{project.completed_count} {t('projects.parts')}</span>
-            </div>
-            {project.failed_count > 0 && (
-              <div className="flex items-center gap-1.5 text-red-600 dark:text-red-400" title={t('projects.failedParts')}>
-                <AlertTriangle className="w-3.5 h-3.5" />
-                <span>{project.failed_count}</span>
-              </div>
-            )}
-            {project.queue_count > 0 && (
-              <div className="flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400" title={t('projects.inQueue')}>
-                <ListTodo className="w-3.5 h-3.5" />
-                <span>{project.queue_count}</span>
-              </div>
+        {/* Progress summary. Each count appears once: the parts and plates
+            figures share one line, and failed and queued counts follow it. */}
+        <div className="flex items-center justify-between gap-3 pt-3 border-t border-bambu-dark-tertiary">
+          <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs">
+            {hasSummary ? (
+              <>
+                <span className={isTargetMet ? 'text-bambu-green font-medium' : 'text-bambu-gray'}>
+                  {partsSummary} · {platesSummary}
+                </span>
+                {project.failed_count > 0 && (
+                  <span className="flex items-center gap-1.5 text-red-600 dark:text-red-400">
+                    <AlertTriangle className="w-3.5 h-3.5" />
+                    {project.failed_count} {t('projects.failed')}
+                  </span>
+                )}
+                {project.queue_count > 0 && (
+                  <span className="flex items-center gap-1.5 text-yellow-600 dark:text-yellow-400">
+                    <ListTodo className="w-3.5 h-3.5" />
+                    {project.queue_count} {t('projects.inQueue')}
+                  </span>
+                )}
+              </>
+            ) : (
+              <span className="italic text-bambu-gray/60">{t('projects.noPrintsYet')}</span>
             )}
           </div>
-          <ChevronRight className="w-4 h-4 text-bambu-gray/50 group-hover:text-bambu-gray transition-colors" />
+          <ChevronRight className="w-4 h-4 text-bambu-gray/50 group-hover:text-bambu-gray transition-colors flex-shrink-0" />
         </div>
+      </div>
+    </div>
+  );
+}
+
+/** Placeholder shaped like a ProjectCard, shown while the project list loads. */
+function ProjectCardSkeleton() {
+  return (
+    <div
+      className="rounded-xl border border-bambu-dark-tertiary bg-bambu-card p-5 pl-6 animate-pulse motion-reduce:animate-none"
+      aria-hidden="true"
+    >
+      <div className="flex items-center gap-3 mb-4">
+        <div className="w-9 h-9 rounded-lg bg-bambu-dark flex-shrink-0" />
+        <div className="flex-1 space-y-2">
+          <div className="h-4 w-1/2 rounded bg-bambu-dark" />
+          <div className="h-3 w-3/4 rounded bg-bambu-dark" />
+        </div>
+      </div>
+      <div className="pt-3 border-t border-bambu-dark-tertiary">
+        <div className="h-3 w-2/5 rounded bg-bambu-dark" />
       </div>
     </div>
   );
@@ -1120,12 +1047,14 @@ export function ProjectsPage() {
 
       {/* Content */}
       {isLoading ? (
-        <div className="flex items-center justify-center py-20">
-          <div className="flex flex-col items-center gap-3">
-            <Loader2 className="w-8 h-8 animate-spin text-bambu-green" />
-            <p className="text-sm text-bambu-gray">{t('projects.loading')}</p>
+        <>
+          <span role="status" className="sr-only">{t('projects.loading')}</span>
+          <div aria-busy="true" className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-8">
+            {[0, 1, 2].map((index) => (
+              <ProjectCardSkeleton key={index} />
+            ))}
           </div>
-        </div>
+        </>
       ) : projects?.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 px-4">
           <div className="p-4 bg-bambu-dark rounded-2xl mb-4">

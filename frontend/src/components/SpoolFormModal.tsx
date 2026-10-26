@@ -8,7 +8,7 @@ import { Button } from './Button';
 import { useToast } from '../contexts/ToastContext';
 import type { SpoolFormData, PrinterWithCalibrations, ColorPreset } from './spool-form/types';
 import { defaultFormData, validateForm, SPOOLMAN_LINKED_FIELDS } from './spool-form/types';
-import { buildFilamentOptions, extractBrandsFromPresets, findPresetOption, loadRecentColors, parsePresetName, saveRecentColor } from './spool-form/utils';
+import { buildFilamentOptions, extractBrandsFromPresets, findPresetOption, loadQuickAddPreference, loadRecentColors, parsePresetName, saveQuickAddPreference, saveRecentColor } from './spool-form/utils';
 import { MATERIALS } from './spool-form/constants';
 import { FilamentSection } from './spool-form/FilamentSection';
 import { ColorSection } from './spool-form/ColorSection';
@@ -74,7 +74,7 @@ export function SpoolFormModal({
   const [activeTab, setActiveTab] = useState<TabId>('filament');
   const [weightTouched, setWeightTouched] = useState(false);
   const [locationIdTouched, setLocationIdTouched] = useState(false);
-  const [quickAdd, setQuickAdd] = useState(false);
+  const [quickAdd, setQuickAdd] = useState(loadQuickAddPreference);
   const [quantity, setQuantity] = useState(1);
 
   // Cloud presets
@@ -379,6 +379,8 @@ export function SpoolFormModal({
           spoolman_filament_id: null,
         });
         setPresetInputValue(spool.slicer_filament_name || spool.slicer_filament || '');
+        // Quick Add is only offered for new spools, so edit and copy never inherit it.
+        setQuickAdd(false);
 
         // Load K-profiles for this spool
         if (spool.k_profiles && spool.k_profiles.length > 0) {
@@ -396,7 +398,7 @@ export function SpoolFormModal({
         setFormData(defaultFormData);
         setPresetInputValue('');
         setSelectedProfiles(new Set());
-        setQuickAdd(false);
+        setQuickAdd(loadQuickAddPreference());
         setQuantity(1);
       }
       setErrors({});
@@ -821,6 +823,7 @@ export function SpoolFormModal({
               aria-checked={quickAdd}
               onClick={() => {
                 setQuickAdd(!quickAdd);
+                saveQuickAddPreference(!quickAdd);
                 if (!quickAdd) setActiveTab('filament');
               }}
               className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${

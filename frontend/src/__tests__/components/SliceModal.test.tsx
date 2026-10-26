@@ -194,7 +194,7 @@ describe('SliceModal catalog selection', () => {
     await screen.findByRole('option', { name: 'P1S' });
     await user.selectOptions(await screen.findByRole('combobox', { name: 'Physical printer' }), '1');
 
-    expect(await screen.findByText('P1S has no active slicer binding. Add one before slicing.')).toBeInTheDocument();
+    expect(await screen.findByText('Set up a slicer binding for P1S.')).toBeInTheDocument();
     expect(screen.getByRole('link', { name: 'Set up P1S binding' })).toHaveAttribute('href', '/#slicer-binding-1');
     expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
     expect(mockApi.sliceLibraryFile).not.toHaveBeenCalled();
@@ -219,27 +219,38 @@ describe('SliceModal catalog selection', () => {
 
     await waitFor(() => expect(screen.getAllByRole('radio', { name: /Inslogic 95A TPU/ })).toHaveLength(3));
     expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
-    expect(screen.getByText(/Filament 1: project PLA, selected TPU/)).toBeInTheDocument();
-    expect(screen.getByText(/Filament 2: project PLA, selected TPU/)).toBeInTheDocument();
-    expect(screen.getByText(/Filament 3: project PLA, selected TPU/)).toBeInTheDocument();
-    expect(screen.getByText(/Filament 1: project PLA, selected TPU/).closest('label'))
+    for (const index of [1, 2, 3]) {
+      await user.click(within(screen.getByRole('group', { name: `Filament ${index} · PLA` })).getByRole('radio', { name: /Inslogic 95A TPU/ }));
+    }
+    for (const index of [1, 2, 3]) {
+      expect(screen.getByText(`Filament ${index}: source says PLA, profile is TPU. Slice anyway?`)).toBeInTheDocument();
+    }
+    expect(screen.getByText('Filament 1: source says PLA, profile is TPU. Slice anyway?').closest('label'))
       .toHaveClass('text-amber-900', 'dark:text-amber-200');
 
-    await user.click(screen.getByRole('checkbox', { name: /Confirm filament materials before slicing/ }));
+    await user.click(screen.getByRole('checkbox', { name: /Slice anyway/ }));
     expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
   });
 
-  it('requires material confirmation for a standalone STL without declared material', async () => {
+  // Failure mode: an unknown source material auto-selects a profile, so the slot looks chosen before the user picks one.
+  it('leaves an STL without declared material unselected until the user chooses a filament', async () => {
     mockApi.getLibraryFileFilamentRequirements.mockResolvedValue({
       file_id: 100, filename: 'Cube.stl', plate_id: 1, filaments: [],
     });
     renderModal();
     const user = await chooseTarget();
 
-    await waitFor(() => expect(screen.getByRole('radio', { name: /PLA profile/ })).toBeChecked());
+    expect(await screen.findByText('Choose the filament you will print with.')).toBeInTheDocument();
+    expect(screen.getByText('Pick a filament profile for slot 1.')).toBeInTheDocument();
+    expect(screen.getByRole('radio', { name: /PLA profile/ })).not.toBeChecked();
     expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
-    expect(screen.getByText(/Filament 1: source material unknown, selected PLA/)).toBeInTheDocument();
-    await user.click(screen.getByRole('checkbox', { name: /Confirm filament materials before slicing/ }));
+    expect(screen.queryByRole('checkbox', { name: /Slice anyway/ })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('radio', { name: /PLA profile/ }));
+    // The backend refuses an STL slice without an acknowledgement, so the modal asks for one first.
+    const confirm = await screen.findByRole('checkbox', { name: 'Filament 1: the file does not say which material it needs. Slice with PLA?' });
+    expect(screen.getByRole('button', { name: 'Slice' })).toBeDisabled();
+    await user.click(confirm);
     expect(screen.getByRole('button', { name: 'Slice' })).toBeEnabled();
   });
 
@@ -291,9 +302,9 @@ describe('SliceModal catalog selection', () => {
     renderModal();
     const user = await chooseTarget();
     const slots = [1, 2, 3].map((index) => screen.getByRole('group', { name: `Filament ${index} · PLA` }));
-    expect(within(slots[0]).getByText('PLA matches (1)')).toBeVisible();
+    expect(within(slots[0]).getByRole('group', { name: 'PLA (1)' })).toBeVisible();
     expect(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ })).toBeVisible();
-    expect(within(slots[0]).getByText(/Selected: Inslogic 95A TPU/)).toBeVisible();
+    expect(within(slots[0]).getByText(/Selected: None/)).toBeVisible();
 
     await user.click(within(slots[0]).getByRole('radio', { name: /Voron Generic PLA/ }));
     await user.click(screen.getByRole('button', { name: 'Apply Voron Generic PLA to 2 other PLA slots' }));
@@ -329,8 +340,8 @@ describe('SliceModal catalog selection', () => {
     renderModal();
     const user = await chooseTarget();
     const firstSlot = screen.getByRole('group', { name: 'Filament 1 · PLA' });
-    expect(within(firstSlot).queryByText('PLA matches (1)')).not.toBeInTheDocument();
-    await user.click(within(firstSlot).getByText('Unclassified (1)'));
+    expect(within(firstSlot).queryByRole('group', { name: 'PLA (1)' })).not.toBeInTheDocument();
+    expect(within(firstSlot).getByRole('group', { name: 'Unknown material (1)' })).toBeVisible();
     await user.click(within(firstSlot).getByRole('radio', { name: /Former PLA profile/ }));
     expect(screen.queryByRole('button', { name: /Apply Former PLA profile/ })).not.toBeInTheDocument();
     await waitFor(() => expect(mockApi.listSlicerCatalogProfiles).toHaveBeenCalledTimes(2));
@@ -465,4 +476,45 @@ it.each(['libraryFile', 'archive'] as const)('uses the physical Moonraker provid
   await user.click(slice);
   const submit = kind === 'libraryFile' ? mockApi.sliceLibraryFile : mockApi.sliceArchive;
   await waitFor(() => expect(submit).toHaveBeenCalledWith(100, expect.objectContaining({ destination_artifact_kind: 'klipper_gcode' })));
+});
+
+describe('SliceModal build plate', () => {
+  // Build plate names are Bambu-only. Klipper output ignores bed_type, so the
+  // control must not appear unless the selected physical printer is Bambu.
+  const buildPlate = () => screen.queryByRole('combobox', { name: /Build plate/ });
+
+  it('hides the build plate control when no printer is selected', async () => {
+    renderModal();
+    // Wait for the printer list so the control would already be on screen if it rendered unconditionally.
+    await screen.findByRole('option', { name: /^P1S ·/ });
+    expect(screen.getByRole('combobox', { name: 'Physical printer' })).toHaveValue('');
+    expect(buildPlate()).not.toBeInTheDocument();
+  });
+
+  it('hides the build plate control and omits bed_type for a Moonraker printer', async () => {
+    mockApi.getPrinters.mockResolvedValue([{ id: 1, name: 'P1S', model: 'P1S', provider: 'moonraker', is_active: true }]);
+    renderModal();
+    const user = await chooseTarget();
+    const slice = screen.getByRole('button', { name: 'Slice' });
+    await waitFor(() => expect(slice).toBeEnabled());
+    expect(buildPlate()).not.toBeInTheDocument();
+
+    await user.click(slice);
+    await waitFor(() => expect(mockApi.sliceLibraryFile).toHaveBeenCalledTimes(1));
+    expect(mockApi.sliceLibraryFile.mock.calls[0][1]).not.toHaveProperty('bed_type');
+  });
+
+  it('shows the build plate control for a Bambu printer and sends the chosen plate', async () => {
+    renderModal();
+    const user = await chooseTarget();
+    const plate = await screen.findByRole('combobox', { name: /Build plate/ });
+    expect(plate).toHaveValue('');
+    await user.selectOptions(plate, 'Textured PEI Plate');
+
+    const slice = screen.getByRole('button', { name: 'Slice' });
+    await waitFor(() => expect(slice).toBeEnabled());
+    await user.click(slice);
+    await waitFor(() => expect(mockApi.sliceLibraryFile).toHaveBeenCalledWith(100,
+      expect.objectContaining({ bed_type: 'Textured PEI Plate' })));
+  });
 });

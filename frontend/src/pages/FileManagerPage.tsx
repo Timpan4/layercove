@@ -62,6 +62,7 @@ import { ModelViewerModal } from '../components/ModelViewerModal';
 import { SliceModal } from '../components/SliceModal';
 import { RunWithPipelineModal } from '../components/RunWithPipelineModal';
 import { BulkTagsPickerModal } from '../components/BulkTagsPickerModal';
+import { ToolbarMoreMenu, toolbarMenuItemClass } from '../components/ToolbarMoreMenu';
 import { FileUploadModal } from '../components/FileUploadModal';
 import { FolderReadmePanel } from '../components/FolderReadmePanel';
 import { LibraryTagsModal } from '../components/LibraryTagsModal';
@@ -1662,28 +1663,6 @@ export function FileManagerPage() {
           </div>
           <Button
             variant="secondary"
-            onClick={() => batchThumbnailMutation.mutate()}
-            disabled={batchThumbnailMutation.isPending || !hasAnyPermission('library:update_own', 'library:update_all')}
-            title={!hasAnyPermission('library:update_own', 'library:update_all') ? t('fileManager.noPermissionGenerateThumbnail') : t('fileManager.generateThumbnailsForMissing')}
-          >
-            {batchThumbnailMutation.isPending ? (
-              <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-            ) : (
-              <Image className="w-4 h-4 mr-2" />
-            )}
-            {t('fileManager.generateThumbnails')}
-          </Button>
-          <Button
-            variant="secondary"
-            onClick={() => setShowExternalFolderModal(true)}
-            disabled={!hasPermission('library:upload')}
-            title={!hasPermission('library:upload') ? t('fileManager.noPermissionCreateFolder') : t('fileManager.linkExternalFolder')}
-          >
-            <FolderSymlink className="w-4 h-4 mr-2" />
-            {t('fileManager.linkExternal')}
-          </Button>
-          <Button
-            variant="secondary"
             onClick={() => setShowNewFolderModal(true)}
             disabled={!hasPermission('library:upload')}
             title={!hasPermission('library:upload') ? t('fileManager.noPermissionCreateFolder') : undefined}
@@ -1691,39 +1670,72 @@ export function FileManagerPage() {
             <FolderPlus className="w-4 h-4 mr-2" />
             {t('fileManager.newFolder')}
           </Button>
-          <Button
-            variant="secondary"
-            onClick={() => setShowTagsModal(true)}
-            title={t('fileManager.tags.manageTitle')}
-          >
-            <TagIcon className="w-4 h-4 mr-2" />
-            {t('fileManager.tags.manage')}
-          </Button>
-          {hasPermission('library:purge') && (
-            <Button
-              variant="secondary"
-              onClick={() => setShowPurgeModal(true)}
-              title={t('libraryPurge.headerTooltip')}
+          <ToolbarMoreMenu label={t('fileManager.moreActions')}>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => batchThumbnailMutation.mutate()}
+              disabled={batchThumbnailMutation.isPending || !hasAnyPermission('library:update_own', 'library:update_all')}
+              title={!hasAnyPermission('library:update_own', 'library:update_all') ? t('fileManager.noPermissionGenerateThumbnail') : t('fileManager.generateThumbnailsForMissing')}
+              className={toolbarMenuItemClass}
             >
-              <Trash2 className="w-4 h-4 mr-2" />
-              {t('libraryPurge.headerButton')}
-            </Button>
-          )}
-          {(hasAnyPermission('library:delete_own', 'library:delete_all')) && (
-            <Link
-              to="/files/trash"
-              className="inline-flex items-center px-3 py-1.5 text-sm rounded bg-bambu-dark-secondary text-bambu-gray hover:text-white hover:bg-bambu-dark transition-colors"
-              title={t('libraryTrash.headerTooltip')}
-            >
-              <Trash2 className="w-4 h-4 mr-2" />
-              {t('libraryTrash.headerButton')}
-              {typeof trashCount === 'number' && trashCount > 0 && (
-                <span className="ml-1.5 px-1.5 py-0.5 text-xs rounded-full bg-bambu-green/20 text-bambu-green">
-                  {trashCount}
-                </span>
+              {batchThumbnailMutation.isPending ? (
+                <Loader2 className="w-4 h-4 animate-spin" />
+              ) : (
+                <Image className="w-4 h-4" />
               )}
-            </Link>
-          )}
+              {t('fileManager.generateThumbnails')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => setShowExternalFolderModal(true)}
+              disabled={!hasPermission('library:upload')}
+              title={!hasPermission('library:upload') ? t('fileManager.noPermissionCreateFolder') : t('fileManager.linkExternalFolder')}
+              className={toolbarMenuItemClass}
+            >
+              <FolderSymlink className="w-4 h-4" />
+              {t('fileManager.linkExternal')}
+            </button>
+            <button
+              type="button"
+              role="menuitem"
+              onClick={() => setShowTagsModal(true)}
+              title={t('fileManager.tags.manageTitle')}
+              className={toolbarMenuItemClass}
+            >
+              <TagIcon className="w-4 h-4" />
+              {t('fileManager.tags.manage')}
+            </button>
+            {hasPermission('library:purge') && (
+              <button
+                type="button"
+                role="menuitem"
+                onClick={() => setShowPurgeModal(true)}
+                title={t('libraryPurge.headerTooltip')}
+                className={toolbarMenuItemClass}
+              >
+                <Trash2 className="w-4 h-4" />
+                {t('libraryPurge.headerButton')}
+              </button>
+            )}
+            {(hasAnyPermission('library:delete_own', 'library:delete_all')) && (
+              <Link
+                role="menuitem"
+                to="/files/trash"
+                title={t('libraryTrash.headerTooltip')}
+                className={toolbarMenuItemClass}
+              >
+                <Trash2 className="w-4 h-4" />
+                {t('libraryTrash.headerButton')}
+                {typeof trashCount === 'number' && trashCount > 0 && (
+                  <span className="ml-auto px-1.5 py-0.5 text-xs rounded-full bg-bambu-green/20 text-bambu-green">
+                    {trashCount}
+                  </span>
+                )}
+              </Link>
+            )}
+          </ToolbarMoreMenu>
           <Button
             onClick={() => setShowUploadModal(true)}
             disabled={!hasPermission('library:upload')}

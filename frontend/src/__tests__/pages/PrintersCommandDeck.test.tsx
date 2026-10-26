@@ -26,9 +26,9 @@ function deck(state: string, awaiting_plate_clear = false) {
 }
 
 describe('Command deck live telemetry', () => {
-  it('shows Bambu RUNNING as printing with its reported progress and next action', () => {
+  it('shows Bambu RUNNING as printing with its reported progress and no next action row', () => {
     deck('RUNNING');
-    expect(screen.getByText('Monitor this print')).toBeInTheDocument();
+    expect(screen.queryByText('Monitor this print')).not.toBeInTheDocument();
     expect(screen.queryByText('Choose a file to print')).not.toBeInTheDocument();
     expect(screen.getAllByText('95%').length).toBeGreaterThan(0);
   });

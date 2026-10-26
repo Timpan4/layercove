@@ -221,6 +221,19 @@ describe('workbench destination contract', () => {
     await act(async () => { await result.current.slice(); });
     expect(submit).toHaveBeenCalledWith(42, expect.objectContaining({ destination_artifact_kind: destination }));
   });
+
+  // Failure mode: a Bambu build plate name reaches a Klipper slice, where the sidecar ignores it.
+  it.each([
+    ['bambu', 'Cool Plate'],
+    ['moonraker', undefined],
+  ] as const)('attaches the build plate only for %s printers', async (provider, expectedBedType) => {
+    vi.mocked(api.getPrinters).mockResolvedValue([{ id: 1, name: 'Printer', provider, is_active: true } as Awaited<ReturnType<typeof api.getPrinters>>[number]]);
+    const { result } = renderHook(() => useSlicerWorkbench({ kind: 'libraryFile', id: 42 }, null), { wrapper: wrapper() });
+    await chooseTarget(result);
+    await waitFor(() => expect(result.current.request).not.toBeNull());
+    act(() => result.current.setBedType('Cool Plate'));
+    expect(result.current.request?.bed_type).toBe(expectedBedType);
+  });
 });
 
 

@@ -101,6 +101,10 @@ const mockStats = {
   disk_total_bytes: 107374182400,
 };
 
+async function openMoreMenu(user: ReturnType<typeof userEvent.setup>) {
+  await user.click(await screen.findByRole('button', { name: 'More' }));
+}
+
 describe('FileManagerPage', () => {
   it('names file and folder action menus', async () => {
     render(<FileManagerPage />);
@@ -523,28 +527,31 @@ describe('FileManagerPage', () => {
   });
 
   describe('STL thumbnail generation', () => {
-    it('shows Generate Thumbnails button', async () => {
-      render(<FileManagerPage />);
-
-      await waitFor(() => {
-        expect(screen.getByText('Generate Thumbnails')).toBeInTheDocument();
-      });
-    });
-
-    it('Generate Thumbnails button has correct title', async () => {
-      render(<FileManagerPage />);
-
-      await waitFor(() => {
-        const button = screen.getByTitle('Generate thumbnails for STL files missing them');
-        expect(button).toBeInTheDocument();
-      });
-    });
-
-    it('can click Generate Thumbnails button', async () => {
+    it('shows Generate Thumbnails in the More menu', async () => {
       const user = userEvent.setup();
+      render(<FileManagerPage />);
+
+      await openMoreMenu(user);
+
+      expect(screen.getByRole('menuitem', { name: 'Generate Thumbnails' })).toBeInTheDocument();
+    });
+
+    it('Generate Thumbnails menu item has correct title', async () => {
+      const user = userEvent.setup();
+      render(<FileManagerPage />);
+
+      await openMoreMenu(user);
+
+      expect(screen.getByTitle('Generate thumbnails for STL files missing them')).toHaveAttribute('role', 'menuitem');
+    });
+
+    it('can click Generate Thumbnails menu item', async () => {
+      const user = userEvent.setup();
+      let thumbnailRequests = 0;
 
       server.use(
         http.post('/api/v1/library/generate-stl-thumbnails', () => {
+          thumbnailRequests += 1;
           return HttpResponse.json({
             processed: 1,
             succeeded: 1,
@@ -556,17 +563,14 @@ describe('FileManagerPage', () => {
 
       render(<FileManagerPage />);
 
-      await waitFor(() => {
-        expect(screen.getByText('Generate Thumbnails')).toBeInTheDocument();
-      });
+      await openMoreMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: 'Generate Thumbnails' }));
 
-      const button = screen.getByText('Generate Thumbnails');
-      await user.click(button);
-
-      // Button should work without error
       await waitFor(() => {
-        expect(screen.getByText('Generate Thumbnails')).toBeInTheDocument();
+        expect(thumbnailRequests).toBe(1);
       });
+      // The menu closed and unmounted the focused item, so the trigger takes focus back.
+      expect(screen.getByRole('button', { name: 'More' })).toHaveFocus();
     });
 
     it('shows STL file without thumbnail in file list', async () => {
@@ -577,6 +581,92 @@ describe('FileManagerPage', () => {
         expect(screen.getByText('bracket.stl')).toBeInTheDocument();
         expect(screen.getAllByText('STL').length).toBeGreaterThan(0);
       });
+    });
+  });
+
+  describe('toolbar More menu', () => {
+    const adminActions = ['Generate Thumbnails', 'Link External', 'Tags', 'Purge old', 'Trash'];
+
+    it('keeps Upload and New Folder visible and hides the admin actions until More opens', async () => {
+      const user = userEvent.setup();
+      render(<FileManagerPage />);
+
+      expect(await screen.findByRole('button', { name: 'Upload', exact: true })).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: 'New Folder', exact: true })).toBeInTheDocument();
+
+      const more = screen.getByRole('button', { name: 'More' });
+      expect(more).toHaveAttribute('aria-haspopup', 'menu');
+      expect(more).toHaveAttribute('aria-expanded', 'false');
+      for (const name of adminActions) {
+        expect(screen.queryByRole('menuitem', { name: new RegExp(`^${name}`) })).not.toBeInTheDocument();
+      }
+
+      await user.click(more);
+
+      expect(more).toHaveAttribute('aria-expanded', 'true');
+      for (const name of adminActions) {
+        expect(screen.getByRole('menuitem', { name: new RegExp(`^${name}`) })).toBeInTheDocument();
+      }
+    });
+
+    it('moves focus between items with arrow keys and closes on Escape', async () => {
+      const user = userEvent.setup();
+      render(<FileManagerPage />);
+
+      const more = await screen.findByRole('button', { name: 'More' });
+      await user.click(more);
+
+      const items = screen.getAllByRole('menuitem');
+      expect(items[0]).toHaveFocus();
+
+      await user.keyboard('{ArrowDown}');
+      expect(items[1]).toHaveFocus();
+
+      await user.keyboard('{ArrowUp}{ArrowUp}');
+      expect(items[items.length - 1]).toHaveFocus();
+
+      await user.keyboard('{Escape}');
+      expect(screen.queryByRole('menu')).not.toBeInTheDocument();
+      expect(more).toHaveFocus();
+    });
+
+    it('opens Link External Folder from the More menu', async () => {
+      const user = userEvent.setup();
+      render(<FileManagerPage />);
+
+      await openMoreMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: 'Link External' }));
+
+      expect(await screen.findByText('Link External Folder')).toBeInTheDocument();
+    });
+
+    it('opens the tag catalog from the More menu', async () => {
+      const user = userEvent.setup();
+      render(<FileManagerPage />);
+
+      await openMoreMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: 'Tags' }));
+
+      expect(await screen.findByRole('dialog')).toBeInTheDocument();
+    });
+
+    it('opens the purge modal from the More menu', async () => {
+      const user = userEvent.setup();
+      render(<FileManagerPage />);
+
+      await openMoreMenu(user);
+      await user.click(screen.getByRole('menuitem', { name: 'Purge old' }));
+
+      expect(await screen.findByText('Purge old files')).toBeInTheDocument();
+    });
+
+    it('links to the trash from the More menu', async () => {
+      const user = userEvent.setup();
+      render(<FileManagerPage />);
+
+      await openMoreMenu(user);
+
+      expect(screen.getByRole('menuitem', { name: /^Trash/ })).toHaveAttribute('href', '/files/trash');
     });
   });
 

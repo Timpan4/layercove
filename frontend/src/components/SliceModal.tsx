@@ -251,6 +251,9 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
   }, [sliceAllPlates, filamentReqsQuery.data]);
   const embeddedProcess = platesQuery.data?.embedded_process ?? null;
   const catalogSelection = useCatalogSliceSelection({ filamentSlots, embeddedProcess });
+  // Build plate names are Bambu-only; Klipper output ignores bed_type.
+  const selectedPrinter = catalogSelection.activePrinters.find((printer) => printer.id === catalogSelection.printerId);
+  const showBedType = selectedPrinter?.provider === 'bambu';
 
   const enqueueMutation = useMutation({
     mutationFn: async (plate: number | null) => {
@@ -292,7 +295,7 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
       catalog_acknowledgement: catalog.acknowledgement,
       catalog_selection_evidence: catalog.evidence,
       ...(plate != null ? { plate } : {}),
-      ...(bedType != null ? { bed_type: bedType } : {}),
+      ...(showBedType && bedType != null ? { bed_type: bedType } : {}),
     };
   }
 
@@ -381,14 +384,16 @@ export function SliceModal({ source, onClose }: SliceModalProps) {
               <label className="flex items-center gap-2 text-sm text-white"><input type="checkbox" checked={arrange}
                 onChange={(event) => setArrange(event.target.checked)} disabled={isEnqueuing} />Arrange on selected printer bed</label>
               <p className="text-xs text-bambu-gray">Uncheck to preserve source placement. Check the sliced preview before printing.</p>
-              {/* Bed-type override (#1337). Always visible, always enabled.
-                  The backend patches curr_bed_type on the resolved process
-                  JSON before forwarding to the sidecar. */}
-              <BedTypeDropdown
-                value={bedType}
-                onChange={setBedType}
-                disabled={isEnqueuing}
-              />
+              {/* Bed-type override (#1337), Bambu printers only. The backend
+                  patches curr_bed_type on the resolved process JSON before
+                  forwarding to the sidecar. */}
+              {showBedType && (
+                <BedTypeDropdown
+                  value={bedType}
+                  onChange={setBedType}
+                  disabled={isEnqueuing}
+                />
+              )}
               {catalogSelection.destinationArtifactKind && <div className="space-y-1">
                 <span className="block text-xs text-bambu-gray">{t('slice.destination.label', 'Output')}</span>
                 <p className="text-sm text-white">{catalogSelection.destinationArtifactKind === 'klipper_gcode'

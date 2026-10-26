@@ -321,6 +321,11 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
   const sliceStatus = model.jobState?.status;
   const sliceState = sliceStatus === 'pending' ? 'queued' : sliceStatus === 'running' ? 'running' : sliceStatus === 'completed' ? 'complete' : sliceStatus === 'failed' || sliceStatus === 'cancelled' ? 'failed' : 'idle';
   const result = model.result;
+  const footerStatus = sliceStatus === 'pending' || sliceStatus === 'running' ? t('slicerFooter.slicing')
+    : sliceStatus === 'completed' ? t('slicerFooter.completed')
+    : sliceStatus === 'failed' ? t('slicerFooter.failed')
+    : sliceStatus === 'cancelled' ? t('slicerFooter.cancelled')
+    : undefined;
   const bedStatus = <SlicerBedStatus
     profileName={model.catalogSelection.selectedBinding?.profile_name}
     revisionId={model.catalogSelection.selectedPrinterProfile?.revision_id}
@@ -338,7 +343,6 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
       mode={previewMode}
       onModeChange={(mode) => { setPreviewMode(mode); setMobilePanel('canvas'); }}
       title={model.sourceName}
-      subtitle={`${schema.engine.name} ${schema.engine.version} · ${schema.schema_hash.slice(0, 10)}`}
       canUndo={model.canUndo}
       canRedo={model.canRedo}
       onUndo={model.undo}
@@ -410,10 +414,10 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
           ? <div className="flex h-full items-center justify-center p-6 text-center text-sm text-bambu-gray-light">STEP source preview is unavailable. If the selected slicer supports STEP, slice it and inspect the resulting Preview.</div>
           : <ModelViewer buildVolume={model.buildVolume ?? undefined} showBuildPlate={Boolean(model.buildVolume)} centerOnBed={model.buildVolume ? model.arrange : false} url={model.modelUrl} fileType={filename.split('.').pop()} selectedPlateId={model.selectedPlate} filamentColors={model.selectedPlateMetadata?.filaments.map((filament) => filament.color)} className="h-full w-full" />}
         gcodeViewer={model.previewUrl ? <div className="relative h-full"><GcodeViewer buildVolume={model.buildVolume ?? undefined} showBuildPlate={Boolean(model.buildVolume && !model.buildVolume.outline)} gcodeUrl={model.previewUrl} filamentColors={model.selectedPlateMetadata?.filaments.map((filament) => filament.color)} className="h-full w-full" />{model.previewStale && <div className="absolute left-3 top-3 rounded-md border border-amber-400/40 bg-black/80 px-3 py-2 text-xs text-amber-300">Preview is stale. Slice again before printing.</div>}{model.buildVolume?.outline && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">This printer has a nonrectangular bed. Toolpath fit is unverified in this preview.</p>}</div> : <div className="flex h-full items-center justify-center text-sm text-bambu-gray-light">Slice plate to generate preview.</div>}
-      >{!model.buildVolume && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">Bed geometry unavailable. Preview only; printer fit and placement are unverified.</p>}</SlicerCanvasWorkspace></div>
+      >{!model.buildVolume && model.printerProfileQuery.isSuccess && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">{t('slicerBed.unverified')}</p>}</SlicerCanvasWorkspace></div>
     </div>
     <HistoricalReslice model={model} />
-    <SlicerFooter status={sliceStatus ?? t('slicerReadiness.editorLoaded')} plateName={model.selectedPlateMetadata?.name || `Plate ${model.selectedPlate ?? 1}`} objectCount={model.selectedPlateMetadata?.object_count ?? (model.objects.length || null)} engine={`${schema.engine.version} · ${schema.schema_hash.slice(0, 8)}`} />
+    <SlicerFooter status={footerStatus} plateName={model.selectedPlateMetadata?.name || t('slicerFooter.plate', { number: model.selectedPlate ?? 1 })} objectCount={model.selectedPlateMetadata?.object_count ?? (model.objects.length || null)} engine={{ label: `${schema.engine.name} ${schema.engine.version}`, hash: schema.schema_hash }} />
     {showPrint && result && <PrintModal
       mode="create"
       archiveId={'archive_id' in result ? result.archive_id : undefined}
@@ -427,6 +431,7 @@ function Workbench({ source, initialJobId, onBack }: { source: WorkbenchSource; 
 }
 
 function SavedSliceResult({ model, onBack }: { model: ReturnType<typeof useSlicerWorkbench>; onBack: () => void }) {
+  const { t } = useTranslation();
   const [showPrint, setShowPrint] = useState(false);
   const job = model.jobState!;
   const request = job.request_snapshot;
@@ -479,7 +484,7 @@ function SavedSliceResult({ model, onBack }: { model: ReturnType<typeof useSlice
       </aside>
       <section aria-label="Saved toolpath preview" className="relative h-[60dvh] min-h-80 min-w-0 flex-1 lg:h-auto">
         {model.previewUrl ? <GcodeViewer buildVolume={bed ?? undefined} showBuildPlate={Boolean(bed && !bed.outline)} gcodeUrl={model.previewUrl} className="h-full w-full" /> : <p>Saved toolpath is unavailable.</p>}
-        {!bed && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">Bed geometry unavailable. Preview only; printer fit and placement are unverified.</p>}
+        {!bed && <p className="absolute bottom-2 left-2 right-2 rounded bg-black/80 p-2 text-xs text-amber-300">{t('slicerBed.unverified')}</p>}
       </section>
     </div>
     <HistoricalReslice model={model} />
