@@ -364,6 +364,9 @@ describe('selected combination readiness', () => {
     ]);
     // An empty slot has nothing to warn about yet.
     expect(catalogMaterialWarnings([{ type: '' }], [undefined], [null])).toEqual([]);
+    // An empty filament_type defers to material_type, as the backend's `or` does.
+    const byMaterialType = { ...profile(22, 'PLA'), compatibility_metadata: { filament_type: '', material_type: 'PLA' } };
+    expect(catalogMaterialWarnings([{ type: 'PLA' }], [byMaterialType], [22])).toEqual([]);
   });
 
   it('requires explicit acknowledgement for unknown compatibility and stale telemetry', () => {

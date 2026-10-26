@@ -49,7 +49,8 @@ export function catalogClassification(
 
 export function catalogFilamentMaterial(profile: SlicerCatalogProfile | undefined): string {
   const metadata = profile?.compatibility_metadata ?? {};
-  const material = metadata.filament_type ?? metadata.material_type;
+  // `||`, like the backend's `or`: an empty filament_type defers to material_type.
+  const material = metadata.filament_type || metadata.material_type;
   return typeof material === 'string' ? canonicalFilamentType(material.trim()) : '';
 }
 
@@ -273,6 +274,10 @@ export interface CatalogMaterialWarning {
 // Mirrors the backend gate in slicer_catalog_selection.py: a slice passes without acknowledgement only
 // when the source and the selected profile both state a material and they agree. A plain STL states none,
 // so the backend answers 409 unless the user confirms the filament here.
+// Known gap: the backend reads the profile material from revision content and treats a content
+// filament_type with zero or several distinct values as unknown, while the API only overwrites the synced
+// metadata when the content yields exactly one. Such a profile reads as known here and unknown there, so
+// the backend still answers 409 for it; closing that needs the API to blank the metadata value too.
 export function catalogMaterialWarnings(
   slots: Array<{ type: string }>,
   profiles: Array<SlicerCatalogProfile | undefined>,
