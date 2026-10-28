@@ -543,6 +543,20 @@ async def test_incremental_parent_revert_also_reverts_children(db):
     assert (await active_content(db, child.id))["parent_value"] == "P1S"
 
 
+# Failure mode: a profile Orca deletes and later sends again with older content keeps the
+# source revision from before the deletion.
+async def test_a_restored_profile_records_the_content_orca_sends_again(db):
+    first = await orca_pull(db, OrcaProfilePull("1", [orca_entry(value=1)], [], True))
+    profile_id = (await db.get(SlicerProfileRevision, first.revision_ids[0])).profile_id
+    await orca_pull(db, OrcaProfilePull("2", [orca_entry(value=2)], [], True))
+    await orca_pull(db, OrcaProfilePull("3", [], [], True))
+    await orca_pull(db, OrcaProfilePull("4", [orca_entry(value=1)], [], True))
+
+    await orca_pull(db, OrcaProfilePull("5", [], [], False))
+
+    assert (await active_content(db, profile_id))["value"] == 1
+
+
 # Failure mode: profiles synced before source revisions were recorded are rebuilt from their
 # newest revision, which Orca may have reverted before the upgrade.
 async def test_profiles_without_a_source_revision_get_a_full_pull(db):

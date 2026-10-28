@@ -284,8 +284,24 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
 
         if pending:
             await session.flush()
-        for revision in current:
-            await session.merge(SlicerProfileSourceRevision(profile_id=revision.profile_id, revision_id=revision.id))
+        source_revision_ids = {revision.profile_id: revision.id for revision in current}
+        sources = (
+            (
+                await session.scalars(
+                    select(SlicerProfileSourceRevision).where(
+                        SlicerProfileSourceRevision.profile_id.in_(source_revision_ids)
+                    )
+                )
+            ).all()
+            if source_revision_ids
+            else []
+        )
+        for source in sources:
+            source.revision_id = source_revision_ids.pop(source.profile_id)
+        session.add_all(
+            SlicerProfileSourceRevision(profile_id=profile_id, revision_id=revision_id)
+            for profile_id, revision_id in source_revision_ids.items()
+        )
 
         account_profiles = (
             await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))
