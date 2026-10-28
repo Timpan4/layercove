@@ -4,7 +4,7 @@ import { afterEach, beforeEach, expect, it, vi } from 'vitest';
 import { api, type SlicerCatalogProfile } from '../../api/client';
 import { FilamentProfileEditor } from '../../components/FilamentProfileEditor';
 
-vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ hasPermission: () => true }) }));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => ({ authEnabled: true, hasPermission: () => true }) }));
 const profile = { profile_id: 8, revision_id: 15, display_name: 'Cloud PLA', sharing_state: 'private' } as SlicerCatalogProfile;
 beforeEach(() => {
   HTMLDialogElement.prototype.showModal = vi.fn(function(this: HTMLDialogElement) { this.setAttribute('open', ''); });

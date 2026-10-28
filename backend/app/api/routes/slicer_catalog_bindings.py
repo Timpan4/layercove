@@ -792,13 +792,19 @@ async def delete_preference(
 async def retire_profile(
     profile_id: int,
     data: RetirementRequest,
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     if data.replacement_profile_id is not None and data.disable_references:
         raise HTTPException(422, "Choose replacement or disable references, not both")
     profile = await db.get(SlicerProfile, profile_id)
-    if profile is None:
+    account = await db.get(SlicerProfileAccount, profile.account_id) if profile is not None else None
+    # settings:update covers shared catalogs. Another user's private profile stays theirs.
+    if (
+        profile is None
+        or account is None
+        or (account.sharing_state != "shared" and account.user_id != (current_user.id if current_user else None))
+    ):
         raise HTTPException(404, "Catalog profile not found")
     if data.replacement_profile_id == profile.id:
         raise HTTPException(422, "Replacement must be a different profile")

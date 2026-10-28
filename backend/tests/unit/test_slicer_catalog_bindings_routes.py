@@ -467,6 +467,34 @@ async def test_retirement_reports_only_bindings_disabled_by_that_request(db, mon
     assert retired["disabled_binding_ids"] == []
 
 
+# Failure mode: any user with settings:update retires another user's private profile and
+# deletes the owner's preferences that point at it.
+async def test_another_user_cannot_retire_a_private_profile(db):
+    owner = User(username="retire-owner", role="admin")
+    outsider = User(username="retire-outsider", role="admin")
+    db.add_all([owner, outsider])
+    await db.commit()
+    result = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud",
+            remote_account_id="orca-retire-owner",
+            user_id=owner.id,
+            profiles=[CatalogProfile("p", "filament", "Private PLA", {"type": "filament"})],
+        ),
+    )
+    await db.commit()
+    profile = await db.scalar(select(SlicerProfile).where(SlicerProfile.account_id == result.account_id))
+
+    with pytest.raises(HTTPException) as hidden:
+        await retire_profile(profile.id, RetirementRequest(disable_references=True), outsider, db)
+
+    assert hidden.value.status_code == 404
+    assert (await db.get(SlicerProfile, profile.id)).tombstoned_at is None
+    retired = await retire_profile(profile.id, RetirementRequest(disable_references=True), owner, db)
+    assert retired["profile_id"] == profile.id
+
+
 async def test_private_cloud_profile_is_visible_and_preferred_only_by_owner(db, monkeypatch):
     profiles = await install_profiles(db)
     monkeypatch.setattr(

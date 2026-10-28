@@ -632,6 +632,44 @@ async def test_deleting_a_user_removes_their_calibration_photos_and_tests(
     assert (await db_session.get(artifact_type, artifact_id)).deleted_at is not None
 
 
+# Failure mode: a deleted user's private copies stay active with no owner, and appear for
+# everyone once authentication is turned off.
+async def test_deleting_a_user_retires_their_private_copies(async_client, db_session):
+    from backend.app.models.slicer_profile_catalog import SlicerProfile
+    from backend.app.services.filament_edit import FilamentCopyRequest, copy_filament_profile
+
+    activation = await publish_filament(db_session, PLA_CONTENT)
+    original_id = activation.profile_id
+    owner = User(username="private-copier")
+    db_session.add(owner)
+    await db_session.commit()
+    owner_id = owner.id
+    copy = await copy_filament_profile(
+        db_session,
+        activation.profile_id,
+        FilamentCopyRequest(base_revision_id=activation.revision_id, name="Mine"),
+        owner_id,
+    )
+    await db_session.commit()
+
+    deleted = await async_client.delete(f"/api/v1/users/{owner_id}")
+
+    assert deleted.status_code == 204, deleted.text
+    db_session.expire_all()
+    assert (await db_session.get(SlicerProfile, copy["profile_id"])).tombstoned_at is not None
+    assert (
+        await db_session.scalar(
+            select(SlicerProfileActivation).where(SlicerProfileActivation.profile_id == copy["profile_id"])
+        )
+    ) is None
+    # The original stays active.
+    assert (
+        await db_session.scalar(
+            select(SlicerProfileActivation).where(SlicerProfileActivation.profile_id == original_id)
+        )
+    ) is not None
+
+
 async def test_a_user_with_a_test_still_generating_is_kept(async_client, db_session):
     session = await create_session(async_client, db_session)
     await add_generated_test(db_session, session["id"], status="running")

@@ -153,6 +153,32 @@ async def test_an_unshared_copy_is_active_only_for_its_owner(db_session):
     assert second["profile_id"] != result["profile_id"]
 
 
+# Failure mode: a new user who gets a deleted user's id lands in that user's orphaned private
+# account, where their own copy is invisible to them.
+async def test_a_reused_user_id_gets_a_new_private_account(db_session):
+    from backend.app.api.routes.slicer_catalog import list_catalog_profiles
+
+    owner = User(username="first-owner")
+    db_session.add(owner)
+    await db_session.commit()
+    source = await seed(db_session)
+    body = FilamentCopyRequest(**{**payload(source.revision), "share_local_copy": False})
+    first = await copy_filament_profile(db_session, source.profile, body, owner.id)
+    # What deleting the user leaves behind.
+    for account in await db_session.scalars(
+        select(SlicerProfileAccount).where(SlicerProfileAccount.user_id == owner.id)
+    ):
+        account.user_id = None
+    await db_session.commit()
+
+    second = await copy_filament_profile(db_session, source.profile, body, owner.id)
+    await db_session.commit()
+
+    visible = {profile["profile_id"] for profile in await list_catalog_profiles(db_session, owner)}
+    assert second["profile_id"] in visible
+    assert first["profile_id"] not in visible
+
+
 @pytest.mark.parametrize("kind", ["changed", "frozen", "identity", "credential"])
 async def test_rejected_edits_write_nothing(async_client, db_session, kind):
     source = await seed(db_session)

@@ -139,31 +139,39 @@ async def copy_filament_profile(
     except ValueError as exc:
         raise HTTPException(422, "Invalid filament settings; credentials are not allowed") from exc
     # Local presets are listed for every user, so a private copy lives only in its owner's account.
-    remote_account_id = "installation" if shared else f"user:{user_id}"
+    # That account is found by its owner. A random identity keeps a reused user id away from the
+    # account of a deleted user.
     local_account = await db.scalar(
-        select(SlicerProfileAccount).where(
-            SlicerProfileAccount.source == "local", SlicerProfileAccount.remote_account_id == remote_account_id
+        select(SlicerProfileAccount)
+        .where(
+            SlicerProfileAccount.source == "local",
+            SlicerProfileAccount.remote_account_id == "installation"
+            if shared
+            else (SlicerProfileAccount.user_id == user_id) & (SlicerProfileAccount.sharing_state == "private"),
         )
+        .order_by(SlicerProfileAccount.id)
+        .limit(1)
     )
     if local_account is not None and local_account.sync_frozen:
         raise HTTPException(409, "The local profile catalog is frozen")
     if shared:
+        remote_account_id = "installation"
         db.add(preset)
         await db.flush()
         catalog_profile = local_preset_adapter(preset)
     else:
         if local_account is None:
             # ingest_catalog would create a local account as shared.
-            db.add(
-                SlicerProfileAccount(
-                    source="local",
-                    remote_account_id=remote_account_id,
-                    display_name="Private filament copies",
-                    user_id=user_id,
-                    sharing_state="private",
-                )
+            local_account = SlicerProfileAccount(
+                source="local",
+                remote_account_id=f"user:{uuid4().hex}",
+                display_name="Private filament copies",
+                user_id=user_id,
+                sharing_state="private",
             )
+            db.add(local_account)
             await db.flush()
+        remote_account_id = local_account.remote_account_id
         catalog_profile = replace(catalog_profile, remote_profile_id=stable_id)
     # Ingest ONLY this new identity. Syncing all local presets then approving its
     # batch could accidentally approve/reject unrelated pending administrator edits.
