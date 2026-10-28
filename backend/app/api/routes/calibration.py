@@ -257,8 +257,13 @@ ACTIVE_JOB_STATES = ("pending", "running", "cancel-requested")
 FILAMENT_CHANGED = "The filament profile has a newer version. Switch this session to it before continuing."
 
 
-async def retire_runs(db: AsyncSession, session: CalibrationSession, steps: Iterable[Step]) -> None:
-    """Forget the steps' generated tests and prints, and trash artifacts no queued print still needs."""
+async def retire_runs(
+    db: AsyncSession, session: CalibrationSession, steps: Iterable[Step], deleted_printer: int | None = None
+) -> None:
+    """Forget the steps' generated tests and prints, and trash artifacts no queued print still needs.
+
+    Queue items of `deleted_printer` are about to be deleted with it, so they keep no artifact.
+    """
     names = {step.value for step in steps}
     job_ids = [job_id for key, job_id in session.runs.items() if key in names]
     if job_ids:
@@ -276,6 +281,7 @@ async def retire_runs(db: AsyncSession, session: CalibrationSession, steps: Iter
                     select(PrintQueueItem.library_file_id).where(
                         PrintQueueItem.library_file_id.in_(file_ids),
                         PrintQueueItem.status.in_(("pending", "printing")),
+                        or_(PrintQueueItem.printer_id.is_(None), PrintQueueItem.printer_id != deleted_printer),
                     )
                 )
             )

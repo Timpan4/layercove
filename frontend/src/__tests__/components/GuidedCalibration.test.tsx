@@ -92,6 +92,33 @@ it('lets the user clear an automatically selected printer profile and enter the 
   expect(screen.getByLabelText('Printer profile')).toHaveValue('');
 });
 
+it('keeps a cleared printer profile cleared after the session starts', async () => {
+  const started = { ...baseSession, id: 12, filament_profile_id: 7, filament_revision_id: 7 };
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([])),
+    http.post('*/api/v1/calibration/sessions', () => HttpResponse.json(started, { status: 201 })),
+    http.get('*/api/v1/calibration/sessions/12', () => HttpResponse.json(started)),
+    http.get('*/api/v1/calibration/sessions/12/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([{ ...profile(7, 'filament', 'Generic ASA'), active: true }])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([binding(5, 'Bambu Lab P1S 0.4 nozzle')])),
+    http.get('*/api/v1/slicer/catalog/printers/1/classification', () => HttpResponse.json(groups([7]))),
+    http.get('*/api/v1/slicer/catalog/revisions/7', () => HttpResponse.json({ content: {} })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+    http.get('*/api/v1/settings/spoolman', () => HttpResponse.json({ spoolman_enabled: 'false', spoolman_url: '' })),
+    http.get('*/api/v1/inventory/spools', () => HttpResponse.json([])),
+  );
+  renderCalibration('/profiles?calibration=guided');
+  fireEvent.change(screen.getByLabelText('Printer'), { target: { value: '1' } });
+  await waitFor(() => expect(screen.getByLabelText('Printer profile')).toHaveValue('5'));
+  await screen.findByRole('option', { name: 'Generic ASA' });
+  fireEvent.change(screen.getByLabelText('Filament'), { target: { value: 'profile:7' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Start calibration' }));
+  await screen.findByRole('button', { name: 'Delete session' });
+  fireEvent.change(screen.getByLabelText('Printer profile'), { target: { value: '' } });
+  await new Promise(resolve => setTimeout(resolve, 50));
+  expect(screen.getByLabelText('Printer profile')).toHaveValue('');
+});
+
 // Failure mode: switching the printer profile changes which profile a spool matches, the
 // field shows nothing, yet the hidden earlier match still starts the session.
 it('drops a spool choice that no longer matches after the printer profile changes', async () => {

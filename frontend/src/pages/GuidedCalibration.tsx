@@ -212,8 +212,10 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const onlyBinding = availableBindings.length === 1 ? availableBindings[0] : undefined;
   const autoSelectKey = `${contextPrinterId}:${session?.id ?? ''}`;
   useEffect(() => {
-    if (onlyBinding && !selectedBinding && autoSelected.current !== autoSelectKey) {
-      autoSelected.current = autoSelectKey;
+    if (autoSelected.current === autoSelectKey || (!onlyBinding && !selectedBinding)) return;
+    // A profile carried into a new session counts as its one automatic choice.
+    autoSelected.current = autoSelectKey;
+    if (onlyBinding && !selectedBinding) {
       setBindingId(String(onlyBinding.id));
       setProcessId(previous => previous || String(onlyBinding.default_process_profile_id ?? ''));
       setAcknowledged(false);

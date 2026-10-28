@@ -5,9 +5,10 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
+from sqlalchemy.orm.attributes import set_committed_value
 
 import backend.app.models  # noqa: F401
 from backend.app.core.database import Base
@@ -24,6 +25,7 @@ from backend.app.services.orca_cloud import OrcaCloudError, OrcaProfilePull
 from backend.app.services.slicer_catalog import (
     CatalogInput,
     activate_revision,
+    activate_without_review,
     approve_review_batch,
     ingest_catalog,
     rollback_revision,
@@ -460,6 +462,36 @@ async def test_local_sync_keeps_a_rollback_until_the_preset_changes(db):
     preset.setting = json.dumps({"value": 3})
     await sync_local_catalog(db)
     assert await active_content(db, profile_id) == {"value": 3}
+
+
+# Failure mode: an owner shares the account while a sync runs, and the sync, still holding
+# the private copy it loaded, activates unreviewed revisions for every user.
+async def test_sync_rereads_sharing_before_activating_without_review(db):
+    first = await sync_orca_account(
+        db,
+        service_with(OrcaProfilePull("10", [orca_entry()], [], True)),
+        remote_account_id="orca-race",
+        display_name="Owner",
+        user_id=None,
+    )
+    result = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud", remote_account_id="orca-race", profiles=[orca_profile_adapter(orca_entry(value=2))]
+        ),
+    )
+    await db.execute(
+        update(SlicerProfileAccount)
+        .where(SlicerProfileAccount.id == first.account_id)
+        .values(sharing_state="shared", consent_at=datetime(2026, 1, 1))
+    )
+    # The sync still holds the copy it loaded before the other transaction committed.
+    stale = await db.get(SlicerProfileAccount, first.account_id)
+    set_committed_value(stale, "sharing_state", "private")
+
+    await activate_without_review(db, result)
+
+    assert (await db.get(SlicerProfileRevision, result.revision_ids[0])).review_state == "pending"
 
 
 async def test_local_sync_keeps_a_rejected_revision_inactive(db):

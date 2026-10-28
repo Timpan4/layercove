@@ -788,7 +788,7 @@ async def delete_printer(
         .all()
     )
     for calibration in calibrations:
-        await retire_runs(db, calibration, STEPS)
+        await retire_runs(db, calibration, STEPS, deleted_printer=printer_id)
         await db.execute(sql_delete(CalibrationEvidence).where(CalibrationEvidence.session_id == calibration.id))
         await db.delete(calibration)
     remove_session_photos(calibration.id for calibration in calibrations)

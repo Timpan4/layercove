@@ -541,8 +541,13 @@ async def test_photos_that_cannot_be_removed_keep_the_session(async_client, db_s
 # Failure mode: deleting a printer leaves its generated calibration tests in the library,
 # or forgets a session whose test is still being generated.
 async def test_deleting_a_printer_retires_its_generated_tests(async_client, db_session):
+    from backend.app.models.print_queue import PrintQueueItem
+
     session = await create_session(async_client, db_session)
     artifact = await add_generated_test(db_session, session["id"])
+    # The printer's own queue goes with it, so its pending print must not keep the file.
+    db_session.add(PrintQueueItem(printer_id=session["printer_id"], library_file_id=artifact.id, status="pending"))
+    await db_session.commit()
     deleted = await async_client.delete(f"/api/v1/printers/{session['printer_id']}")
     assert deleted.status_code == 200, deleted.text
     await db_session.refresh(artifact)

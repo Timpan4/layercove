@@ -409,7 +409,14 @@ async def activate_without_review(session: AsyncSession, result: IngestResult, u
     """
 
     async def operation() -> None:
-        account = await session.get(SlicerProfileAccount, result.account_id)
+        # Lock and re-read: the owner may have shared the account since ingest loaded it.
+        # set_account_sharing takes the same lock.
+        account = await session.scalar(
+            select(SlicerProfileAccount)
+            .where(SlicerProfileAccount.id == result.account_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
         if account is None or (account.source != "local" and account.sharing_state == "shared"):
             return
         batches = (

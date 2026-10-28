@@ -450,7 +450,10 @@ async def set_account_sharing(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequireAnyPermissionIfAuthEnabled(Permission.CLOUD_AUTH, Permission.ORCA_CLOUD_AUTH),
 ) -> dict[str, Any]:
-    account = await db.get(SlicerProfileAccount, account_id)
+    # Locked so a concurrent sync cannot activate revisions without review while sharing changes.
+    account = await db.scalar(
+        select(SlicerProfileAccount).where(SlicerProfileAccount.id == account_id).with_for_update()
+    )
     if account is None:
         raise HTTPException(status_code=404, detail="Catalog account not found")
     if account.source not in {"cloud", "orca_cloud"}:
