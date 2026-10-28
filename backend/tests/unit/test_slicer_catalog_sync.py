@@ -479,9 +479,12 @@ async def test_incremental_orca_pull_keeps_a_reverted_profile(db):
     await orca_pull(db, OrcaProfilePull("2", [orca_entry(value=2)], [], True))
     await orca_pull(db, OrcaProfilePull("3", [orca_entry(value=1)], [], True))
     assert (await active_content(db, profile_id))["value"] == 1
+    service = service_with(OrcaProfilePull("4", [], [], False))
 
-    await orca_pull(db, OrcaProfilePull("4", [], [], False))
+    await sync_orca_account(db, service, remote_account_id="orca-history", display_name="Owner", user_id=None)
 
+    # Profiles with source revisions keep incremental pulls.
+    service.pull_profiles.assert_awaited_once_with("3")
     assert (await active_content(db, profile_id))["value"] == 1
 
 
