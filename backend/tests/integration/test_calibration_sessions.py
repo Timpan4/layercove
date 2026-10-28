@@ -427,6 +427,44 @@ async def test_deleting_a_session_removes_its_photos(async_client, db_session, t
     assert not (tmp_path / "calibration" / str(session["id"])).exists()
 
 
+async def test_generating_a_test_taller_than_the_printer_profile_is_refused(async_client, db_session):
+    from backend.app.models.slicer_profile_catalog import PrinterSlicerBinding
+
+    session = await create_session(async_client, db_session)
+    session = await record(async_client, session, "temperature", 215)
+    session = await record(async_client, session, "flow_rate", 0.98)
+    printer = await ingest_catalog(
+        db_session,
+        CatalogInput(
+            source="standard",
+            remote_account_id="calibration-printer",
+            profiles=[
+                CatalogProfile("p1s", "printer", "Short printer", {"type": "machine", "printable_height": "100"})
+            ],
+        ),
+    )
+    await approve_review_batch(db_session, printer.review_batch_id)
+    activation = await activate_revision(db_session, printer.revision_ids[0])
+    binding = PrinterSlicerBinding(
+        printer_id=session["printer_id"], profile_id=activation.profile_id, expected_nozzle_diameter=0.4
+    )
+    db_session.add(binding)
+    await db_session.commit()
+    base = f"/api/v1/calibration/sessions/{session['id']}"
+    # 151 pressure advance bands of 1 mm.
+    saved = await async_client.put(
+        base + "/parameters/pressure_advance",
+        json={"version": session["version"], "lowest": 0, "highest": 0.15, "increment": 0.001, "baseline": 0.02},
+    )
+    assert saved.status_code == 200, saved.text
+    generated = await async_client.post(
+        base + "/generate/pressure_advance",
+        json={"version": saved.json()["version"], "binding_id": binding.id, "process_profile_id": 1},
+    )
+    assert generated.status_code == 409, generated.text
+    assert "the printer profile allows 100 mm" in generated.json()["detail"]
+
+
 @pytest.mark.parametrize(
     "step,lowest,highest,increment,fits",
     [

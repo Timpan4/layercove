@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import delete, or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.slicer_profile_catalog import (
@@ -463,22 +463,29 @@ async def activate_without_review(session: AsyncSession, result: IngestResult, u
                 )
             ).all()
         )
+        latest_events = (
+            select(func.max(SlicerProfileActivationEvent.id))
+            .join(SlicerProfile, SlicerProfile.id == SlicerProfileActivationEvent.profile_id)
+            .where(SlicerProfile.account_id == account.id)
+            .group_by(SlicerProfileActivationEvent.profile_id)
+        )
         last_action = dict(
             (
                 await session.execute(
-                    select(SlicerProfileActivationEvent.profile_id, SlicerProfileActivationEvent.action)
-                    .join(SlicerProfile, SlicerProfile.id == SlicerProfileActivationEvent.profile_id)
-                    .where(SlicerProfile.account_id == account.id)
-                    .order_by(SlicerProfileActivationEvent.id)
+                    select(SlicerProfileActivationEvent.profile_id, SlicerProfileActivationEvent.action).where(
+                        SlicerProfileActivationEvent.id.in_(latest_events)
+                    )
                 )
             ).all()
         )
-        newly_approved = {revision.id for revision in waiting}
+        # Only content this sync saw for the first time overrides a rollback. A revision left
+        # pending from before the rollback does not.
+        created = set(result.revision_ids)
         for revision_id in result.current_revision_ids:
             revision = await session.get(SlicerProfileRevision, revision_id)
             if revision.review_state != "approved" or active.get(revision.profile_id) == revision.id:
                 continue
-            if last_action.get(revision.profile_id) == "rollback" and revision.id not in newly_approved:
+            if last_action.get(revision.profile_id) == "rollback" and revision.id not in created:
                 continue
             await activate_revision(session, revision.id, user_id)
 

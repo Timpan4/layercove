@@ -20,10 +20,11 @@ A session keeps its original filament revision, test ranges, setting limits, res
 
 - Changing a result clears later results and retires their generated tests.
 - Changing a test range or generating a step again retires that step's previous test.
-- A retired test is forgotten together with its print, and its library file moves to the library trash unless a pending or printing queue item still uses it. Photos of a retired test stay in the session but no longer show on the step.
+- A retired test is forgotten together with its print, and its library file moves to the library trash unless a pending or printing queue item still uses it. Photos of a retired test stay in the session but no longer show on the step. Photos taken before any test was generated stay on the step.
 - Results and ranges cannot change while one of the affected tests is still generating.
 - Concurrent edits return 409.
 - If the filament profile gets a newer active revision, the session stops generating and saving until you choose **Use current filament version**. That keeps your results and ranges that fit the new limits, recomputes the limits, and retires all generated tests.
+- If the filament profile is removed or deactivated, the session can still record results but cannot generate tests or save a calibrated copy.
 - Saving creates an active calibrated copy of the filament through the existing catalog copy transaction. The original and its revision provenance are preserved. Calibrated copies are local presets that everyone on this installation can use, so saving requires confirming that.
 - Deleting a session removes its photos and retires its generated tests. Deleting a printer does the same for each of its sessions, and is refused while one of their tests is still generating. Saved profile copies stay.
 - Photos are removed before the deletion is saved. If they cannot be removed, the request fails and the session stays, so the deletion can be retried.

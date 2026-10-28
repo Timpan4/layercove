@@ -109,6 +109,8 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const sessionFilament = filaments.find(profile => profile.profile_id === session?.filament_profile_id);
   // An edit or sync activates a new revision; the session stays pinned to the one it started with.
   const filamentOutdated = !!session && !session.saved_profile_id && !!sessionFilament && sessionFilament.revision_id !== session.filament_revision_id;
+  // The profile was removed or deactivated after the session started.
+  const filamentUnavailable = !!session && !session.saved_profile_id && catalog.isSuccess && !sessionFilament;
   const runId = session?.runs[id];
   const job = useQuery({ queryKey: ['calibrationJob', runId], queryFn: () => api.getSliceJob(runId!), enabled: !!runId,
     refetchInterval: query => query.state.data && ['completed', 'failed', 'cancelled'].includes(query.state.data.status) ? false : 1000 });
@@ -120,7 +122,9 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const currentPrint = prints.data?.find(print => print.id === session?.prints[id]);
   const evidence = useQuery({ queryKey: ['calibrationEvidence', sessionId], queryFn: () => api.listCalibrationEvidence(sessionId!), enabled: !!sessionId });
   // Photos of a retired test stay in the session's history but no longer describe this step.
-  const photos = evidence.data?.filter(photo => photo.step === id && photo.run_id === (runId ?? null)) ?? [];
+  // Photos taken before any test was generated have no run and stay with the step.
+  const photos = evidence.data?.filter(photo => photo.step === id && (photo.run_id === null || photo.run_id === runId))
+    .sort((a, b) => Number(b.run_id !== null) - Number(a.run_id !== null)) ?? [];
   const photo = useQuery({ queryKey: ['calibrationPhoto', sessionId, photos[0]?.id],
     queryFn: () => api.getCalibrationPhoto(sessionId!, photos[0].id), enabled: !!photos[0] });
   const upload = useMutation({ mutationFn: async ({ file, source }: { file?: Blob; source: 'camera' | 'upload' }) => {
@@ -171,12 +175,14 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     : session.saved_profile_id ? 'This session is saved. Start a new calibration to generate tests.'
     : activePrint ? 'Wait for the test print to finish.'
     : filamentOutdated ? 'Switch to the current filament version first.'
+    : filamentUnavailable ? 'The filament profile was removed from the catalog.'
     : earlierMissing ? 'Record the results of the earlier steps first.'
     : bindings.isLoading ? 'Loading printer profiles…'
     : !printerBindings.length ? 'Set up a slicer printer profile for this printer first.'
     : !availableBindings.length ? 'No printer profile matches this session’s nozzle.'
     : !selectedBinding ? 'Choose a printer profile.'
-    : !processId ? 'Choose a process.'
+    // A binding's default process may have been removed from the catalog since.
+    : !processes.some(profile => profile.profile_id === Number(processId)) ? 'Choose a process.'
     : valuesChanged ? 'Save the test values first.'
     : !classification.data ? 'Checking profile compatibility…'
     : compatibilityBlocked ? 'The selected profiles are not compatible with this printer.'
@@ -262,6 +268,9 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
       <p>{sessionFilament.display_name} changed after this session started. Switch to the current version to continue. Your results stay, and tests generated for the old version are removed.</p>
       <button className="cal-button cal-secondary" disabled={mutate.isPending || !!activePrint}
         onClick={() => mutate.mutate(() => api.switchCalibrationFilamentRevision(session.id, { version: session.version }))}>Use current filament version</button>
+    </div>}
+    {filamentUnavailable && <div className="cal-notice" role="status">
+      <p>This session&apos;s filament profile is no longer available, so it cannot generate tests or save a calibrated copy. You can still record results.</p>
     </div>}
     <div className="cal-companion"><div className="cal-companion-main">
       <nav className="cal-steps" aria-label="Calibration steps">{calibrationTests.map((item, position) => <button key={item.field}
@@ -360,7 +369,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
           <label className="cal-profile-name">Profile name<input type="text" value={name} disabled={locked} onChange={event => setName(event.target.value)} /></label>
           <label className="cal-check"><input type="checkbox" checked={shareCopy} disabled={locked} onChange={event => setShareCopy(event.target.checked)} /><span>Share this copy on this installation</span></label>
           {!session?.saved_profile_id && <p className="cal-caption">Calibrated copies are saved as local presets that everyone on this installation can use, so saving requires this confirmation.</p>}
-          <button className="cal-button cal-secondary" disabled={locked || completed !== ids.length || !name.trim() || !shareCopy || filamentOutdated} onClick={() => {
+          <button className="cal-button cal-secondary" disabled={locked || completed !== ids.length || !name.trim() || !shareCopy || filamentOutdated || filamentUnavailable} onClick={() => {
             if (session) mutate.mutate(() => api.saveCalibrationProfile(session.id, { version: session.version, name, share_local_copy: shareCopy }), { onSuccess: () => { void client.invalidateQueries({ queryKey: ['slicerCatalogProfiles'] }); } });
           }}><Save size={15} />{session?.saved_profile_id ? 'Profile saved' : 'Save profile copy'}</button>
           <p className="cal-caption">{session?.saved_profile_id ? 'Saved profile #' + session.saved_profile_id + '. Your original remains intact.' : 'A calibrated copy keeps your original preset intact.'}</p>

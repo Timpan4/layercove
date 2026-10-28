@@ -7,8 +7,11 @@ export function spoolProfileMatches(spool: Pick<InventorySpool, 'slicer_filament
   profiles: SlicerCatalogProfile[], compatibleIds: Set<number>) {
   const code = spool.slicer_filament?.trim();
   const name = spool.slicer_filament_name?.trim();
+  const isCompatible = (profile: SlicerCatalogProfile) => compatibleIds.has(profile.profile_id);
   const exact = profiles.filter(profile => (!!code && profile.remote_profile_id === code) || (!!name && profile.display_name === name));
-  const candidates = exact.length ? exact : name ? profiles.filter(profile => profile.display_name.startsWith(`${name} @`)) : [];
-  const compatible = candidates.filter(profile => compatibleIds.has(profile.profile_id));
-  return compatible.length ? compatible : candidates;
+  const variants = name ? profiles.filter(profile => profile.display_name.startsWith(`${name} @`)) : [];
+  // Exact matches win, but printer variants still count when no exact match fits the printer profile.
+  const candidates = exact.length && (compatibleIds.size === 0 || exact.some(isCompatible)) ? exact : [...exact, ...variants];
+  const compatible = candidates.filter(isCompatible);
+  return compatible.length ? compatible : exact.length ? exact : candidates;
 }

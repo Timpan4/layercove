@@ -464,6 +464,44 @@ async def test_local_sync_keeps_a_rollback_until_the_preset_changes(db):
     assert await active_content(db, profile_id) == {"value": 3}
 
 
+async def orca_pull(db, pull):
+    return await sync_orca_account(
+        db, service_with(pull), remote_account_id="orca-history", display_name="Owner", user_id=None
+    )
+
+
+# Failure mode: after Orca reverts a profile, an incremental pull rebuilds unchanged profiles
+# from their newest revision and activates content Orca no longer serves.
+async def test_incremental_orca_pull_keeps_a_reverted_profile(db):
+    first = await orca_pull(db, OrcaProfilePull("1", [orca_entry(value=1)], [], True))
+    profile_id = (await db.get(SlicerProfileRevision, first.revision_ids[0])).profile_id
+    await orca_pull(db, OrcaProfilePull("2", [orca_entry(value=2)], [], True))
+    await orca_pull(db, OrcaProfilePull("3", [orca_entry(value=1)], [], True))
+    assert (await active_content(db, profile_id))["value"] == 1
+
+    await orca_pull(db, OrcaProfilePull("4", [], [], False))
+
+    assert (await active_content(db, profile_id))["value"] == 1
+
+
+# Failure mode: a revision left pending while the account was shared bypasses an
+# administrator's later rollback once the account is private again.
+async def test_rollback_holds_against_a_revision_pending_from_before(db):
+    first = await orca_pull(db, OrcaProfilePull("1", [orca_entry(value=1)], [], True))
+    profile_id = (await db.get(SlicerProfileRevision, first.revision_ids[0])).profile_id
+    account = await db.get(SlicerProfileAccount, first.account_id)
+    account.sharing_state, account.consent_at = "shared", datetime(2026, 1, 1)
+    await db.commit()
+    await orca_pull(db, OrcaProfilePull("2", [orca_entry(value=2)], [], True))
+    await rollback_revision(db, profile_id, first.revision_ids[0])
+    account.sharing_state, account.consent_at = "private", None
+    await db.commit()
+
+    await orca_pull(db, OrcaProfilePull("3", [orca_entry(value=2)], [], True))
+
+    assert (await active_content(db, profile_id))["value"] == 1
+
+
 # Failure mode: an owner shares the account while a sync runs, and the sync, still holding
 # the private copy it loaded, activates unreviewed revisions for every user.
 async def test_sync_rereads_sharing_before_activating_without_review(db):

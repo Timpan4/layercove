@@ -168,6 +168,54 @@ it('explains why a test cannot be generated or printed yet', async () => {
   expect(screen.getByText('Save the test values and generate the test.')).toBeInTheDocument();
 });
 
+// Failure modes: a deleted default process still enables Generate, and a session whose
+// filament profile was removed offers Generate and Save that the server rejects.
+it('blocks generating with a removed process or filament profile', async () => {
+  const withProcess = (deletedFilament: boolean) => {
+    server.use(
+      http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([baseSession])),
+      http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json({ ...baseSession, parameters: { temperature: { lowest: 200, highest: 220, increment: 5, baseline: 210 } } })),
+      http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+      http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json(deletedFilament ? [] : [profile(1, 'filament', 'Generic ASA')])),
+      http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([{ ...binding(5, 'Bambu Lab P1S 0.4 nozzle'), default_process_profile_id: 44 }])),
+      http.get('*/api/v1/slicer/catalog/printers/1/classification', () => HttpResponse.json(groups([1]))),
+      http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: { nozzle_temperature: ['210'] } })),
+      http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+    );
+  };
+  withProcess(false);
+  const first = renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  await waitFor(() => expect(screen.getByLabelText('Printer profile')).toHaveValue('5'));
+  expect(await screen.findByText('Choose a process.')).toBeInTheDocument();
+  first.unmount();
+
+  withProcess(true);
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  expect(await screen.findByText(/filament profile is no longer available/)).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Generate test' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save profile copy' })).toBeDisabled();
+});
+
+// Failure mode: a photo taken before the first test is generated vanishes from the step.
+it('keeps photos taken before generation visible on the step', async () => {
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([baseSession])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json({ ...baseSession, runs: { temperature: 70 } })),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([
+      { id: 3, session_id: 1, step: 'temperature', source: 'upload', run_id: null, print_id: null, created_at: '' },
+      { id: 4, session_id: 1, step: 'temperature', source: 'upload', run_id: 69, print_id: null, created_at: '' },
+    ])),
+    http.get('*/api/v1/calibration/sessions/1/evidence/:photo/image', () => new HttpResponse(new Blob(['x'], { type: 'image/png' }))),
+    http.get('*/api/v1/slice-jobs/70', () => HttpResponse.json({ id: 70, status: 'completed' })),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'Generic ASA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: {} })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  expect(await screen.findByText('Photo saved with this step. Choose the result yourself.')).toBeInTheDocument();
+});
+
 it('lets a session move to the filament profile version that replaced it', async () => {
   let switched = false;
   server.use(

@@ -15,6 +15,7 @@ from backend.app.models.local_preset import LocalPreset
 from backend.app.models.slicer_profile_catalog import (
     SlicerProfile,
     SlicerProfileAccount,
+    SlicerProfileActivation,
     SlicerProfileRevision,
 )
 from backend.app.services.orca_cloud import OrcaCloudService, OrcaProfilePull
@@ -477,13 +478,25 @@ async def _existing_orca_profiles(
             .order_by(SlicerProfile.id)
         )
     ).all()
+    # Without review a sync activates what Orca serves, so the active revision is the source copy,
+    # even after Orca reverts to content with an older revision. Reviewed accounts may hold
+    # newer pending revisions, so they rebuild from the newest one.
+    follows_source = account.sharing_state != "shared"
     result: list[CatalogProfile] = []
     for profile in profiles:
-        revision = await session.scalar(
-            select(SlicerProfileRevision)
-            .where(SlicerProfileRevision.profile_id == profile.id)
-            .order_by(SlicerProfileRevision.id.desc())
-        )
+        revision = None
+        if follows_source:
+            revision = await session.scalar(
+                select(SlicerProfileRevision)
+                .join(SlicerProfileActivation, SlicerProfileActivation.revision_id == SlicerProfileRevision.id)
+                .where(SlicerProfileActivation.profile_id == profile.id)
+            )
+        if revision is None:
+            revision = await session.scalar(
+                select(SlicerProfileRevision)
+                .where(SlicerProfileRevision.profile_id == profile.id)
+                .order_by(SlicerProfileRevision.id.desc())
+            )
         if revision is None:
             continue
         metadata = dict((revision.resolved_metadata or {}).get("metadata") or {})

@@ -27,6 +27,15 @@ describe('spoolProfileMatches', () => {
       .toEqual([profiles[1]]);
   });
 
+  // Failure mode: a generic profile named exactly like the spool hides the variant that fits the printer.
+  it('falls back to compatible variants when the exact name match does not fit the printer profile', () => {
+    const generic = profile(5, 'Bambu PLA Basic');
+    expect(spoolProfileMatches({ slicer_filament: 'GFSA00', slicer_filament_name: 'Bambu PLA Basic' }, [...profiles, generic], new Set([2])))
+      .toEqual([profiles[1]]);
+    expect(spoolProfileMatches({ slicer_filament: 'GFSA00', slicer_filament_name: 'Bambu PLA Basic' }, [...profiles, generic], new Set()))
+      .toEqual([generic]);
+  });
+
   it('finds nothing for a spool without a catalog preset', () => {
     expect(spoolProfileMatches({ slicer_filament: null, slicer_filament_name: null }, profiles, new Set())).toEqual([]);
   });
