@@ -16,6 +16,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfile,
     SlicerProfileAccount,
     SlicerProfileRevision,
+    SlicerProfileSourceRevision,
 )
 from backend.app.services.orca_cloud import OrcaCloudService, OrcaProfilePull
 from backend.app.services.slicer_catalog import (
@@ -481,9 +482,16 @@ async def _existing_orca_profiles(
     for profile in profiles:
         revision = await session.scalar(
             select(SlicerProfileRevision)
-            .where(SlicerProfileRevision.profile_id == profile.id)
-            .order_by(SlicerProfileRevision.id.desc())
+            .join(SlicerProfileSourceRevision, SlicerProfileSourceRevision.revision_id == SlicerProfileRevision.id)
+            .where(SlicerProfileSourceRevision.profile_id == profile.id)
         )
+        if revision is None:
+            # Profiles synced before source revisions were recorded.
+            revision = await session.scalar(
+                select(SlicerProfileRevision)
+                .where(SlicerProfileRevision.profile_id == profile.id)
+                .order_by(SlicerProfileRevision.id.desc())
+            )
         if revision is None:
             continue
         metadata = dict((revision.resolved_metadata or {}).get("metadata") or {})
@@ -500,25 +508,6 @@ async def _existing_orca_profiles(
             )
         )
     return result
-
-
-def _reported_by_pull(upserts: list[CatalogProfile], profiles: list[CatalogProfile]) -> set[tuple[str, str]]:
-    """Profiles whose content an incremental pull sent, directly or through an inherited parent.
-
-    The rest of an incremental snapshot is rebuilt from stored revisions, which are not
-    necessarily what Orca serves now.
-    """
-    reported = {(profile.profile_type, profile.remote_profile_id) for profile in upserts}
-    grew = True
-    while grew:
-        grew = False
-        for profile in profiles:
-            key = (profile.profile_type, profile.remote_profile_id)
-            parent = (profile.profile_type, (profile.metadata or {}).get("source_inherits"))
-            if key not in reported and parent in reported:
-                reported.add(key)
-                grew = True
-    return reported
 
 
 async def sync_orca_account(
@@ -581,9 +570,7 @@ async def sync_orca_account(
                 profiles=profiles,
             ),
         )
-        await activate_without_review(
-            session, result, user_id, reported=None if pull.full_snapshot else _reported_by_pull(upserts, profiles)
-        )
+        await activate_without_review(session, result, user_id)
         await session.commit()
         return result
     except Exception:

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Collection, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
@@ -22,6 +22,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileActivationEvent,
     SlicerProfileReviewBatch,
     SlicerProfileRevision,
+    SlicerProfileSourceRevision,
     UserSlicerPreference,
 )
 
@@ -283,6 +284,8 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
 
         if pending:
             await session.flush()
+        for revision in current:
+            await session.merge(SlicerProfileSourceRevision(profile_id=revision.profile_id, revision_id=revision.id))
 
         account_profiles = (
             await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))
@@ -399,23 +402,13 @@ async def activate_revision(
     return await _in_transaction(session, operation)
 
 
-async def activate_without_review(
-    session: AsyncSession,
-    result: IngestResult,
-    user_id: int | None = None,
-    *,
-    reported: Collection[tuple[str, str]] | None = None,
-) -> None:
+async def activate_without_review(session: AsyncSession, result: IngestResult, user_id: int | None = None) -> None:
     """Approve and activate a sync's current revisions when review protects no other user.
 
     Changing local presets already needs settings:update, the permission review needs, and an
     unshared account's profiles reach only its owner. Shared accounts, including the bundled
     standard catalog, keep the review step. Rejected revisions stay inactive, and a rollback
     holds until the source sends content that has no revision yet.
-
-    ``reported`` lists the (profile_type, remote_profile_id) pairs whose content the source sent
-    in this sync, or None when it sent all of them. Other current revisions came from stored
-    copies, so they activate only when new or waiting for review.
     """
 
     async def operation() -> None:
@@ -491,17 +484,12 @@ async def activate_without_review(
         # Only content this sync saw for the first time overrides a rollback. A revision left
         # pending from before the rollback does not.
         created = set(result.revision_ids)
-        approved_now = {revision.id for revision in waiting}
         for revision_id in result.current_revision_ids:
             revision = await session.get(SlicerProfileRevision, revision_id)
             if revision.review_state != "approved" or active.get(revision.profile_id) == revision.id:
                 continue
             if last_action.get(revision.profile_id) == "rollback" and revision.id not in created:
                 continue
-            if reported is not None and revision.id not in created | approved_now:
-                profile = await session.get(SlicerProfile, revision.profile_id)
-                if (profile.profile_type, profile.remote_profile_id) not in reported:
-                    continue
             await activate_revision(session, revision.id, user_id)
 
     await _in_transaction(session, operation)

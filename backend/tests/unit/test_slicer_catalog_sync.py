@@ -542,6 +542,28 @@ async def test_incremental_parent_revert_also_reverts_children(db):
     assert (await active_content(db, child.id))["parent_value"] == "P1S"
 
 
+# Failure mode: after Orca reverts a parent, a later child update inherits from the parent's
+# newest revision, which Orca no longer serves.
+async def test_child_update_after_parent_revert_inherits_what_orca_serves(db):
+    first = await orca_pull(db, OrcaProfilePull("1", orca_inherited_entries("P1S"), [], True))
+    await orca_pull(db, OrcaProfilePull("2", orca_inherited_entries("X1C"), [], True))
+    await orca_pull(db, OrcaProfilePull("3", orca_inherited_entries("P1S"), [], True))
+    child = await db.scalar(
+        select(SlicerProfile).where(
+            SlicerProfile.account_id == first.account_id, SlicerProfile.remote_profile_id == "child"
+        )
+    )
+
+    await orca_pull(db, OrcaProfilePull("4", [orca_inherited_entries("P1S", child_value=2)[1]], [], False))
+
+    assert await active_content(db, child.id) == {
+        "type": "print",
+        "parent_value": "P1S",
+        "compatible_printers": ["P1S"],
+        "child_value": 2,
+    }
+
+
 # Failure mode: a revision left pending while the account was shared bypasses an
 # administrator's later rollback once the account is private again.
 async def test_rollback_holds_against_a_revision_pending_from_before(db):

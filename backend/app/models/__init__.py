@@ -40,6 +40,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileActivationEvent,
     SlicerProfileReviewBatch,
     SlicerProfileRevision,
+    SlicerProfileSourceRevision,
     SlicerSelectionEvaluation,
     UserSlicerPreference,
 )
@@ -99,6 +100,7 @@ __all__ = [
     "SlicerProfileReviewBatch",
     "SlicerProfile",
     "SlicerProfileRevision",
+    "SlicerProfileSourceRevision",
     "SlicerProfileActivation",
     "SlicerProfileActivationEvent",
     "PrinterSlicerBinding",
