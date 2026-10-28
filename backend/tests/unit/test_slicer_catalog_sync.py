@@ -484,6 +484,64 @@ async def test_incremental_orca_pull_keeps_a_reverted_profile(db):
     assert (await active_content(db, profile_id))["value"] == 1
 
 
+# Failure mode: content Orca sent while the account was shared stays inactive after the
+# account becomes private again, because an unrelated pull rebuilds it from the old revision.
+async def test_content_pending_from_a_shared_period_activates_after_unsharing(db):
+    first = await orca_pull(db, OrcaProfilePull("1", [orca_entry(value=1)], [], True))
+    profile_id = (await db.get(SlicerProfileRevision, first.revision_ids[0])).profile_id
+    account = await db.get(SlicerProfileAccount, first.account_id)
+    account.sharing_state, account.consent_at = "shared", datetime(2026, 1, 1)
+    await db.commit()
+    await orca_pull(db, OrcaProfilePull("2", [orca_entry(value=2)], [], True))
+    account.sharing_state, account.consent_at = "private", None
+    await db.commit()
+
+    await orca_pull(db, OrcaProfilePull("3", [], [], False))
+
+    assert (await active_content(db, profile_id))["value"] == 2
+
+
+# Failure mode: an administrator's rollback of a parent leaks into its children, which an
+# unrelated pull re-resolves against the rolled-back parent.
+async def test_parent_rollback_does_not_change_children_on_an_unrelated_pull(db):
+    first = await orca_pull(db, OrcaProfilePull("1", orca_inherited_entries("P1S"), [], True))
+    await orca_pull(db, OrcaProfilePull("2", orca_inherited_entries("X1C"), [], True))
+    profiles = {
+        profile.remote_profile_id: profile.id
+        for profile in (
+            await db.scalars(select(SlicerProfile).where(SlicerProfile.account_id == first.account_id))
+        ).all()
+    }
+    parent_v1 = await db.scalar(
+        select(SlicerProfileRevision.id)
+        .where(SlicerProfileRevision.profile_id == profiles["parent"])
+        .order_by(SlicerProfileRevision.id)
+    )
+    await rollback_revision(db, profiles["parent"], parent_v1)
+    await db.commit()
+
+    await orca_pull(db, OrcaProfilePull("3", [], [], False))
+
+    assert (await active_content(db, profiles["parent"]))["parent_value"] == "P1S"
+    assert (await active_content(db, profiles["child"]))["parent_value"] == "X1C"
+
+
+# Failure mode: Orca reverts a parent in an incremental pull, and its child keeps the newer
+# inherited content because the reverted child content already has a revision.
+async def test_incremental_parent_revert_also_reverts_children(db):
+    first = await orca_pull(db, OrcaProfilePull("1", orca_inherited_entries("P1S"), [], True))
+    await orca_pull(db, OrcaProfilePull("2", orca_inherited_entries("X1C"), [], True))
+    child = await db.scalar(
+        select(SlicerProfile).where(
+            SlicerProfile.account_id == first.account_id, SlicerProfile.remote_profile_id == "child"
+        )
+    )
+
+    await orca_pull(db, OrcaProfilePull("3", [orca_inherited_entries("P1S")[0]], [], False))
+
+    assert (await active_content(db, child.id))["parent_value"] == "P1S"
+
+
 # Failure mode: a revision left pending while the account was shared bypasses an
 # administrator's later rollback once the account is private again.
 async def test_rollback_holds_against_a_revision_pending_from_before(db):
