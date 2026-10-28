@@ -777,6 +777,22 @@ async def delete_printer(
     if not printer:
         raise HTTPException(404, "Printer not found")
 
+    # Calibration sessions go first: a test still generating stops the deletion before the printer
+    # disconnects. Photos live on disk, outside the cascading rows.
+    from backend.app.api.routes.calibration import STEPS, remove_session_photos, retire_runs
+    from backend.app.models.calibration import CalibrationEvidence, CalibrationSession
+
+    calibrations = (
+        (await db.execute(select(CalibrationSession).where(CalibrationSession.printer_id == printer_id)))
+        .scalars()
+        .all()
+    )
+    for calibration in calibrations:
+        await retire_runs(db, calibration, STEPS, deleted_printer=printer_id)
+        await db.execute(sql_delete(CalibrationEvidence).where(CalibrationEvidence.session_id == calibration.id))
+        await db.delete(calibration)
+    remove_session_photos(calibration.id for calibration in calibrations)
+
     await printer_manager.disconnect_printer_async(printer_id)
 
     if delete_archives:

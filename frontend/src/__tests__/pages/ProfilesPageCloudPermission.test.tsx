@@ -69,4 +69,16 @@ describe('ProfilesPage Bambu Cloud permission gate', () => {
     expect(await screen.findByText('Connect to Bambu Cloud')).toBeInTheDocument();
     await waitFor(() => expect(cloudStatusRequests).toBe(1));
   });
+
+  // Calibration links here when a filament profile waits for review.
+  it('opens the shared catalog from the tab query parameter', async () => {
+    server.use(authStatusHandler, userHandler(true, []));
+    window.history.pushState({}, '', '/profiles?tab=catalog');
+    try {
+      render(<ProfilesPage />);
+      expect(await screen.findByText('Shared Profiles catalog')).toBeInTheDocument();
+    } finally {
+      window.history.pushState({}, '', '/');
+    }
+  });
 });

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from typing import Any
 
-from sqlalchemy import or_, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.slicer_profile_catalog import (
@@ -22,6 +22,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileActivationEvent,
     SlicerProfileReviewBatch,
     SlicerProfileRevision,
+    SlicerProfileSourceRevision,
     UserSlicerPreference,
 )
 
@@ -58,6 +59,8 @@ class IngestResult:
     review_batch_id: int | None
     revision_ids: tuple[int, ...]
     cursor: str | None
+    # The revision matching each live profile's content, whether new or reused.
+    current_revision_ids: tuple[int, ...] = ()
 
 
 @dataclass(frozen=True)
@@ -187,6 +190,7 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
         before_cursor = account.sync_cursor
         changed = False
         revision_ids: list[int] = []
+        current: list[SlicerProfileRevision] = []
         pending: list[tuple[SlicerProfileRevision, set[str]]] = []
         for item in catalog.profiles:
             profile = await session.scalar(
@@ -276,9 +280,28 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                 session.add(revision)
                 pending.append((revision, refs))
                 changed = True
+            current.append(revision)
 
         if pending:
             await session.flush()
+        source_revision_ids = {revision.profile_id: revision.id for revision in current}
+        sources = (
+            (
+                await session.scalars(
+                    select(SlicerProfileSourceRevision).where(
+                        SlicerProfileSourceRevision.profile_id.in_(source_revision_ids)
+                    )
+                )
+            ).all()
+            if source_revision_ids
+            else []
+        )
+        for source in sources:
+            source.revision_id = source_revision_ids.pop(source.profile_id)
+        session.add_all(
+            SlicerProfileSourceRevision(profile_id=profile_id, revision_id=revision_id)
+            for profile_id, revision_id in source_revision_ids.items()
+        )
 
         account_profiles = (
             await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))
@@ -313,7 +336,9 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
             batch_id = batch.id
         else:
             batch_id = None
-        return IngestResult(account.id, batch_id, tuple(revision_ids), catalog.cursor)
+        return IngestResult(
+            account.id, batch_id, tuple(revision_ids), catalog.cursor, tuple(revision.id for revision in current)
+        )
 
     return await _in_transaction(session, operation)
 
@@ -391,6 +416,145 @@ async def activate_revision(
         return activation
 
     return await _in_transaction(session, operation)
+
+
+async def activate_without_review(session: AsyncSession, result: IngestResult, user_id: int | None = None) -> None:
+    """Approve and activate a sync's current revisions when review protects no other user.
+
+    Changing local presets already needs settings:update, the permission review needs, and an
+    unshared account's profiles reach only its owner. Shared accounts, including the bundled
+    standard catalog, keep the review step. Rejected revisions stay inactive, and a rollback
+    holds until the source sends content that has no revision yet.
+    """
+
+    async def operation() -> None:
+        # Lock and re-read: the owner may have shared the account since ingest loaded it.
+        # set_account_sharing takes the same lock.
+        account = await session.scalar(
+            select(SlicerProfileAccount)
+            .where(SlicerProfileAccount.id == result.account_id)
+            .with_for_update()
+            .execution_options(populate_existing=True)
+        )
+        if account is None or (account.source != "local" and account.sharing_state == "shared"):
+            return
+        batches = (
+            await session.scalars(
+                select(SlicerProfileReviewBatch).where(
+                    SlicerProfileReviewBatch.account_id == account.id,
+                    SlicerProfileReviewBatch.status == "pending",
+                )
+            )
+        ).all()
+        waiting = (
+            (
+                await session.scalars(
+                    select(SlicerProfileRevision).where(
+                        SlicerProfileRevision.review_batch_id.in_([batch.id for batch in batches]),
+                        SlicerProfileRevision.review_state == "pending",
+                    )
+                )
+            ).all()
+            if batches
+            else []
+        )
+        for revision in waiting:
+            revision.review_state = "approved"
+        for batch in batches:
+            batch.status = "approved"
+            batch.reviewed_by_user_id = user_id
+            batch.reviewed_at = _now()
+            batch.summary = {
+                **(batch.summary or {}),
+                "approved_revision_ids": sorted(
+                    revision.id for revision in waiting if revision.review_batch_id == batch.id
+                ),
+                "rejected_revision_ids": [],
+                # Sharing the account sends these back to review; see return_unreviewed_to_review.
+                "approved_without_review": True,
+            }
+        active = dict(
+            (
+                await session.execute(
+                    select(SlicerProfileActivation.profile_id, SlicerProfileActivation.revision_id)
+                    .join(SlicerProfile, SlicerProfile.id == SlicerProfileActivation.profile_id)
+                    .where(SlicerProfile.account_id == account.id)
+                )
+            ).all()
+        )
+        latest_events = (
+            select(func.max(SlicerProfileActivationEvent.id))
+            .join(SlicerProfile, SlicerProfile.id == SlicerProfileActivationEvent.profile_id)
+            .where(SlicerProfile.account_id == account.id)
+            .group_by(SlicerProfileActivationEvent.profile_id)
+        )
+        last_action = dict(
+            (
+                await session.execute(
+                    select(SlicerProfileActivationEvent.profile_id, SlicerProfileActivationEvent.action).where(
+                        SlicerProfileActivationEvent.id.in_(latest_events)
+                    )
+                )
+            ).all()
+        )
+        # Only content this sync saw for the first time overrides a rollback. A revision left
+        # pending from before the rollback does not.
+        created = set(result.revision_ids)
+        for revision_id in result.current_revision_ids:
+            revision = await session.get(SlicerProfileRevision, revision_id)
+            if revision.review_state != "approved" or active.get(revision.profile_id) == revision.id:
+                continue
+            if last_action.get(revision.profile_id) == "rollback" and revision.id not in created:
+                continue
+            await activate_revision(session, revision.id, user_id)
+
+    await _in_transaction(session, operation)
+
+
+async def return_unreviewed_to_review(session: AsyncSession, account_id: int) -> None:
+    """Deactivate an account's revisions that a sync approved without review, and queue them for review.
+
+    Sharing an account would otherwise hand profiles nobody reviewed to every user.
+    """
+
+    async def operation() -> None:
+        batches = (
+            await session.scalars(
+                select(SlicerProfileReviewBatch).where(
+                    SlicerProfileReviewBatch.account_id == account_id,
+                    SlicerProfileReviewBatch.status == "approved",
+                )
+            )
+        ).all()
+        skipped = [batch.id for batch in batches if (batch.summary or {}).get("approved_without_review")]
+        if not skipped:
+            return
+        revisions = (
+            await session.scalars(
+                select(SlicerProfileRevision).where(
+                    SlicerProfileRevision.review_batch_id.in_(skipped),
+                    SlicerProfileRevision.review_state == "approved",
+                )
+            )
+        ).all()
+        if not revisions:
+            return
+        batch = SlicerProfileReviewBatch(
+            account_id=account_id,
+            summary={"profiles": len({revision.profile_id for revision in revisions}), "revisions": len(revisions)},
+        )
+        session.add(batch)
+        await session.flush()
+        for revision in revisions:
+            revision.review_state = "pending"
+            revision.review_batch_id = batch.id
+        await session.execute(
+            delete(SlicerProfileActivation).where(
+                SlicerProfileActivation.revision_id.in_([revision.id for revision in revisions])
+            )
+        )
+
+    await _in_transaction(session, operation)
 
 
 async def rollback_revision(session: AsyncSession, profile_id: int, revision_id: int, user_id: int | None = None):

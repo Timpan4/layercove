@@ -129,6 +129,19 @@ class SlicerProfileRevision(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
 
 
+class SlicerProfileSourceRevision(Base):
+    """The revision with the content the source sent most recently for a profile.
+
+    Revisions are deduplicated by content, so after a source reverts a profile, its newest
+    revision is no longer what the source serves.
+    """
+
+    __tablename__ = "slicer_profile_source_revisions"
+
+    profile_id: Mapped[int] = mapped_column(ForeignKey("slicer_profiles.id", ondelete="CASCADE"), primary_key=True)
+    revision_id: Mapped[int] = mapped_column(ForeignKey("slicer_profile_revisions.id", ondelete="CASCADE"), index=True)
+
+
 class SlicerProfileActivation(Base):
     __tablename__ = "slicer_profile_activations"
     __table_args__ = (UniqueConstraint("profile_id", name="uq_slicer_profile_activations_profile"),)

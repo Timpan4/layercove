@@ -1,21 +1,26 @@
 """Guided calibration sessions. Manual results never trigger a printer command."""
 
 import math
+import shutil
+from collections.abc import Iterable
+from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
 from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from sqlalchemy import or_, select
+from sqlalchemy import delete, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
 from backend.app.core.auth import require_caller_identity_if_auth_enabled
+from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.identity import CallerIdentity, CallerKind
 from backend.app.core.permissions import Permission
 from backend.app.models.calibration import CalibrationEvidence, CalibrationSession
+from backend.app.models.library import LibraryFile
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.slice_job import SliceJobRecord
@@ -61,7 +66,8 @@ class SessionCreate(BaseModel):
     filament_profile_id: int = Field(gt=0)
     filament_revision_id: int = Field(gt=0)
     nozzle_diameter: Decimal = Field(gt=0, max_digits=4, decimal_places=2)
-    tool_index: int = Field(default=0, ge=0)
+    # Test generation supports single-extruder bindings only.
+    tool_index: Literal[0] = 0
 
 
 class VersionedEdit(BaseModel):
@@ -186,30 +192,30 @@ async def commit(db: AsyncSession) -> None:
         raise HTTPException(409, "Session changed in another tab; reload before editing") from exc
 
 
-@router.post("/sessions", status_code=201)
-async def create_session(body: SessionCreate, caller: WriteCaller, db: AsyncSession = Depends(get_db)):
-    personal_caller(caller)
-    caller.require_printer_access(body.printer_id)
-    if await db.get(Printer, body.printer_id) is None:
-        raise HTTPException(404, "Printer not found")
-    profile = await db.scalar(
-        select(SlicerProfile)
-        .join(SlicerProfileAccount)
-        .join(SlicerProfileActivation)
-        .join(SlicerProfileRevision, SlicerProfileRevision.id == SlicerProfileActivation.revision_id)
+async def active_filament_revision(
+    db: AsyncSession, profile_id: int, owner_id: int | None
+) -> SlicerProfileRevision | None:
+    return await db.scalar(
+        select(SlicerProfileRevision)
+        .join(SlicerProfileActivation, SlicerProfileActivation.revision_id == SlicerProfileRevision.id)
+        .join(SlicerProfile, SlicerProfile.id == SlicerProfileActivation.profile_id)
+        .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
         .where(
-            SlicerProfile.id == body.filament_profile_id,
+            SlicerProfile.id == profile_id,
             SlicerProfile.profile_type == "filament",
             SlicerProfile.tombstoned_at.is_(None),
             SlicerProfileAccount.sync_frozen.is_(False),
-            SlicerProfileRevision.id == body.filament_revision_id,
             SlicerProfileRevision.review_state == "approved",
-            or_(SlicerProfileAccount.sharing_state == "shared", SlicerProfileAccount.user_id == caller.owner_id),
+            or_(SlicerProfileAccount.sharing_state == "shared", SlicerProfileAccount.user_id == owner_id),
         )
     )
-    if profile is None:
-        raise HTTPException(409, "Select an available active filament revision")
+
+
+async def load_setting_limits(
+    db: AsyncSession, revision: SlicerProfileRevision, printer_id: int, tool_index: int
+) -> dict:
     from backend.app.api.routes.slicer import resolve_orca_api_url
+    from backend.app.services.printer_manager import printer_manager
     from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
 
     try:
@@ -220,27 +226,94 @@ async def create_session(body: SessionCreate, caller: WriteCaller, db: AsyncSess
     options = {option["key"]: option for option in schema.options}
     if any(key not in options for key in SETTINGS.values()):
         raise HTTPException(503, "The filament schema is missing calibration settings")
-    revision = await db.get(SlicerProfileRevision, body.filament_revision_id)
     limits = {
         step.value: {key: options[field].get(key) for key in ("min", "max", "item_type", "units", "default")}
         for step, field in SETTINGS.items()
     }
-    material_max = revision.content.get(
-        "nozzle_temperature_range_high", options["nozzle_temperature_range_high"]["default"]
-    )
-    try:
-        material_max = float(material_max[0] if isinstance(material_max, list) else material_max)
-        if not 0 < material_max <= options["nozzle_temperature"]["max"]:
-            raise ValueError
-    except (TypeError, ValueError, IndexError) as exc:
-        raise HTTPException(409, "The filament profile needs a valid maximum nozzle temperature") from exc
-    limits[Step.TEMPERATURE.value]["max"] = material_max
-    from backend.app.services.printer_manager import printer_manager
-
-    snapshot = printer_manager.get_snapshot(body.printer_id)
-    nozzle = next((item for item in snapshot.nozzles if item.tool_index == body.tool_index), None) if snapshot else None
+    temperature = limits[Step.TEMPERATURE.value]
+    material_max = revision.content.get("nozzle_temperature_range_high")
+    # Orca applies the schema default only to a complete profile. When the profile
+    # inherits, the parent supplies the value, which this revision does not carry.
+    if material_max is None and not revision.content.get("inherits"):
+        material_max = options["nozzle_temperature_range_high"]["default"]
+    if material_max is not None:
+        try:
+            material_max = float(material_max[0] if isinstance(material_max, list) else material_max)
+            if not 0 < material_max <= options["nozzle_temperature"]["max"]:
+                raise ValueError
+        except (TypeError, ValueError, IndexError) as exc:
+            raise HTTPException(409, "The filament profile needs a valid maximum nozzle temperature") from exc
+        temperature["max"] = material_max
+    snapshot = printer_manager.get_snapshot(printer_id)
+    nozzle = next((item for item in snapshot.nozzles if item.tool_index == tool_index), None) if snapshot else None
     if nozzle and nozzle.max_temperature is not None:
-        limits[Step.TEMPERATURE.value]["max"] = min(material_max, nozzle.max_temperature)
+        temperature["max"] = (
+            nozzle.max_temperature if temperature["max"] is None else min(temperature["max"], nozzle.max_temperature)
+        )
+    return limits
+
+
+ACTIVE_JOB_STATES = ("pending", "running", "cancel-requested")
+FILAMENT_CHANGED = "The filament profile has a newer version. Switch this session to it before continuing."
+
+
+async def retire_runs(
+    db: AsyncSession, session: CalibrationSession, steps: Iterable[Step], deleted_printer: int | None = None
+) -> None:
+    """Forget the steps' generated tests and prints, and trash artifacts no queued print still needs.
+
+    Queue items of `deleted_printer` are about to be deleted with it, so they keep no artifact.
+    """
+    names = {step.value for step in steps}
+    job_ids = [job_id for key, job_id in session.runs.items() if key in names]
+    if job_ids:
+        jobs = (await db.scalars(select(SliceJobRecord).where(SliceJobRecord.id.in_(job_ids)))).all()
+        if any(job.status in ACTIVE_JOB_STATES for job in jobs):
+            raise HTTPException(409, "Wait for the test generation to finish")
+        file_ids = [
+            job.result_artifact_id
+            for job in jobs
+            if job.result_artifact_kind == "library_file" and job.result_artifact_id is not None
+        ]
+        if file_ids:
+            queued = set(
+                await db.scalars(
+                    select(PrintQueueItem.library_file_id).where(
+                        PrintQueueItem.library_file_id.in_(file_ids),
+                        PrintQueueItem.status.in_(("pending", "printing")),
+                        or_(PrintQueueItem.printer_id.is_(None), PrintQueueItem.printer_id != deleted_printer),
+                    )
+                )
+            )
+            now = datetime.now(timezone.utc)
+            for file in await db.scalars(LibraryFile.active().where(LibraryFile.id.in_(file_ids))):
+                if file.id not in queued:
+                    file.deleted_at = now
+    session.runs = {key: value for key, value in session.runs.items() if key not in names}
+    session.prints = {key: value for key, value in session.prints.items() if key not in names}
+
+
+def remove_session_photos(session_ids: Iterable[int]) -> None:
+    """Delete the sessions' photos. Call before committing their deletion, so a failure keeps the rows to retry from."""
+    for session_id in session_ids:
+        try:
+            shutil.rmtree(settings.base_dir / "calibration" / str(session_id))
+        except FileNotFoundError:
+            continue
+        except OSError as error:
+            raise HTTPException(500, "Could not delete the calibration photos. Try again.") from error
+
+
+@router.post("/sessions", status_code=201)
+async def create_session(body: SessionCreate, caller: WriteCaller, db: AsyncSession = Depends(get_db)):
+    personal_caller(caller)
+    caller.require_printer_access(body.printer_id)
+    if await db.get(Printer, body.printer_id) is None:
+        raise HTTPException(404, "Printer not found")
+    revision = await active_filament_revision(db, body.filament_profile_id, caller.owner_id)
+    if revision is None or revision.id != body.filament_revision_id:
+        raise HTTPException(409, "Select an available active filament revision")
+    limits = await load_setting_limits(db, revision, body.printer_id, body.tool_index)
     session = CalibrationSession(
         owner_id=caller.owner_id, **body.model_dump(), parameters={}, results={}, setting_limits=limits
     )
@@ -248,6 +321,52 @@ async def create_session(body: SessionCreate, caller: WriteCaller, db: AsyncSess
     await commit(db)
     await db.refresh(session)
     return response(session)
+
+
+@router.post("/sessions/{session_id}/filament-revision")
+async def use_current_filament_revision(
+    session_id: int, body: VersionedEdit, caller: WriteCaller, db: AsyncSession = Depends(get_db)
+):
+    """Move a session to its filament's active revision after an edit or sync replaced it."""
+    session = await load_session(db, session_id, caller)
+    require_edit(session, body.version)
+    await require_no_active_print(db, session)
+    revision = await active_filament_revision(db, session.filament_profile_id, caller.owner_id)
+    if revision is None:
+        raise HTTPException(409, "This filament profile is no longer available; start a new calibration")
+    if revision.id == session.filament_revision_id:
+        return response(session)
+    limits = await load_setting_limits(db, revision, session.printer_id, session.tool_index)
+    # Generated tests were sliced from the old revision.
+    await retire_runs(db, session, STEPS)
+    session.filament_revision_id = revision.id
+    session.setting_limits = limits
+    session.parameters = {
+        step: values
+        for step, values in session.parameters.items()
+        if all(setting_error(limits, Step(step), values[key]) is None for key in ("lowest", "highest", "baseline"))
+    }
+    results = {}
+    for step in STEPS:
+        value = session.results.get(step.value)
+        # Later results depend on earlier ones, so stop at the first that no longer fits.
+        if value is None or setting_error(limits, step, value) is not None:
+            break
+        results[step.value] = value
+    session.results = results
+    await commit(db)
+    return response(session)
+
+
+@router.delete("/sessions/{session_id}", status_code=204)
+async def delete_session(session_id: int, caller: WriteCaller, db: AsyncSession = Depends(get_db)):
+    session = await load_session(db, session_id, caller)
+    await require_no_active_print(db, session)
+    await retire_runs(db, session, STEPS)
+    await db.execute(delete(CalibrationEvidence).where(CalibrationEvidence.session_id == session.id))
+    await db.delete(session)
+    remove_session_photos([session_id])
+    await commit(db)
 
 
 @router.get("/sessions")
@@ -287,7 +406,7 @@ async def edit_parameters(
     if step is Step.TEMPERATURE and not body.increment.is_integer():
         raise HTTPException(422, "Temperature step size requires whole degrees")
     if session.parameters.get(step.value) != values:
-        session.runs = {key: value for key, value in session.runs.items() if key != step.value}
+        await retire_runs(db, session, (step,))
     session.parameters = {**session.parameters, step.value: values}
     await commit(db)
     return response(session)
@@ -306,25 +425,32 @@ async def edit_result(
         raise HTTPException(409, "Record the preceding calibration results first")
     results = dict(session.results)
     if results.get(step.value) != body.value:
-        for later in STEPS[index + 1 :]:
+        later_steps = STEPS[index + 1 :]
+        for later in later_steps:
             results.pop(later.value, None)
-        earlier_steps = {item.value for item in STEPS[: index + 1]}
-        session.runs = {key: value for key, value in session.runs.items() if key in earlier_steps}
+        await retire_runs(db, session, later_steps)
     session.results = {**results, step.value: body.value}
     await commit(db)
     return response(session)
 
 
-def validate_setting(session: CalibrationSession, step: Step, value: float) -> None:
-    limits = session.setting_limits.get(step.value)
-    if limits is None:
-        raise HTTPException(409, "Start a new calibration session to load its setting limits")
-    if limits.get("item_type") == "int" and not value.is_integer():
-        raise HTTPException(422, "This setting requires a whole number")
+def setting_error(all_limits: dict, step: Step, value: float) -> str | None:
+    limits = all_limits[step.value]
+    if limits.get("item_type") == "int" and not float(value).is_integer():
+        return "This setting requires a whole number"
     if value < max(0, limits.get("min") or 0) or (limits.get("max") is not None and value > limits["max"]):
-        raise HTTPException(422, "Value is outside this filament setting's limits")
+        return "Value is outside this filament setting's limits"
     if value == 0 and step not in {Step.PRESSURE_ADVANCE, Step.RETRACTION}:
-        raise HTTPException(422, "This setting must be greater than zero")
+        return "This setting must be greater than zero"
+    return None
+
+
+def validate_setting(session: CalibrationSession, step: Step, value: float) -> None:
+    if step.value not in session.setting_limits:
+        raise HTTPException(409, "Start a new calibration session to load its setting limits")
+    error = setting_error(session.setting_limits, step, value)
+    if error is not None:
+        raise HTTPException(422, error)
 
 
 def require_temperature_capacity(session: CalibrationSession, step: Step, nozzle) -> None:
@@ -339,6 +465,35 @@ def require_temperature_capacity(session: CalibrationSession, step: Step, nozzle
         raise HTTPException(409, "Calibration exceeds the printer's reported nozzle temperature limit")
 
 
+def test_height(session: CalibrationSession, step: Step) -> float | None:
+    """Lower bound on test height from the geometry in docs/calibration.md; flow tiles lie flat."""
+    parameters = session.parameters[step.value]
+    samples = round((parameters["highest"] - parameters["lowest"]) / parameters["increment"]) + 1
+    if step is Step.TEMPERATURE:
+        return samples * 25 * float(session.nozzle_diameter)
+    if step in {Step.PRESSURE_ADVANCE, Step.VOLUMETRIC_FLOW}:
+        return float(samples)
+    if step is Step.RETRACTION:
+        return 0.4 + samples
+    return None
+
+
+def require_printable_height(session: CalibrationSession, step: Step, printer_content: dict) -> None:
+    height = test_height(session, step)
+    raw = printer_content.get("printable_height")
+    try:
+        printable = float(raw[0] if isinstance(raw, list) else raw)
+    except (TypeError, ValueError, IndexError):
+        # A profile without a usable height leaves the check to the slicer.
+        return
+    if height is not None and height > printable:
+        raise HTTPException(
+            409,
+            f"This test needs at least {height:g} mm of height, but the printer profile allows {printable:g} mm. "
+            "Narrow the range or use a larger step size.",
+        )
+
+
 @router.post("/sessions/{session_id}/save")
 async def save_session(session_id: int, body: SaveRequest, caller: WriteCaller, db: AsyncSession = Depends(get_db)):
     session = await load_session(db, session_id, caller)
@@ -351,6 +506,9 @@ async def save_session(session_id: int, body: SaveRequest, caller: WriteCaller, 
     temperature = session.results[Step.TEMPERATURE.value]
     if not temperature.is_integer():
         raise HTTPException(422, "Orca nozzle temperature requires whole degrees")
+    revision = await active_filament_revision(db, session.filament_profile_id, caller.owner_id)
+    if revision is not None and revision.id != session.filament_revision_id:
+        raise HTTPException(409, FILAMENT_CHANGED)
     overrides = {SETTINGS[step]: [format(session.results[step.value], ".15g")] for step in STEPS}
     overrides["nozzle_temperature_initial_layer"] = overrides["nozzle_temperature"]
     overrides["enable_pressure_advance"] = ["1"]
@@ -402,6 +560,12 @@ async def generate_test(
         or session.tool_index != 0
     ):
         raise HTTPException(409, "Choose the installed single-extruder binding for this printer and nozzle")
+    printer_revision = await db.scalar(
+        select(SlicerProfileRevision)
+        .join(SlicerProfileActivation, SlicerProfileActivation.revision_id == SlicerProfileRevision.id)
+        .where(SlicerProfileActivation.profile_id == binding.profile_id)
+    )
+    require_printable_height(session, step, printer_revision.content if printer_revision else {})
     try:
         async with SlicerApiService(await resolve_orca_api_url(db)) as service:
             capabilities = await service.capabilities()
@@ -439,15 +603,12 @@ async def generate_test(
     async def prepare(job_db, job):
         current = await load_session(job_db, session_id, caller)
         require_edit(current, body.version)
-        previous_job_id = current.runs.get(step.value)
-        if previous_job_id:
-            previous_job = await job_db.get(SliceJobRecord, previous_job_id)
-            if previous_job and previous_job.status in {"pending", "running", "cancel-requested"}:
-                raise HTTPException(409, "This test is already being generated")
         await persist_catalog_selection(job_db, job, request, force_validation=True)
         provenance = await job_db.scalar(select(SlicerJobProvenance).where(SlicerJobProvenance.slice_job_id == job.id))
         if provenance.filament_revision_ids != [current.filament_revision_id]:
-            raise HTTPException(409, "The filament revision changed; start a new calibration session")
+            raise HTTPException(409, FILAMENT_CHANGED)
+        # Raises while the previous test is still generating.
+        await retire_runs(job_db, current, (step,))
         job.request_snapshot = {**job.request_snapshot, "calibration": calibration}
         current.runs = {**current.runs, step.value: job.id}
 
@@ -577,20 +738,22 @@ async def print_test(
     async def associate(items):
         session.prints = {**session.prints, step.value: items[0].id}
 
+    item = PrintQueueItemCreate(
+        printer_id=session.printer_id,
+        library_file_id=job.result_artifact_id,
+        use_ams=body.use_ams,
+        ams_mapping=body.ams_mapping,
+        flow_cali=False,
+        vibration_cali=False,
+    )
+    # The plate_clear request field is the user's filament confirmation. Without
+    # it here, the scheduler holds the print until the queue page confirms it.
+    check = await enqueue_print(item, db, caller, check_only=True)
+    if check["blocking"]:
+        raise HTTPException(409, " ".join(check["blocking"]))
+    item.material_confirmation = check["confirmation_key"]
     try:
-        await enqueue_print(
-            PrintQueueItemCreate(
-                printer_id=session.printer_id,
-                library_file_id=job.result_artifact_id,
-                use_ams=body.use_ams,
-                ams_mapping=body.ams_mapping,
-                flow_cali=False,
-                vibration_cali=False,
-            ),
-            db,
-            caller,
-            before_commit=associate,
-        )
+        await enqueue_print(item, db, caller, before_commit=associate)
     except StaleDataError as exc:
         await db.rollback()
         raise HTTPException(409, "Session changed; reload before printing") from exc

@@ -16,6 +16,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfile,
     SlicerProfileAccount,
     SlicerProfileRevision,
+    SlicerProfileSourceRevision,
 )
 from backend.app.services.orca_cloud import OrcaCloudService, OrcaProfilePull
 from backend.app.services.slicer_catalog import (
@@ -23,6 +24,7 @@ from backend.app.services.slicer_catalog import (
     CatalogProfile,
     CatalogProfileReferences,
     IngestResult,
+    activate_without_review,
     canonical_hash,
     catalog_profile_references,
     ingest_catalog,
@@ -213,7 +215,7 @@ async def sync_local_catalog(
             )
             for profile in removed
         )
-    return await ingest_catalog(
+    result = await ingest_catalog(
         session,
         CatalogInput(
             source="local",
@@ -223,6 +225,8 @@ async def sync_local_catalog(
             actor_user_id=actor_user_id,
         ),
     )
+    await activate_without_review(session, result, actor_user_id)
+    return result
 
 
 def cloud_profile_adapter(profile_type: str, entry: Mapping[str, Any]) -> CatalogProfile:
@@ -343,6 +347,7 @@ async def sync_cloud_account(
                 cursor=cursor,
             ),
         )
+        await activate_without_review(session, result, user_id)
         await session.commit()
         return result
     except Exception:
@@ -477,8 +482,8 @@ async def _existing_orca_profiles(
     for profile in profiles:
         revision = await session.scalar(
             select(SlicerProfileRevision)
-            .where(SlicerProfileRevision.profile_id == profile.id)
-            .order_by(SlicerProfileRevision.id.desc())
+            .join(SlicerProfileSourceRevision, SlicerProfileSourceRevision.revision_id == SlicerProfileRevision.id)
+            .where(SlicerProfileSourceRevision.profile_id == profile.id)
         )
         if revision is None:
             continue
@@ -496,6 +501,20 @@ async def _existing_orca_profiles(
             )
         )
     return result
+
+
+async def _lacks_source_revisions(session: AsyncSession, account: SlicerProfileAccount) -> bool:
+    missing = await session.scalar(
+        select(SlicerProfile.id)
+        .outerjoin(SlicerProfileSourceRevision, SlicerProfileSourceRevision.profile_id == SlicerProfile.id)
+        .where(
+            SlicerProfile.account_id == account.id,
+            SlicerProfile.tombstoned_at.is_(None),
+            SlicerProfileSourceRevision.profile_id.is_(None),
+        )
+        .limit(1)
+    )
+    return missing is not None
 
 
 async def sync_orca_account(
@@ -517,6 +536,10 @@ async def sync_orca_account(
     if account is not None and account.sync_frozen:
         raise ValueError("catalog account is frozen")
     cursor = account.sync_cursor if account is not None else None
+    if cursor is not None and await _lacks_source_revisions(session, account):
+        # Profiles synced before source revisions were recorded. Their newest revision may be
+        # content Orca has since reverted, so pull a full snapshot instead of rebuilding them.
+        cursor = None
     try:
         pull = await service.pull_profiles(cursor)
         upserts = [orca_profile_adapter(entry) for entry in pull.upserts]
@@ -558,6 +581,7 @@ async def sync_orca_account(
                 profiles=profiles,
             ),
         )
+        await activate_without_review(session, result, user_id)
         await session.commit()
         return result
     except Exception:

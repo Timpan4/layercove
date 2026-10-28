@@ -13,7 +13,7 @@ test('calibration retains a draft result when saving test values and resumes all
   expect(filament).toBeTruthy();
   await page.goto('/profiles?calibration=guided');
   await page.getByLabel('Printer', { exact: true }).selectOption(String(printer.id));
-  await page.getByLabel('Filament', { exact: true }).selectOption(String(filament.profile_id));
+  await page.getByLabel('Filament', { exact: true }).selectOption(`profile:${filament.profile_id}`);
   await page.getByLabel('Nozzle diameter (mm)').fill('0.4');
   await page.getByRole('button', { name: 'Start calibration', exact: true }).click();
   await expect(page.getByLabel('Baseline value (°C)', { exact: true })).toHaveValue('210');
