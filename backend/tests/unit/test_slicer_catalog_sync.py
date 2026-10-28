@@ -1,5 +1,7 @@
 """Focused tests for catalog source adapters and Orca mirror sync."""
 
+import json
+from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -9,21 +11,31 @@ from sqlalchemy.orm import sessionmaker
 
 import backend.app.models  # noqa: F401
 from backend.app.core.database import Base
+from backend.app.models.local_preset import LocalPreset
 from backend.app.models.slice_job import SliceJobRecord  # noqa: F401
 from backend.app.models.slicer_profile_catalog import (
     SlicerProfile,
     SlicerProfileAccount,
     SlicerProfileActivation,
+    SlicerProfileReviewBatch,
     SlicerProfileRevision,
 )
 from backend.app.services.orca_cloud import OrcaCloudError, OrcaProfilePull
-from backend.app.services.slicer_catalog import activate_revision, approve_review_batch
+from backend.app.services.slicer_catalog import (
+    CatalogInput,
+    activate_revision,
+    approve_review_batch,
+    ingest_catalog,
+    rollback_revision,
+)
 from backend.app.services.slicer_catalog_sync import (
     cloud_profile_adapter,
+    local_preset_adapter,
     orca_profile_adapter,
     resolve_profile_inheritance,
     standard_profile_adapter,
     sync_cloud_account,
+    sync_local_catalog,
     sync_orca_account,
     sync_standard_account,
 )
@@ -351,9 +363,6 @@ async def test_orca_outage_freezes_active_mirror(db):
         display_name="A",
         user_id=None,
     )
-    await approve_review_batch(db, result.review_batch_id)
-    await activate_revision(db, result.revision_ids[0])
-    await db.commit()
 
     service.pull_profiles = AsyncMock(side_effect=OrcaCloudError("offline"))
     with pytest.raises(OrcaCloudError, match="offline"):
@@ -377,11 +386,6 @@ async def test_orca_outage_freezes_active_mirror(db):
 
 
 def test_local_profile_preserves_compatibility_from_full_content():
-    import json
-
-    from backend.app.models.local_preset import LocalPreset
-    from backend.app.services.slicer_catalog_sync import local_preset_adapter
-
     preset = LocalPreset(
         id=91,
         name="Imported process",
@@ -390,3 +394,112 @@ def test_local_profile_preserves_compatibility_from_full_content():
         compatible_printers=None,
     )
     assert local_preset_adapter(preset).metadata["compatible_printers"] == ["Machine 0.4"]
+
+
+def local_filament(value: int):
+    return LocalPreset(id=7, name="Dogge PETG", preset_type="filament", setting=json.dumps({"value": value}))
+
+
+async def active_content(db, profile_id: int):
+    activation = await db.scalar(
+        select(SlicerProfileActivation).where(SlicerProfileActivation.profile_id == profile_id)
+    )
+    return None if activation is None else (await db.get(SlicerProfileRevision, activation.revision_id)).content
+
+
+# Failure mode: imported or edited local presets wait for a review that the importer
+# could do anyway, so calibration and slicing cannot use them.
+async def test_local_preset_changes_are_active_without_review(db):
+    preset = local_filament(1)
+    db.add(preset)
+    await db.flush()
+    first = await sync_local_catalog(db)
+    profile_id = (await db.get(SlicerProfileRevision, first.revision_ids[0])).profile_id
+    assert await active_content(db, profile_id) == {"value": 1}
+
+    preset.setting = json.dumps({"value": 2})
+    await sync_local_catalog(db)
+    assert await active_content(db, profile_id) == {"value": 2}
+
+    # Reverting an edit reuses the earlier revision and must make it active again.
+    preset.setting = json.dumps({"value": 1})
+    await sync_local_catalog(db)
+    assert await active_content(db, profile_id) == {"value": 1}
+    assert {batch.status for batch in (await db.scalars(select(SlicerProfileReviewBatch))).all()} == {"approved"}
+
+
+async def test_local_sync_activates_revisions_left_waiting_for_review(db):
+    preset = local_filament(1)
+    db.add(preset)
+    await db.flush()
+    waiting = await ingest_catalog(
+        db, CatalogInput(source="local", remote_account_id="installation", profiles=[local_preset_adapter(preset)])
+    )
+
+    await sync_local_catalog(db)
+
+    revision = await db.get(SlicerProfileRevision, waiting.revision_ids[0])
+    assert (await db.get(SlicerProfileReviewBatch, waiting.review_batch_id)).status == "approved"
+    assert await active_content(db, revision.profile_id) == {"value": 1}
+
+
+# Failure mode: an unrelated preset change or a restart undoes an administrator's rollback.
+async def test_local_sync_keeps_a_rollback_until_the_preset_changes(db):
+    preset = local_filament(1)
+    db.add(preset)
+    await db.flush()
+    first = await sync_local_catalog(db)
+    profile_id = (await db.get(SlicerProfileRevision, first.revision_ids[0])).profile_id
+    preset.setting = json.dumps({"value": 2})
+    await sync_local_catalog(db)
+    await rollback_revision(db, profile_id, first.revision_ids[0])
+
+    await sync_local_catalog(db)
+    assert await active_content(db, profile_id) == {"value": 1}
+
+    preset.setting = json.dumps({"value": 3})
+    await sync_local_catalog(db)
+    assert await active_content(db, profile_id) == {"value": 3}
+
+
+async def test_local_sync_keeps_a_rejected_revision_inactive(db):
+    preset = local_filament(1)
+    db.add(preset)
+    await db.flush()
+    rejected = await ingest_catalog(
+        db, CatalogInput(source="local", remote_account_id="installation", profiles=[local_preset_adapter(preset)])
+    )
+    (await db.get(SlicerProfileReviewBatch, rejected.review_batch_id)).status = "rejected"
+    revision = await db.get(SlicerProfileRevision, rejected.revision_ids[0])
+    revision.review_state = "rejected"
+
+    await sync_local_catalog(db)
+
+    assert await active_content(db, revision.profile_id) is None
+
+
+async def test_private_cloud_syncs_activate_and_shared_ones_wait_for_review(db):
+    private = await sync_orca_account(
+        db,
+        service_with(OrcaProfilePull("10", [orca_entry()], [], True)),
+        remote_account_id="orca-review",
+        display_name="Owner",
+        user_id=None,
+    )
+    profile_id = (await db.get(SlicerProfileRevision, private.revision_ids[0])).profile_id
+    assert (await active_content(db, profile_id))["value"] == 1
+
+    account = await db.get(SlicerProfileAccount, private.account_id)
+    account.sharing_state = "shared"
+    account.consent_at = datetime(2026, 1, 1)
+    await db.commit()
+    shared = await sync_orca_account(
+        db,
+        service_with(OrcaProfilePull("11", [orca_entry(value=2)], [], True)),
+        remote_account_id="orca-review",
+        display_name="Owner",
+        user_id=None,
+    )
+
+    assert (await db.get(SlicerProfileRevision, shared.revision_ids[0])).review_state == "pending"
+    assert (await active_content(db, profile_id))["value"] == 1

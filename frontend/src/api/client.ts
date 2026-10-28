@@ -6857,6 +6857,10 @@ export const api = {
     request<CalibrationSession>(`/calibration/sessions/${id}/results/${step}`, { method: 'PUT', body: JSON.stringify(body) }),
   saveCalibrationProfile: (id: number, body: { version: number; name: string; share_local_copy: boolean }) =>
     request<CalibrationSession>(`/calibration/sessions/${id}/save`, { method: 'POST', body: JSON.stringify(body) }),
+  switchCalibrationFilamentRevision: (id: number, body: { version: number }) =>
+    request<CalibrationSession>(`/calibration/sessions/${id}/filament-revision`, { method: 'POST', body: JSON.stringify(body) }),
+  deleteCalibrationSession: (id: number) =>
+    request<void>(`/calibration/sessions/${id}`, { method: 'DELETE' }),
   getSlicerCatalogRevision: (revisionId: number) => request<SlicerCatalogRevisionContent>(`/slicer/catalog/revisions/${revisionId}`),
   generateCalibrationTest: (id: number, step: CalibrationStep, body: {
     version: number; binding_id: number; process_profile_id: number; acknowledge_compatibility: boolean;

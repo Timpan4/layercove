@@ -240,14 +240,10 @@ async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_sel
             },
         )
         assert check.status_code == 200, check.text
-        assert not check.json()["blocking"]
-        confirmed = await async_client.patch(
-            f"/api/v1/queue/{queue_id}",
-            json={
-                "material_confirmation": check.json()["confirmation_key"],
-            },
-        )
-        assert confirmed.status_code == 200, confirmed.text
+        # The scheduler would hold this print without a confirmation; the calibration
+        # print request supplies it, so the queue page is not needed.
+        assert check.json()["confirmation_key"] is not None
+        assert queued.json()["material_confirmation"] == check.json()["confirmation_key"]
         blocked = await async_client.put(
             base + "/results/temperature", json={"version": session["version"], "value": 210}
         )

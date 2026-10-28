@@ -23,6 +23,7 @@ from backend.app.services.slicer_catalog import (
     CatalogProfile,
     CatalogProfileReferences,
     IngestResult,
+    activate_without_review,
     canonical_hash,
     catalog_profile_references,
     ingest_catalog,
@@ -213,7 +214,7 @@ async def sync_local_catalog(
             )
             for profile in removed
         )
-    return await ingest_catalog(
+    result = await ingest_catalog(
         session,
         CatalogInput(
             source="local",
@@ -223,6 +224,8 @@ async def sync_local_catalog(
             actor_user_id=actor_user_id,
         ),
     )
+    await activate_without_review(session, result, actor_user_id)
+    return result
 
 
 def cloud_profile_adapter(profile_type: str, entry: Mapping[str, Any]) -> CatalogProfile:
@@ -343,6 +346,7 @@ async def sync_cloud_account(
                 cursor=cursor,
             ),
         )
+        await activate_without_review(session, result, user_id)
         await session.commit()
         return result
     except Exception:
@@ -558,6 +562,7 @@ async def sync_orca_account(
                 profiles=profiles,
             ),
         )
+        await activate_without_review(session, result, user_id)
         await session.commit()
         return result
     except Exception:

@@ -2833,14 +2833,16 @@ export function ProfilesPage() {
   const canUseBambuCloud = hasPermission('cloud:auth');
   const [selectedTab, setSelectedTab] = useState<ProfileTab>('cloud');
   const [searchParams, setSearchParams] = useSearchParams();
+  // Calibration links to ?tab=catalog when a filament profile waits for review.
   const activeTab = searchParams.get('calibration') === 'guided'
-    ? 'calibration' : selectedTab;
+    ? 'calibration' : searchParams.get('tab') === 'catalog' ? 'catalog' : selectedTab;
   const setActiveTab = (tab: ProfileTab) => {
     setSelectedTab(tab);
-    if (searchParams.has('calibration')) {
+    if (searchParams.has('calibration') || searchParams.has('tab')) {
       const next = new URLSearchParams(searchParams);
       next.delete('calibration');
       next.delete('variant');
+      next.delete('tab');
       setSearchParams(next, { replace: true });
     }
   };

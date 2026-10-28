@@ -1,5 +1,7 @@
 """Calibration sessions through HTTP, including catalog copy transactions."""
 
+from datetime import datetime, timezone
+
 import pytest
 from sqlalchemy import select
 
@@ -16,37 +18,37 @@ from backend.app.services.slicer_catalog import (
 )
 from backend.tests._fixtures.calibration import filament_schema  # noqa: F401
 
+PLA_CONTENT = {
+    "type": "filament",
+    "name": "Original PLA",
+    "nozzle_temperature": ["220"],
+    "nozzle_temperature_initial_layer": ["220"],
+    "filament_flow_ratio": ["1"],
+    "pressure_advance": ["0.02"],
+    "filament_retraction_length": ["0.8"],
+    "filament_max_volumetric_speed": ["15"],
+}
 
-async def create_session(client, db):
-    printer = Printer(name="Calibration machine", provider="moonraker")
-    db.add(printer)
+
+async def publish_filament(db, content):
     catalog = await ingest_catalog(
         db,
         CatalogInput(
             source="standard",
             remote_account_id="calibration-test",
-            profiles=[
-                CatalogProfile(
-                    "pla",
-                    "filament",
-                    "Original PLA",
-                    {
-                        "type": "filament",
-                        "name": "Original PLA",
-                        "nozzle_temperature": ["220"],
-                        "nozzle_temperature_initial_layer": ["220"],
-                        "filament_flow_ratio": ["1"],
-                        "pressure_advance": ["0.02"],
-                        "filament_retraction_length": ["0.8"],
-                        "filament_max_volumetric_speed": ["15"],
-                    },
-                )
-            ],
+            profiles=[CatalogProfile("pla", "filament", "Original PLA", content)],
         ),
     )
     await approve_review_batch(db, catalog.review_batch_id)
     activation = await activate_revision(db, catalog.revision_ids[0])
     await db.commit()
+    return activation
+
+
+async def create_session(client, db, content=PLA_CONTENT):
+    printer = Printer(name="Calibration machine", provider="moonraker")
+    db.add(printer)
+    activation = await publish_filament(db, content)
     response = await client.post(
         "/api/v1/calibration/sessions",
         json={
@@ -319,3 +321,238 @@ async def test_api_key_cannot_read_an_anonymous_calibration_job(async_client, db
         assert response.status_code == 403, response.text
     finally:
         app.dependency_overrides.pop(get_caller_identity_if_auth_enabled)
+
+
+async def test_sessions_are_single_extruder(async_client, db_session):
+    session = await create_session(async_client, db_session)
+    response = await async_client.post(
+        "/api/v1/calibration/sessions",
+        json={
+            "printer_id": session["printer_id"],
+            "filament_profile_id": session["filament_profile_id"],
+            "filament_revision_id": session["filament_revision_id"],
+            "nozzle_diameter": 0.4,
+            "tool_index": 1,
+        },
+    )
+    assert response.status_code == 422, response.text
+
+
+async def test_inherited_filament_without_its_own_maximum_keeps_parent_temperatures_available(async_client, db_session):
+    # The pinned schema default (240 °C) is not the parent's value, so it must not cap the range.
+    session = await create_session(async_client, db_session, {**PLA_CONTENT, "inherits": "Generic ASA"})
+    response = await async_client.put(
+        f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
+        json={"version": session["version"], "lowest": 240, "highest": 280, "increment": 10, "baseline": 260},
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_a_newer_filament_revision_can_be_adopted_without_losing_results(async_client, db_session):
+    session = await create_session(async_client, db_session)
+    for step, value in (("temperature", 210), ("flow_rate", 0.98)):
+        session = await record(async_client, session, step, value)
+    newer = await publish_filament(db_session, {**PLA_CONTENT, "nozzle_temperature": ["215"]})
+    assert newer.revision_id != session["filament_revision_id"]
+    base = f"/api/v1/calibration/sessions/{session['id']}"
+    for step, value in (("pressure_advance", 0.021), ("retraction", 0.6), ("volumetric_flow", 18)):
+        session = await record(async_client, session, step, value)
+    save = {"version": session["version"], "name": "Calibrated PLA", "share_local_copy": True}
+    blocked = await async_client.post(base + "/save", json=save)
+    assert blocked.status_code == 409, blocked.text
+    adopted = await async_client.post(base + "/filament-revision", json={"version": session["version"]})
+    assert adopted.status_code == 200, adopted.text
+    session = adopted.json()
+    assert session["filament_revision_id"] == newer.revision_id
+    assert session["results"]["volumetric_flow"] == 18
+    saved = await async_client.post(base + "/save", json={**save, "version": session["version"]})
+    assert saved.status_code == 200, saved.text
+
+
+async def test_changing_a_result_retires_later_tests_and_their_prints(async_client, db_session):
+    from datetime import datetime, timezone
+
+    from backend.app.models.library import LibraryFile
+    from backend.app.models.slice_job import SliceJobRecord
+
+    session = await create_session(async_client, db_session)
+    session = await record(async_client, session, "temperature", 210)
+    artifact = LibraryFile(filename="flow.gcode", file_path="library/flow.gcode", file_type="gcode", file_size=1)
+    db_session.add(artifact)
+    await db_session.flush()
+    job = SliceJobRecord(
+        source_kind="calibration_session",
+        source_id=session["id"],
+        source_name="flow_rate calibration",
+        status="completed",
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        result_artifact_kind="library_file",
+        result_artifact_id=artifact.id,
+    )
+    db_session.add(job)
+    await db_session.flush()
+    row = await db_session.get(CalibrationSession, session["id"])
+    row.runs = {"flow_rate": job.id}
+    # A finished print of the old test must not show as this step's print.
+    row.prints = {"flow_rate": 999999}
+    await db_session.commit()
+    session = (await async_client.get(f"/api/v1/calibration/sessions/{session['id']}")).json()
+    session = await record(async_client, session, "temperature", 215)
+    assert session["runs"] == {}
+    assert session["prints"] == {}
+    await db_session.refresh(artifact)
+    assert artifact.deleted_at is not None
+
+
+async def test_deleting_a_session_removes_its_photos(async_client, db_session, tmp_path, monkeypatch):
+    import io
+
+    from PIL import Image
+
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "base_dir", tmp_path)
+    session = await create_session(async_client, db_session)
+    photo = io.BytesIO()
+    Image.new("RGB", (8, 8), "orange").save(photo, format="PNG")
+    base = f"/api/v1/calibration/sessions/{session['id']}"
+    uploaded = await async_client.post(
+        base + "/evidence/temperature", files={"file": ("photo.png", photo.getvalue(), "image/png")}
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    assert (tmp_path / "calibration" / str(session["id"])).is_dir()
+    deleted = await async_client.delete(base)
+    assert deleted.status_code == 204, deleted.text
+    assert (await async_client.get(base)).status_code == 404
+    assert not (tmp_path / "calibration" / str(session["id"])).exists()
+
+
+@pytest.mark.parametrize(
+    "step,lowest,highest,increment,fits",
+    [
+        ("pressure_advance", 0, 0.2, 0.001, False),
+        ("pressure_advance", 0, 0.1, 0.002, True),
+        ("temperature", 200, 260, 5, True),
+        ("temperature", 180, 280, 5, False),
+        ("flow_rate", 0.5, 1.5, 0.001, True),
+    ],
+)
+def test_tests_taller_than_the_printer_profile_are_rejected(step, lowest, highest, increment, fits):
+    from decimal import Decimal
+    from types import SimpleNamespace
+
+    from fastapi import HTTPException
+
+    from backend.app.api.routes.calibration import Step, require_printable_height
+
+    session = SimpleNamespace(
+        nozzle_diameter=Decimal("0.4"),
+        parameters={step: {"lowest": lowest, "highest": highest, "increment": increment, "baseline": lowest}},
+    )
+    printer = {"printable_height": "180"}
+    if fits:
+        require_printable_height(session, Step(step), printer)
+    else:
+        with pytest.raises(HTTPException) as error:
+            require_printable_height(session, Step(step), printer)
+        assert error.value.status_code == 409
+    # Without a usable height in the profile, the slicer stays the authority.
+    require_printable_height(session, Step(step), {})
+
+
+async def test_deleting_a_printer_removes_its_calibration_photos(async_client, db_session, tmp_path, monkeypatch):
+    import io
+
+    from PIL import Image
+
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "base_dir", tmp_path)
+    session = await create_session(async_client, db_session)
+    photo = io.BytesIO()
+    Image.new("RGB", (8, 8), "orange").save(photo, format="PNG")
+    uploaded = await async_client.post(
+        f"/api/v1/calibration/sessions/{session['id']}/evidence/temperature",
+        files={"file": ("photo.png", photo.getvalue(), "image/png")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    deleted = await async_client.delete(f"/api/v1/printers/{session['printer_id']}")
+    assert deleted.status_code == 200, deleted.text
+    assert not (tmp_path / "calibration" / str(session["id"])).exists()
+    assert await db_session.get(CalibrationSession, session["id"]) is None
+
+
+async def add_generated_test(db_session, session_id: int, status: str = "completed"):
+    from backend.app.models.library import LibraryFile
+    from backend.app.models.slice_job import SliceJobRecord
+
+    artifact = LibraryFile(filename="temp.gcode", file_path="library/temp.gcode", file_type="gcode", file_size=1)
+    db_session.add(artifact)
+    await db_session.flush()
+    job = SliceJobRecord(
+        source_kind="calibration_session",
+        source_id=session_id,
+        source_name="temperature calibration",
+        status=status,
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        result_artifact_kind="library_file",
+        result_artifact_id=artifact.id,
+    )
+    db_session.add(job)
+    await db_session.flush()
+    row = await db_session.get(CalibrationSession, session_id)
+    row.runs = {"temperature": job.id}
+    await db_session.commit()
+    return artifact
+
+
+# Failure mode: the database forgets the session while its private photos stay on disk
+# with no record left to retry the deletion from.
+@pytest.mark.parametrize("target", ["session", "printer"])
+async def test_photos_that_cannot_be_removed_keep_the_session(async_client, db_session, tmp_path, monkeypatch, target):
+    import io
+    import shutil
+
+    from PIL import Image
+
+    from backend.app.core.config import settings
+
+    monkeypatch.setattr(settings, "base_dir", tmp_path)
+    session = await create_session(async_client, db_session)
+    photo = io.BytesIO()
+    Image.new("RGB", (8, 8), "orange").save(photo, format="PNG")
+    base = f"/api/v1/calibration/sessions/{session['id']}"
+    uploaded = await async_client.post(
+        base + "/evidence/temperature", files={"file": ("photo.png", photo.getvalue(), "image/png")}
+    )
+    assert uploaded.status_code == 201, uploaded.text
+
+    def refuse(path, *args, **kwargs):
+        raise PermissionError(13, "Permission denied", str(path))
+
+    monkeypatch.setattr(shutil, "rmtree", refuse)
+    url = base if target == "session" else f"/api/v1/printers/{session['printer_id']}"
+    deleted = await async_client.delete(url)
+    assert deleted.status_code == 500, deleted.text
+    db_session.expire_all()
+    assert await db_session.get(CalibrationSession, session["id"]) is not None
+
+
+# Failure mode: deleting a printer leaves its generated calibration tests in the library,
+# or forgets a session whose test is still being generated.
+async def test_deleting_a_printer_retires_its_generated_tests(async_client, db_session):
+    session = await create_session(async_client, db_session)
+    artifact = await add_generated_test(db_session, session["id"])
+    deleted = await async_client.delete(f"/api/v1/printers/{session['printer_id']}")
+    assert deleted.status_code == 200, deleted.text
+    await db_session.refresh(artifact)
+    assert artifact.deleted_at is not None
+
+
+async def test_a_printer_with_a_test_still_generating_is_kept(async_client, db_session):
+    session = await create_session(async_client, db_session)
+    await add_generated_test(db_session, session["id"], status="running")
+    deleted = await async_client.delete(f"/api/v1/printers/{session['printer_id']}")
+    assert deleted.status_code == 409, deleted.text
+    db_session.expire_all()
+    assert await db_session.get(CalibrationSession, session["id"]) is not None

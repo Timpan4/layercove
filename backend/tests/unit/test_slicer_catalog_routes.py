@@ -31,6 +31,7 @@ from backend.app.models.slice_job import SliceJobRecord  # noqa: F401
 from backend.app.models.slicer_profile_catalog import SlicerProfileAccount, SlicerProfileRevision
 from backend.app.models.user import User
 from backend.app.schemas.slicer_presets import UnifiedPreset
+from backend.app.services.orca_cloud import OrcaProfilePull
 from backend.app.services.slicer_catalog import (
     CatalogInput,
     CatalogProfile,
@@ -39,6 +40,7 @@ from backend.app.services.slicer_catalog import (
     canonical_hash,
     ingest_catalog,
 )
+from backend.app.services.slicer_catalog_sync import sync_orca_account
 
 
 @pytest.fixture
@@ -546,6 +548,49 @@ async def test_profile_listing_exposes_filament_material_from_existing_revision(
         "Generic PLA": "PLA",
         "Inslogic 95A TPU": "TPU",
     }
+
+
+async def orca_owner_sync(db, owner: User):
+    service = MagicMock()
+    service.pull_profiles = AsyncMock(
+        return_value=OrcaProfilePull(
+            "1", [{"id": "p", "name": "Owner process", "content": {"type": "print", "value": 1}}], [], True
+        )
+    )
+    return await sync_orca_account(
+        db, service, remote_account_id=f"orca-{owner.username}", display_name=None, user_id=owner.id
+    )
+
+
+# Failure mode: a sync activates an owner's private profiles without review, and sharing
+# the account then hands those unreviewed profiles to every user.
+async def test_sharing_sends_profiles_activated_without_review_back_to_review(db):
+    orca_group = Group(name="Orca only", permissions=[Permission.ORCA_CLOUD_AUTH.value])
+    owner = User(username="orca-owner", groups=[orca_group])
+    outsider = User(username="orca-outsider")
+    db.add_all([owner, outsider])
+    await db.commit()
+    await db.refresh(owner, ["groups"])
+    result = await orca_owner_sync(db, owner)
+    assert len(await list_catalog_profiles(db, owner)) == 1
+
+    await set_account_sharing(result.account_id, SharingRequest(shared=True), db, owner)
+
+    assert await list_catalog_profiles(db, outsider) == []
+    waiting = await list_catalog_profiles(db, outsider, include_inactive=True)
+    assert [(profile["active"], profile["review_state"]) for profile in waiting] == [(False, "pending")]
+
+
+async def test_an_administrator_can_share_profiles_they_could_approve(db):
+    owner = User(username="orca-admin", role="admin")
+    outsider = User(username="admin-outsider")
+    db.add_all([owner, outsider])
+    await db.commit()
+    result = await orca_owner_sync(db, owner)
+
+    await set_account_sharing(result.account_id, SharingRequest(shared=True), db, owner)
+
+    assert len(await list_catalog_profiles(db, outsider)) == 1
 
 
 async def test_sharing_requires_source_specific_cloud_permission(db):

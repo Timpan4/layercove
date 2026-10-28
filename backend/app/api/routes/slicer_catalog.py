@@ -34,6 +34,7 @@ from backend.app.services.slicer_catalog import (
     get_revision_bed_content,
     get_revision_content,
     mark_account_stale,
+    return_unreviewed_to_review,
     rollback_revision,
 )
 from backend.app.services.slicer_catalog_sync import sync_cloud_account, sync_orca_account, sync_standard_account
@@ -459,6 +460,13 @@ async def set_account_sharing(
     required_permission = Permission.CLOUD_AUTH if account.source == "cloud" else Permission.ORCA_CLOUD_AUTH
     if current_user is not None and not current_user.has_permission(required_permission.value):
         raise HTTPException(status_code=403, detail=f"Missing required permission: {required_permission.value}")
+    # Private syncs activate without review. An owner who could not approve them must not publish them.
+    if (
+        request.shared
+        and current_user is not None
+        and not current_user.has_permission(Permission.SETTINGS_UPDATE.value)
+    ):
+        await return_unreviewed_to_review(db, account.id)
     account.sharing_state = "shared" if request.shared else "private"
     account.consent_at = _utc_now_naive() if request.shared else None
     await db.commit()
