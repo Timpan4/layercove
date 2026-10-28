@@ -5,7 +5,7 @@ from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from sqlalchemy import select, update
+from sqlalchemy import delete, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, create_async_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.orm.attributes import set_committed_value
@@ -20,6 +20,7 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileActivation,
     SlicerProfileReviewBatch,
     SlicerProfileRevision,
+    SlicerProfileSourceRevision,
 )
 from backend.app.services.orca_cloud import OrcaCloudError, OrcaProfilePull
 from backend.app.services.slicer_catalog import (
@@ -540,6 +541,25 @@ async def test_incremental_parent_revert_also_reverts_children(db):
     await orca_pull(db, OrcaProfilePull("3", [orca_inherited_entries("P1S")[0]], [], False))
 
     assert (await active_content(db, child.id))["parent_value"] == "P1S"
+
+
+# Failure mode: profiles synced before source revisions were recorded are rebuilt from their
+# newest revision, which Orca may have reverted before the upgrade.
+async def test_profiles_without_a_source_revision_get_a_full_pull(db):
+    first = await orca_pull(db, OrcaProfilePull("1", [orca_entry(value=1)], [], True))
+    profile_id = (await db.get(SlicerProfileRevision, first.revision_ids[0])).profile_id
+    await orca_pull(db, OrcaProfilePull("2", [orca_entry(value=2)], [], True))
+    await orca_pull(db, OrcaProfilePull("3", [orca_entry(value=1)], [], True))
+    await db.execute(delete(SlicerProfileSourceRevision))
+    await db.commit()
+    service = service_with(OrcaProfilePull("4", [orca_entry(value=1)], [], True))
+
+    await sync_orca_account(db, service, remote_account_id="orca-history", display_name="Owner", user_id=None)
+
+    service.pull_profiles.assert_awaited_once_with(None)
+    assert (await active_content(db, profile_id))["value"] == 1
+    source = await db.get(SlicerProfileSourceRevision, profile_id)
+    assert (await db.get(SlicerProfileRevision, source.revision_id)).content["value"] == 1
 
 
 # Failure mode: after Orca reverts a parent, a later child update inherits from the parent's

@@ -486,13 +486,6 @@ async def _existing_orca_profiles(
             .where(SlicerProfileSourceRevision.profile_id == profile.id)
         )
         if revision is None:
-            # Profiles synced before source revisions were recorded.
-            revision = await session.scalar(
-                select(SlicerProfileRevision)
-                .where(SlicerProfileRevision.profile_id == profile.id)
-                .order_by(SlicerProfileRevision.id.desc())
-            )
-        if revision is None:
             continue
         metadata = dict((revision.resolved_metadata or {}).get("metadata") or {})
         source_content = metadata.get("source_content")
@@ -508,6 +501,20 @@ async def _existing_orca_profiles(
             )
         )
     return result
+
+
+async def _lacks_source_revisions(session: AsyncSession, account: SlicerProfileAccount) -> bool:
+    missing = await session.scalar(
+        select(SlicerProfile.id)
+        .outerjoin(SlicerProfileSourceRevision, SlicerProfileSourceRevision.profile_id == SlicerProfile.id)
+        .where(
+            SlicerProfile.account_id == account.id,
+            SlicerProfile.tombstoned_at.is_(None),
+            SlicerProfileSourceRevision.profile_id.is_(None),
+        )
+        .limit(1)
+    )
+    return missing is not None
 
 
 async def sync_orca_account(
@@ -529,6 +536,10 @@ async def sync_orca_account(
     if account is not None and account.sync_frozen:
         raise ValueError("catalog account is frozen")
     cursor = account.sync_cursor if account is not None else None
+    if cursor is not None and await _lacks_source_revisions(session, account):
+        # Profiles synced before source revisions were recorded. Their newest revision may be
+        # content Orca has since reverted, so pull a full snapshot instead of rebuilding them.
+        cursor = None
     try:
         pull = await service.pull_profiles(cursor)
         upserts = [orca_profile_adapter(entry) for entry in pull.upserts]
