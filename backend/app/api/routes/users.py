@@ -407,6 +407,18 @@ async def delete_user(
             detail="Cannot delete your own account",
         )
 
+    # Calibration sessions are private, so they go with the user. Their rows cascade, but the
+    # photos on disk and the generated tests in the library do not. A test still generating
+    # stops the deletion.
+    from backend.app.api.routes.calibration import STEPS, remove_session_photos, retire_runs
+    from backend.app.models.calibration import CalibrationEvidence, CalibrationSession
+
+    calibrations = (await db.scalars(select(CalibrationSession).where(CalibrationSession.owner_id == user_id))).all()
+    for calibration in calibrations:
+        await retire_runs(db, calibration, STEPS)
+        await db.execute(delete(CalibrationEvidence).where(CalibrationEvidence.session_id == calibration.id))
+        await db.delete(calibration)
+
     if delete_items:
         # Delete all items created by this user
         await db.execute(delete(PrintArchive).where(PrintArchive.created_by_id == user_id))
@@ -457,6 +469,8 @@ async def delete_user(
     await db.execute(delete(PrinterOwner).where(PrinterOwner.user_id == user_id))
 
     await db.delete(user)
+    # Last, so a failure keeps the rows to retry from.
+    remove_session_photos(calibration.id for calibration in calibrations)
     await db.commit()
 
 

@@ -90,7 +90,7 @@ export function FilamentProfileEditor({ profile, onSaved, onClose }: {
     className="m-auto max-h-[90vh] w-[min(42rem,95vw)] overflow-y-auto rounded-lg border border-white/20 bg-bambu-dark-secondary p-5 text-white backdrop:bg-black/60">
     <div className="flex items-center justify-between gap-4"><h2 id="filament-editor-title" className="text-lg font-semibold">Edit filament profile</h2>
       <button type="button" onClick={onClose} disabled={saving} aria-label="Close filament editor">Close</button></div>
-    <p className="my-3 text-sm text-bambu-gray-light">Save an active local copy shared on this installation. The original profile and existing jobs stay unchanged. Compatibility declarations are preserved.</p>
+    <p className="my-3 text-sm text-bambu-gray-light">Save an active local copy. Without sharing, only you can use it. The original profile and existing jobs stay unchanged. Compatibility declarations are preserved.</p>
     {revision.isLoading && <p>Loading profile…</p>}
     {revision.error && <p role="alert">Could not load the selected profile revision. {revision.error.message}</p>}
     {revision.data && <div className="space-y-4">
@@ -107,10 +107,10 @@ export function FilamentProfileEditor({ profile, onSaved, onClose }: {
         {!parsed && <p role="alert">Enter a JSON object with filament setting values.</p>}
       </details>
       <label className="flex items-start gap-2 text-sm"><input type="checkbox" checked={share} disabled={locked} onChange={(e) => setShare(e.target.checked)} />
-        I confirm this copy can be shared with users of this installation.</label>
+        Share this copy with everyone on this installation.</label>
       {!hasPermission('settings:update') && <p role="alert">Saving profiles requires settings:update permission.</p>}
       {error && <p role="alert" className="text-red-300">{savedId !== null ? 'The copy was saved. ' : ''}{error}</p>}
-      <button type="button" onClick={() => void save()} disabled={saving || !parsed || !name.trim() || !share || !hasPermission('settings:update')}
+      <button type="button" onClick={() => void save()} disabled={saving || !parsed || !name.trim() || !hasPermission('settings:update')}
         className="rounded bg-bambu-green px-4 py-2 text-sm text-black disabled:opacity-40">{saving ? 'Saving…' : savedId !== null ? 'Use saved copy' : 'Save and use local copy'}</button>
     </div>}
   </dialog>, document.body);

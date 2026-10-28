@@ -196,6 +196,31 @@ it('blocks generating with a removed process or filament profile', async () => {
   expect(screen.getByRole('button', { name: 'Save profile copy' })).toBeDisabled();
 });
 
+// Failure mode: saving a calibrated copy required sharing it with every user.
+it('saves a finished calibration as a private copy unless it is shared', async () => {
+  const results = { temperature: 215, flow_rate: 0.98, pressure_advance: 0.02, retraction: 0.8, volumetric_flow: 15 };
+  let body: unknown;
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([baseSession])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json({ ...baseSession, results })),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'Generic ASA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+    http.post('*/api/v1/calibration/sessions/1/save', async ({ request }) => {
+      body = await request.json();
+      return HttpResponse.json({ ...baseSession, results, saved_profile_id: 9, version: 2 });
+    }),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  const save = await screen.findByRole('button', { name: 'Save profile copy' });
+  fireEvent.change(screen.getByLabelText('Profile name'), { target: { value: 'ASA calibrated' } });
+  await waitFor(() => expect(save).toBeEnabled());
+  expect(screen.getByRole('checkbox', { name: 'Share with everyone on this installation' })).not.toBeChecked();
+  fireEvent.click(save);
+  await waitFor(() => expect(body).toMatchObject({ share_local_copy: false }));
+});
+
 // Failure mode: a photo taken before the first test is generated vanishes from the step.
 it('keeps photos taken before generation visible on the step', async () => {
   server.use(

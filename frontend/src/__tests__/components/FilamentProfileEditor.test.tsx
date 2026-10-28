@@ -13,7 +13,8 @@ beforeEach(() => {
     content: { name: 'Cloud PLA', type: 'filament', compatible_printers: ['Printer'], nozzle_temperature: ['220','215'], filament_flow_ratio: ['0.98'] } });
 });
 afterEach(() => vi.restoreAllMocks());
-it('edits real revision values, preserves array slots and requires consent before saving a copy', async () => {
+// Failure mode: saving required sharing the copy with every user, so nobody could keep one private.
+it('edits real revision values, preserves array slots and saves a private copy unless shared', async () => {
   const copy = vi.spyOn(api, 'copySlicerFilament').mockResolvedValue({ profile_id: 30, revision_id: 40, local_preset_id: 6 });
   const saved = vi.fn().mockResolvedValue(undefined), close = vi.fn();
   render(<QueryClientProvider client={new QueryClient({defaultOptions: {queries: {retry: false}}})}>
@@ -21,12 +22,9 @@ it('edits real revision values, preserves array slots and requires consent befor
   </QueryClientProvider>);
   const input = await screen.findByLabelText('Nozzle temperature (°C)');
   fireEvent.change(input, { target: {value: '235'} });
-  const save = screen.getByRole('button', {name: 'Save and use local copy'});
-  expect(save).toBeDisabled();
-  fireEvent.click(screen.getByRole('checkbox'));
-  fireEvent.click(save);
+  fireEvent.click(screen.getByRole('button', {name: 'Save and use local copy'}));
   await waitFor(() => expect(saved).toHaveBeenCalledWith(30));
-  expect(copy).toHaveBeenCalledWith(8, { base_revision_id: 15, name: 'Cloud PLA - edited', share_local_copy: true,
+  expect(copy).toHaveBeenCalledWith(8, { base_revision_id: 15, name: 'Cloud PLA - edited', share_local_copy: false,
     overrides: {nozzle_temperature: ['235','215']} });
   expect(close).toHaveBeenCalled();
 });

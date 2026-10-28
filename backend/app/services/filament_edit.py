@@ -1,10 +1,11 @@
-"""Create an explicitly shared, active local copy without mutating a pinned revision."""
+"""Create an active local copy without mutating a pinned revision."""
 
 from __future__ import annotations
 
 import json
 import math
 import re
+from dataclasses import replace
 from typing import Any
 from uuid import uuid4
 
@@ -88,7 +89,11 @@ class FilamentCopyRequest(BaseModel):
 
 async def copy_filament_profile(
     db: AsyncSession, profile_id: int, body: FilamentCopyRequest, user_id: int | None
-) -> dict[str, int]:
+) -> dict[str, int | None]:
+    """Save the copy as an installation-wide local preset, or in the user's private account.
+
+    Without authentication there is no other user to hide a copy from, so it is always shared.
+    """
     visibility = or_(
         SlicerProfileAccount.sharing_state == "shared",
         SlicerProfileAccount.user_id == user_id if user_id is not None else SlicerProfileAccount.user_id.is_(None),
@@ -111,8 +116,7 @@ async def copy_filament_profile(
         raise HTTPException(409, "This filament profile is no longer available; reload the catalog")
     if revision.id != body.base_revision_id:
         raise HTTPException(409, "The filament profile changed while editing; reload before saving")
-    if not body.share_local_copy:
-        raise HTTPException(400, "Confirm that the local copy will be shared on this installation")
+    shared = body.share_local_copy or user_id is None
     content = {**revision.content, **body.overrides, "name": body.name}
     if account.source == "standard":
         # Standard revisions already contain the resolved ancestor values.
@@ -120,7 +124,8 @@ async def copy_filament_profile(
     # A cloud revision can omit CLI identity fields. A local copy must be
     # independently sliceable and must not reuse the source's setting identity.
     content.pop("setting_id", None)
-    content = materialize_orca_profile(content, slot="filament", stable_id=f"LC{uuid4().hex}", stable_name=body.name)
+    stable_id = f"LC{uuid4().hex}"
+    content = materialize_orca_profile(content, slot="filament", stable_id=stable_id, stable_name=body.name)
     # Use the existing local preset adapter (including credential validation).
     preset = LocalPreset(
         name=body.name,
@@ -130,27 +135,45 @@ async def copy_filament_profile(
         **extract_core_fields(content),
     )
     try:
-        local_preset_adapter(preset)
+        catalog_profile = local_preset_adapter(preset)
     except ValueError as exc:
         raise HTTPException(422, "Invalid filament settings; credentials are not allowed") from exc
+    # Local presets are listed for every user, so a private copy lives only in its owner's account.
+    remote_account_id = "installation" if shared else f"user:{user_id}"
     local_account = await db.scalar(
         select(SlicerProfileAccount).where(
-            SlicerProfileAccount.source == "local", SlicerProfileAccount.remote_account_id == "installation"
+            SlicerProfileAccount.source == "local", SlicerProfileAccount.remote_account_id == remote_account_id
         )
     )
     if local_account is not None and local_account.sync_frozen:
         raise HTTPException(409, "The local profile catalog is frozen")
-    db.add(preset)
-    await db.flush()
+    if shared:
+        db.add(preset)
+        await db.flush()
+        catalog_profile = local_preset_adapter(preset)
+    else:
+        if local_account is None:
+            # ingest_catalog would create a local account as shared.
+            db.add(
+                SlicerProfileAccount(
+                    source="local",
+                    remote_account_id=remote_account_id,
+                    display_name="Private filament copies",
+                    user_id=user_id,
+                    sharing_state="private",
+                )
+            )
+            await db.flush()
+        catalog_profile = replace(catalog_profile, remote_profile_id=stable_id)
     # Ingest ONLY this new identity. Syncing all local presets then approving its
     # batch could accidentally approve/reject unrelated pending administrator edits.
     result = await ingest_catalog(
         db,
         CatalogInput(
             source="local",
-            remote_account_id="installation",
+            remote_account_id=remote_account_id,
             actor_user_id=user_id,
-            profiles=[local_preset_adapter(preset)],
+            profiles=[catalog_profile],
         ),
     )
     await approve_review_batch(db, result.review_batch_id, user_id=user_id)
@@ -167,4 +190,8 @@ async def copy_filament_profile(
             )
         )
     await db.flush()
-    return {"profile_id": activation.profile_id, "revision_id": activation.revision_id, "local_preset_id": preset.id}
+    return {
+        "profile_id": activation.profile_id,
+        "revision_id": activation.revision_id,
+        "local_preset_id": preset.id if shared else None,
+    }

@@ -11,8 +11,10 @@ from sqlalchemy.orm import sessionmaker
 import backend.app.api.routes.slicer_catalog as catalog_routes
 import backend.app.models  # noqa: F401
 from backend.app.api.routes.slicer_catalog import (
+    ActivationRequest,
     ReviewRequest,
     SharingRequest,
+    activate_catalog_profile,
     freeze_catalog_account,
     list_catalog_accounts,
     list_catalog_profile_revisions,
@@ -20,6 +22,7 @@ from backend.app.api.routes.slicer_catalog import (
     list_review_batches,
     resume_catalog_account,
     review_batch,
+    rollback_catalog_profile,
     set_account_sharing,
     sync_cloud_catalog,
     sync_standard_catalog,
@@ -487,6 +490,46 @@ async def test_account_listing_and_reviews_hide_other_users_private_accounts(db)
         with pytest.raises(HTTPException) as hidden:
             await list_review_batches(result.account_id, db, caller)
         assert hidden.value.status_code == 404
+
+
+# Failure mode: any user with settings:update could approve, activate, roll back, freeze or
+# resume another user's private account, which also decides what that owner slices with.
+async def test_other_users_cannot_manage_a_private_account(db):
+    owner = User(username="private-owner", role="admin")
+    outsider = User(username="private-outsider", role="admin")
+    db.add_all([owner, outsider])
+    await db.commit()
+    result = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="orca_cloud",
+            remote_account_id="orca-private-owner",
+            user_id=owner.id,
+            profiles=[CatalogProfile("p", "process", "Private", {"type": "print"})],
+        ),
+    )
+    await db.commit()
+    revision = await db.get(SlicerProfileRevision, result.revision_ids[0])
+    activation = ActivationRequest(revision_id=revision.id)
+
+    attempts = (
+        review_batch(result.review_batch_id, ReviewRequest(approved=True), db, outsider),
+        activate_catalog_profile(revision.profile_id, activation, db, outsider),
+        rollback_catalog_profile(revision.profile_id, activation, db, outsider),
+        freeze_catalog_account(result.account_id, db, outsider),
+        resume_catalog_account(result.account_id, db, outsider),
+    )
+    for attempt in attempts:
+        with pytest.raises(HTTPException) as hidden:
+            await attempt
+        assert hidden.value.status_code == 404
+    assert (await db.get(SlicerProfileRevision, revision.id)).review_state == "pending"
+    assert not (await db.get(SlicerProfileAccount, result.account_id)).sync_frozen
+
+    assert (await review_batch(result.review_batch_id, ReviewRequest(approved=True), db, owner))["status"] == (
+        "approved"
+    )
+    assert (await activate_catalog_profile(revision.profile_id, activation, db, owner))["revision_id"] == revision.id
 
 
 async def test_catalog_profile_listing_exposes_filament_material_from_revision(db):

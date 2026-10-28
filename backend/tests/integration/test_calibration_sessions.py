@@ -593,6 +593,63 @@ async def test_deleting_a_printer_retires_its_generated_tests(async_client, db_s
     assert artifact.deleted_at is not None
 
 
+# Failure mode: deleting a user cascades their private sessions away but leaves the photos on
+# disk and the generated tests in the library, with no session left to clean them up from.
+async def test_deleting_a_user_removes_their_calibration_photos_and_tests(
+    async_client, db_session, tmp_path, monkeypatch
+):
+    import io
+
+    from PIL import Image
+
+    from backend.app.core.config import settings
+    from backend.app.models.calibration import CalibrationEvidence
+
+    monkeypatch.setattr(settings, "base_dir", tmp_path)
+    session = await create_session(async_client, db_session)
+    photo = io.BytesIO()
+    Image.new("RGB", (8, 8), "orange").save(photo, format="PNG")
+    uploaded = await async_client.post(
+        f"/api/v1/calibration/sessions/{session['id']}/evidence/temperature",
+        files={"file": ("photo.png", photo.getvalue(), "image/png")},
+    )
+    assert uploaded.status_code == 201, uploaded.text
+    artifact = await add_generated_test(db_session, session["id"])
+    artifact_type, artifact_id = type(artifact), artifact.id
+    owner = User(username="calibrating-user")
+    db_session.add(owner)
+    await db_session.flush()
+    (await db_session.get(CalibrationSession, session["id"])).owner_id = owner.id
+    await db_session.commit()
+
+    deleted = await async_client.delete(f"/api/v1/users/{owner.id}")
+
+    assert deleted.status_code == 204, deleted.text
+    assert not (tmp_path / "calibration" / str(session["id"])).exists()
+    db_session.expire_all()
+    assert await db_session.get(CalibrationSession, session["id"]) is None
+    assert await db_session.scalar(select(CalibrationEvidence.id)) is None
+    assert (await db_session.get(artifact_type, artifact_id)).deleted_at is not None
+
+
+async def test_a_user_with_a_test_still_generating_is_kept(async_client, db_session):
+    session = await create_session(async_client, db_session)
+    await add_generated_test(db_session, session["id"], status="running")
+    owner = User(username="generating-user")
+    db_session.add(owner)
+    await db_session.flush()
+    owner_id = owner.id
+    (await db_session.get(CalibrationSession, session["id"])).owner_id = owner_id
+    await db_session.commit()
+
+    deleted = await async_client.delete(f"/api/v1/users/{owner_id}")
+
+    assert deleted.status_code == 409, deleted.text
+    db_session.expire_all()
+    assert await db_session.get(User, owner_id) is not None
+    assert await db_session.get(CalibrationSession, session["id"]) is not None
+
+
 async def test_a_printer_with_a_test_still_generating_is_kept(async_client, db_session):
     session = await create_session(async_client, db_session)
     await add_generated_test(db_session, session["id"], status="running")
