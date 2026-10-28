@@ -4,7 +4,7 @@ from typing import Annotated
 import jwt as _jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import delete, func, select, update as sql_update
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,7 +32,17 @@ from backend.app.models.print_batch import PrintBatch
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import PrinterOwner
 from backend.app.models.settings import Settings
-from backend.app.models.slicer_profile_catalog import SlicerProfile, SlicerProfileAccount, SlicerProfileActivation
+from backend.app.models.slicer_profile_catalog import (
+    SlicerCompatibilityMapping,
+    SlicerFilamentRule,
+    SlicerProfile,
+    SlicerProfileAccount,
+    SlicerProfileActivation,
+    SlicerProfileActivationEvent,
+    SlicerProfileReviewBatch,
+    SlicerProfileRevision,
+    SlicerProfileSourceRevision,
+)
 from backend.app.models.user import User
 from backend.app.models.user_otp_code import UserOTPCode
 from backend.app.models.user_totp import UserTOTP
@@ -419,23 +429,35 @@ async def delete_user(
         await retire_runs(db, calibration, STEPS)
         await db.execute(delete(CalibrationEvidence).where(CalibrationEvidence.session_id == calibration.id))
         await db.delete(calibration)
-    # Their private filament copies lose their owner. Retire them, so they cannot become
-    # visible later, for example when authentication is turned off.
-    private_copies = (
-        select(SlicerProfile.id)
-        .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-        .where(
-            SlicerProfileAccount.source == "local",
-            SlicerProfileAccount.user_id == user_id,
-            SlicerProfileAccount.sharing_state == "private",
+    # Their private filament copies go too. An ownerless private account is listed for everyone
+    # once authentication is turned off. Copies are filaments, so no binding or job provenance
+    # refers to them, and the owner's sessions were deleted above. Children are deleted
+    # explicitly, children first, so this does not depend on the database enforcing cascades.
+    private_account_ids = (
+        await db.scalars(
+            select(SlicerProfileAccount.id).where(
+                SlicerProfileAccount.source == "local",
+                SlicerProfileAccount.user_id == user_id,
+                SlicerProfileAccount.sharing_state == "private",
+            )
         )
-    )
-    await db.execute(delete(SlicerProfileActivation).where(SlicerProfileActivation.profile_id.in_(private_copies)))
-    await db.execute(
-        sql_update(SlicerProfile)
-        .where(SlicerProfile.id.in_(private_copies), SlicerProfile.tombstoned_at.is_(None))
-        .values(tombstoned_at=datetime.now(timezone.utc).replace(tzinfo=None))
-    )
+    ).all()
+    if private_account_ids:
+        copy_ids = select(SlicerProfile.id).where(SlicerProfile.account_id.in_(private_account_ids))
+        for model, column in (
+            (SlicerProfileActivationEvent, SlicerProfileActivationEvent.profile_id),
+            (SlicerProfileActivation, SlicerProfileActivation.profile_id),
+            (SlicerProfileSourceRevision, SlicerProfileSourceRevision.profile_id),
+            (SlicerCompatibilityMapping, SlicerCompatibilityMapping.profile_id),
+            (SlicerFilamentRule, SlicerFilamentRule.filament_profile_id),
+            (SlicerProfileRevision, SlicerProfileRevision.profile_id),
+        ):
+            await db.execute(delete(model).where(column.in_(copy_ids)))
+        await db.execute(delete(SlicerProfile).where(SlicerProfile.account_id.in_(private_account_ids)))
+        await db.execute(
+            delete(SlicerProfileReviewBatch).where(SlicerProfileReviewBatch.account_id.in_(private_account_ids))
+        )
+        await db.execute(delete(SlicerProfileAccount).where(SlicerProfileAccount.id.in_(private_account_ids)))
 
     if delete_items:
         # Delete all items created by this user

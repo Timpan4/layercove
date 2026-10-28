@@ -634,8 +634,11 @@ async def test_deleting_a_user_removes_their_calibration_photos_and_tests(
 
 # Failure mode: a deleted user's private copies stay active with no owner, and appear for
 # everyone once authentication is turned off.
-async def test_deleting_a_user_retires_their_private_copies(async_client, db_session):
-    from backend.app.models.slicer_profile_catalog import SlicerProfile
+# Failure mode: retired copies of a deleted user stayed listed with include_inactive once
+# authentication was turned off, because their account had no owner left.
+async def test_deleting_a_user_deletes_their_private_copies(async_client, db_session):
+    from backend.app.api.routes.slicer_catalog import list_catalog_profiles
+    from backend.app.models.slicer_profile_catalog import SlicerProfile, SlicerProfileRevision
     from backend.app.services.filament_edit import FilamentCopyRequest, copy_filament_profile
 
     activation = await publish_filament(db_session, PLA_CONTENT)
@@ -656,12 +659,10 @@ async def test_deleting_a_user_retires_their_private_copies(async_client, db_ses
 
     assert deleted.status_code == 204, deleted.text
     db_session.expire_all()
-    assert (await db_session.get(SlicerProfile, copy["profile_id"])).tombstoned_at is not None
-    assert (
-        await db_session.scalar(
-            select(SlicerProfileActivation).where(SlicerProfileActivation.profile_id == copy["profile_id"])
-        )
-    ) is None
+    assert await db_session.get(SlicerProfile, copy["profile_id"]) is None
+    assert await db_session.get(SlicerProfileRevision, copy["revision_id"]) is None
+    listed = await list_catalog_profiles(db_session, None, include_inactive=True)
+    assert copy["profile_id"] not in {profile["profile_id"] for profile in listed}
     # The original stays active.
     assert (
         await db_session.scalar(
