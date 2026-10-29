@@ -306,11 +306,12 @@ async def _require_visible_account(db: AsyncSession, account_id: int, current_us
         raise HTTPException(status_code=404, detail="Catalog account not found")
 
 
-async def _require_visible_profile(db: AsyncSession, profile_id: int, current_user: User | None) -> None:
+async def require_visible_profile(db: AsyncSession, profile_id: int, current_user: User | None) -> SlicerProfile:
     profile = await db.get(SlicerProfile, profile_id)
     if profile is None:
         raise HTTPException(status_code=404, detail="Profile not found")
     await _require_visible_account(db, profile.account_id, current_user)
+    return profile
 
 
 @router.get("/accounts")
@@ -592,7 +593,7 @@ async def activate_catalog_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ) -> dict[str, Any]:
-    await _require_visible_profile(db, profile_id, current_user)
+    await require_visible_profile(db, profile_id, current_user)
     revision = await db.get(SlicerProfileRevision, request.revision_id)
     if revision is None or revision.profile_id != profile_id:
         raise HTTPException(status_code=422, detail="Revision does not belong to profile")
@@ -611,7 +612,7 @@ async def rollback_catalog_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ) -> dict[str, Any]:
-    await _require_visible_profile(db, profile_id, current_user)
+    await require_visible_profile(db, profile_id, current_user)
     try:
         activation = await rollback_revision(
             db,
