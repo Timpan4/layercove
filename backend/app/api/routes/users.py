@@ -32,9 +32,11 @@ from backend.app.models.print_batch import PrintBatch
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import PrinterOwner
 from backend.app.models.settings import Settings
+from backend.app.models.slice_job import SliceJobRecord
 from backend.app.models.slicer_profile_catalog import (
     SlicerCompatibilityMapping,
     SlicerFilamentRule,
+    SlicerJobProvenance,
     SlicerProfile,
     SlicerProfileAccount,
     SlicerProfileActivation,
@@ -418,6 +420,34 @@ async def delete_user(
             detail="Cannot delete your own account",
         )
 
+    # Their private filament copies go with them, because an ownerless private account is listed
+    # for everyone once authentication is turned off. A slice job reads its pinned revisions when
+    # it runs, so a job still using a copy stops the deletion. Retained jobs could not reslice
+    # with another user's private copy anyway.
+    private_account_ids = (
+        await db.scalars(
+            select(SlicerProfileAccount.id).where(
+                SlicerProfileAccount.source == "local",
+                SlicerProfileAccount.user_id == user_id,
+                SlicerProfileAccount.sharing_state == "private",
+            )
+        )
+    ).all()
+    copy_ids = select(SlicerProfile.id).where(SlicerProfile.account_id.in_(private_account_ids))
+    if private_account_ids:
+        copy_revision_ids = set(
+            (
+                await db.scalars(select(SlicerProfileRevision.id).where(SlicerProfileRevision.profile_id.in_(copy_ids)))
+            ).all()
+        )
+        pinned_by_active_jobs = await db.scalars(
+            select(SlicerJobProvenance.filament_revision_ids)
+            .join(SliceJobRecord, SliceJobRecord.id == SlicerJobProvenance.slice_job_id)
+            .where(SliceJobRecord.status.in_(("pending", "running", "cancel-requested")))
+        )
+        if any(copy_revision_ids.intersection(revision_ids or []) for revision_ids in pinned_by_active_jobs):
+            raise HTTPException(409, "Wait for the slice jobs using this user's private filament copies to finish")
+
     # Calibration sessions are private, so they go with the user. Their rows cascade, but the
     # photos on disk and the generated tests in the library do not. A test still generating
     # stops the deletion.
@@ -429,21 +459,10 @@ async def delete_user(
         await retire_runs(db, calibration, STEPS)
         await db.execute(delete(CalibrationEvidence).where(CalibrationEvidence.session_id == calibration.id))
         await db.delete(calibration)
-    # Their private filament copies go too. An ownerless private account is listed for everyone
-    # once authentication is turned off. Copies are filaments, so no binding or job provenance
-    # refers to them, and the owner's sessions were deleted above. Children are deleted
-    # explicitly, children first, so this does not depend on the database enforcing cascades.
-    private_account_ids = (
-        await db.scalars(
-            select(SlicerProfileAccount.id).where(
-                SlicerProfileAccount.source == "local",
-                SlicerProfileAccount.user_id == user_id,
-                SlicerProfileAccount.sharing_state == "private",
-            )
-        )
-    ).all()
+    # Copies are filaments, so no binding refers to them, and the owner's sessions were deleted
+    # above. Children are deleted explicitly, children first, so this does not depend on the
+    # database enforcing cascades.
     if private_account_ids:
-        copy_ids = select(SlicerProfile.id).where(SlicerProfile.account_id.in_(private_account_ids))
         for model, column in (
             (SlicerProfileActivationEvent, SlicerProfileActivationEvent.profile_id),
             (SlicerProfileActivation, SlicerProfileActivation.profile_id),

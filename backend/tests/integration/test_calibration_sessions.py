@@ -632,17 +632,9 @@ async def test_deleting_a_user_removes_their_calibration_photos_and_tests(
     assert (await db_session.get(artifact_type, artifact_id)).deleted_at is not None
 
 
-# Failure mode: a deleted user's private copies stay active with no owner, and appear for
-# everyone once authentication is turned off.
-# Failure mode: retired copies of a deleted user stayed listed with include_inactive once
-# authentication was turned off, because their account had no owner left.
-async def test_deleting_a_user_deletes_their_private_copies(async_client, db_session):
-    from backend.app.api.routes.slicer_catalog import list_catalog_profiles
-    from backend.app.models.slicer_profile_catalog import SlicerProfile, SlicerProfileRevision
+async def private_copy(db_session, activation):
     from backend.app.services.filament_edit import FilamentCopyRequest, copy_filament_profile
 
-    activation = await publish_filament(db_session, PLA_CONTENT)
-    original_id = activation.profile_id
     owner = User(username="private-copier")
     db_session.add(owner)
     await db_session.commit()
@@ -654,6 +646,53 @@ async def test_deleting_a_user_deletes_their_private_copies(async_client, db_ses
         owner_id,
     )
     await db_session.commit()
+    return owner_id, copy
+
+
+# Failure mode: deleting the user removed the revision a running slice job had pinned, so the
+# job failed when it loaded its profiles.
+async def test_a_user_whose_private_copy_is_still_slicing_is_kept(async_client, db_session):
+    from backend.app.models.slice_job import SliceJobRecord
+    from backend.app.models.slicer_profile_catalog import SlicerJobProvenance
+
+    activation = await publish_filament(db_session, PLA_CONTENT)
+    owner_id, copy = await private_copy(db_session, activation)
+    job = SliceJobRecord(
+        owner_id=owner_id,
+        source_kind="library",
+        source_id=1,
+        source_name="model.3mf",
+        status="running",
+        created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+    )
+    db_session.add(job)
+    await db_session.flush()
+    db_session.add(
+        SlicerJobProvenance(
+            slice_job_id=job.id, provenance_state="resolved", filament_revision_ids=[copy["revision_id"]]
+        )
+    )
+    await db_session.commit()
+
+    deleted = await async_client.delete(f"/api/v1/users/{owner_id}")
+
+    assert deleted.status_code == 409, deleted.text
+    db_session.expire_all()
+    assert await db_session.get(User, owner_id) is not None
+    assert await db_session.get(SlicerProfileRevision, copy["revision_id"]) is not None
+
+
+# Failure mode: a deleted user's private copies stay active with no owner, and appear for
+# everyone once authentication is turned off.
+# Failure mode: retired copies of a deleted user stayed listed with include_inactive once
+# authentication was turned off, because their account had no owner left.
+async def test_deleting_a_user_deletes_their_private_copies(async_client, db_session):
+    from backend.app.api.routes.slicer_catalog import list_catalog_profiles
+    from backend.app.models.slicer_profile_catalog import SlicerProfile
+
+    activation = await publish_filament(db_session, PLA_CONTENT)
+    original_id = activation.profile_id
+    owner_id, copy = await private_copy(db_session, activation)
 
     deleted = await async_client.delete(f"/api/v1/users/{owner_id}")
 
