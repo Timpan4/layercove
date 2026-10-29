@@ -293,7 +293,9 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     </div>;
   };
   const error = mutate.error ?? remove.error ?? upload.error ?? current.error ?? sessions.error ?? catalog.error ?? revision.error
-    ?? bindings.error ?? job.error ?? prints.error ?? evidence.error ?? photo.error ?? printerStatus.error ?? classification.error ?? generics.error;
+    ?? bindings.error ?? job.error ?? prints.error ?? evidence.error ?? photo.error ?? printerStatus.error ?? classification.error
+    // The generic list only serves starting a new session.
+    ?? (!sessionId ? generics.error : null);
   return <div className="cal-prototype cal-variant-b cal-live">
     <div className="cal-heading"><h1>Filament calibration</h1></div>
     {error && <p className="cal-error" role="alert">{error.message}</p>}
