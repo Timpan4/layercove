@@ -469,6 +469,22 @@ async def delete_user(
     # above. Children are deleted explicitly, children first, so this does not depend on the
     # database enforcing cascades.
     if private_account_ids:
+        # Only the owner's jobs can pin their copies. Retained jobs keep the pins as JSON without
+        # a foreign key, and SQLite gives a deleted id to the next row, so a kept pin could later
+        # resolve to another user's revision. Forget the pins instead.
+        owned_provenance = (
+            await db.scalars(
+                select(SlicerJobProvenance)
+                .join(SliceJobRecord, SliceJobRecord.id == SlicerJobProvenance.slice_job_id)
+                .where(SliceJobRecord.owner_id == user_id, SlicerJobProvenance.provenance_state == "resolved")
+            )
+        ).all()
+        for provenance in owned_provenance:
+            if copy_revision_ids.intersection(provenance.filament_revision_ids or []):
+                provenance.provenance_state = "provenance_unknown"
+                provenance.printer_revision_id = None
+                provenance.process_revision_id = None
+                provenance.filament_revision_ids = None
         for model, column in (
             (SlicerProfileActivationEvent, SlicerProfileActivationEvent.profile_id),
             (SlicerProfileActivation, SlicerProfileActivation.profile_id),

@@ -682,6 +682,45 @@ async def test_a_user_whose_private_copy_is_still_slicing_is_kept(async_client, 
     assert await db_session.get(SlicerProfileRevision, copy["revision_id"]) is not None
 
 
+# Failure mode: a finished job kept the deleted copy's revision id, which SQLite can give to the
+# next revision, so its history could resolve to another user's filament.
+async def test_deleting_a_user_forgets_finished_jobs_pinning_their_private_copy(async_client, db_session):
+    from backend.app.models.slice_job import SliceJobRecord
+    from backend.app.models.slicer_profile_catalog import SlicerJobProvenance
+
+    activation = await publish_filament(db_session, PLA_CONTENT)
+    shared_revision_id = activation.revision_id
+    owner_id, copy = await private_copy(db_session, activation)
+    provenance_ids = {}
+    for name, revision_id in (("copy", copy["revision_id"]), ("shared", shared_revision_id)):
+        job = SliceJobRecord(
+            owner_id=owner_id,
+            source_kind="library_file",
+            source_id=1,
+            source_name="model.3mf",
+            status="completed",
+            created_at=datetime.now(timezone.utc).replace(tzinfo=None),
+        )
+        db_session.add(job)
+        await db_session.flush()
+        provenance = SlicerJobProvenance(
+            slice_job_id=job.id, provenance_state="resolved", filament_revision_ids=[revision_id]
+        )
+        db_session.add(provenance)
+        await db_session.flush()
+        provenance_ids[name] = provenance.id
+    await db_session.commit()
+
+    deleted = await async_client.delete(f"/api/v1/users/{owner_id}")
+
+    assert deleted.status_code == 204, deleted.text
+    db_session.expire_all()
+    forgotten = await db_session.get(SlicerJobProvenance, provenance_ids["copy"])
+    assert (forgotten.provenance_state, forgotten.filament_revision_ids) == ("provenance_unknown", None)
+    kept = await db_session.get(SlicerJobProvenance, provenance_ids["shared"])
+    assert (kept.provenance_state, kept.filament_revision_ids) == ("resolved", [shared_revision_id])
+
+
 # Failure mode: a deleted user's private copies stay active with no owner, and appear for
 # everyone once authentication is turned off.
 # Failure mode: retired copies of a deleted user stayed listed with include_inactive once
