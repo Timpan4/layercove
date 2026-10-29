@@ -108,11 +108,15 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const compatibleIds = classification.data ? new Set(classification.data.selected_printer.map(profile => profile.profile_id)) : null;
   const selectedProfiles = Object.values(classification.data ?? {}).flat().filter(profile =>
     profile.profile_id === Number(processId) || profile.profile_id === session?.filament_profile_id);
-  const warnings = [...(selectedBinding?.readiness.reason_codes ?? []).map(reason => reason.replaceAll('_', ' ')),
+  // Calibration slices with the process and filament chosen here, as the server does, so a binding
+  // without usable defaults is not blocked. The selected profiles' readiness still covers the nozzle.
+  const bindingReasons = (selectedBinding?.readiness.reason_codes ?? []).filter(reason => reason !== 'default_unavailable');
+  const bindingState = bindingReasons.length ? selectedBinding?.readiness.state : 'ready';
+  const warnings = [...bindingReasons.map(reason => reason.replaceAll('_', ' ')),
     ...selectedProfiles.flatMap(profile => profile.classification.reason_details)];
-  const compatibilityBlocked = selectedBinding?.readiness.state === 'blocked'
+  const compatibilityBlocked = bindingState === 'blocked'
     || selectedProfiles.some(profile => !profile.classification.selectable);
-  const needsAcknowledgement = selectedBinding?.readiness.state === 'acknowledgement_required'
+  const needsAcknowledgement = bindingState === 'acknowledgement_required'
     || selectedProfiles.some(profile => profile.classification.acknowledgement_required);
   const inventorySource = useInventorySource();
   const spools = useQuery({ queryKey: inventoryQueryKeys.spools(inventorySource.source),
