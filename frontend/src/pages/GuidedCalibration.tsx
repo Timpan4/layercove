@@ -9,6 +9,7 @@ import { useAuth } from '../contexts/AuthContext';
 import { TestIllustration } from './CalibrationIllustration';
 import { calibrationTests } from './calibrationTests';
 import { getAmsLabel, getGlobalTrayId } from '../utils/amsHelpers';
+import { defaultTestValues } from '../utils/calibrationDefaults';
 import { spoolProfileMatches } from '../utils/calibrationFilaments';
 import './calibration-prototype.css';
 
@@ -20,6 +21,19 @@ const fields = [
 type Values = Record<(typeof fields)[number]['key'], string>;
 const empty: Values = { lowest: '', highest: '', increment: '', baseline: '' };
 const generatingStates = ['pending', 'running', 'cancel-requested'];
+
+// The name for the saved profile is chosen before the session starts, but sessions have no field
+// for it, so this browser keeps it until the session is saved.
+const nameKey = (sessionId: number) => `layercove.calibration.profileName.${sessionId}`;
+function rememberName(sessionId: number, name: string) {
+  try { localStorage.setItem(nameKey(sessionId), name); } catch { /* Storage can be unavailable; the name can be typed again. */ }
+}
+function recalledName(sessionId: number) {
+  try { return localStorage.getItem(nameKey(sessionId)); } catch { return null; }
+}
+function forgetName(sessionId: number) {
+  try { localStorage.removeItem(nameKey(sessionId)); } catch { /* Storage can be unavailable. */ }
+}
 
 const spoolLabel = (spool: InventorySpool) => [spool.brand, spool.material, spool.subtype, spool.color_name].filter(Boolean).join(' ');
 
@@ -52,6 +66,11 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     queryFn: () => api.listSlicerCatalogProfiles({ includeInactive: true }), enabled: !sessionId });
   const waitingFilaments = fullCatalog.data?.filter(profile => profile.profile_type === 'filament' && !profile.tombstoned
     && profile.source !== 'standard' && !profile.active && profile.review_state !== 'rejected') ?? [];
+  // A new filament profile starts from Orca's generic profile for its material, such as "Generic PLA @System".
+  const generics = useQuery({ queryKey: ['calibrationGenericFilaments'], queryFn: api.listCalibrationGenericFilaments,
+    enabled: !sessionId, staleTime: Infinity, retry: false });
+  const genericFor = (material: string | null | undefined) => material
+    ? generics.data?.find(name => name.toLowerCase() === `generic ${material} @system`.toLowerCase()) : undefined;
   const [printerId, setPrinterId] = useState('');
   const [filamentChoice, setFilamentChoice] = useState('');
   const [nozzle, setNozzle] = useState('');
@@ -60,6 +79,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const [result, setResult] = useState('');
   const [name, setName] = useState('');
   const [shareCopy, setShareCopy] = useState(false);
+  const [updateProfile, setUpdateProfile] = useState(false);
   // Without authentication there is one user, and the server always shares copies.
   const { authEnabled } = useAuth();
   const [confirmed, setConfirmed] = useState(false);
@@ -102,18 +122,27 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     const matches = spoolProfileMatches(spool, filaments, compatibleIds ?? new Set());
     if (matches.length) return matches.map(profile => ({ value: `spool:${spool.id}:${profile.profile_id}`,
       label: `${spoolLabel(spool)} · ${profile.display_name}`, name: spoolLabel(spool), disabled: false, waiting: false }));
+    // A spool's own preset waiting for approval is named, so the user approves it instead of starting a duplicate.
     const waiting = spoolProfileMatches(spool, waitingFilaments, new Set())[0];
+    const generic = waiting ? undefined : genericFor(spool.material);
+    if (generic) return [{ value: `spool:${spool.id}:generic:${generic}`, label: `${spoolLabel(spool)} · new profile from ${generic}`,
+      name: spoolLabel(spool), disabled: false, waiting: false }];
     return [{ value: `spool:${spool.id}:`, name: spoolLabel(spool), disabled: true, waiting: !!waiting,
       label: `${spoolLabel(spool)} · ${waiting ? `${waiting.display_name} · waiting for approval` : 'no matching slicer profile'}` }];
   }).map(option => [option.label, option] as const)).values()];
   // A spool's matching profiles depend on the printer profile, so a choice that is no longer offered stops counting.
   const choiceOffered = !filamentChoice.startsWith('spool:') || spoolOptions.some(option => option.value === filamentChoice && !option.disabled);
   const filament = choiceOffered ? filaments.find(profile => profile.profile_id === Number(filamentChoice.split(':').at(-1))) : undefined;
+  const genericChoice = choiceOffered && filamentChoice.includes('generic:')
+    ? filamentChoice.slice(filamentChoice.indexOf('generic:') + 'generic:'.length) : null;
   const sessionFilament = filaments.find(profile => profile.profile_id === session?.filament_profile_id);
   // An edit or sync activates a new revision; the session stays pinned to the one it started with.
   const filamentOutdated = !!session && !session.saved_profile_id && !!sessionFilament && sessionFilament.revision_id !== session.filament_revision_id;
   // The profile was removed or deactivated after the session started.
   const filamentUnavailable = !!session && !session.saved_profile_id && catalog.isSuccess && !sessionFilament;
+  // Local presets and private copies can take the results. Cloud and bundled profiles come from their source.
+  const canUpdate = sessionFilament?.source === 'local';
+  const savesInPlace = canUpdate && updateProfile;
   const runId = session?.runs[id];
   const job = useQuery({ queryKey: ['calibrationJob', runId], queryFn: () => api.getSliceJob(runId!), enabled: !!runId,
     refetchInterval: query => query.state.data && ['completed', 'failed', 'cancelled'].includes(query.state.data.status) ? false : 1000 });
@@ -148,6 +177,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     selectSession(String(saved.id));
   } });
   const remove = useMutation({ mutationFn: (target: number) => api.deleteCalibrationSession(target), onSuccess: (_, target) => {
+    forgetName(target);
     setConfirmDelete(false);
     client.removeQueries({ queryKey: ['calibrationSession', target] });
     void client.invalidateQueries({ queryKey: ['calibrationSessions'] });
@@ -211,6 +241,8 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   useEffect(() => {
     if (session && openedSession.current !== session.id) {
       openedSession.current = session.id;
+      setName(recalledName(session.id) ?? '');
+      setUpdateProfile(false);
       const next = ids.findIndex(key => session.results[key] === undefined);
       setIndex(next < 0 ? ids.length - 1 : next);
       setConfirmed(false);
@@ -232,11 +264,9 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   }, [onlyBinding, selectedBinding, autoSelectKey]);
   useEffect(() => {
     const saved = session?.parameters[id];
-    const setting = revision.data?.content[step.field];
-    const baseline = Array.isArray(setting) ? setting[0] : setting;
     setValues(saved ? { lowest: String(saved.lowest), highest: String(saved.highest), increment: String(saved.increment), baseline: String(saved.baseline) }
-      : { ...empty, baseline: typeof baseline === 'string' || typeof baseline === 'number' ? String(baseline) : '' });
-  }, [sessionId, index, revision.data, session?.parameters, step.field, id]);
+      : defaultTestValues(id, step.field, revision.data?.content, session?.setting_limits.temperature?.max));
+  }, [sessionId, index, revision.data, session?.parameters, session?.setting_limits, step.field, id]);
   useEffect(() => { setResult(savedResult === undefined ? '' : String(savedResult)); }, [sessionId, id, savedResult]);
   useEffect(() => {
     if (!photo.data) { setPhotoUrl(null); return; }
@@ -263,7 +293,9 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     </div>;
   };
   const error = mutate.error ?? remove.error ?? upload.error ?? current.error ?? sessions.error ?? catalog.error ?? revision.error
-    ?? bindings.error ?? job.error ?? prints.error ?? evidence.error ?? photo.error ?? printerStatus.error ?? classification.error;
+    ?? bindings.error ?? job.error ?? prints.error ?? evidence.error ?? photo.error ?? printerStatus.error ?? classification.error
+    // The generic list only serves starting a new session.
+    ?? (!sessionId ? generics.error : null);
   return <div className="cal-prototype cal-variant-b cal-live">
     <div className="cal-heading"><h1>Filament calibration</h1></div>
     {error && <p className="cal-error" role="alert">{error.message}</p>}
@@ -347,13 +379,17 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
             setFilamentChoice(choice);
             const spool = spoolOptions.find(option => option.value === choice);
             const profile = filaments.find(item => item.profile_id === Number(choice.split(':').at(-1)));
-            setName((spool?.name ?? profile?.display_name ?? 'Filament') + ' calibrated');
+            // A new profile gets its own name, not the generic profile's.
+            setName(choice.includes('generic:') ? spool?.name ?? '' : (spool?.name ?? profile?.display_name ?? 'Filament') + ' calibrated');
           }}><option value="">Choose filament</option>
             {session && !sessionFilament && <option value={`profile:${session.filament_profile_id}`}>Filament #{session.filament_profile_id}</option>}
             {!session && spoolOptions.length > 0 && <optgroup label="Your filament inventory">{spoolOptions.map(option => <option key={option.value} value={option.value} disabled={option.disabled}>{option.label}</option>)}</optgroup>}
+            {!session && !!generics.data?.length && <optgroup label="New filament profile">{generics.data.map(generic => <option key={generic} value={`generic:${generic}`}>New profile from {generic}</option>)}</optgroup>}
             {byCompatibility(filaments, compatibleIds, 'filament').map(group => <optgroup key={group.label} label={group.label}>{group.profiles.map(profile => <option key={profile.profile_id} value={`profile:${profile.profile_id}`}>{profile.display_name}</option>)}</optgroup>)}
             {!session && waitingFilaments.length > 0 && <optgroup label="Waiting for approval">{waitingFilaments.map(profile => <option key={profile.profile_id} value={`profile:${profile.profile_id}`} disabled>{profile.display_name}</option>)}</optgroup>}
           </select></label>
+          {!session && genericChoice && <><label>New profile name<input type="text" value={name} disabled={mutate.isPending} onChange={event => setName(event.target.value)} /></label>
+            <p className="cal-caption">Calibration starts from {genericChoice} and saves your results as this new profile.</p></>}
           {!session && spoolOptions.some(option => option.disabled && !option.waiting) && <p className="cal-caption">Spools appear as choices when their slicer preset is in the profile catalog.</p>}
           {!session && waitingFilaments.length > 0 && <p className="cal-caption">Synced filament presets can be calibrated after they are approved and activated. <Link className="cal-text-button" to={{ pathname: '/profiles', search: 'tab=catalog' }}>Review them in the Shared catalog</Link></p>}
           {session && <label>Process<select aria-label="Process" value={processId} disabled={locked} onChange={event => { setProcessId(event.target.value); setAcknowledged(false); }}><option value="">Choose process</option>
@@ -363,19 +399,32 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
           {session && contextPrinter?.provider === 'bambu' && <><label className="cal-check"><input type="checkbox" checked={useAms} disabled={locked} onChange={event => setUseAms(event.target.checked)} /><span>Use AMS</span></label>
             {useAms && <label>Filament slot<select value={tray} disabled={locked} onChange={event => setTray(event.target.value)}><option value="">Choose loaded filament</option>{amsTrays.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label>}
             {!useAms && <p className="cal-caption">Load this filament on the external spool holder.</p>}</>}
-          {!session && <button className="cal-button cal-primary" disabled={!printerId || !filament || !(Number(selectedBinding?.expected_nozzle_diameter ?? nozzle) > 0) || mutate.isPending} onClick={() => {
-            if (filament) mutate.mutate(() => api.createCalibrationSession({ printer_id: Number(printerId), filament_profile_id: filament.profile_id, filament_revision_id: filament.revision_id, nozzle_diameter: Number(selectedBinding?.expected_nozzle_diameter ?? nozzle) }));
+          {!session && <button className="cal-button cal-primary" disabled={!printerId || !(filament || genericChoice && name.trim()) || !(Number(selectedBinding?.expected_nozzle_diameter ?? nozzle) > 0) || mutate.isPending} onClick={() => {
+            // Starting from a generic filament activates it in the catalog, which the session then shows.
+            if (genericChoice) mutate.mutate(() => api.createCalibrationSession({ printer_id: Number(printerId), generic_filament: genericChoice, nozzle_diameter: Number(selectedBinding?.expected_nozzle_diameter ?? nozzle) }),
+              { onSuccess: saved => { rememberName(saved.id, name); void client.invalidateQueries({ queryKey: ['slicerCatalogProfiles'] }); } });
+            else if (filament) mutate.mutate(() => api.createCalibrationSession({ printer_id: Number(printerId), filament_profile_id: filament.profile_id, filament_revision_id: filament.revision_id, nozzle_diameter: Number(selectedBinding?.expected_nozzle_diameter ?? nozzle) }),
+              { onSuccess: saved => rememberName(saved.id, name) });
           }}>Start calibration</button>}
         </section>
         <section className="cal-summary" aria-label="Profile preview"><div className="cal-between"><h3>Your profile</h3><span>{completed} of {ids.length}</span></div>
           <dl>{calibrationTests.map((item, position) => <div key={item.field}><dt>{item.name}</dt><dd>{session?.results[ids[position]] !== undefined ? session.results[ids[position]] + ' ' + item.unit : '—'}</dd></div>)}</dl>
-          <label className="cal-profile-name">Profile name<input type="text" value={name} disabled={locked} onChange={event => setName(event.target.value)} /></label>
-          {authEnabled && <label className="cal-check"><input type="checkbox" checked={shareCopy} disabled={locked} onChange={event => setShareCopy(event.target.checked)} /><span>Share with everyone on this installation</span></label>}
-          {!session?.saved_profile_id && <p className="cal-caption">{authEnabled ? 'Without sharing, only you can use the calibrated copy. A shared copy becomes a local preset for every user.' : 'The calibrated copy is saved as a local preset.'}</p>}
-          <button className="cal-button cal-secondary" disabled={locked || completed !== ids.length || !name.trim() || filamentOutdated || filamentUnavailable} onClick={() => {
-            if (session) mutate.mutate(() => api.saveCalibrationProfile(session.id, { version: session.version, name, share_local_copy: shareCopy }), { onSuccess: () => { void client.invalidateQueries({ queryKey: ['slicerCatalogProfiles'] }); } });
-          }}><Save size={15} />{session?.saved_profile_id ? 'Profile saved' : 'Save profile copy'}</button>
-          <p className="cal-caption">{session?.saved_profile_id ? 'Saved profile #' + session.saved_profile_id + '. Your original remains intact.' : 'A calibrated copy keeps your original preset intact.'}</p>
+          {canUpdate && !session?.saved_profile_id && <div role="radiogroup" aria-label="Save results to">
+            <label className="cal-check"><input type="radio" name="calibration-save-target" checked={updateProfile} disabled={locked} onChange={() => setUpdateProfile(true)} /><span>Update {sessionFilament.display_name}</span></label>
+            <label className="cal-check"><input type="radio" name="calibration-save-target" checked={!updateProfile} disabled={locked} onChange={() => setUpdateProfile(false)} /><span>Save as a new profile</span></label></div>}
+          {!savesInPlace && <>
+            <label className="cal-profile-name">Profile name<input type="text" value={name} disabled={locked} onChange={event => {
+              setName(event.target.value);
+              if (session) rememberName(session.id, event.target.value);
+            }} /></label>
+            {authEnabled && <label className="cal-check"><input type="checkbox" checked={shareCopy} disabled={locked} onChange={event => setShareCopy(event.target.checked)} /><span>Share with everyone on this installation</span></label>}
+            {!session?.saved_profile_id && <p className="cal-caption">{authEnabled ? 'Without sharing, only you can use the new profile. A shared profile becomes a local preset for every user.' : 'The new profile is saved as a local preset.'}</p>}</>}
+          <button className="cal-button cal-secondary" disabled={locked || completed !== ids.length || !savesInPlace && !name.trim() || filamentOutdated || filamentUnavailable} onClick={() => {
+            if (session) mutate.mutate(() => api.saveCalibrationProfile(session.id, { version: session.version, name, share_local_copy: shareCopy, update_profile: savesInPlace }), { onSuccess: () => { forgetName(session.id); void client.invalidateQueries({ queryKey: ['slicerCatalogProfiles'] }); } });
+          }}><Save size={15} />{session?.saved_profile_id ? 'Profile saved' : savesInPlace ? 'Update profile' : 'Save new profile'}</button>
+          <p className="cal-caption">{session?.saved_profile_id === session?.filament_profile_id && session ? 'Updated this profile. Its earlier versions stay in the catalog history.'
+            : session?.saved_profile_id ? 'Saved profile #' + session.saved_profile_id + '. Your original remains intact.'
+            : savesInPlace ? 'Writes your results into this profile. Its earlier version stays in the catalog history.' : 'A new profile keeps your original preset intact.'}</p>
         </section></aside></div>
     {confirmDelete && session && <ConfirmModal title="Delete calibration session?" variant="danger" confirmText="Delete session"
       message="This removes the session, its photos, and its generated tests. Saved profile copies stay in the catalog."

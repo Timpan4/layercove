@@ -1,16 +1,18 @@
 """Guided calibration sessions. Manual results never trigger a printer command."""
 
 import math
+import re
 import shutil
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from datetime import datetime, timezone
 from decimal import Decimal
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import delete, or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm.exc import StaleDataError
 
@@ -32,7 +34,15 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileActivation,
     SlicerProfileRevision,
 )
-from backend.app.services.filament_edit import FilamentCopyRequest, copy_filament_profile
+from backend.app.services.filament_edit import FilamentCopyRequest, copy_filament_profile, update_local_filament
+from backend.app.services.slicer_catalog import (
+    CatalogInput,
+    CatalogProfile,
+    activate_revision,
+    approve_review_batch,
+    ingest_catalog,
+)
+from backend.app.services.slicer_catalog_sync import STANDARD_ACCOUNT_ID, standard_profile_adapter
 
 router = APIRouter(prefix="/calibration", tags=["Calibration"])
 ReadCaller = Annotated[CallerIdentity, Depends(require_caller_identity_if_auth_enabled(Permission.PRINTERS_READ))]
@@ -63,11 +73,20 @@ SETTINGS = {
 class SessionCreate(BaseModel):
     model_config = ConfigDict(extra="forbid")
     printer_id: int = Field(gt=0)
-    filament_profile_id: int = Field(gt=0)
-    filament_revision_id: int = Field(gt=0)
+    filament_profile_id: int | None = Field(default=None, gt=0)
+    filament_revision_id: int | None = Field(default=None, gt=0)
+    # A new filament profile starts from this bundled generic profile instead.
+    generic_filament: str | None = Field(default=None, min_length=1, max_length=512)
     nozzle_diameter: Decimal = Field(gt=0, max_digits=4, decimal_places=2)
     # Test generation supports single-extruder bindings only.
     tool_index: Literal[0] = 0
+
+    @model_validator(mode="after")
+    def one_filament(self):
+        profile = self.filament_profile_id is not None
+        if profile != (self.filament_revision_id is not None) or profile == (self.generic_filament is not None):
+            raise ValueError("Choose either a filament profile and revision or a generic filament")
+        return self
 
 
 class VersionedEdit(BaseModel):
@@ -95,6 +114,8 @@ class ParameterEdit(VersionedEdit):
 class SaveRequest(VersionedEdit):
     name: str
     share_local_copy: bool = False
+    # Write the results into the calibrated profile itself instead of a new copy.
+    update_profile: bool = False
 
 
 class GenerateRequest(VersionedEdit):
@@ -211,9 +232,97 @@ async def active_filament_revision(
     )
 
 
-async def load_setting_limits(
-    db: AsyncSession, revision: SlicerProfileRevision, printer_id: int, tool_index: int
-) -> dict:
+# Orca's vendor-neutral generic filaments, such as "Generic PLA @System".
+GENERIC_FILAMENT = re.compile(r"Generic .+ @System")
+
+
+async def bundled_generic_filaments(db: AsyncSession) -> dict[str, dict]:
+    """The sidecar's bundled generic filament profiles, by name."""
+    from backend.app.api.routes.slicer import resolve_orca_api_url
+    from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
+
+    try:
+        async with SlicerApiService(await resolve_orca_api_url(db)) as service:
+            snapshot = await service.list_bundled_profiles()
+    except (SlicerApiError, ValueError) as exc:
+        raise HTTPException(503, "The slicer sidecar did not list its bundled filament profiles") from exc
+    entries = snapshot.get("filament") if isinstance(snapshot, dict) else None
+    return {
+        entry["name"]: entry
+        for entry in (entries if isinstance(entries, list) else [])
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str) and GENERIC_FILAMENT.fullmatch(entry["name"])
+    }
+
+
+async def generic_filament(
+    db: AsyncSession, name: str, owner_id: int | None
+) -> tuple[CatalogProfile, SlicerProfileRevision | None]:
+    """The bundled generic profile a new filament profile starts from, and its active revision if any."""
+    entry = (await bundled_generic_filaments(db)).get(name)
+    if entry is None:
+        raise HTTPException(404, "Generic filament profile not found")
+    try:
+        item = standard_profile_adapter("filament", entry)
+    except ValueError as exc:
+        raise HTTPException(502, "The slicer sidecar returned an invalid generic filament profile") from exc
+    account = await db.scalar(
+        select(SlicerProfileAccount).where(
+            SlicerProfileAccount.source == "standard", SlicerProfileAccount.remote_account_id == STANDARD_ACCOUNT_ID
+        )
+    )
+    if account is not None:
+        if account.sync_frozen:
+            raise HTTPException(409, "The standard profile catalog is frozen")
+        profile_id = await db.scalar(
+            select(SlicerProfile.id).where(
+                SlicerProfile.account_id == account.id,
+                SlicerProfile.remote_profile_id == item.remote_profile_id,
+                SlicerProfile.profile_type == "filament",
+            )
+        )
+        if profile_id is not None:
+            return item, await active_filament_revision(db, profile_id, owner_id)
+    return item, None
+
+
+async def activate_generic_filament(
+    db: AsyncSession, item: CatalogProfile, owner_id: int | None
+) -> SlicerProfileRevision:
+    """Add the bundled generic profile to the standard catalog and activate it.
+
+    Bundled profiles wait for review because every user sees them. Calibration already requires
+    settings:update, the permission that review needs, so starting from one approves and activates it.
+    A revision someone rejected or that waits in a standard sync's review is refused.
+    """
+    # Two first starts can both add the profile, its revision or its activation; the later one retries.
+    try:
+        result = await ingest_catalog(
+            db,
+            CatalogInput(
+                source="standard",
+                remote_account_id=STANDARD_ACCOUNT_ID,
+                display_name="Standard",
+                actor_user_id=owner_id,
+                profiles=[item],
+                # Adding one profile is not a sync of the bundled snapshot.
+                partial=True,
+            ),
+        )
+        revision = await db.get(SlicerProfileRevision, result.current_revision_ids[0])
+        # Only this profile's own review batch is approved, never a sync's batch with other profiles.
+        if revision.review_state == "pending" and revision.review_batch_id == result.review_batch_id:
+            await approve_review_batch(db, result.review_batch_id, user_id=owner_id)
+        if revision.review_state == "rejected":
+            raise HTTPException(409, f"{item.display_name} was rejected in the Shared catalog")
+        if revision.review_state != "approved":
+            raise HTTPException(409, f"{item.display_name} is waiting for review in the Shared catalog")
+        await activate_revision(db, revision.id, user_id=owner_id)
+    except IntegrityError as exc:
+        raise HTTPException(409, f"Another calibration is adding {item.display_name}; try again") from exc
+    return revision
+
+
+async def load_setting_limits(db: AsyncSession, content: Mapping[str, Any], printer_id: int, tool_index: int) -> dict:
     from backend.app.api.routes.slicer import resolve_orca_api_url
     from backend.app.services.printer_manager import printer_manager
     from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
@@ -231,10 +340,10 @@ async def load_setting_limits(
         for step, field in SETTINGS.items()
     }
     temperature = limits[Step.TEMPERATURE.value]
-    material_max = revision.content.get("nozzle_temperature_range_high")
+    material_max = content.get("nozzle_temperature_range_high")
     # Orca applies the schema default only to a complete profile. When the profile
     # inherits, the parent supplies the value, which this revision does not carry.
-    if material_max is None and not revision.content.get("inherits"):
+    if material_max is None and not content.get("inherits"):
         material_max = options["nozzle_temperature_range_high"]["default"]
     if material_max is not None:
         try:
@@ -304,18 +413,41 @@ def remove_session_photos(session_ids: Iterable[int]) -> None:
             raise HTTPException(500, "Could not delete the calibration photos. Try again.") from error
 
 
+@router.get("/generic-filaments")
+async def list_generic_filaments(_: ReadCaller, db: AsyncSession = Depends(get_db)) -> list[str]:
+    """Names of the generic profiles a new filament profile can start from."""
+    return sorted(await bundled_generic_filaments(db))
+
+
 @router.post("/sessions", status_code=201)
 async def create_session(body: SessionCreate, caller: WriteCaller, db: AsyncSession = Depends(get_db)):
     personal_caller(caller)
     caller.require_printer_access(body.printer_id)
     if await db.get(Printer, body.printer_id) is None:
         raise HTTPException(404, "Printer not found")
-    revision = await active_filament_revision(db, body.filament_profile_id, caller.owner_id)
-    if revision is None or revision.id != body.filament_revision_id:
-        raise HTTPException(409, "Select an available active filament revision")
-    limits = await load_setting_limits(db, revision, body.printer_id, body.tool_index)
+    generic = None
+    if body.generic_filament is not None:
+        # An active generic revision is kept; otherwise the bundled content becomes the new one.
+        generic, revision = await generic_filament(db, body.generic_filament, caller.owner_id)
+    else:
+        revision = await active_filament_revision(db, body.filament_profile_id, caller.owner_id)
+        if revision is None or revision.id != body.filament_revision_id:
+            raise HTTPException(409, "Select an available active filament revision")
+    # Ask the sidecar before writing, so SQLite's write lock is not held during the request.
+    content = revision.content if revision is not None else generic.content
+    limits = await load_setting_limits(db, content, body.printer_id, body.tool_index)
+    if revision is None:
+        revision = await activate_generic_filament(db, generic, caller.owner_id)
     session = CalibrationSession(
-        owner_id=caller.owner_id, **body.model_dump(), parameters={}, results={}, setting_limits=limits
+        owner_id=caller.owner_id,
+        printer_id=body.printer_id,
+        filament_profile_id=revision.profile_id,
+        filament_revision_id=revision.id,
+        nozzle_diameter=body.nozzle_diameter,
+        tool_index=body.tool_index,
+        parameters={},
+        results={},
+        setting_limits=limits,
     )
     db.add(session)
     await commit(db)
@@ -336,7 +468,7 @@ async def use_current_filament_revision(
         raise HTTPException(409, "This filament profile is no longer available; start a new calibration")
     if revision.id == session.filament_revision_id:
         return response(session)
-    limits = await load_setting_limits(db, revision, session.printer_id, session.tool_index)
+    limits = await load_setting_limits(db, revision.content, session.printer_id, session.tool_index)
     # Generated tests were sliced from the old revision.
     await retire_runs(db, session, STEPS)
     session.filament_revision_id = revision.id
@@ -512,6 +644,13 @@ async def save_session(session_id: int, body: SaveRequest, caller: WriteCaller, 
     overrides = {SETTINGS[step]: [format(session.results[step.value], ".15g")] for step in STEPS}
     overrides["nozzle_temperature_initial_layer"] = overrides["nozzle_temperature"]
     overrides["enable_pressure_advance"] = ["1"]
+    if body.update_profile:
+        await update_local_filament(
+            db, session.filament_profile_id, session.filament_revision_id, overrides, caller.owner_id
+        )
+        session.saved_profile_id = session.filament_profile_id
+        await commit(db)
+        return response(session)
     saved = await copy_filament_profile(
         db,
         session.filament_profile_id,

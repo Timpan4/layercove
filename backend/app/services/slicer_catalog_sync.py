@@ -32,7 +32,7 @@ from backend.app.services.slicer_catalog import (
 )
 
 _ORCA_PROFILE_TYPES = {"printer": "printer", "print": "process", "process": "process", "filament": "filament"}
-_STANDARD_ACCOUNT_ID = "bundled"
+STANDARD_ACCOUNT_ID = "bundled"
 _SECRET_KEYS = {"access_token", "refresh_token", "password", "api_key"}
 
 logger = logging.getLogger(__name__)
@@ -391,7 +391,7 @@ async def sync_standard_account(
     account = await session.scalar(
         select(SlicerProfileAccount).where(
             SlicerProfileAccount.source == "standard",
-            SlicerProfileAccount.remote_account_id == _STANDARD_ACCOUNT_ID,
+            SlicerProfileAccount.remote_account_id == STANDARD_ACCOUNT_ID,
         )
     )
     account_id = account.id if account is not None else None
@@ -422,7 +422,7 @@ async def sync_standard_account(
             session,
             CatalogInput(
                 source="standard",
-                remote_account_id=_STANDARD_ACCOUNT_ID,
+                remote_account_id=STANDARD_ACCOUNT_ID,
                 display_name=display_name,
                 profiles=profiles,
                 cursor=snapshot_hash,

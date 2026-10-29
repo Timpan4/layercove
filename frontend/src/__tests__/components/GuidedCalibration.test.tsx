@@ -9,7 +9,7 @@ import type { CalibrationSession, Printer, SlicerCatalogProfile } from '../../ap
 
 const auth = vi.hoisted(() => ({ authEnabled: true }));
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => auth }));
-afterEach(() => { auth.authEnabled = true; });
+afterEach(() => { auth.authEnabled = true; vi.mocked(localStorage.getItem).mockReset(); vi.mocked(localStorage.setItem).mockClear(); });
 
 const printer = { id: 1, name: 'Dogge printer', provider: 'bambu', is_active: true } as Printer;
 const profile = (profile_id: number, profile_type: SlicerCatalogProfile['profile_type'], display_name: string, revision_id = profile_id) =>
@@ -58,6 +58,8 @@ it('shows filament profiles that wait for catalog approval and links to the revi
         // Bundled presets are activated one by one on purpose; listing them would bury the user's own.
         { ...profile(11, 'filament', 'Bambu PLA Basic @BBL P1S'), source: 'standard', active: false, review_state: 'approved' }]
       : [profile(7, 'filament', 'Bambu ASA @BBL P1S')])),
+    // The spool's own waiting preset wins over starting a duplicate from the generic profile.
+    http.get('*/api/v1/calibration/generic-filaments', () => HttpResponse.json(['Generic PETG @System'])),
     http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
     http.get('*/api/v1/settings/spoolman', () => HttpResponse.json({ spoolman_enabled: 'false', spoolman_url: '' })),
     http.get('*/api/v1/inventory/spools', () => HttpResponse.json([
@@ -197,17 +199,17 @@ it('blocks generating with a removed process or filament profile', async () => {
   renderCalibration('/profiles?calibration=guided&calibrationSession=1');
   expect(await screen.findByText(/filament profile is no longer available/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Generate test' })).toBeDisabled();
-  expect(screen.getByRole('button', { name: 'Save profile copy' })).toBeDisabled();
+  expect(screen.getByRole('button', { name: 'Save new profile' })).toBeDisabled();
 });
 
 const finishedResults = { temperature: 215, flow_rate: 0.98, pressure_advance: 0.02, retraction: 0.8, volumetric_flow: 15 };
-function finishedSession(onSave: (body: unknown) => void) {
+function finishedSession(onSave: (body: unknown) => void, source: SlicerCatalogProfile['source'] = 'standard') {
   const results = finishedResults;
   server.use(
     http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([baseSession])),
     http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json({ ...baseSession, results })),
     http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
-    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'Generic ASA')])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([{ ...profile(1, 'filament', 'Generic ASA'), source }])),
     http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
     http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
     http.post('*/api/v1/calibration/sessions/1/save', async ({ request }) => {
@@ -222,12 +224,15 @@ function finishedSession(onSave: (body: unknown) => void) {
 it('saves a finished calibration as a private copy unless it is shared', async () => {
   let body: unknown;
   finishedSession(value => { body = value; });
-  const save = await screen.findByRole('button', { name: 'Save profile copy' });
+  const save = await screen.findByRole('button', { name: 'Save new profile' });
+  // Opening the session restores its remembered name, so type after it has loaded.
+  await screen.findByText('5 of 5');
   fireEvent.change(screen.getByLabelText('Profile name'), { target: { value: 'ASA calibrated' } });
   await waitFor(() => expect(save).toBeEnabled());
   expect(screen.getByRole('checkbox', { name: 'Share with everyone on this installation' })).not.toBeChecked();
   fireEvent.click(save);
   await waitFor(() => expect(body).toMatchObject({ share_local_copy: false }));
+  await waitFor(() => expect(localStorage.removeItem).toHaveBeenCalledWith('layercove.calibration.profileName.1'));
 });
 
 // Failure mode: without authentication the page promises a private copy, but the server
@@ -235,8 +240,63 @@ it('saves a finished calibration as a private copy unless it is shared', async (
 it('does not offer private copies without authentication', async () => {
   auth.authEnabled = false;
   finishedSession(() => undefined);
-  expect(await screen.findByText('The calibrated copy is saved as a local preset.')).toBeInTheDocument();
+  expect(await screen.findByText('The new profile is saved as a local preset.')).toBeInTheDocument();
   expect(screen.queryByRole('checkbox', { name: 'Share with everyone on this installation' })).not.toBeInTheDocument();
+});
+
+// Failure mode: calibrating an existing local preset always created another profile.
+it('can write the results into the local profile it calibrated', async () => {
+  let body: unknown;
+  finishedSession(value => { body = value; }, 'local');
+  fireEvent.click(await screen.findByRole('radio', { name: 'Update Generic ASA' }));
+  expect(screen.queryByLabelText('Profile name')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Update profile' }));
+  await waitFor(() => expect(body).toMatchObject({ update_profile: true }));
+});
+
+it('saves synced profiles only as a new profile', async () => {
+  finishedSession(() => undefined, 'orca_cloud');
+  expect(await screen.findByRole('button', { name: 'Save new profile' })).toBeInTheDocument();
+  expect(screen.queryByRole('radio', { name: 'Update Generic ASA' })).not.toBeInTheDocument();
+});
+
+// Failure mode: a new filament had to start from someone else's existing profile.
+it('starts a new filament profile from the generic profile for its material', async () => {
+  let created: unknown;
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([])),
+    http.post('*/api/v1/calibration/sessions', async ({ request }) => {
+      created = await request.json();
+      return HttpResponse.json({ ...baseSession, id: 12 }, { status: 201 });
+    }),
+    http.get('*/api/v1/calibration/generic-filaments', () => HttpResponse.json(['Generic PETG @System', 'Generic PLA @System'])),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/settings/spoolman', () => HttpResponse.json({ spoolman_enabled: 'false', spoolman_url: '' })),
+    http.get('*/api/v1/inventory/spools', () => HttpResponse.json([
+      { id: 4, brand: 'Acme', material: 'PETG', subtype: null, color_name: 'Red', slicer_filament: null, slicer_filament_name: null, archived_at: null },
+    ])),
+  );
+  renderCalibration('/profiles?calibration=guided');
+  fireEvent.change(screen.getByLabelText('Printer'), { target: { value: '1' } });
+  fireEvent.change(screen.getByLabelText('Nozzle diameter (mm)'), { target: { value: '0.4' } });
+  const spool = await screen.findByRole('option', { name: 'Acme PETG Red · new profile from Generic PETG @System' });
+  expect(spool).toBeEnabled();
+  fireEvent.change(screen.getByLabelText('Filament'), { target: { value: 'generic:Generic PLA @System' } });
+  const start = screen.getByRole('button', { name: 'Start calibration' });
+  expect(start).toBeDisabled();
+  fireEvent.change(screen.getByLabelText('New profile name'), { target: { value: 'Shop PLA' } });
+  fireEvent.click(start);
+  await waitFor(() => expect(created).toMatchObject({ generic_filament: 'Generic PLA @System' }));
+  await waitFor(() => expect(localStorage.setItem).toHaveBeenCalledWith('layercove.calibration.profileName.12', 'Shop PLA'));
+});
+
+// Failure mode: the name chosen before starting was gone when the session was reopened.
+it('keeps the profile name when a session is resumed', async () => {
+  vi.mocked(localStorage.getItem).mockImplementation(key => key === 'layercove.calibration.profileName.1' ? 'Shop ASA' : null);
+  finishedSession(() => undefined);
+  await waitFor(() => expect(screen.getByLabelText('Profile name')).toHaveValue('Shop ASA'));
 });
 
 // Failure mode: a photo taken before the first test is generated vanishes from the step.
