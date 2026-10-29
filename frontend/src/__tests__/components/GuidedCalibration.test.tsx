@@ -202,6 +202,27 @@ it('blocks generating with a removed process or filament profile', async () => {
   expect(screen.getByRole('button', { name: 'Save new profile' })).toBeDisabled();
 });
 
+// Failure mode: a printer profile without a usable default process and filament read as
+// incompatible, though calibration slices with the profiles chosen on the page.
+it('generates with a printer profile that has no usable defaults', async () => {
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([baseSession])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json({ ...baseSession, parameters: { temperature: { lowest: 230, highest: 250, increment: 5, baseline: 240 } } })),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'Printonion PETG'), profile(44, 'process', '0.20mm Standard')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([{ ...binding(5, 'Voron 2.4 300 0.4 nozzle'),
+      readiness: { state: 'blocked', reason_codes: ['default_unavailable'] } }])),
+    http.get('*/api/v1/slicer/catalog/printers/1/classification', () => HttpResponse.json(groups([1, 44]))),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: { nozzle_temperature: ['240'] } })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  await waitFor(() => expect(screen.getByLabelText('Printer profile')).toHaveValue('5'));
+  fireEvent.change(await screen.findByLabelText('Process'), { target: { value: '44' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Generate test' })).toBeEnabled());
+  expect(screen.queryByText(/default unavailable/)).not.toBeInTheDocument();
+});
+
 const finishedResults = { temperature: 215, flow_rate: 0.98, pressure_advance: 0.02, retraction: 0.8, volumetric_flow: 15 };
 function finishedSession(onSave: (body: unknown) => void, source: SlicerCatalogProfile['source'] = 'standard') {
   const results = finishedResults;
