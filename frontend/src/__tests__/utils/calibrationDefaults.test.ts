@@ -12,6 +12,12 @@ it('starts each step from Orca calibration defaults around the profile value', (
     .toEqual({ lowest: '0', highest: '0.1', increment: '0.002', baseline: '0.04' });
 });
 
+// Failure mode: rounding the step first moved the top flow tile past +20%.
+it('keeps the flow range at plus and minus 20 percent', () => {
+  expect(defaultTestValues('flow_rate', 'filament_flow_ratio', { filament_flow_ratio: ['0.99'] }, null))
+    .toEqual({ lowest: '0.792', highest: '1.188', increment: '0.0495', baseline: '0.99' });
+});
+
 it('keeps the temperature range under the session limit', () => {
   expect(defaultTestValues('temperature', 'nozzle_temperature', { filament_type: ['PA-CF'] }, 298))
     .toEqual({ lowest: '280', highest: '295', increment: '5', baseline: '' });

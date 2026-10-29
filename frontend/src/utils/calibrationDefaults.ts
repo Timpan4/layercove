@@ -33,9 +33,9 @@ export function defaultTestValues(step: CalibrationStep, field: string, content:
     // Orca's first flow pass prints nine tiles from -20% to +20% of the current ratio.
     const ratio = Number(baseline);
     if (!baseline || !(ratio > 0)) return { lowest: '', highest: '', increment: '', baseline };
-    // Thousandths keep the highest tile exactly on the step grid.
-    const lowest = Math.round(ratio * 800), increment = Math.round(ratio * 50);
-    return { lowest: String(lowest / 1000), highest: String((lowest + 8 * increment) / 1000), increment: String(increment / 1000), baseline };
+    // Rounded endpoints in thousandths, with the step derived from them, keep the top tile at +20% and on the step grid.
+    const lowest = Math.round(ratio * 800), highest = Math.round(ratio * 1200);
+    return { lowest: String(lowest / 1000), highest: String(highest / 1000), increment: String((highest - lowest) / 8 / 1000), baseline };
   }
   const [lowest, highest, increment] = ranges[step]!;
   return { lowest: String(lowest), highest: String(highest), increment: String(increment), baseline };
