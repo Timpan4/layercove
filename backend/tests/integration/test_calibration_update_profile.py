@@ -1,6 +1,7 @@
 """Saving calibration results into the calibrated profile instead of a new copy."""
 
 import json
+from datetime import datetime
 
 import pytest
 from fastapi import HTTPException
@@ -8,7 +9,12 @@ from sqlalchemy import func, select
 
 from backend.app.models.local_preset import LocalPreset
 from backend.app.models.printer import Printer
-from backend.app.models.slicer_profile_catalog import SlicerProfile, SlicerProfileActivation, SlicerProfileRevision
+from backend.app.models.slicer_profile_catalog import (
+    SlicerProfile,
+    SlicerProfileAccount,
+    SlicerProfileActivation,
+    SlicerProfileRevision,
+)
 from backend.app.models.user import User
 from backend.app.services.filament_edit import FilamentCopyRequest, copy_filament_profile, update_local_filament
 from backend.app.services.slicer_catalog_sync import sync_local_catalog
@@ -80,6 +86,29 @@ async def test_a_synced_profile_is_not_updated_in_place(async_client, db_session
     response = await finish(async_client, session)
     assert response.status_code == 409, response.text
     assert (await active_content(db_session, session["filament_profile_id"]))["nozzle_temperature"] == ["220"]
+
+
+# Failure mode: saving one copy recorded a successful sync of all local presets, so a failed
+# sync's error and stale markers disappeared.
+async def test_saving_a_copy_keeps_the_local_sync_status(db_session):
+    preset = LocalPreset(name="Shop PLA", preset_type="filament", source="manual", setting=json.dumps(PLA_CONTENT))
+    db_session.add(preset)
+    await db_session.flush()
+    sync = await sync_local_catalog(db_session)
+    account = await db_session.get(SlicerProfileAccount, sync.account_id)
+    stale = await db_session.scalar(select(SlicerProfile).where(SlicerProfile.account_id == account.id))
+    stale_at = datetime(2026, 1, 1)
+    account.last_sync_error, stale.stale_at = "sync_failed", stale_at
+    activation = await publish_filament(db_session, PLA_CONTENT)
+
+    await copy_filament_profile(
+        db_session,
+        activation.profile_id,
+        FilamentCopyRequest(base_revision_id=activation.revision_id, name="Shared", share_local_copy=True),
+        None,
+    )
+    assert account.last_sync_error == "sync_failed"
+    assert stale.stale_at == stale_at
 
 
 async def test_a_private_copy_is_updated_only_by_its_owner(db_session):

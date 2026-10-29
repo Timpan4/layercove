@@ -188,6 +188,7 @@ async def copy_filament_profile(
             remote_account_id=remote_account_id,
             actor_user_id=user_id,
             profiles=[catalog_profile],
+            partial=True,
         ),
     )
     await approve_review_batch(db, result.review_batch_id, user_id=user_id)
