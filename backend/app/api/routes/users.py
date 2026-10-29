@@ -4,7 +4,7 @@ from typing import Annotated
 import jwt as _jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -384,10 +384,10 @@ async def delete_user(
     this user will also be deleted. Otherwise, these items will become "ownerless"
     (created_by_id set to NULL by the foreign key constraint).
     """
-    # The row lock serializes this with slice job admission, which references the user from the
-    # new job row. The check for jobs using a private copy below then sees every admitted job,
-    # and later admissions wait and fail on the deleted owner. SQLite has no row locks, but it
-    # serializes writers, so one of two racing transactions fails instead.
+    # Lock the user before the check for jobs using a private copy below, so slice job admission,
+    # which references the user from the new job row, cannot slip in after it. A job admitted
+    # earlier is then visible to the check, and a later admission waits and fails on the deleted
+    # owner.
     result = await db.execute(
         select(User).where(User.id == user_id).options(selectinload(User.groups)).with_for_update(of=User)
     )
@@ -397,6 +397,10 @@ async def delete_user(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
         )
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite ignores FOR UPDATE, and its driver opens a transaction only at the first write.
+        # A no-op write takes the database write lock now.
+        await db.execute(sql_update(User).where(User.id == user_id).values(id=User.id))
 
     # Prevent deleting the last admin
     if user.is_admin:
