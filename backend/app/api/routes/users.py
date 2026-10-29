@@ -400,7 +400,9 @@ async def delete_user(
     if db.get_bind().dialect.name == "sqlite":
         # SQLite ignores FOR UPDATE, and its driver opens a transaction only at the first write.
         # A no-op write takes the database write lock now.
-        await db.execute(sql_update(User).where(User.id == user_id).values(id=User.id))
+        await db.execute(
+            sql_update(User).where(User.id == user_id).values(id=User.id).execution_options(synchronize_session=False)
+        )
 
     # Prevent deleting the last admin
     if user.is_admin:
