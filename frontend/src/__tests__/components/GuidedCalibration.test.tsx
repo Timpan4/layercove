@@ -9,7 +9,7 @@ import type { CalibrationSession, Printer, SlicerCatalogProfile } from '../../ap
 
 const auth = vi.hoisted(() => ({ authEnabled: true }));
 vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => auth }));
-afterEach(() => { auth.authEnabled = true; });
+afterEach(() => { auth.authEnabled = true; vi.mocked(localStorage.getItem).mockReset(); vi.mocked(localStorage.setItem).mockClear(); });
 
 const printer = { id: 1, name: 'Dogge printer', provider: 'bambu', is_active: true } as Printer;
 const profile = (profile_id: number, profile_type: SlicerCatalogProfile['profile_type'], display_name: string, revision_id = profile_id) =>
@@ -58,6 +58,8 @@ it('shows filament profiles that wait for catalog approval and links to the revi
         // Bundled presets are activated one by one on purpose; listing them would bury the user's own.
         { ...profile(11, 'filament', 'Bambu PLA Basic @BBL P1S'), source: 'standard', active: false, review_state: 'approved' }]
       : [profile(7, 'filament', 'Bambu ASA @BBL P1S')])),
+    // The spool's own waiting preset wins over starting a duplicate from the generic profile.
+    http.get('*/api/v1/calibration/generic-filaments', () => HttpResponse.json(['Generic PETG @System'])),
     http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
     http.get('*/api/v1/settings/spoolman', () => HttpResponse.json({ spoolman_enabled: 'false', spoolman_url: '' })),
     http.get('*/api/v1/inventory/spools', () => HttpResponse.json([
@@ -223,6 +225,8 @@ it('saves a finished calibration as a private copy unless it is shared', async (
   let body: unknown;
   finishedSession(value => { body = value; });
   const save = await screen.findByRole('button', { name: 'Save new profile' });
+  // Opening the session restores its remembered name, so type after it has loaded.
+  await screen.findByText('5 of 5');
   fireEvent.change(screen.getByLabelText('Profile name'), { target: { value: 'ASA calibrated' } });
   await waitFor(() => expect(save).toBeEnabled());
   expect(screen.getByRole('checkbox', { name: 'Share with everyone on this installation' })).not.toBeChecked();
@@ -283,6 +287,14 @@ it('starts a new filament profile from the generic profile for its material', as
   fireEvent.change(screen.getByLabelText('New profile name'), { target: { value: 'Shop PLA' } });
   fireEvent.click(start);
   await waitFor(() => expect(created).toMatchObject({ generic_filament: 'Generic PLA @System' }));
+  await waitFor(() => expect(localStorage.setItem).toHaveBeenCalledWith('layercove.calibration.profileName.12', 'Shop PLA'));
+});
+
+// Failure mode: the name chosen before starting was gone when the session was reopened.
+it('keeps the profile name when a session is resumed', async () => {
+  vi.mocked(localStorage.getItem).mockImplementation(key => key === 'layercove.calibration.profileName.1' ? 'Shop ASA' : null);
+  finishedSession(() => undefined);
+  await waitFor(() => expect(screen.getByLabelText('Profile name')).toHaveValue('Shop ASA'));
 });
 
 // Failure mode: a photo taken before the first test is generated vanishes from the step.

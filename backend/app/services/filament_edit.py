@@ -11,7 +11,7 @@ from uuid import uuid4
 
 from fastapi import HTTPException
 from pydantic import BaseModel, ConfigDict, Field, field_validator
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.models.local_preset import LocalPreset
@@ -220,21 +220,31 @@ async def update_local_filament(
     """
     row = (
         await db.execute(
-            select(SlicerProfile, SlicerProfileAccount, SlicerProfileActivation.revision_id)
+            select(SlicerProfile, SlicerProfileAccount)
             .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-            .join(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
             .where(SlicerProfile.id == profile_id, SlicerProfile.tombstoned_at.is_(None))
         )
     ).one_or_none()
     if row is None:
         raise HTTPException(409, "This filament profile is no longer available; save a copy instead")
-    profile, account, active_revision_id = row
+    profile, account = row
     private = account.sharing_state == "private" and account.user_id == user_id
     if account.source != "local" or not (private or account.remote_account_id == "installation"):
         raise HTTPException(409, "Only local presets and your private copies can be updated; save a copy instead")
     if account.sync_frozen:
         raise HTTPException(409, "The local profile catalog is frozen")
-    if active_revision_id != base_revision_id:
+    # A conditional write checks the active revision and locks it in one step, so a concurrent save
+    # from the same revision waits and then finds the profile changed instead of overwriting it.
+    claimed = await db.execute(
+        sql_update(SlicerProfileActivation)
+        .where(
+            SlicerProfileActivation.profile_id == profile_id,
+            SlicerProfileActivation.revision_id == base_revision_id,
+        )
+        .values(revision_id=SlicerProfileActivation.revision_id)
+        .execution_options(synchronize_session=False)
+    )
+    if claimed.rowcount != 1:
         raise HTTPException(409, "The filament profile changed while calibrating; reload before saving")
     if not private:
         preset = await db.get(LocalPreset, int(profile.remote_profile_id))
@@ -265,7 +275,7 @@ async def update_local_filament(
                     metadata=(revision.resolved_metadata or {}).get("metadata"),
                 )
             ],
-            cursor=account.sync_cursor,
+            partial=True,
         ),
     )
     if result.review_batch_id is not None:

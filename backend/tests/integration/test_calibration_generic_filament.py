@@ -1,12 +1,18 @@
 """Calibrating a new filament profile that starts from a bundled generic profile."""
 
+from datetime import datetime
 from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
 
 from backend.app.models.printer import Printer
-from backend.app.models.slicer_profile_catalog import SlicerProfile, SlicerProfileActivation, SlicerProfileRevision
+from backend.app.models.slicer_profile_catalog import (
+    SlicerProfile,
+    SlicerProfileAccount,
+    SlicerProfileActivation,
+    SlicerProfileRevision,
+)
 from backend.app.services.slicer_api import SlicerApiService
 from backend.app.services.slicer_catalog_sync import sync_standard_account
 from backend.tests._fixtures.calibration import filament_schema  # noqa: F401
@@ -82,6 +88,24 @@ async def test_a_generic_profile_waiting_in_a_standard_sync_is_not_approved(asyn
     assert response.status_code == 409, response.text
     states = set(await db_session.scalars(select(SlicerProfileRevision.review_state)))
     assert states == {"pending"}
+
+
+# Failure mode: adding the generic profile recorded a successful sync of the whole standard
+# catalog, so profiles a failed sync left stale looked fresh.
+async def test_starting_from_a_generic_profile_keeps_the_standard_sync_status(async_client, db_session):
+    sync = await sync_standard_account(db_session, {**BUNDLED, "filament": BUNDLED["filament"][1:]})
+    account = await db_session.get(SlicerProfileAccount, sync.account_id)
+    other = await db_session.scalar(select(SlicerProfile).where(SlicerProfile.account_id == account.id))
+    stale_at = datetime(2026, 1, 1)
+    account.last_sync_error, other.stale_at = "sync_failed", stale_at
+    await db_session.commit()
+
+    response = await start(async_client, db_session)
+    assert response.status_code == 201, response.text
+    await db_session.refresh(account)
+    await db_session.refresh(other)
+    assert account.last_sync_error == "sync_failed"
+    assert other.stale_at == stale_at
 
 
 @pytest.mark.parametrize(

@@ -51,6 +51,8 @@ class CatalogInput:
     display_name: str | None = None
     user_id: int | None = None
     actor_user_id: int | None = None
+    # Profiles added outside a sync leave the account's cursor, sync status and stale profiles alone.
+    partial: bool = False
 
 
 @dataclass(frozen=True)
@@ -312,20 +314,20 @@ async def ingest_catalog(session: AsyncSession, catalog: CatalogInput) -> Ingest
                 **(revision.resolved_metadata or {}),
                 "dependency_ids": sorted({profile_ids_by_remote[ref] for ref in refs if ref in profile_ids_by_remote}),
             }
-        for profile in account_profiles:
-            profile.stale_at = None
-
-        if before_cursor != catalog.cursor:
-            account.sync_cursor = catalog.cursor
-            changed = True
-        account.last_sync_at = _now()
-        account.last_successful_sync_at = account.last_sync_at
-        account.last_sync_error = None
+        if not catalog.partial:
+            for profile in account_profiles:
+                profile.stale_at = None
+            if before_cursor != catalog.cursor:
+                account.sync_cursor = catalog.cursor
+                changed = True
+            account.last_sync_at = _now()
+            account.last_successful_sync_at = account.last_sync_at
+            account.last_sync_error = None
         if changed:
             batch = SlicerProfileReviewBatch(
                 account_id=account.id,
                 sync_cursor_before=before_cursor,
-                sync_cursor_after=catalog.cursor,
+                sync_cursor_after=account.sync_cursor,
                 summary={"profiles": len(catalog.profiles), "revisions": len(pending)},
             )
             session.add(batch)
