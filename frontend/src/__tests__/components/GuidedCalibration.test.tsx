@@ -270,6 +270,7 @@ it('starts a new filament profile from the generic profile for its material', as
       return HttpResponse.json({ ...baseSession, id: 12 }, { status: 201 });
     }),
     http.get('*/api/v1/calibration/generic-filaments', () => HttpResponse.json(['Generic PETG @System', 'Generic PLA @System'])),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
     http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([])),
     http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
     http.get('*/api/v1/settings/spoolman', () => HttpResponse.json({ spoolman_enabled: 'false', spoolman_url: '' })),
