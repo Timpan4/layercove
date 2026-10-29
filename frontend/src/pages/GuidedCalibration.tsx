@@ -31,6 +31,9 @@ function rememberName(sessionId: number, name: string) {
 function recalledName(sessionId: number) {
   try { return localStorage.getItem(nameKey(sessionId)); } catch { return null; }
 }
+function forgetName(sessionId: number) {
+  try { localStorage.removeItem(nameKey(sessionId)); } catch { /* Storage can be unavailable. */ }
+}
 
 const spoolLabel = (spool: InventorySpool) => [spool.brand, spool.material, spool.subtype, spool.color_name].filter(Boolean).join(' ');
 
@@ -174,6 +177,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     selectSession(String(saved.id));
   } });
   const remove = useMutation({ mutationFn: (target: number) => api.deleteCalibrationSession(target), onSuccess: (_, target) => {
+    forgetName(target);
     setConfirmDelete(false);
     client.removeQueries({ queryKey: ['calibrationSession', target] });
     void client.invalidateQueries({ queryKey: ['calibrationSessions'] });
@@ -414,7 +418,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
             {authEnabled && <label className="cal-check"><input type="checkbox" checked={shareCopy} disabled={locked} onChange={event => setShareCopy(event.target.checked)} /><span>Share with everyone on this installation</span></label>}
             {!session?.saved_profile_id && <p className="cal-caption">{authEnabled ? 'Without sharing, only you can use the new profile. A shared profile becomes a local preset for every user.' : 'The new profile is saved as a local preset.'}</p>}</>}
           <button className="cal-button cal-secondary" disabled={locked || completed !== ids.length || !savesInPlace && !name.trim() || filamentOutdated || filamentUnavailable} onClick={() => {
-            if (session) mutate.mutate(() => api.saveCalibrationProfile(session.id, { version: session.version, name, share_local_copy: shareCopy, update_profile: savesInPlace }), { onSuccess: () => { void client.invalidateQueries({ queryKey: ['slicerCatalogProfiles'] }); } });
+            if (session) mutate.mutate(() => api.saveCalibrationProfile(session.id, { version: session.version, name, share_local_copy: shareCopy, update_profile: savesInPlace }), { onSuccess: () => { forgetName(session.id); void client.invalidateQueries({ queryKey: ['slicerCatalogProfiles'] }); } });
           }}><Save size={15} />{session?.saved_profile_id ? 'Profile saved' : savesInPlace ? 'Update profile' : 'Save new profile'}</button>
           <p className="cal-caption">{session?.saved_profile_id === session?.filament_profile_id && session ? 'Updated this profile. Its earlier versions stay in the catalog history.'
             : session?.saved_profile_id ? 'Saved profile #' + session.saved_profile_id + '. Your original remains intact.'

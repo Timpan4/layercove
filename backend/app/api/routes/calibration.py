@@ -294,6 +294,7 @@ async def activate_generic_filament(
     settings:update, the permission that review needs, so starting from one approves and activates it.
     A revision someone rejected or that waits in a standard sync's review is refused.
     """
+    # Two first starts can both add the profile, its revision or its activation; the later one retries.
     try:
         result = await ingest_catalog(
             db,
@@ -307,17 +308,17 @@ async def activate_generic_filament(
                 partial=True,
             ),
         )
+        revision = await db.get(SlicerProfileRevision, result.current_revision_ids[0])
+        # Only this profile's own review batch is approved, never a sync's batch with other profiles.
+        if revision.review_state == "pending" and revision.review_batch_id == result.review_batch_id:
+            await approve_review_batch(db, result.review_batch_id, user_id=owner_id)
+        if revision.review_state == "rejected":
+            raise HTTPException(409, f"{item.display_name} was rejected in the Shared catalog")
+        if revision.review_state != "approved":
+            raise HTTPException(409, f"{item.display_name} is waiting for review in the Shared catalog")
+        await activate_revision(db, revision.id, user_id=owner_id)
     except IntegrityError as exc:
         raise HTTPException(409, f"Another calibration is adding {item.display_name}; try again") from exc
-    revision = await db.get(SlicerProfileRevision, result.current_revision_ids[0])
-    # Only this profile's own review batch is approved, never a sync's batch with other profiles.
-    if revision.review_state == "pending" and revision.review_batch_id == result.review_batch_id:
-        await approve_review_batch(db, result.review_batch_id, user_id=owner_id)
-    if revision.review_state == "rejected":
-        raise HTTPException(409, f"{item.display_name} was rejected in the Shared catalog")
-    if revision.review_state != "approved":
-        raise HTTPException(409, f"{item.display_name} is waiting for review in the Shared catalog")
-    await activate_revision(db, revision.id, user_id=owner_id)
     return revision
 
 

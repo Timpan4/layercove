@@ -232,6 +232,7 @@ it('saves a finished calibration as a private copy unless it is shared', async (
   expect(screen.getByRole('checkbox', { name: 'Share with everyone on this installation' })).not.toBeChecked();
   fireEvent.click(save);
   await waitFor(() => expect(body).toMatchObject({ share_local_copy: false }));
+  await waitFor(() => expect(localStorage.removeItem).toHaveBeenCalledWith('layercove.calibration.profileName.1'));
 });
 
 // Failure mode: without authentication the page promises a private copy, but the server

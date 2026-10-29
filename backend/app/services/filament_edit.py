@@ -234,6 +234,15 @@ async def update_local_filament(
         raise HTTPException(409, "Only local presets and your private copies can be updated; save a copy instead")
     if account.sync_frozen:
         raise HTTPException(409, "The local profile catalog is frozen")
+    preset = None
+    if not private:
+        # Lock the preset before the activation, in the order a local preset edit takes them,
+        # so a concurrent edit of the same preset waits instead of deadlocking on PostgreSQL.
+        preset = await db.scalar(
+            select(LocalPreset).where(LocalPreset.id == int(profile.remote_profile_id)).with_for_update()
+        )
+        if preset is None:
+            raise HTTPException(409, "This filament profile is no longer available; save a copy instead")
     # A conditional write checks the active revision and locks it in one step, so a concurrent save
     # from the same revision waits and then finds the profile changed instead of overwriting it.
     claimed = await db.execute(
@@ -247,8 +256,7 @@ async def update_local_filament(
     )
     if claimed.rowcount != 1:
         raise HTTPException(409, "The filament profile changed while calibrating; reload before saving")
-    if not private:
-        preset = await db.get(LocalPreset, int(profile.remote_profile_id))
+    if preset is not None:
         content = {**json.loads(preset.setting), **overrides}
         preset.setting = json.dumps(content)
         for key, value in extract_core_fields(content).items():
