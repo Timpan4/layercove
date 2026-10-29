@@ -384,7 +384,13 @@ async def delete_user(
     this user will also be deleted. Otherwise, these items will become "ownerless"
     (created_by_id set to NULL by the foreign key constraint).
     """
-    result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.groups)))
+    # The row lock serializes this with slice job admission, which references the user from the
+    # new job row. The check for jobs using a private copy below then sees every admitted job,
+    # and later admissions wait and fail on the deleted owner. SQLite has no row locks, but it
+    # serializes writers, so one of two racing transactions fails instead.
+    result = await db.execute(
+        select(User).where(User.id == user_id).options(selectinload(User.groups)).with_for_update(of=User)
+    )
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(
