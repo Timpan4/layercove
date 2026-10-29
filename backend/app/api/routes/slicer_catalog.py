@@ -48,7 +48,7 @@ async def create_filament_copy(
     body: FilamentCopyRequest,
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
-) -> dict[str, int]:
+) -> dict[str, int | None]:
     """Save an edited local copy and activate it in the same transaction."""
     result = await copy_filament_profile(db, profile_id, body, current_user.id if current_user else None)
     await db.commit()
@@ -297,6 +297,23 @@ def _account_visibility(current_user: User | None):
     return or_(visibility, SlicerProfileAccount.user_id.is_(None))
 
 
+async def _require_visible_account(db: AsyncSession, account_id: int, current_user: User | None) -> None:
+    """settings:update covers shared catalogs. Another user's private account stays theirs to manage."""
+    visible = await db.scalar(
+        select(SlicerProfileAccount.id).where(SlicerProfileAccount.id == account_id, _account_visibility(current_user))
+    )
+    if visible is None:
+        raise HTTPException(status_code=404, detail="Catalog account not found")
+
+
+async def require_visible_profile(db: AsyncSession, profile_id: int, current_user: User | None) -> SlicerProfile:
+    profile = await db.get(SlicerProfile, profile_id)
+    if profile is None:
+        raise HTTPException(status_code=404, detail="Profile not found")
+    await _require_visible_account(db, profile.account_id, current_user)
+    return profile
+
+
 @router.get("/accounts")
 async def list_catalog_accounts(
     db: AsyncSession = Depends(get_db),
@@ -541,6 +558,7 @@ async def review_batch(
     batch = await db.get(SlicerProfileReviewBatch, batch_id)
     if batch is None:
         raise HTTPException(status_code=404, detail="Review batch not found")
+    await _require_visible_account(db, batch.account_id, current_user)
     if batch.status != "pending":
         raise HTTPException(status_code=409, detail="Review batch is already finalized")
     if request.approved:
@@ -575,6 +593,7 @@ async def activate_catalog_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ) -> dict[str, Any]:
+    await require_visible_profile(db, profile_id, current_user)
     revision = await db.get(SlicerProfileRevision, request.revision_id)
     if revision is None or revision.profile_id != profile_id:
         raise HTTPException(status_code=422, detail="Revision does not belong to profile")
@@ -593,6 +612,7 @@ async def rollback_catalog_profile(
     db: AsyncSession = Depends(get_db),
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ) -> dict[str, Any]:
+    await require_visible_profile(db, profile_id, current_user)
     try:
         activation = await rollback_revision(
             db,
@@ -610,8 +630,9 @@ async def rollback_catalog_profile(
 async def freeze_catalog_account(
     account_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ) -> dict[str, Any]:
+    await _require_visible_account(db, account_id, current_user)
     account = await db.get(SlicerProfileAccount, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Catalog account not found")
@@ -625,8 +646,9 @@ async def freeze_catalog_account(
 async def resume_catalog_account(
     account_id: int,
     db: AsyncSession = Depends(get_db),
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
 ) -> dict[str, Any]:
+    await _require_visible_account(db, account_id, current_user)
     account = await db.get(SlicerProfileAccount, account_id)
     if account is None:
         raise HTTPException(status_code=404, detail="Catalog account not found")

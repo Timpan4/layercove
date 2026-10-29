@@ -13,6 +13,7 @@ from sqlalchemy import or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.api.routes.slicer_catalog import require_visible_profile
 from backend.app.core.auth import RequirePermissionIfAuthEnabled
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
@@ -792,14 +793,12 @@ async def delete_preference(
 async def retire_profile(
     profile_id: int,
     data: RetirementRequest,
-    _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
+    current_user: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_UPDATE),
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
     if data.replacement_profile_id is not None and data.disable_references:
         raise HTTPException(422, "Choose replacement or disable references, not both")
-    profile = await db.get(SlicerProfile, profile_id)
-    if profile is None:
-        raise HTTPException(404, "Catalog profile not found")
+    profile = await require_visible_profile(db, profile_id, current_user)
     if data.replacement_profile_id == profile.id:
         raise HTTPException(422, "Replacement must be a different profile")
 

@@ -1732,7 +1732,8 @@ export interface SlicerCatalogRevisionContent {
 export interface FilamentProfileCopy {
   profile_id: number;
   revision_id: number;
-  local_preset_id: number;
+  // Null for a copy saved privately in the user's own catalog account.
+  local_preset_id: number | null;
 }
 
 export type CalibrationStep = 'temperature' | 'flow_rate' | 'pressure_advance' | 'retraction' | 'volumetric_flow';

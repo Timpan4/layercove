@@ -4,7 +4,7 @@ from typing import Annotated
 import jwt as _jwt
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy import delete, func, select
+from sqlalchemy import delete, func, select, update as sql_update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -32,6 +32,19 @@ from backend.app.models.print_batch import PrintBatch
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import PrinterOwner
 from backend.app.models.settings import Settings
+from backend.app.models.slice_job import SliceJobRecord
+from backend.app.models.slicer_profile_catalog import (
+    SlicerCompatibilityMapping,
+    SlicerFilamentRule,
+    SlicerJobProvenance,
+    SlicerProfile,
+    SlicerProfileAccount,
+    SlicerProfileActivation,
+    SlicerProfileActivationEvent,
+    SlicerProfileReviewBatch,
+    SlicerProfileRevision,
+    SlicerProfileSourceRevision,
+)
 from backend.app.models.user import User
 from backend.app.models.user_otp_code import UserOTPCode
 from backend.app.models.user_totp import UserTOTP
@@ -371,12 +384,24 @@ async def delete_user(
     this user will also be deleted. Otherwise, these items will become "ownerless"
     (created_by_id set to NULL by the foreign key constraint).
     """
-    result = await db.execute(select(User).where(User.id == user_id).options(selectinload(User.groups)))
+    # Lock the user before the check for jobs using a private copy below, so slice job admission,
+    # which references the user from the new job row, cannot slip in after it. A job admitted
+    # earlier is then visible to the check, and a later admission waits and fails on the deleted
+    # owner.
+    result = await db.execute(
+        select(User).where(User.id == user_id).options(selectinload(User.groups)).with_for_update(of=User)
+    )
     user = result.scalar_one_or_none()
     if not user:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="User not found",
+        )
+    if db.get_bind().dialect.name == "sqlite":
+        # SQLite ignores FOR UPDATE, and its driver opens a transaction only at the first write.
+        # A no-op write takes the database write lock now.
+        await db.execute(
+            sql_update(User).where(User.id == user_id).values(id=User.id).execution_options(synchronize_session=False)
         )
 
     # Prevent deleting the last admin
@@ -406,6 +431,80 @@ async def delete_user(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Cannot delete your own account",
         )
+
+    # Their private filament copies go with them, because an ownerless private account is listed
+    # for everyone once authentication is turned off. A slice job reads its pinned revisions when
+    # it runs, so a job still using a copy stops the deletion. Retained jobs could not reslice
+    # with another user's private copy anyway.
+    private_account_ids = (
+        await db.scalars(
+            select(SlicerProfileAccount.id).where(
+                SlicerProfileAccount.source == "local",
+                SlicerProfileAccount.user_id == user_id,
+                SlicerProfileAccount.sharing_state == "private",
+            )
+        )
+    ).all()
+    copy_ids = select(SlicerProfile.id).where(SlicerProfile.account_id.in_(private_account_ids))
+    if private_account_ids:
+        copy_revision_ids = set(
+            (
+                await db.scalars(select(SlicerProfileRevision.id).where(SlicerProfileRevision.profile_id.in_(copy_ids)))
+            ).all()
+        )
+        pinned_by_active_jobs = await db.scalars(
+            select(SlicerJobProvenance.filament_revision_ids)
+            .join(SliceJobRecord, SliceJobRecord.id == SlicerJobProvenance.slice_job_id)
+            .where(SliceJobRecord.status.in_(("pending", "running", "cancel-requested")))
+        )
+        if any(copy_revision_ids.intersection(revision_ids or []) for revision_ids in pinned_by_active_jobs):
+            raise HTTPException(409, "Wait for the slice jobs using this user's private filament copies to finish")
+
+    # Calibration sessions are private, so they go with the user. Their rows cascade, but the
+    # photos on disk and the generated tests in the library do not. A test still generating
+    # stops the deletion.
+    from backend.app.api.routes.calibration import STEPS, remove_session_photos, retire_runs
+    from backend.app.models.calibration import CalibrationEvidence, CalibrationSession
+
+    calibrations = (await db.scalars(select(CalibrationSession).where(CalibrationSession.owner_id == user_id))).all()
+    for calibration in calibrations:
+        await retire_runs(db, calibration, STEPS)
+        await db.execute(delete(CalibrationEvidence).where(CalibrationEvidence.session_id == calibration.id))
+        await db.delete(calibration)
+    # Copies are filaments, so no binding refers to them, and the owner's sessions were deleted
+    # above. Children are deleted explicitly, children first, so this does not depend on the
+    # database enforcing cascades.
+    if private_account_ids:
+        # Only the owner's jobs can pin their copies. Retained jobs keep the pins as JSON without
+        # a foreign key, and SQLite gives a deleted id to the next row, so a kept pin could later
+        # resolve to another user's revision. Forget the pins instead.
+        owned_provenance = (
+            await db.scalars(
+                select(SlicerJobProvenance)
+                .join(SliceJobRecord, SliceJobRecord.id == SlicerJobProvenance.slice_job_id)
+                .where(SliceJobRecord.owner_id == user_id, SlicerJobProvenance.provenance_state == "resolved")
+            )
+        ).all()
+        for provenance in owned_provenance:
+            if copy_revision_ids.intersection(provenance.filament_revision_ids or []):
+                provenance.provenance_state = "provenance_unknown"
+                provenance.printer_revision_id = None
+                provenance.process_revision_id = None
+                provenance.filament_revision_ids = None
+        for model, column in (
+            (SlicerProfileActivationEvent, SlicerProfileActivationEvent.profile_id),
+            (SlicerProfileActivation, SlicerProfileActivation.profile_id),
+            (SlicerProfileSourceRevision, SlicerProfileSourceRevision.profile_id),
+            (SlicerCompatibilityMapping, SlicerCompatibilityMapping.profile_id),
+            (SlicerFilamentRule, SlicerFilamentRule.filament_profile_id),
+            (SlicerProfileRevision, SlicerProfileRevision.profile_id),
+        ):
+            await db.execute(delete(model).where(column.in_(copy_ids)))
+        await db.execute(delete(SlicerProfile).where(SlicerProfile.account_id.in_(private_account_ids)))
+        await db.execute(
+            delete(SlicerProfileReviewBatch).where(SlicerProfileReviewBatch.account_id.in_(private_account_ids))
+        )
+        await db.execute(delete(SlicerProfileAccount).where(SlicerProfileAccount.id.in_(private_account_ids)))
 
     if delete_items:
         # Delete all items created by this user
@@ -457,6 +556,8 @@ async def delete_user(
     await db.execute(delete(PrinterOwner).where(PrinterOwner.user_id == user_id))
 
     await db.delete(user)
+    # Last, so a failure keeps the rows to retry from.
+    remove_session_photos(calibration.id for calibration in calibrations)
     await db.commit()
 
 

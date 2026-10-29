@@ -2,10 +2,14 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { http, HttpResponse } from 'msw';
 import { MemoryRouter } from 'react-router-dom';
-import { expect, it } from 'vitest';
+import { afterEach, expect, it, vi } from 'vitest';
 import { GuidedCalibration } from '../../pages/GuidedCalibration';
 import { server } from '../mocks/server';
 import type { CalibrationSession, Printer, SlicerCatalogProfile } from '../../api/client';
+
+const auth = vi.hoisted(() => ({ authEnabled: true }));
+vi.mock('../../contexts/AuthContext', () => ({ useAuth: () => auth }));
+afterEach(() => { auth.authEnabled = true; });
 
 const printer = { id: 1, name: 'Dogge printer', provider: 'bambu', is_active: true } as Printer;
 const profile = (profile_id: number, profile_type: SlicerCatalogProfile['profile_type'], display_name: string, revision_id = profile_id) =>
@@ -194,6 +198,45 @@ it('blocks generating with a removed process or filament profile', async () => {
   expect(await screen.findByText(/filament profile is no longer available/)).toBeInTheDocument();
   expect(screen.getByRole('button', { name: 'Generate test' })).toBeDisabled();
   expect(screen.getByRole('button', { name: 'Save profile copy' })).toBeDisabled();
+});
+
+const finishedResults = { temperature: 215, flow_rate: 0.98, pressure_advance: 0.02, retraction: 0.8, volumetric_flow: 15 };
+function finishedSession(onSave: (body: unknown) => void) {
+  const results = finishedResults;
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([baseSession])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json({ ...baseSession, results })),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'Generic ASA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+    http.post('*/api/v1/calibration/sessions/1/save', async ({ request }) => {
+      onSave(await request.json());
+      return HttpResponse.json({ ...baseSession, results, saved_profile_id: 9, version: 2 });
+    }),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+}
+
+// Failure mode: saving a calibrated copy required sharing it with every user.
+it('saves a finished calibration as a private copy unless it is shared', async () => {
+  let body: unknown;
+  finishedSession(value => { body = value; });
+  const save = await screen.findByRole('button', { name: 'Save profile copy' });
+  fireEvent.change(screen.getByLabelText('Profile name'), { target: { value: 'ASA calibrated' } });
+  await waitFor(() => expect(save).toBeEnabled());
+  expect(screen.getByRole('checkbox', { name: 'Share with everyone on this installation' })).not.toBeChecked();
+  fireEvent.click(save);
+  await waitFor(() => expect(body).toMatchObject({ share_local_copy: false }));
+});
+
+// Failure mode: without authentication the page promises a private copy, but the server
+// saves a local preset for the installation.
+it('does not offer private copies without authentication', async () => {
+  auth.authEnabled = false;
+  finishedSession(() => undefined);
+  expect(await screen.findByText('The calibrated copy is saved as a local preset.')).toBeInTheDocument();
+  expect(screen.queryByRole('checkbox', { name: 'Share with everyone on this installation' })).not.toBeInTheDocument();
 });
 
 // Failure mode: a photo taken before the first test is generated vanishes from the step.

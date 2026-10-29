@@ -5,6 +5,7 @@ import { ArrowRight, Camera, Check, Layers, Minus, Play, Plus, Save, SlidersHori
 import { api, type CalibrationSession, type CalibrationStep, type InventorySpool, type Printer, type SlicerCatalogProfile } from '../api/client';
 import { inventoryData, inventoryQueryKeys, useInventorySource } from '../api/inventoryData';
 import { ConfirmModal } from '../components/ConfirmModal';
+import { useAuth } from '../contexts/AuthContext';
 import { TestIllustration } from './CalibrationIllustration';
 import { calibrationTests } from './calibrationTests';
 import { getAmsLabel, getGlobalTrayId } from '../utils/amsHelpers';
@@ -59,6 +60,8 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const [result, setResult] = useState('');
   const [name, setName] = useState('');
   const [shareCopy, setShareCopy] = useState(false);
+  // Without authentication there is one user, and the server always shares copies.
+  const { authEnabled } = useAuth();
   const [confirmed, setConfirmed] = useState(false);
   const [bindingId, setBindingId] = useState('');
   const [processId, setProcessId] = useState('');
@@ -367,9 +370,9 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
         <section className="cal-summary" aria-label="Profile preview"><div className="cal-between"><h3>Your profile</h3><span>{completed} of {ids.length}</span></div>
           <dl>{calibrationTests.map((item, position) => <div key={item.field}><dt>{item.name}</dt><dd>{session?.results[ids[position]] !== undefined ? session.results[ids[position]] + ' ' + item.unit : '—'}</dd></div>)}</dl>
           <label className="cal-profile-name">Profile name<input type="text" value={name} disabled={locked} onChange={event => setName(event.target.value)} /></label>
-          <label className="cal-check"><input type="checkbox" checked={shareCopy} disabled={locked} onChange={event => setShareCopy(event.target.checked)} /><span>Share this copy on this installation</span></label>
-          {!session?.saved_profile_id && <p className="cal-caption">Calibrated copies are saved as local presets that everyone on this installation can use, so saving requires this confirmation.</p>}
-          <button className="cal-button cal-secondary" disabled={locked || completed !== ids.length || !name.trim() || !shareCopy || filamentOutdated || filamentUnavailable} onClick={() => {
+          {authEnabled && <label className="cal-check"><input type="checkbox" checked={shareCopy} disabled={locked} onChange={event => setShareCopy(event.target.checked)} /><span>Share with everyone on this installation</span></label>}
+          {!session?.saved_profile_id && <p className="cal-caption">{authEnabled ? 'Without sharing, only you can use the calibrated copy. A shared copy becomes a local preset for every user.' : 'The calibrated copy is saved as a local preset.'}</p>}
+          <button className="cal-button cal-secondary" disabled={locked || completed !== ids.length || !name.trim() || filamentOutdated || filamentUnavailable} onClick={() => {
             if (session) mutate.mutate(() => api.saveCalibrationProfile(session.id, { version: session.version, name, share_local_copy: shareCopy }), { onSuccess: () => { void client.invalidateQueries({ queryKey: ['slicerCatalogProfiles'] }); } });
           }}><Save size={15} />{session?.saved_profile_id ? 'Profile saved' : 'Save profile copy'}</button>
           <p className="cal-caption">{session?.saved_profile_id ? 'Saved profile #' + session.saved_profile_id + '. Your original remains intact.' : 'A calibrated copy keeps your original preset intact.'}</p>

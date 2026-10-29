@@ -113,7 +113,7 @@ async def test_copy_is_immediately_active_immutable_and_survives_local_sync(asyn
     ).revision_id == revision.id
 
 
-async def test_private_copy_requires_visibility_and_explicit_sharing_consent(db_session):
+async def test_copying_requires_visibility_of_the_original(db_session):
     owner, other = User(username="owner"), User(username="other")
     db_session.add_all([owner, other])
     await db_session.commit()
@@ -122,14 +122,64 @@ async def test_private_copy_requires_visibility_and_explicit_sharing_consent(db_
     with pytest.raises(HTTPException) as denied:
         await copy_filament_profile(db_session, source.profile, body, other.id)
     assert denied.value.status_code == 404
-    body.share_local_copy = False
-    with pytest.raises(HTTPException) as consent:
-        await copy_filament_profile(db_session, source.profile, body, owner.id)
-    assert consent.value.status_code == 400
     assert await db_session.scalar(select(func.count(LocalPreset.id))) == 0
 
 
-@pytest.mark.parametrize("kind", ["changed", "frozen", "consent", "identity", "credential"])
+# Failure mode: every calibrated copy became a local preset that all users see, so users
+# could not keep their own calibrations to themselves.
+async def test_an_unshared_copy_is_active_only_for_its_owner(db_session):
+    from backend.app.api.routes.slicer_catalog import list_catalog_profiles
+
+    owner, other = User(username="owner"), User(username="other")
+    db_session.add_all([owner, other])
+    await db_session.commit()
+    source = await seed(db_session)
+    body = FilamentCopyRequest(**{**payload(source.revision), "share_local_copy": False})
+
+    result = await copy_filament_profile(db_session, source.profile, body, owner.id)
+    await db_session.commit()
+
+    assert result["local_preset_id"] is None
+    assert await db_session.scalar(select(func.count(LocalPreset.id))) == 0
+    visible = {profile["profile_id"] for profile in await list_catalog_profiles(db_session, owner)}
+    assert result["profile_id"] in visible
+    assert result["profile_id"] not in {
+        profile["profile_id"] for profile in await list_catalog_profiles(db_session, other)
+    }
+    # A second private copy reuses the owner's account.
+    second = await copy_filament_profile(db_session, source.profile, body, owner.id)
+    accounts = await db_session.scalars(select(SlicerProfileAccount).where(SlicerProfileAccount.user_id == owner.id))
+    assert [(a.source, a.sharing_state) for a in accounts] == [("local", "private")]
+    assert second["profile_id"] != result["profile_id"]
+
+
+# Failure mode: a new user who gets a deleted user's id lands in that user's orphaned private
+# account, where their own copy is invisible to them.
+async def test_a_reused_user_id_gets_a_new_private_account(db_session):
+    from backend.app.api.routes.slicer_catalog import list_catalog_profiles
+
+    owner = User(username="first-owner")
+    db_session.add(owner)
+    await db_session.commit()
+    source = await seed(db_session)
+    body = FilamentCopyRequest(**{**payload(source.revision), "share_local_copy": False})
+    first = await copy_filament_profile(db_session, source.profile, body, owner.id)
+    # What deleting the user leaves behind.
+    for account in await db_session.scalars(
+        select(SlicerProfileAccount).where(SlicerProfileAccount.user_id == owner.id)
+    ):
+        account.user_id = None
+    await db_session.commit()
+
+    second = await copy_filament_profile(db_session, source.profile, body, owner.id)
+    await db_session.commit()
+
+    visible = {profile["profile_id"] for profile in await list_catalog_profiles(db_session, owner)}
+    assert second["profile_id"] in visible
+    assert first["profile_id"] not in visible
+
+
+@pytest.mark.parametrize("kind", ["changed", "frozen", "identity", "credential"])
 async def test_rejected_edits_write_nothing(async_client, db_session, kind):
     source = await seed(db_session)
     body = payload(source.revision)
@@ -138,8 +188,6 @@ async def test_rejected_edits_write_nothing(async_client, db_session, kind):
     if kind == "frozen":
         (await db_session.get(SlicerProfileAccount, source.account)).sync_frozen = True
         await db_session.commit()
-    if kind == "consent":
-        body["share_local_copy"] = False
     if kind == "identity":
         body["overrides"] = {"compatible_printers": ["Another"]}
     if kind == "credential":
