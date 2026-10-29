@@ -39,11 +39,12 @@ jobs:
       - name: Install ruff
         run: pip install ruff
 
-      - name: Run ruff check
-        run: ruff check backend/
+      - parallel:
+          - name: Run ruff check
+            run: ruff check backend/
 
-      - name: Run ruff format check
-        run: ruff format --check backend/
+          - name: Run ruff format check
+            run: ruff format --check backend/
 
   backend-tests:
     name: Backend Tests (shard ${{ matrix.shard }}/4)
@@ -150,18 +151,20 @@ jobs:
         working-directory: frontend
         run: bun install --frozen-lockfile
 
-      - name: Run Oxlint
-        working-directory: frontend
-        run: bun run lint
+      - parallel:
+          - name: Run Oxlint
+            working-directory: frontend
+            run: bun run lint
 
-      - name: Run TypeScript check
-        working-directory: frontend
-        run: bun x tsc --noEmit
+          - name: Run TypeScript check
+            working-directory: frontend
+            run: bun x tsc --noEmit
 
-      - name: Build frontend assets
-        working-directory: frontend
-        run: bun run build
+          - name: Build frontend assets
+            working-directory: frontend
+            run: bun run build
 
+      # Brand tests inspect ../static, so they must follow the build.
       - name: Run tests
         timeout-minutes: 10
         working-directory: frontend
@@ -232,6 +235,8 @@ jobs:
         uses: docker/setup-buildx-action@v4
 
       - name: Build production image
+        id: production-image
+        background: true
         uses: docker/build-push-action@v7
         with:
           context: .
@@ -240,6 +245,21 @@ jobs:
           tags: bambuddy:test
           cache-from: type=gha,scope=production
           cache-to: type=gha,scope=production,mode=max
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: ${{ env.BUN_VERSION }}
+
+      - name: Install E2E dependencies
+        working-directory: frontend
+        run: |
+          bun install --frozen-lockfile
+          bun x playwright install --with-deps chromium
+
+      # Setup above is independent of the image. All consumers wait here,
+      # including failure propagation before Compose starts a container.
+      - wait: production-image
 
       - name: Verify backend imports
         run: docker run --rm bambuddy:test python -c "import backend.app.main; print('Backend imports OK')"
@@ -272,17 +292,6 @@ jobs:
           STATUS=$(docker compose exec -T integration curl -fsS -o /dev/null -w "%{http_code}" http://localhost:8000/)
           echo "Static files HTTP status: $STATUS"
           [ "$STATUS" = "200" ]
-
-      - name: Set up Bun
-        uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: ${{ env.BUN_VERSION }}
-
-      - name: Install E2E dependencies
-        working-directory: frontend
-        run: |
-          bun install --frozen-lockfile
-          bun x playwright install --with-deps chromium
 
       - name: Run E2E tests against integration container
         working-directory: frontend
