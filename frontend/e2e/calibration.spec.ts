@@ -46,7 +46,6 @@ test('calibration retains a draft result when saving test values and resumes all
   await page.reload();
   await expect(page.getByLabel('Custom result (mm³/s)', { exact: true })).toHaveValue('18');
   await page.getByLabel('Profile name', { exact: true }).fill('Preview calibrated PLA');
-  await page.getByLabel('Share this copy on this installation').check();
-  await page.getByRole('button', { name: 'Save profile copy', exact: true }).click();
+  await page.getByRole('button', { name: 'Save new profile', exact: true }).click();
   await expect(page.getByRole('button', { name: 'Profile saved', exact: true })).toBeVisible();
 });

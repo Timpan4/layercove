@@ -6849,14 +6849,15 @@ export const api = {
   // Persistent installed-printer slicer catalog.
   listCalibrationSessions: () => request<CalibrationSession[]>('/calibration/sessions'),
   getCalibrationSession: (id: number) => request<CalibrationSession>(`/calibration/sessions/${id}`),
-  createCalibrationSession: (body: {
-    printer_id: number; filament_profile_id: number; filament_revision_id: number; nozzle_diameter: number; tool_index?: number;
-  }) => request<CalibrationSession>('/calibration/sessions', { method: 'POST', body: JSON.stringify(body) }),
+  listCalibrationGenericFilaments: () => request<string[]>('/calibration/generic-filaments'),
+  // A new filament profile starts from a generic filament instead of an existing profile.
+  createCalibrationSession: (body: { printer_id: number; nozzle_diameter: number; tool_index?: number }
+    & ({ filament_profile_id: number; filament_revision_id: number } | { generic_filament: string })) => request<CalibrationSession>('/calibration/sessions', { method: 'POST', body: JSON.stringify(body) }),
   updateCalibrationParameters: (id: number, step: CalibrationStep, body: CalibrationParameters & { version: number }) =>
     request<CalibrationSession>(`/calibration/sessions/${id}/parameters/${step}`, { method: 'PUT', body: JSON.stringify(body) }),
   recordCalibrationResult: (id: number, step: CalibrationStep, body: { version: number; value: number }) =>
     request<CalibrationSession>(`/calibration/sessions/${id}/results/${step}`, { method: 'PUT', body: JSON.stringify(body) }),
-  saveCalibrationProfile: (id: number, body: { version: number; name: string; share_local_copy: boolean }) =>
+  saveCalibrationProfile: (id: number, body: { version: number; name: string; share_local_copy: boolean; update_profile?: boolean }) =>
     request<CalibrationSession>(`/calibration/sessions/${id}/save`, { method: 'POST', body: JSON.stringify(body) }),
   switchCalibrationFilamentRevision: (id: number, body: { version: number }) =>
     request<CalibrationSession>(`/calibration/sessions/${id}/filament-revision`, { method: 'POST', body: JSON.stringify(body) }),

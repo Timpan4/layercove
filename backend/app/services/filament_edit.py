@@ -24,8 +24,14 @@ from backend.app.models.slicer_profile_catalog import (
 )
 from backend.app.services.orca_profiles import extract_core_fields
 from backend.app.services.preset_resolver import materialize_orca_profile
-from backend.app.services.slicer_catalog import CatalogInput, activate_revision, approve_review_batch, ingest_catalog
-from backend.app.services.slicer_catalog_sync import local_preset_adapter
+from backend.app.services.slicer_catalog import (
+    CatalogInput,
+    CatalogProfile,
+    activate_revision,
+    approve_review_batch,
+    ingest_catalog,
+)
+from backend.app.services.slicer_catalog_sync import local_preset_adapter, sync_local_catalog
 
 # Editing print parameters must not silently alter identity, inheritance or the
 # compatibility evidence whose administrator mappings are copied below.
@@ -203,3 +209,65 @@ async def copy_filament_profile(
         "revision_id": activation.revision_id,
         "local_preset_id": preset.id if shared else None,
     }
+
+
+async def update_local_filament(
+    db: AsyncSession, profile_id: int, base_revision_id: int, overrides: dict[str, Any], user_id: int | None
+) -> None:
+    """Write overrides into a local preset or the user's private copy as its new active revision.
+
+    Cloud and bundled profiles come from their source, whose next sync would replace the change.
+    """
+    row = (
+        await db.execute(
+            select(SlicerProfile, SlicerProfileAccount, SlicerProfileActivation.revision_id)
+            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+            .join(SlicerProfileActivation, SlicerProfileActivation.profile_id == SlicerProfile.id)
+            .where(SlicerProfile.id == profile_id, SlicerProfile.tombstoned_at.is_(None))
+        )
+    ).one_or_none()
+    if row is None:
+        raise HTTPException(409, "This filament profile is no longer available; save a copy instead")
+    profile, account, active_revision_id = row
+    private = account.sharing_state == "private" and account.user_id == user_id
+    if account.source != "local" or not (private or account.remote_account_id == "installation"):
+        raise HTTPException(409, "Only local presets and your private copies can be updated; save a copy instead")
+    if account.sync_frozen:
+        raise HTTPException(409, "The local profile catalog is frozen")
+    if active_revision_id != base_revision_id:
+        raise HTTPException(409, "The filament profile changed while calibrating; reload before saving")
+    if not private:
+        preset = await db.get(LocalPreset, int(profile.remote_profile_id))
+        content = {**json.loads(preset.setting), **overrides}
+        preset.setting = json.dumps(content)
+        for key, value in extract_core_fields(content).items():
+            setattr(preset, key, value)
+        await db.flush()
+        try:
+            # Editing local presets activates their new revisions without review.
+            await sync_local_catalog(db, actor_user_id=user_id)
+        except ValueError as exc:
+            raise HTTPException(409, f"Could not update the local presets: {exc}") from exc
+        return
+    revision = await db.get(SlicerProfileRevision, base_revision_id)
+    result = await ingest_catalog(
+        db,
+        CatalogInput(
+            source="local",
+            remote_account_id=account.remote_account_id,
+            actor_user_id=user_id,
+            profiles=[
+                CatalogProfile(
+                    remote_profile_id=profile.remote_profile_id,
+                    profile_type="filament",
+                    display_name=profile.display_name,
+                    content={**revision.content, **overrides},
+                    metadata=(revision.resolved_metadata or {}).get("metadata"),
+                )
+            ],
+            cursor=account.sync_cursor,
+        ),
+    )
+    if result.review_batch_id is not None:
+        await approve_review_batch(db, result.review_batch_id, user_id=user_id)
+    await activate_revision(db, result.current_revision_ids[0], user_id=user_id)
