@@ -28,6 +28,11 @@ const flowPatterns: Record<FlowPattern, { name: string; labels: number[]; additi
   pass2: { name: 'Pass 2', labels: Array.from({ length: 10 }, (_, i) => i - 9), additive: false },
 };
 function isFlowPattern(value: string): value is FlowPattern { return Object.hasOwn(flowPatterns, value); }
+// The flow ratio a labelled tile prints with, as Orca's Plater::calib_flowrate sets it.
+function flowRatio(pattern: FlowPattern, baseline: number, modifier: number) {
+  const ratio = flowPatterns[pattern].additive ? baseline + modifier : baseline * (1 + modifier / 100);
+  return Number(ratio.toPrecision(15));
+}
 
 // The name for the saved profile is chosen before the session starts, but sessions have no field
 // for it, so this browser keeps it until the session is saved.
@@ -208,7 +213,8 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const lastValue = Number(values.lowest) + Math.round(intervals) * Number(values.increment);
   const reachesHighest = Number.isFinite(intervals) && Math.abs(lastValue - Number(values.highest))
     <= Math.abs(Number(values.highest)) * Number.EPSILON;
-  const validRange = id === 'flow_rate' ? values.baseline.trim() !== '' && withinLimits(Number(values.baseline)) : Object.values(values).every(value => value.trim() !== '' && Number.isFinite(Number(value)))
+  const validRange = id === 'flow_rate' ? values.baseline.trim() !== '' && withinLimits(Number(values.baseline))
+    && flowPatterns[flowPattern].labels.every(label => withinLimits(flowRatio(flowPattern, Number(values.baseline), label))) : Object.values(values).every(value => value.trim() !== '' && Number.isFinite(Number(value)))
     && ['lowest', 'highest', 'baseline'].every(key => withinLimits(Number(values[key as keyof typeof values])))
     && Number(values.highest) > Number(values.lowest) && Number(values.increment) > 0
     && Number(values.increment) <= Number(values.highest) - Number(values.lowest)
@@ -218,7 +224,8 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const aboveRecommended = recommendedMax != null && [values.highest, values.baseline].some(value => Number(value) > recommendedMax);
   const savedParameters = session?.parameters[id];
   const legacyParameters = !!savedParameters && (id === 'flow_rate' ? !('flow_pattern' in savedParameters)
-    : id === 'temperature' && 'increment' in savedParameters && savedParameters.increment !== 5);
+    : id === 'temperature' && 'increment' in savedParameters && (savedParameters.increment !== 5
+      || savedParameters.lowest % 5 !== 0 || savedParameters.highest % 5 !== 0 || savedParameters.highest > 350));
   const valuesChanged = !savedParameters || legacyParameters || (id === 'flow_rate'
     ? !('flow_pattern' in savedParameters) || savedParameters.flow_pattern !== flowPattern || savedParameters.baseline !== Number(values.baseline)
     : !('lowest' in savedParameters) || fields.some(field => values[field.key].trim() === '' || Number(values[field.key]) !== savedParameters[field.key]));
@@ -347,7 +354,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
           {index < ids.length - 1 && <button className="cal-button cal-primary" onClick={() => goTo(index + 1)}>Next: {calibrationTests[index + 1].name}<ArrowRight size={16} /></button>}
           <button className="cal-text-button" onClick={() => setConfirmed(false)}>Edit result</button></div>
           : <div className="cal-inspector-layout"><div className="cal-model"><div className="cal-art">{photoUrl ? <img src={photoUrl} alt={'Your ' + step.name.toLowerCase() + ' test'} className="cal-review-photo" /> : <TestIllustration step={index} />}<span className="cal-art-caption">{photoUrl ? 'Your test photo' : 'Reference illustration'}</span></div><p>{step.look}</p>
-            {session?.parameters[id] && job.data?.status === 'completed' && <p className="cal-caption">{id === 'temperature' ? `Hottest section at the bottom: ${session.parameters.temperature?.highest} °C. Each section is 10 mm tall. Count sections upward, subtracting 5 °C each time.`
+            {session?.parameters[id] && !legacyParameters && job.data?.status === 'completed' && <p className="cal-caption">{id === 'temperature' ? `Hottest section at the bottom: ${session.parameters.temperature?.highest} °C. Each section is 10 mm tall. Count sections upward, subtracting 5 °C each time.`
               : id === 'flow_rate' ? 'Choose the modifier printed on the best tile. The result is stored as an absolute flow ratio.'
               : id === 'pressure_advance' ? 'Measure height from the base in mm. PA = lowest value + whole mm × step size.'
               : id === 'retraction' ? 'Measure height from the base in mm. Retraction = lowest value + whole mm above 0.4 mm × step size.'
@@ -384,12 +391,10 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
                     binding_id: selectedBinding.id, process_profile_id: Number(processId), acknowledge_compatibility: acknowledged })); }}><Layers size={15} />Generate test</button>
                 {generateBlocker && <p className="cal-caption">{generateBlocker}</p>}
                 <div className="cal-result-editor">
-                  {id === 'flow_rate' && <label className="cal-flow-tile">Which labelled tile looks best?<select aria-label="Best labelled tile" value={tile} disabled={locked || valuesChanged || !tilePattern} onChange={event => {
+                  {id === 'flow_rate' && <label className="cal-flow-tile">Which labelled tile looks best?<select value={tile} disabled={locked || valuesChanged || !tilePattern} onChange={event => {
                     setTile(event.target.value);
-                    if (event.target.value !== '' && savedFlow && tilePattern) {
-                      const modifier = Number(event.target.value);
-                      const ratio = tilePattern.additive ? savedFlow.baseline + modifier : savedFlow.baseline * (1 + modifier / 100);
-                      setResult(String(Number(ratio.toPrecision(15))));
+                    if (event.target.value !== '' && savedFlow && 'flow_pattern' in savedFlow) {
+                      setResult(String(flowRatio(savedFlow.flow_pattern, savedFlow.baseline, Number(event.target.value))));
                     }
                   }}><option value="">Choose tile label</option>{tilePattern?.labels.map(label => <option key={label} value={label}>{label > 0 ? '+' : ''}{label}</option>)}</select></label>}
                   <label><span>Custom result</span><span className="cal-input-value"><input type="number" step="any" value={result} disabled={locked}

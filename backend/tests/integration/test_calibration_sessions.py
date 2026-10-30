@@ -74,6 +74,18 @@ async def test_v3_flow_parameters_and_rerun(async_client, db_session, pattern):
     assert rejected.status_code == 422
 
 
+# Pass 1's +20 tile at a 1.9 baseline prints at 2.28, above the pinned flow ratio maximum of 2, and
+# YOLO's -0.05 tile at a 0.03 baseline would be negative.
+@pytest.mark.parametrize("pattern,baseline", [("pass1", 1.9), ("yolo", 0.03), ("yolo_perfectionist", 1.98)])
+async def test_flow_patterns_reject_tiles_outside_the_flow_ratio_limits(async_client, db_session, pattern, baseline):
+    session = await create_session(async_client, db_session)
+    rejected = await async_client.put(
+        f"/api/v1/calibration/sessions/{session['id']}/parameters/flow_rate",
+        json={"version": session["version"], "baseline": baseline, "flow_pattern": pattern},
+    )
+    assert rejected.status_code == 422, rejected.text
+
+
 @pytest.mark.parametrize("step", ["temperature", "pressure_advance", "retraction", "volumetric_flow"])
 async def test_flow_pattern_is_rejected_on_other_steps(async_client, db_session, step):
     session = await create_session(async_client, db_session)
@@ -120,6 +132,9 @@ def test_v3_cut_heights(step, values, height):
     "step,values",
     [
         ("temperature", {"lowest": 200, "highest": 220, "increment": 10, "baseline": 210}),
+        # Whole-degree bounds were valid before the tower's 5 °C labels.
+        ("temperature", {"lowest": 197, "highest": 222, "increment": 5, "baseline": 212}),
+        ("temperature", {"lowest": 450, "highest": 500, "increment": 5, "baseline": 460}),
         ("flow_rate", {"lowest": 0.8, "highest": 1.2, "increment": 0.05, "baseline": 1}),
     ],
 )
@@ -197,6 +212,12 @@ async def test_temperature_range_is_limited_to_the_orca_dialog_maximum(async_cli
     )
     assert rejected.status_code == 422, rejected.text
     assert "350 °C" in rejected.json()["detail"]
+    # 350 °C limits only the tower. A recorded result keeps the Orca dialog's 500 °C maximum.
+    results = f"/api/v1/calibration/sessions/{session['id']}/results/temperature"
+    recorded = await async_client.put(results, json={"version": row.version, "value": 400})
+    assert recorded.status_code == 200, recorded.text
+    above = await async_client.put(results, json={"version": recorded.json()["version"], "value": 505})
+    assert above.status_code == 422, above.text
 
 
 # Failure mode: a profile printing at 265 °C under its parent's 220-260 °C range showed

@@ -68,8 +68,13 @@ SETTINGS = {
     Step.RETRACTION: "filament_retraction_length",
     Step.VOLUMETRIC_FLOW: "filament_max_volumetric_speed",
 }
-# Highest label on Orca's bundled temperature tower.
-MAX_CALIBRATION_TEMPERATURE = 350
+# The sidecar's pinned OrcaSlicer temperature dialog (calib_dlg.cpp) starts at 500 °C at most, and the
+# sidecar enforces it.
+MAX_CALIBRATION_TEMPERATURE = 500
+# Highest label on Orca's bundled temperature tower, which limits only the tower's range.
+TOWER_TOP_TEMPERATURE = 350
+# Lowest and highest tile modifier in each of Orca's flow-rate calibration models.
+FLOW_TILE_EXTREMES = {"yolo": (-0.05, 0.05), "yolo_perfectionist": (-0.04, 0.035), "pass1": (-20, 20), "pass2": (-9, 0)}
 
 
 class SessionCreate(BaseModel):
@@ -118,9 +123,25 @@ class FlowParameterEdit(VersionedEdit):
     baseline: float = Field(gt=0, allow_inf_nan=False)
 
 
+def flow_ratio(pattern: str, baseline: float, modifier: float) -> float:
+    """The flow ratio a labelled tile prints with, as Orca's Plater::calib_flowrate sets it."""
+    return baseline + modifier if pattern.startswith("yolo") else baseline * (1 + modifier / 100)
+
+
+def tower_range_error(parameters: dict) -> str | None:
+    if (
+        parameters.get("increment") != 5
+        or parameters.get("lowest", 0) % 5
+        or parameters.get("highest", 0) % 5
+        or parameters.get("highest", 0) > TOWER_TOP_TEMPERATURE
+    ):
+        return f"Temperature requires 5 °C steps and labels that are multiples of 5, up to {TOWER_TOP_TEMPERATURE} °C"
+    return None
+
+
 def legacy_parameters(step: Step, parameters: dict) -> bool:
     return (step is Step.FLOW_RATE and "flow_pattern" not in parameters) or (
-        step is Step.TEMPERATURE and parameters.get("increment") != 5
+        step is Step.TEMPERATURE and tower_range_error(parameters) is not None
     )
 
 
@@ -575,6 +596,10 @@ async def edit_parameters(
     for key in ("lowest", "highest", "baseline"):
         if key in values:
             validate_setting(session, step, values[key])
+    if isinstance(body, FlowParameterEdit):
+        # Every tile must print with a flow ratio the filament setting accepts.
+        for modifier in FLOW_TILE_EXTREMES[body.flow_pattern]:
+            validate_setting(session, step, flow_ratio(body.flow_pattern, body.baseline, modifier))
     if isinstance(body, ParameterEdit):
         validate_range(step, body)
     if session.parameters.get(step.value) != values:
@@ -585,8 +610,8 @@ async def edit_parameters(
 
 
 def validate_range(step: Step, body: ParameterEdit) -> None:
-    if step is Step.TEMPERATURE and (body.increment != 5 or body.lowest % 5 or body.highest % 5):
-        raise HTTPException(422, "Temperature requires 5 °C steps and labels that are multiples of 5")
+    if step is Step.TEMPERATURE and (error := tower_range_error(body.model_dump())) is not None:
+        raise HTTPException(422, error)
     if body.increment > body.highest - body.lowest:
         raise HTTPException(422, "Step size must fit inside the test range")
     intervals = (body.highest - body.lowest) / body.increment
