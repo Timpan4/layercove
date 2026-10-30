@@ -6,7 +6,7 @@ from sqlalchemy import DateTime, event
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
-from sqlalchemy.types import NullType
+from sqlalchemy.types import NullType, TupleType
 
 from backend.app.core.config import settings
 from backend.app.core.db_dialect import is_sqlite
@@ -32,25 +32,37 @@ def _normalize_postgres_datetime_params(parameters, context, executemany):
         return parameters
 
     binds = getattr(compiled, "binds", {})
+
+    def bind_type(name):
+        bind = binds.get(name)
+        return None if bind is None else bind.type
+
     positiontup = getattr(compiled, "positiontup", None)
+    position_types = [bind_type(name) for name in positiontup or ()]
     if positiontup and (
         getattr(compiled, "literal_execute_params", None) or getattr(compiled, "post_compile_params", None)
     ):
         # An IN list expands one bind into several and a literal-execute bind renders inline, so
         # the DBAPI tuple no longer follows compiled.positiontup. Rebuild the order of SQLAlchemy's
         # _process_parameters_for_postcompile: numeric styles such as asyncpg's $n keep the
-        # other binds first and append expanded values. Each expanded value is typed by the bind
-        # it came from; tuple IN element types are not resolved.
+        # other binds first and append expanded values.
         expanded = getattr(context, "_expanded_parameters", None) or {}
         inline = {compiled.bind_names[bind] for bind in getattr(compiled, "literal_execute_params", ())}
         pre_expanded = getattr(compiled, "_pre_expanded_positiontup", None) or positiontup
         kept = [name for name in pre_expanded if name not in inline]
+
+        def types_of(name):
+            # Each expanded value takes its source bind's type. A tuple IN is flattened row by row,
+            # so its values take the tuple's element types in turn.
+            source = bind_type(name)
+            if name not in expanded:
+                return [source]
+            elements = source.types if isinstance(source, TupleType) else [source]
+            return [elements[index % len(elements)] for index in range(len(expanded[name]))]
+
         if getattr(compiled, "_numeric_binds", False):
-            positiontup = [name for name in kept if name not in expanded] + [
-                name for name in kept if name in expanded for _ in expanded[name]
-            ]
-        else:
-            positiontup = [source for name in kept for source in [name] * len(expanded.get(name, [name]))]
+            kept = [name for name in kept if name not in expanded] + [name for name in kept if name in expanded]
+        position_types = [type_ for name in kept for type_ in types_of(name)]
 
     def naive_utc(value):
         if isinstance(value, datetime) and value.tzinfo is not None:
@@ -63,27 +75,26 @@ def _normalize_postgres_datetime_params(parameters, context, executemany):
             return [naive_utc(item) for item in value]
         return value
 
-    def normalize(value, bind_name):
-        bind = binds.get(bind_name)
-        if bind is not None and isinstance(bind.type, DateTime) and bind.type.timezone:
+    def normalize(value, type_):
+        if isinstance(type_, DateTime) and type_.timezone:
             return value
         # Untyped text() binds retain legacy naive-UTC handling. Callers targeting
         # TIMESTAMPTZ must bind DateTime(timezone=True) so their instant is preserved.
-        if bind is None or isinstance(bind.type, (DateTime, NullType)):
+        if type_ is None or isinstance(type_, (DateTime, NullType)):
             return naive_utc(value)
         return value
 
     def normalize_row(row):
         if isinstance(row, dict):
-            return {name: normalize(value, name) for name, value in row.items()}
+            return {name: normalize(value, bind_type(name)) for name, value in row.items()}
         if isinstance(row, tuple) and positiontup:
             return tuple(
-                normalize(value, positiontup[index]) if index < len(positiontup) else value
+                normalize(value, position_types[index]) if index < len(position_types) else value
                 for index, value in enumerate(row)
             )
         if isinstance(row, list) and positiontup:
             return [
-                normalize(value, positiontup[index]) if index < len(positiontup) else value
+                normalize(value, position_types[index]) if index < len(position_types) else value
                 for index, value in enumerate(row)
             ]
         return row

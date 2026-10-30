@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 from uuid import uuid4
 
 import pytest
-from sqlalchemy import bindparam, func, select
+from sqlalchemy import bindparam, func, select, tuple_
 from sqlalchemy.engine import make_url
 from sqlalchemy.ext.asyncio import async_sessionmaker
 from sqlalchemy.schema import CreateSchema, DropSchema
@@ -65,6 +65,15 @@ async def test_aware_datetimes_bind_by_column_type_next_to_in_lists(monkeypatch)
                     PrintQueueItem.completed_at >= since,
                 )
             )
+            # A tuple IN is flattened row by row; each value binds by its element's column type.
+            noon_at_utc_plus_two = datetime(2026, 10, 30, 14, tzinfo=timezone(timedelta(hours=2)))
+            tupled = await session.scalar(
+                select(func.count(PrintQueueItem.id)).where(
+                    tuple_(PrintQueueItem.status, PrintQueueItem.completed_at).in_(
+                        [("failed", noon_at_utc_plus_two), ("completed", since)]
+                    )
+                )
+            )
             # A TIMESTAMP WITH TIME ZONE column next to an IN list binds too: 14:30 at UTC+2 is after 12:00 UTC.
             later = datetime(2026, 10, 30, 14, 30, tzinfo=timezone(timedelta(hours=2)))
             events = await session.scalar(
@@ -76,6 +85,7 @@ async def test_aware_datetimes_bind_by_column_type_next_to_in_lists(monkeypatch)
 
         assert completed == 1
         assert inline == 1
+        assert tupled == 1
         assert events == 0
     finally:
         async with engine.begin() as connection:
