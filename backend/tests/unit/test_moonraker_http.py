@@ -211,7 +211,6 @@ async def test_moonraker_upload_rejects_non_object_json_response(response_json):
     [
         {"default_metadata_parser_timeout": "20"},
         {"default_metadata_parser_timeout": True},
-        {"default_metadata_parser_timeout": 0},
         {"enable_object_processing": "yes"},
     ],
 )
@@ -311,9 +310,14 @@ async def test_moonraker_upload_uses_separate_bounded_transfer_deadline(monkeypa
 
     monkeypatch.setattr(moonraker_http, "_TOTAL_TIMEOUT_SECONDS", 0.001)
     monkeypatch.setattr(moonraker_http, "_UPLOAD_TOTAL_TIMEOUT_SECONDS", 0.1)
+    resolved = 0
 
     async def resolver(host: str, port: int):
-        await asyncio.sleep(0.01)
+        # The settings read keeps the normal deadline; only the upload itself is slow.
+        nonlocal resolved
+        resolved += 1
+        if resolved > 1:
+            await asyncio.sleep(0.01)
         return {ipaddress.ip_address("192.168.1.25")}
 
     client = MoonrakerHTTPClient(

@@ -136,7 +136,8 @@ async def test_real_http_client_covers_upload_and_mvp_commands(fake_moonraker, m
 # Failure mode: a 1.4 MB calibration tower reached the printer, but Moonraker was still
 # processing its objects when the 10 s read timeout fired, so the print was reported as failed.
 @pytest.mark.asyncio
-@pytest.mark.parametrize("parser_timeout, object_processing", [(0.5, False), (0.01, True)])
+# A parser timeout of 0 means Moonraker never stops the metadata run.
+@pytest.mark.parametrize("parser_timeout, object_processing", [(0.5, False), (0.01, True), (0, False)])
 async def test_upload_waits_for_moonraker_metadata_processing(
     fake_moonraker, monkeypatch, parser_timeout, object_processing
 ):
@@ -157,8 +158,8 @@ async def test_upload_waits_for_moonraker_metadata_processing(
     assert path == "queue/tower.gcode"
 
 
-# A printer that stops answering after the body holds the print queue only for Moonraker's own
-# metadata limit plus the normal read timeout, not the whole upload deadline.
+# A printer that stops answering after the body holds the print queue only for Moonraker's three
+# metadata runs plus the normal read timeout, not the whole upload deadline.
 @pytest.mark.asyncio
 async def test_upload_reply_wait_is_bounded_by_moonraker_metadata_limit(fake_moonraker, monkeypatch):
     import httpx
