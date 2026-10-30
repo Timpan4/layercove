@@ -74,7 +74,8 @@ CALIBRATION_CONTRACT = "3"
 # The sidecar's pinned OrcaSlicer temperature dialog (calib_dlg.cpp) starts at 500 °C at most, and the
 # sidecar enforces it.
 MAX_CALIBRATION_TEMPERATURE = 500
-# Highest label on Orca's bundled temperature tower, which limits only the tower's range.
+# Lowest and highest labels on Orca's bundled temperature tower, which limit only the tower's range.
+TOWER_BOTTOM_TEMPERATURE = 5
 TOWER_TOP_TEMPERATURE = 350
 # Lowest and highest tile modifier in each of Orca's flow-rate calibration models.
 FLOW_TILE_EXTREMES = {"yolo": (-0.05, 0.05), "yolo_perfectionist": (-0.04, 0.035), "pass1": (-20, 20), "pass2": (-9, 0)}
@@ -136,9 +137,13 @@ def tower_range_error(parameters: dict) -> str | None:
         parameters.get("increment") != 5
         or parameters.get("lowest", 0) % 5
         or parameters.get("highest", 0) % 5
+        or parameters.get("lowest", 0) < TOWER_BOTTOM_TEMPERATURE
         or parameters.get("highest", 0) > TOWER_TOP_TEMPERATURE
     ):
-        return f"Temperature requires 5 °C steps and labels that are multiples of 5, up to {TOWER_TOP_TEMPERATURE} °C"
+        return (
+            "Temperature requires 5 °C steps and labels that are multiples of 5, "
+            f"from {TOWER_BOTTOM_TEMPERATURE} to {TOWER_TOP_TEMPERATURE} °C"
+        )
     return None
 
 

@@ -218,14 +218,14 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     && ['lowest', 'highest', 'baseline'].every(key => withinLimits(Number(values[key as keyof typeof values])))
     && Number(values.highest) > Number(values.lowest) && Number(values.increment) > 0
     && Number(values.increment) <= Number(values.highest) - Number(values.lowest)
-    && reachesHighest && (id !== 'temperature' || Number(values.increment) === 5 && Number(values.lowest) % 5 === 0 && Number(values.highest) % 5 === 0 && Number(values.highest) <= 350);
+    && reachesHighest && (id !== 'temperature' || Number(values.increment) === 5 && Number(values.lowest) % 5 === 0 && Number(values.highest) % 5 === 0 && Number(values.lowest) >= 5 && Number(values.highest) <= 350);
   // The filament's temperature range is a recommendation, as in OrcaSlicer, so going above it only warns.
   const recommendedMax = limit?.recommended_max;
   const aboveRecommended = recommendedMax != null && [values.highest, values.baseline].some(value => Number(value) > recommendedMax);
   const savedParameters = session?.parameters[id];
   const legacyParameters = !!savedParameters && (id === 'flow_rate' ? !('flow_pattern' in savedParameters)
     : id === 'temperature' && 'increment' in savedParameters && (savedParameters.increment !== 5
-      || savedParameters.lowest % 5 !== 0 || savedParameters.highest % 5 !== 0 || savedParameters.highest > 350));
+      || savedParameters.lowest % 5 !== 0 || savedParameters.highest % 5 !== 0 || savedParameters.lowest < 5 || savedParameters.highest > 350));
   const valuesChanged = !savedParameters || legacyParameters || (id === 'flow_rate'
     ? !('flow_pattern' in savedParameters) || savedParameters.flow_pattern !== flowPattern || savedParameters.baseline !== Number(values.baseline)
     : !('lowest' in savedParameters) || fields.some(field => values[field.key].trim() === '' || Number(values[field.key]) !== savedParameters[field.key]));
@@ -386,7 +386,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
                   }));
                 }}>Save test values</button>
                 {values.highest && values.lowest && values.increment && !reachesHighest && <p className="cal-caption">Step size must reach the highest test value.</p>}
-                {id === 'temperature' && <p className="cal-caption">Use 5 °C steps and bounds that are multiples of 5, up to 350 °C.</p>}
+                {id === 'temperature' && <p className="cal-caption">Use 5 °C steps and bounds that are multiples of 5, from 5 to 350 °C.</p>}
                 {limit && <p className="cal-caption">{limit.item_type === 'int' ? 'Whole numbers' : 'Numeric values'}{limit.max == null ? '' : `, up to ${limit.max} ${step.unit}`}.</p>}
                 {aboveRecommended && <p className="cal-caption" role="status">Above this filament’s recommended maximum of {recommendedMax} {step.unit}. Check that the filament can take it.</p>}
                 <button className="cal-button cal-secondary" disabled={locked || !!generateBlocker}

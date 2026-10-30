@@ -38,6 +38,8 @@ PLA_CONTENT = {
         {"lowest": 200, "highest": 220, "increment": 10, "baseline": 210},
         {"lowest": 201, "highest": 221, "increment": 5, "baseline": 210},
         {"lowest": 340, "highest": 355, "increment": 5, "baseline": 345},
+        # The tower's lowest label is 5 °C.
+        {"lowest": 0, "highest": 20, "increment": 5, "baseline": 10},
     ],
 )
 async def test_v3_temperature_rejects_unsupported_labels(async_client, db_session, values):
