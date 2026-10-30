@@ -112,6 +112,8 @@ class SliceJobStateResponse(BaseModel):
     schema_hash: str | None = None
     request_fingerprint: str | None = None
     request_snapshot: dict[str, Any] | None = None
+    # The calibration protocol a calibration test was generated under; None for older tests.
+    calibration_contract: str | None = None
     created_at: datetime
     started_at: datetime | None = None
     completed_at: datetime | None = None

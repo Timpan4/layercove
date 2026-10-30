@@ -15,6 +15,7 @@ from backend.app.models.library import LibraryFile
 from backend.app.models.moonraker_printer_config import MoonrakerPrinterConfig
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
+from backend.app.models.slice_job import SliceJobRecord
 from backend.app.models.slicer_profile_catalog import SlicerProfile, SlicerProfileActivation
 from backend.app.services import print_scheduler, printer_manager, slicer_api, slicer_catalog_selection
 from backend.app.services.print_scheduler import PrintScheduler
@@ -246,7 +247,21 @@ async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_sel
             },
         )
         session = regenerated.json()
-        assert (await _wait_for_job(async_client, session["runs"]["temperature"]))["status"] == "completed"
+        job = await _wait_for_job(async_client, session["runs"]["temperature"])
+        assert job["status"] == "completed"
+        assert job["calibration_contract"] == "3"
+        # A test generated under the previous protocol printed different geometry.
+        record = await db_session.get(SliceJobRecord, job["job_id"])
+        current = record.request_snapshot
+        record.request_snapshot = {key: value for key, value in current.items() if key != "calibration_contract"}
+        await db_session.commit()
+        older = await async_client.post(
+            base + "/print/temperature", json={"version": session["version"], "plate_clear": True}
+        )
+        assert older.status_code == 409, older.text
+        assert "generate it again" in older.json()["detail"]
+        record.request_snapshot = current
+        await db_session.commit()
         wrong_provider = await async_client.post(
             base + "/print/temperature",
             json={"version": session["version"], "plate_clear": True, "use_ams": True, "ams_mapping": [0]},

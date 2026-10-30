@@ -64,6 +64,9 @@ async def get_slice_job(
         "schema_hash": job.schema_hash,
         "request_fingerprint": job.request_fingerprint,
         "request_snapshot": snapshot,
+        "calibration_contract": (job.request_snapshot or {}).get("calibration_contract")
+        if job.source_kind == "calibration_session"
+        else None,
         "created_at": job.created_at.isoformat(),
         "started_at": job.started_at.isoformat() if job.started_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,

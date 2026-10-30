@@ -229,6 +229,8 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
   const valuesChanged = !savedParameters || legacyParameters || (id === 'flow_rate'
     ? !('flow_pattern' in savedParameters) || savedParameters.flow_pattern !== flowPattern || savedParameters.baseline !== Number(values.baseline)
     : !('lowest' in savedParameters) || fields.some(field => values[field.key].trim() === '' || Number(values[field.key]) !== savedParameters[field.key]));
+  // Tests generated under an older sidecar protocol printed different geometry.
+  const outdatedRun = job.data?.status === 'completed' && job.data.calibration_contract !== '3';
   const savedFlow = session?.parameters.flow_rate;
   const tilePattern = savedFlow && 'flow_pattern' in savedFlow ? flowPatterns[savedFlow.flow_pattern] : null;
   const savedResult = session?.results[id];
@@ -255,6 +257,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     : filamentOutdated ? 'Switch to the current filament version first.'
     : valuesChanged ? 'Save the test values and generate the test.'
     : job.data?.status !== 'completed' ? 'Generate the test before printing.'
+    : outdatedRun ? 'Generate the test again with Orca calibration models.'
     : useAms && !amsTrays.some(item => item.value === Number(tray)) ? 'Choose the AMS slot that holds this filament.'
     : !plateClear ? 'Confirm that the plate is clear and the filament is loaded.'
     : null;
@@ -354,7 +357,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
           {index < ids.length - 1 && <button className="cal-button cal-primary" onClick={() => goTo(index + 1)}>Next: {calibrationTests[index + 1].name}<ArrowRight size={16} /></button>}
           <button className="cal-text-button" onClick={() => setConfirmed(false)}>Edit result</button></div>
           : <div className="cal-inspector-layout"><div className="cal-model"><div className="cal-art">{photoUrl ? <img src={photoUrl} alt={'Your ' + step.name.toLowerCase() + ' test'} className="cal-review-photo" /> : <TestIllustration step={index} />}<span className="cal-art-caption">{photoUrl ? 'Your test photo' : 'Reference illustration'}</span></div><p>{step.look}</p>
-            {session?.parameters[id] && !legacyParameters && job.data?.status === 'completed' && <p className="cal-caption">{id === 'temperature' ? `Hottest section at the bottom: ${session.parameters.temperature?.highest} °C. Each section is 10 mm tall. Count sections upward, subtracting 5 °C each time.`
+            {session?.parameters[id] && !legacyParameters && job.data?.status === 'completed' && !outdatedRun && <p className="cal-caption">{id === 'temperature' ? `Hottest section at the bottom: ${session.parameters.temperature?.highest} °C. Each section is 10 mm tall. Count sections upward, subtracting 5 °C each time.`
               : id === 'flow_rate' ? 'Choose the modifier printed on the best tile. The result is stored as an absolute flow ratio.'
               : id === 'pressure_advance' ? 'Measure height from the base in mm. PA = lowest value + whole mm × step size.'
               : id === 'retraction' ? 'Measure height from the base in mm. Retraction = lowest value + whole mm above 0.4 mm × step size.'
@@ -364,7 +367,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
               <label className="cal-button cal-secondary cal-upload"><Upload size={15} />Upload photo<input type="file" accept="image/jpeg,image/png,image/webp"
                 disabled={!session || !!session.saved_profile_id || upload.isPending} onChange={event => { const file = event.target.files?.[0]; if (file) upload.mutate({ file, source: 'upload' }); event.target.value = ''; }} /></label></div>
             <p className="cal-caption">{upload.isPending ? 'Saving photo…' : photos.length ? 'Photo saved with this step. Choose the result yourself.' : 'Capture the printer camera or upload a close-up for review.'}</p>
-            {job.data && <p className="cal-caption" role="status">{job.data.status === 'completed' ? 'Test generated. Ready to print.' : job.data.status === 'failed' ? job.data.error_detail : 'Generating test: ' + (job.data.progress?.total_percent ?? 0) + '%'}</p>}
+            {job.data && <p className="cal-caption" role="status">{job.data.status === 'completed' ? (outdatedRun ? 'This test was generated before Orca calibration models. Generate it again.' : 'Test generated. Ready to print.') : job.data.status === 'failed' ? job.data.error_detail : 'Generating test: ' + (job.data.progress?.total_percent ?? 0) + '%'}</p>}
             {currentPrint && <p className="cal-caption" role="status">{currentPrint.status === 'completed' ? 'Print completed. Review the test and record your result.' : 'Test print: ' + currentPrint.status}{currentPrint.error_message ? '. ' + currentPrint.error_message : ''}</p>}
             {activePrint && <a className="cal-text-button" href="/queue">View print queue</a>}
           </div>

@@ -459,6 +459,31 @@ it('keeps photos taken before generation visible on the step', async () => {
   expect(await screen.findByText('Photo saved with this step. Choose the result yourself.')).toBeInTheDocument();
 });
 
+// Failure mode: a tower generated before Orca's models (15 mm sections on a 0.6 mm nozzle) was read
+// with the caption for 10 mm sections and printed again as if current.
+it.each([[null, true], ['3', false]])('treats a completed test generated under protocol %s as outdated: %s', async (contract, outdated) => {
+  const parameters = { temperature: { lowest: 240, highest: 270, increment: 5, baseline: 265 } };
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([baseSession])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json({ ...baseSession, parameters, runs: { temperature: 70 } })),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slice-jobs/70', () => HttpResponse.json({ id: 70, status: 'completed', calibration_contract: contract })),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'Generic ASA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: {} })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  const notice = 'This test was generated before Orca calibration models. Generate it again.';
+  if (outdated) {
+    expect(await screen.findByText(notice)).toBeInTheDocument();
+    expect(screen.queryByText(/Each section is 10 mm tall/)).not.toBeInTheDocument();
+  } else {
+    expect(await screen.findByText(/Each section is 10 mm tall/)).toBeInTheDocument();
+    expect(screen.queryByText(notice)).not.toBeInTheDocument();
+  }
+});
+
 it('lets a session move to the filament profile version that replaced it', async () => {
   let switched = false;
   server.use(

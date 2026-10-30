@@ -68,6 +68,9 @@ SETTINGS = {
     Step.RETRACTION: "filament_retraction_length",
     Step.VOLUMETRIC_FLOW: "filament_max_volumetric_speed",
 }
+# The orca-slicer-api calibration protocol these tests use. Runs generated under an older one print
+# different geometry, so they are regenerated before printing.
+CALIBRATION_CONTRACT = "3"
 # The sidecar's pinned OrcaSlicer temperature dialog (calib_dlg.cpp) starts at 500 °C at most, and the
 # sidecar enforces it.
 MAX_CALIBRATION_TEMPERATURE = 500
@@ -800,7 +803,7 @@ async def generate_test(
             if (
                 not capabilities.calibration
                 or capabilities.calibration.get("available") is not True
-                or capabilities.calibration.get("version") != "3"
+                or capabilities.calibration.get("version") != CALIBRATION_CONTRACT
             ):
                 raise HTTPException(
                     503, "The configured Orca sidecar needs calibration protocol 3 (orca-slicer-api 0.2.0)"
@@ -839,7 +842,11 @@ async def generate_test(
             raise HTTPException(409, FILAMENT_CHANGED)
         # Raises while the previous test is still generating.
         await retire_runs(job_db, current, (step,))
-        job.request_snapshot = {**job.request_snapshot, "calibration": calibration}
+        job.request_snapshot = {
+            **job.request_snapshot,
+            "calibration": calibration,
+            "calibration_contract": CALIBRATION_CONTRACT,
+        }
         current.runs = {**current.runs, step.value: job.id}
 
     async def run(job_id):
@@ -895,6 +902,8 @@ async def print_test(
     job = await db.get(SliceJobRecord, job_id) if job_id else None
     if job is None or job.status != "completed" or job.result_artifact_kind != "library_file":
         raise HTTPException(409, "Generate this calibration test before printing")
+    if job.request_snapshot.get("calibration_contract") != CALIBRATION_CONTRACT:
+        raise HTTPException(409, "This test was generated before Orca calibration models; generate it again")
     if job.request_snapshot.get("calibration") != test_request(session, step):
         raise HTTPException(409, "Test values or preceding results changed; generate the test again")
     if not printer_manager.is_connected(session.printer_id):

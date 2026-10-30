@@ -2103,6 +2103,8 @@ export interface SliceJobState {
   request_fingerprint: string | null;
   /** Retained request, validated against the job fingerprint by the server. */
   request_snapshot?: SliceRequest | null;
+  /** Calibration protocol a calibration test was generated under; null for older tests. */
+  calibration_contract?: string | null;
   created_at: string;
   started_at: string | null;
   completed_at: string | null;
