@@ -1,6 +1,7 @@
 """Calibration sessions through HTTP, including catalog copy transactions."""
 
 from datetime import datetime, timezone
+from unittest.mock import AsyncMock
 
 import pytest
 from sqlalchemy import select
@@ -9,6 +10,7 @@ from backend.app.models.calibration import CalibrationSession
 from backend.app.models.printer import Printer
 from backend.app.models.slicer_profile_catalog import SlicerProfileActivation, SlicerProfileRevision
 from backend.app.models.user import User
+from backend.app.services.slicer_api import SlicerApiService
 from backend.app.services.slicer_catalog import (
     CatalogInput,
     CatalogProfile,
@@ -74,13 +76,30 @@ async def test_results_reject_values_outside_pinned_setting_limits(async_client,
     assert response.status_code == 422, response.text
 
 
-async def test_temperature_range_cannot_exceed_material_maximum(async_client, db_session):
+async def test_temperature_range_cannot_exceed_the_orca_tower_maximum(async_client, db_session):
     session = await create_session(async_client, db_session)
     response = await async_client.put(
         f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
-        json={"version": session["version"], "lowest": 200, "highest": 500, "increment": 5, "baseline": 210},
+        json={"version": session["version"], "lowest": 300, "highest": 355, "increment": 5, "baseline": 310},
     )
     assert response.status_code == 422, response.text
+
+
+# Failure mode: a profile printing at 265 °C under its parent's 220-260 °C range showed
+# "up to 310 °C", and the slicer then rejected the test against the parent's 260 °C.
+async def test_the_filament_temperature_range_is_a_recommendation_resolved_from_the_parent(
+    async_client, db_session, monkeypatch
+):
+    bundled = {"filament": [{"name": "Generic PETG @System", "content": {"nozzle_temperature_range_high": ["260"]}}]}
+    monkeypatch.setattr(SlicerApiService, "list_bundled_profiles", AsyncMock(return_value=bundled))
+    content = {**PLA_CONTENT, "nozzle_temperature": ["265"], "inherits": "Generic PETG @System"}
+    session = await create_session(async_client, db_session, content)
+    assert session["setting_limits"]["temperature"]["recommended_max"] == 260
+    response = await async_client.put(
+        f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
+        json={"version": session["version"], "lowest": 240, "highest": 270, "increment": 5, "baseline": 265},
+    )
+    assert response.status_code == 200, response.text
 
 
 @pytest.mark.parametrize("highest,increment", [(1.05, 0.1), (1e308, 1e-308)])
@@ -336,16 +355,6 @@ async def test_sessions_are_single_extruder(async_client, db_session):
         },
     )
     assert response.status_code == 422, response.text
-
-
-async def test_inherited_filament_without_its_own_maximum_keeps_parent_temperatures_available(async_client, db_session):
-    # The pinned schema default (240 °C) is not the parent's value, so it must not cap the range.
-    session = await create_session(async_client, db_session, {**PLA_CONTENT, "inherits": "Generic ASA"})
-    response = await async_client.put(
-        f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
-        json={"version": session["version"], "lowest": 240, "highest": 280, "increment": 10, "baseline": 260},
-    )
-    assert response.status_code == 200, response.text
 
 
 async def test_a_newer_filament_revision_can_be_adopted_without_losing_results(async_client, db_session):

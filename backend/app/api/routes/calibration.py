@@ -236,8 +236,8 @@ async def active_filament_revision(
 GENERIC_FILAMENT = re.compile(r"Generic .+ @System")
 
 
-async def bundled_generic_filaments(db: AsyncSession) -> dict[str, dict]:
-    """The sidecar's bundled generic filament profiles, by name."""
+async def bundled_filaments(db: AsyncSession) -> list[dict]:
+    """The sidecar's bundled filament profiles, each with a name and resolved content."""
     from backend.app.api.routes.slicer import resolve_orca_api_url
     from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
 
@@ -247,11 +247,16 @@ async def bundled_generic_filaments(db: AsyncSession) -> dict[str, dict]:
     except (SlicerApiError, ValueError) as exc:
         raise HTTPException(503, "The slicer sidecar did not list its bundled filament profiles") from exc
     entries = snapshot.get("filament") if isinstance(snapshot, dict) else None
-    return {
-        entry["name"]: entry
+    return [
+        entry
         for entry in (entries if isinstance(entries, list) else [])
-        if isinstance(entry, dict) and isinstance(entry.get("name"), str) and GENERIC_FILAMENT.fullmatch(entry["name"])
-    }
+        if isinstance(entry, dict) and isinstance(entry.get("name"), str) and isinstance(entry.get("content"), Mapping)
+    ]
+
+
+async def bundled_generic_filaments(db: AsyncSession) -> dict[str, dict]:
+    """The sidecar's bundled generic filament profiles, by name."""
+    return {entry["name"]: entry for entry in await bundled_filaments(db) if GENERIC_FILAMENT.fullmatch(entry["name"])}
 
 
 async def generic_filament(
@@ -340,19 +345,31 @@ async def load_setting_limits(db: AsyncSession, content: Mapping[str, Any], prin
         for step, field in SETTINGS.items()
     }
     temperature = limits[Step.TEMPERATURE.value]
-    material_max = content.get("nozzle_temperature_range_high")
-    # Orca applies the schema default only to a complete profile. When the profile
-    # inherits, the parent supplies the value, which this revision does not carry.
-    if material_max is None and not content.get("inherits"):
-        material_max = options["nozzle_temperature_range_high"]["default"]
-    if material_max is not None:
-        try:
-            material_max = float(material_max[0] if isinstance(material_max, list) else material_max)
-            if not 0 < material_max <= options["nozzle_temperature"]["max"]:
-                raise ValueError
-        except (TypeError, ValueError, IndexError) as exc:
-            raise HTTPException(409, "The filament profile needs a valid maximum nozzle temperature") from exc
-        temperature["max"] = material_max
+    # OrcaSlicer's temperature tower (v2.3.0 calib_dlg.cpp) starts at 350 °C at most, and the sidecar enforces it.
+    temperature["max"] = 350 if temperature["max"] is None else min(temperature["max"], 350)
+    # The filament's temperature range is a recommendation, as in Orca, so it only warns.
+    recommended = content.get("nozzle_temperature_range_high")
+    parent = content.get("inherits")
+    if recommended is None and parent:
+        # The sidecar fills an inheriting profile from its bundled parent before slicing.
+        recommended = next(
+            (
+                entry["content"].get("nozzle_temperature_range_high")
+                for entry in await bundled_filaments(db)
+                if entry["name"] == parent
+            ),
+            None,
+        )
+    elif recommended is None:
+        # Orca applies the schema default to a complete profile.
+        recommended = options["nozzle_temperature_range_high"]["default"]
+    try:
+        recommended = float(recommended[0] if isinstance(recommended, list) else recommended)
+    except (TypeError, ValueError, IndexError):
+        recommended = None
+    temperature["recommended_max"] = (
+        recommended if recommended is not None and math.isfinite(recommended) and recommended > 0 else None
+    )
     snapshot = printer_manager.get_snapshot(printer_id)
     nozzle = next((item for item in snapshot.nozzles if item.tool_index == tool_index), None) if snapshot else None
     if nozzle and nozzle.max_temperature is not None:

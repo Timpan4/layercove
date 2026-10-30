@@ -204,6 +204,9 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
     && Number(values.highest) > Number(values.lowest) && Number(values.increment) > 0
     && Number(values.increment) <= Number(values.highest) - Number(values.lowest)
     && reachesHighest && (id !== 'temperature' || Number.isInteger(Number(values.increment)));
+  // The filament's temperature range is a recommendation, as in OrcaSlicer, so going above it only warns.
+  const recommendedMax = limit?.recommended_max;
+  const aboveRecommended = recommendedMax != null && [values.highest, values.baseline].some(value => Number(value) > recommendedMax);
   const valuesChanged = !session?.parameters[id] || fields.some(field => values[field.key].trim() === ''
     || Number(values[field.key]) !== session.parameters[id]![field.key]);
   const savedResult = session?.results[id];
@@ -349,6 +352,7 @@ export function GuidedCalibration({ printers }: { printers: Printer[] }) {
                 }}>Save test values</button>
                 {values.highest && values.lowest && values.increment && !reachesHighest && <p className="cal-caption">Step size must reach the highest test value.</p>}
                 {limit && <p className="cal-caption">{limit.item_type === 'int' ? 'Whole numbers' : 'Numeric values'}{limit.max == null ? '' : `, up to ${limit.max} ${step.unit}`}.</p>}
+                {aboveRecommended && <p className="cal-caption" role="status">Above this filament’s recommended maximum of {recommendedMax} {step.unit}. Check that the filament can take it.</p>}
                 <button className="cal-button cal-secondary" disabled={locked || !!generateBlocker}
                   onClick={() => { if (session && selectedBinding) mutate.mutate(() => api.generateCalibrationTest(session.id, id, { version: session.version,
                     binding_id: selectedBinding.id, process_profile_id: Number(processId), acknowledge_compatibility: acknowledged })); }}><Layers size={15} />Generate test</button>

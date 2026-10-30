@@ -5,7 +5,7 @@ type TestValues = { lowest: string; highest: string; increment: string; baseline
 // Orca's calibration dialog defaults, from OrcaSlicer v2.3.0 src/slic3r/GUI/calib_dlg.cpp.
 // Temperature towers use 5 °C steps between these per-material bounds; PLA bounds cover other materials.
 const temperatures: [RegExp, number, number][] = [
-  [/^(ABS|ASA)/i, 230, 270], [/^PETG/i, 230, 250], [/^PCTG/i, 240, 280], [/^TPU/i, 210, 240], [/^(PA|PET)-CF/i, 280, 320],
+  [/\b(ABS|ASA)/i, 230, 270], [/\bPETG/i, 230, 250], [/\bPCTG/i, 240, 280], [/\bTPU/i, 210, 240], [/\b(PA|PET)-CF/i, 280, 320],
 ];
 // Pressure advance uses the direct-drive tower range; a Bowden extruder needs a wider one.
 const ranges: Partial<Record<CalibrationStep, [number, number, number]>> = {
@@ -23,7 +23,8 @@ export function defaultTestValues(step: CalibrationStep, field: string, content:
   maxTemperature: number | null | undefined): TestValues {
   const baseline = first(content, field);
   if (step === 'temperature') {
-    const material = first(content, 'filament_type');
+    // A profile that inherits its type names it only through its parent, such as "Generic PETG @System".
+    const material = first(content, 'filament_type') || first(content, 'inherits');
     const [, low, high] = temperatures.find(([pattern]) => pattern.test(material)) ?? [null, 190, 230];
     // Stay under the session's temperature limit, on the 5 °C grid.
     const highest = maxTemperature == null ? high : Math.min(high, Math.floor(maxTemperature / 5) * 5);

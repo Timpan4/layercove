@@ -18,6 +18,12 @@ it('keeps the flow range at plus and minus 20 percent', () => {
     .toEqual({ lowest: '0.792', highest: '1.188', increment: '0.0495', baseline: '0.99' });
 });
 
+// Failure mode: a PETG profile that inherits its type got the PLA range of 190-230 °C.
+it('takes the material from the parent profile when the profile inherits it', () => {
+  expect(defaultTestValues('temperature', 'nozzle_temperature', { inherits: 'Generic PETG @System', nozzle_temperature: ['265'] }, 350))
+    .toEqual({ lowest: '230', highest: '250', increment: '5', baseline: '265' });
+});
+
 it('keeps the temperature range under the session limit', () => {
   expect(defaultTestValues('temperature', 'nozzle_temperature', { filament_type: ['PA-CF'] }, 298))
     .toEqual({ lowest: '280', highest: '295', increment: '5', baseline: '' });

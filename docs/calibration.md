@@ -49,9 +49,9 @@ The configured Rust Orca sidecar must support calibration protocol 1 and the pin
 - Pressure advance and volumetric flow use 1 mm bands.
 - Retraction uses 1 mm bands above a 0.4 mm base.
 
-The UI explains the value-to-height mapping. The step size must reach the highest sample. Where available, LayerCove checks whole-degree temperatures, source setting bounds, the material's maximum temperature, reported nozzle limits, printable height, and volumetric XY speed limits. Missing source maxima are not replaced with guessed physical limits.
+The UI explains the value-to-height mapping. The step size must reach the highest sample. Where available, LayerCove checks whole-degree temperatures, source setting bounds, OrcaSlicer's 350 °C temperature tower limit, reported nozzle limits, printable height, and volumetric XY speed limits. Missing source maxima are not replaced with guessed physical limits.
 
-- Material maximum: a filament revision without `nozzle_temperature_range_high` uses the schema default only when it has no `inherits` parent. An inheriting profile gets its value from the parent, so the session applies no material cap and keeps the printer's reported nozzle limit.
+- Recommended temperature: the filament's `nozzle_temperature_range_high` is a recommendation, as in OrcaSlicer. A test above it shows a warning but can still be generated. A profile that inherits takes the value from its bundled parent, the same parent the sidecar fills in. A complete profile without the value uses the schema default. Sessions started before this change keep the material cap they started with.
 - Printable height: before generating, LayerCove compares the band heights above with the printer profile's `printable_height`. This is a lower bound, because the sidecar may add a base or margins. A profile without a usable height leaves the check to the sidecar.
 
 ## Printing
