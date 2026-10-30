@@ -9,6 +9,17 @@ import httpx
 import pytest
 
 
+def _with_config(handler):
+    """Answer Moonraker's file manager settings, which every upload reads first."""
+
+    def answer(request: httpx.Request):
+        if request.method == "GET" and request.url.path == "/server/config":
+            return httpx.Response(200, json={"result": {"config": {"file_manager": {}}}})
+        return handler(request)
+
+    return answer
+
+
 @pytest.mark.asyncio
 async def test_moonraker_client_blocks_unsafe_resolved_peers():
     from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
@@ -166,7 +177,7 @@ async def test_moonraker_upload_uses_multipart_gcodes_root_and_returned_path():
         base_url="http://printer.lan:7125",
         api_key="moonraker-secret",
         resolver=resolver,
-        transport_factory=lambda *_: httpx.MockTransport(handler),
+        transport_factory=lambda *_: httpx.MockTransport(_with_config(handler)),
     )
 
     assert await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3) == "server-name.gcode"
@@ -183,13 +194,50 @@ async def test_moonraker_upload_rejects_non_object_json_response(response_json):
     client = MoonrakerHTTPClient(
         base_url="http://printer.lan:7125",
         resolver=resolver,
-        transport_factory=lambda *_: httpx.MockTransport(lambda request: httpx.Response(201, json=response_json)),
+        transport_factory=lambda *_: httpx.MockTransport(
+            _with_config(lambda request: httpx.Response(201, json=response_json))
+        ),
     )
 
     with pytest.raises(MoonrakerHTTPError) as error:
         await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
 
     assert error.value.code == "invalid_response"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_manager",
+    [
+        {"default_metadata_parser_timeout": "20"},
+        {"default_metadata_parser_timeout": True},
+        {"default_metadata_parser_timeout": 10**400},
+        {"enable_object_processing": "yes"},
+    ],
+)
+async def test_moonraker_upload_rejects_unreadable_file_manager_settings_before_sending(file_manager):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    requests = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(200, json={"result": {"config": {"file_manager": file_manager}}})
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
+
+    assert error.value.code == "invalid_response"
+    assert requests == ["/server/config"]
 
 
 @pytest.mark.asyncio
@@ -246,7 +294,9 @@ async def test_moonraker_upload_streaming_bound_rejects_unknown_oversize_file(mo
     client = MoonrakerHTTPClient(
         base_url="http://printer.lan:7125",
         resolver=resolver,
-        transport_factory=lambda *_: httpx.MockTransport(lambda request: httpx.Response(201, json={"item": {}})),
+        transport_factory=lambda *_: httpx.MockTransport(
+            _with_config(lambda request: httpx.Response(201, json={"item": {}}))
+        ),
     )
     with pytest.raises(MoonrakerHTTPError) as error:
         await client.upload_gcode(io.BytesIO(b"G28X"), filename="cube.gcode")
@@ -261,20 +311,55 @@ async def test_moonraker_upload_uses_separate_bounded_transfer_deadline(monkeypa
 
     monkeypatch.setattr(moonraker_http, "_TOTAL_TIMEOUT_SECONDS", 0.001)
     monkeypatch.setattr(moonraker_http, "_UPLOAD_TOTAL_TIMEOUT_SECONDS", 0.1)
+    resolved = 0
 
     async def resolver(host: str, port: int):
-        await asyncio.sleep(0.01)
+        # The first resolve is the settings read; only the upload itself is slow.
+        nonlocal resolved
+        resolved += 1
+        if resolved > 1:
+            await asyncio.sleep(0.01)
         return {ipaddress.ip_address("192.168.1.25")}
 
     client = MoonrakerHTTPClient(
         base_url="http://printer.lan:7125",
         resolver=resolver,
         transport_factory=lambda *_: httpx.MockTransport(
-            lambda request: httpx.Response(201, json={"item": {"path": "cube.gcode"}})
+            _with_config(lambda request: httpx.Response(201, json={"item": {"path": "cube.gcode"}}))
         ),
     )
 
     assert await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3) == "cube.gcode"
+
+
+@pytest.mark.asyncio
+async def test_moonraker_upload_settings_read_keeps_normal_deadline(monkeypatch):
+    from backend.app.services import moonraker_http
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
+
+    monkeypatch.setattr(moonraker_http, "_TOTAL_TIMEOUT_SECONDS", 0.01)
+    monkeypatch.setattr(moonraker_http, "_UPLOAD_TOTAL_TIMEOUT_SECONDS", 5.0)
+    requests = []
+
+    async def resolver(host: str, port: int):
+        await asyncio.sleep(0.1)
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request.url.path)
+        return httpx.Response(201, json={"item": {"path": "cube.gcode"}})
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(_with_config(handler)),
+    )
+
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
+
+    assert error.value.code == "timeout"
+    assert requests == []
 
 
 @pytest.mark.asyncio
@@ -283,16 +368,68 @@ async def test_moonraker_upload_transfer_deadline_is_bounded(monkeypatch):
     from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
 
     monkeypatch.setattr(moonraker_http, "_UPLOAD_TOTAL_TIMEOUT_SECONDS", 0.01)
+    resolved = 0
 
     async def resolver(host: str, port: int):
-        await asyncio.Event().wait()
+        # The settings read answers; the upload never resolves.
+        nonlocal resolved
+        resolved += 1
+        if resolved > 1:
+            await asyncio.Event().wait()
+        return {ipaddress.ip_address("192.168.1.25")}
 
-    client = MoonrakerHTTPClient(base_url="http://printer.lan:7125", resolver=resolver)
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(_with_config(lambda request: httpx.Response(201))),
+    )
 
     with pytest.raises(MoonrakerHTTPError) as error:
-        await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
+        async with asyncio.timeout(1.0):
+            await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
 
     assert error.value.code == "timeout"
+
+
+# Moonraker makes up to three metadata runs before it replies. Each run is limited to the parser
+# timeout, raised to 300 s with object processing; 0 never times out and a negative limit fails at once.
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "file_manager, read_timeout",
+    [
+        ({}, 3 * 20 + 10),
+        ({"default_metadata_parser_timeout": 0}, None),
+        ({"default_metadata_parser_timeout": -0.0}, None),
+        ({"default_metadata_parser_timeout": -5}, 10),
+        ({"enable_object_processing": True}, 3 * 300 + 10),
+        ({"default_metadata_parser_timeout": 0, "enable_object_processing": True}, 3 * 300 + 10),
+        ({"default_metadata_parser_timeout": -5, "enable_object_processing": True}, 3 * 300 + 10),
+        ({"default_metadata_parser_timeout": 400, "enable_object_processing": True}, 3 * 400 + 10),
+    ],
+)
+async def test_moonraker_upload_waits_for_moonraker_metadata_runs(file_manager, read_timeout):
+    from backend.app.services.moonraker_http import MoonrakerHTTPClient
+
+    async def resolver(host: str, port: int):
+        return {ipaddress.ip_address("192.168.1.25")}
+
+    timeouts = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if request.method == "GET":
+            return httpx.Response(200, json={"result": {"config": {"file_manager": file_manager}}})
+        timeouts.append(request.extensions["timeout"]["read"])
+        return httpx.Response(201, json={"item": {"path": "cube.gcode"}})
+
+    client = MoonrakerHTTPClient(
+        base_url="http://printer.lan:7125",
+        resolver=resolver,
+        transport_factory=lambda *_: httpx.MockTransport(handler),
+    )
+
+    await client.upload_gcode(io.BytesIO(b"G28"), filename="cube.gcode", size=3)
+
+    assert timeouts == [read_timeout]
 
 
 @pytest.mark.asyncio
@@ -924,7 +1061,7 @@ async def test_dispatch_directory_is_separate_from_export_basename():
     client = MoonrakerHTTPClient(
         base_url="http://printer.lan:7125",
         resolver=resolver,
-        transport_factory=lambda *_: httpx.MockTransport(handler),
+        transport_factory=lambda *_: httpx.MockTransport(_with_config(handler)),
     )
     for attempt in ("a" * 32, "b" * 32):
         directory = f"layercove/{attempt}"
@@ -964,7 +1101,7 @@ async def test_upload_cannot_silently_lose_attempt_isolation(root, path):
         base_url="http://printer.lan:7125",
         resolver=resolver,
         transport_factory=lambda *_: httpx.MockTransport(
-            lambda _: httpx.Response(201, json={"item": {"root": root, "path": path}})
+            _with_config(lambda _: httpx.Response(201, json={"item": {"root": root, "path": path}}))
         ),
     )
     with pytest.raises(MoonrakerHTTPError) as caught:

@@ -6,6 +6,7 @@ import asyncio
 import io
 import ipaddress
 import json
+import math
 import ssl
 from collections.abc import Callable
 from dataclasses import dataclass
@@ -34,6 +35,10 @@ _MAX_UPLOAD_BYTES = MOONRAKER_MAX_UPLOAD_BYTES
 _TOTAL_TIMEOUT_SECONDS = 10.0
 _UPLOAD_TOTAL_TIMEOUT_SECONDS = 4 * 60 * 60
 _TIMEOUT = httpx.Timeout(connect=5.0, read=10.0, write=10.0, pool=5.0)
+# Moonraker's metadata limits, from moonraker/components/file_manager/file_manager.py.
+_MOONRAKER_METADATA_TIMEOUT = 20.0
+_MOONRAKER_OBJECT_PROCESSING_TIMEOUT = 300.0
+_MOONRAKER_METADATA_ATTEMPTS = 3
 
 TransportFactory = Callable[[str, int, frozenset[IPAddress], bool], httpx.AsyncBaseTransport]
 
@@ -443,6 +448,44 @@ class MoonrakerHTTPClient:
         response = await self.get_server_info()
         return 200 <= response.status_code < 300
 
+    async def _metadata_seconds(self) -> float | None:
+        """How long Moonraker may process an uploaded G-code before it replies, or None for no limit.
+
+        Moonraker replies to an upload only after metadata extraction (_finish_gcode_upload in
+        moonraker/components/file_manager/file_manager.py). _run_extract_metadata limits each run
+        to default_metadata_parser_timeout, or at least 300 s when object processing is enabled,
+        and a limit of 0 never times out. _process_metadata_update makes up to three runs. Gcode
+        processors registered by other components can extend the limit, and the API does not list
+        them. An upload queued behind other files' metadata runs also waits longer.
+        """
+        response = await self._request("GET", "/server/config")
+        try:
+            payload = json.loads(response.body)
+            settings = payload["result"]["config"].get("file_manager", {})
+            parser = settings.get("default_metadata_parser_timeout", _MOONRAKER_METADATA_TIMEOUT)
+            objects = settings.get("enable_object_processing", False)
+            if isinstance(parser, bool) or not isinstance(parser, int | float) or not isinstance(objects, bool):
+                raise TypeError("Unexpected file manager settings")
+            per_run = float(parser)
+            if not math.isfinite(per_run):
+                raise ValueError("Unexpected metadata parser timeout")
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            ValueError,
+            OverflowError,
+        ) as exc:
+            raise MoonrakerHTTPError("invalid_response", "Moonraker did not report its file manager settings.") from exc
+        if objects:
+            per_run = max(per_run, _MOONRAKER_OBJECT_PROCESSING_TIMEOUT)
+        if per_run == 0:
+            return None
+        # A negative limit makes each run time out at once.
+        return _MOONRAKER_METADATA_ATTEMPTS * max(per_run, 0.0)
+
     async def upload_gcode(
         self,
         file: BinaryIO,
@@ -472,12 +515,20 @@ class MoonrakerHTTPClient:
             except InvalidFilenameError as exc:
                 raise MoonrakerHTTPError("invalid_directory", "Moonraker upload directory is invalid.") from exc
             data["path"] = directory
+        upload = _BoundedUpload(file, size, progress_callback)
+        metadata_seconds = await self._metadata_seconds()
         response = await self._request(
             "POST",
             "/server/files/upload",
             total_timeout=_UPLOAD_TOTAL_TIMEOUT_SECONDS,
+            timeout=httpx.Timeout(
+                connect=_TIMEOUT.connect,
+                read=None if metadata_seconds is None else metadata_seconds + _TIMEOUT.read,
+                write=_TIMEOUT.write,
+                pool=_TIMEOUT.pool,
+            ),
             data=data,
-            files={"file": (filename, _BoundedUpload(file, size, progress_callback), "application/octet-stream")},
+            files={"file": (filename, upload, "application/octet-stream")},
         )
         try:
             payload = json.loads(response.body)
