@@ -80,7 +80,7 @@ async def test_temperature_range_cannot_exceed_the_orca_tower_maximum(async_clie
     session = await create_session(async_client, db_session)
     response = await async_client.put(
         f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
-        json={"version": session["version"], "lowest": 300, "highest": 355, "increment": 5, "baseline": 310},
+        json={"version": session["version"], "lowest": 450, "highest": 505, "increment": 5, "baseline": 460},
     )
     assert response.status_code == 422, response.text
 

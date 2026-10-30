@@ -345,8 +345,9 @@ async def load_setting_limits(db: AsyncSession, content: Mapping[str, Any], prin
         for step, field in SETTINGS.items()
     }
     temperature = limits[Step.TEMPERATURE.value]
-    # OrcaSlicer's temperature tower (v2.3.0 calib_dlg.cpp) starts at 350 °C at most, and the sidecar enforces it.
-    temperature["max"] = 350 if temperature["max"] is None else min(temperature["max"], 350)
+    # The sidecar's pinned OrcaSlicer temperature dialog (calib_dlg.cpp) starts at 500 °C at most, and the
+    # sidecar enforces it.
+    temperature["max"] = 500 if temperature["max"] is None else min(temperature["max"], 500)
     # The filament's temperature range is a recommendation, as in Orca, so it only warns.
     recommended = content.get("nozzle_temperature_range_high")
     parent = content.get("inherits")
