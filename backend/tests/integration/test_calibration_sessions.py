@@ -10,7 +10,7 @@ from backend.app.models.calibration import CalibrationSession
 from backend.app.models.printer import Printer
 from backend.app.models.slicer_profile_catalog import SlicerProfileActivation, SlicerProfileRevision
 from backend.app.models.user import User
-from backend.app.services.slicer_api import SlicerApiService
+from backend.app.services.slicer_api import SlicerApiService, SlicerApiUnavailableError
 from backend.app.services.slicer_catalog import (
     CatalogInput,
     CatalogProfile,
@@ -109,6 +109,15 @@ async def test_the_filament_temperature_range_is_a_recommendation_resolved_from_
         json={"version": session["version"], "lowest": 240, "highest": 270, "increment": 5, "baseline": 265},
     )
     assert response.status_code == 200, response.text
+
+
+# Failure mode: a recommendation that only drives a warning blocked starting the session.
+async def test_a_session_starts_without_the_bundled_parent_list(async_client, db_session, monkeypatch):
+    monkeypatch.setattr(
+        SlicerApiService, "list_bundled_profiles", AsyncMock(side_effect=SlicerApiUnavailableError("down"))
+    )
+    session = await create_session(async_client, db_session, {**PLA_CONTENT, "inherits": "Generic PETG @System"})
+    assert session["setting_limits"]["temperature"]["recommended_max"] is None
 
 
 @pytest.mark.parametrize("highest,increment", [(1.05, 0.1), (1e308, 1e-308)])

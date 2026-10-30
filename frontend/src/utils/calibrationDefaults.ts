@@ -4,8 +4,10 @@ type TestValues = { lowest: string; highest: string; increment: string; baseline
 
 // Orca's calibration dialog defaults, from OrcaSlicer v2.3.0 src/slic3r/GUI/calib_dlg.cpp.
 // Temperature towers use 5 °C steps between these per-material bounds; PLA bounds cover other materials.
+const PLA: [number, number] = [190, 230];
 const temperatures: [RegExp, number, number][] = [
-  [/\b(ABS|ASA)/i, 230, 270], [/\bPETG/i, 230, 250], [/\bPCTG/i, 240, 280], [/\bTPU/i, 210, 240], [/\b(PA|PET)-CF/i, 280, 320],
+  [/\bPLA/i, ...PLA], [/\b(ABS|ASA)/i, 230, 270], [/\bPETG/i, 230, 250], [/\bPCTG/i, 240, 280], [/\bTPU/i, 210, 240],
+  [/\b(PA|PET)-CF/i, 280, 320],
 ];
 // Pressure advance uses the direct-drive tower range; a Bowden extruder needs a wider one.
 const ranges: Partial<Record<CalibrationStep, [number, number, number]>> = {
@@ -26,7 +28,11 @@ export function defaultTestValues(step: CalibrationStep, field: string, content:
     // A profile that inherits its type names it only through its parent, such as "Generic PETG @System".
     // The part after "@" names a printer or vendor, not the material.
     const material = first(content, 'filament_type') || first(content, 'inherits').split('@')[0];
-    const [, low, high] = temperatures.find(([pattern]) => pattern.test(material)) ?? [null, 190, 230];
+    // The first material named wins, so "Support For PLA/PETG" is PLA.
+    const [low, high] = temperatures
+      .map(([pattern, ...bounds]) => ({ at: material.search(pattern), bounds }))
+      .filter(({ at }) => at >= 0)
+      .sort((a, b) => a.at - b.at)[0]?.bounds ?? PLA;
     // Stay under the session's temperature limit, on the 5 °C grid.
     const highest = maxTemperature == null ? high : Math.min(high, Math.floor(maxTemperature / 5) * 5);
     return { lowest: String(Math.min(low, highest - 5)), highest: String(highest), increment: '5', baseline };

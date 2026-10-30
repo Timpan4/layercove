@@ -357,13 +357,14 @@ async def load_setting_limits(db: AsyncSession, content: Mapping[str, Any], prin
     recommended = content.get("nozzle_temperature_range_high")
     parent = content.get("inherits")
     if recommended is None and parent:
-        # The sidecar fills an inheriting profile from its bundled parent before slicing.
+        # The sidecar fills an inheriting profile from its bundled parent before slicing. Without
+        # the parent list there is only no warning, so the session still starts.
+        try:
+            entries = await bundled_filaments(db)
+        except HTTPException:
+            entries = []
         recommended = next(
-            (
-                entry["content"].get("nozzle_temperature_range_high")
-                for entry in await bundled_filaments(db)
-                if entry["name"] == parent
-            ),
+            (entry["content"].get("nozzle_temperature_range_high") for entry in entries if entry["name"] == parent),
             None,
         )
     elif recommended is None:
@@ -612,13 +613,16 @@ def validate_setting(session: CalibrationSession, step: Step, value: float) -> N
 
 
 def require_temperature_capacity(session: CalibrationSession, step: Step, nozzle) -> None:
-    if nozzle is None or nozzle.max_temperature is None:
-        return
     temperatures = (
         (session.parameters[step.value]["highest"], session.parameters[step.value]["baseline"])
         if step is Step.TEMPERATURE
         else (session.results[Step.TEMPERATURE.value],)
     )
+    # Values saved before this limit can exceed it.
+    if max(temperatures) > MAX_CALIBRATION_TEMPERATURE:
+        raise HTTPException(409, f"Calibration temperatures cannot exceed {MAX_CALIBRATION_TEMPERATURE} °C")
+    if nozzle is None or nozzle.max_temperature is None:
+        return
     if max(temperatures) > nozzle.max_temperature:
         raise HTTPException(409, "Calibration exceeds the printer's reported nozzle temperature limit")
 
@@ -737,9 +741,12 @@ async def generate_test(
             if (
                 not capabilities.calibration
                 or capabilities.calibration.get("available") is not True
-                or capabilities.calibration.get("version") != "1"
+                # Version 2 treats the filament's temperature range as a recommendation, as LayerCove does.
+                or capabilities.calibration.get("version") != "2"
             ):
-                raise HTTPException(503, "The configured Orca sidecar does not have the calibration engine")
+                raise HTTPException(
+                    503, "The configured Orca sidecar needs calibration protocol 2 (orca-slicer-api 0.1.8 or later)"
+                )
     except SlicerApiError as exc:
         raise HTTPException(503, str(exc)) from exc
     rows = (

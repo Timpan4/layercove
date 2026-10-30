@@ -25,6 +25,9 @@ it('takes the material from the parent profile when the profile inherits it', ()
   // The printer named after "@" is not the material.
   expect(defaultTestValues('temperature', 'nozzle_temperature', { inherits: 'Generic PETG @ASA Printer' }, 350))
     .toEqual({ lowest: '230', highest: '250', increment: '5', baseline: '' });
+  // A support material for both is based on its first material.
+  expect(defaultTestValues('temperature', 'nozzle_temperature', { inherits: 'Bambu Support For PLA/PETG @BBL X1C' }, 350))
+    .toEqual({ lowest: '190', highest: '230', increment: '5', baseline: '' });
 });
 
 it('keeps the temperature range under the session limit', () => {

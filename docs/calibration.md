@@ -40,7 +40,7 @@ A session keeps its original filament revision, test ranges, setting limits, res
 
 ## Sidecar requirements
 
-The configured Rust Orca sidecar must support calibration protocol 1 and the pinned filament schema. It generates test geometry and slices with the checksum-pinned prebuilt Orca binary. Do not compile Orca from source. The printer, process, and filament selection uses the existing catalog binding and compatibility checks. Unsupported extrusion templates fail with an error.
+The configured Rust Orca sidecar must support calibration protocol 2 (orca-slicer-api 0.1.8 or later) and the pinned filament schema. Protocol 1 sidecars limited temperatures to the filament's recommended range. It generates test geometry and slices with the checksum-pinned prebuilt Orca binary. Do not compile Orca from source. The printer, process, and filament selection uses the existing catalog binding and compatibility checks. Unsupported extrusion templates fail with an error.
 
 ## Test geometry and limits
 

@@ -98,7 +98,7 @@ async def test_calibration_generates_a_pinned_artifact_and_dispatches_to_the_sel
     await _wait_for(lambda: manager.get_snapshot(printer.id).connected, timeout=5)
     schema = PinnedContractFixture.schema_payload()
     identity = PinnedContractFixture.contract()
-    identity["calibration"] = {"available": True, "version": "1"}
+    identity["calibration"] = {"available": True, "version": "2"}
     raw_gcode = b"; gcode_flavor = klipper\n; filament_type = PLA\nG28\nG1 X10 Y10\n"
     fields = []
 
