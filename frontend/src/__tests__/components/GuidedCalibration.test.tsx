@@ -245,6 +245,104 @@ it('warns above the filament recommended temperature without blocking', async ()
 });
 
 const finishedResults = { temperature: 215, flow_rate: 0.98, pressure_advance: 0.02, retraction: 0.8, volumetric_flow: 15 };
+
+// Whole-degree bounds and towers above 350 °C were valid before the tower's 5 °C labels.
+it.each([
+  ['temperature', { temperature: { lowest: 200, highest: 220, increment: 10, baseline: 210 } }],
+  ['temperature', { temperature: { lowest: 197, highest: 222, increment: 5, baseline: 212 } }],
+  ['temperature', { temperature: { lowest: 450, highest: 500, increment: 5, baseline: 460 } }],
+  ['flow_rate', { flow_rate: { lowest: 0.8, highest: 1.2, increment: 0.05, baseline: 1 } }],
+] as const)('prompts to replace legacy %s parameters %#', async (step, parameters) => {
+  const session = { ...baseSession, results: step === 'flow_rate' ? { temperature: 210 } : {}, parameters };
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([session])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json(session)),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'PLA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: { nozzle_temperature: ['210'], filament_flow_ratio: ['1'] } })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  expect(await screen.findByText('Re-enter test values for this step to use Orca calibration models.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Generate test' })).toBeDisabled();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save test values' })).toBeEnabled());
+});
+
+// Failure modes: flow sends obsolete range fields, tile modifiers are stored as ratios,
+// or pass 2 cannot use the result of pass 1 as its baseline.
+it.each([
+  ['yolo', '-0.05', 0.95], ['yolo_perfectionist', '0.035', 1.035],
+  ['pass1', '20', 1.2], ['pass2', '-9', 0.91],
+])('records the labelled tile for %s and allows a new baseline', async (pattern, tile, expected) => {
+  let session = { ...baseSession, results: { temperature: 215 }, parameters: {} };
+  let parameters: unknown;
+  let result: unknown;
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([session])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json(session)),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'PLA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: { filament_flow_ratio: ['1'] } })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+    http.put('*/api/v1/calibration/sessions/1/parameters/flow_rate', async ({ request }) => {
+      const body = await request.json();
+      parameters = body;
+      session = { ...session, version: session.version + 1, parameters: { flow_rate: { baseline: body.baseline, flow_pattern: body.flow_pattern } } };
+      return HttpResponse.json(session);
+    }),
+    http.put('*/api/v1/calibration/sessions/1/results/flow_rate', async ({ request }) => {
+      result = await request.json();
+      return HttpResponse.json(session);
+    }),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  await waitFor(() => expect(screen.getByRole('button', { name: /Flow rate/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: /Flow rate/ }));
+  const selector = await screen.findByLabelText('Flow pattern');
+  expect(selector).toHaveValue('yolo');
+  fireEvent.change(selector, { target: { value: pattern } });
+  await waitFor(() => expect(screen.getByLabelText('Baseline value (ratio)')).toHaveValue(1));
+  expect(screen.queryByLabelText('Lowest test value (ratio)')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Save test values' }));
+  await waitFor(() => expect(parameters).toEqual({ version: 1, flow_pattern: pattern, baseline: 1 }));
+  fireEvent.change(screen.getByLabelText('Which labelled tile looks best?'), { target: { value: tile } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use value' }));
+  await waitFor(() => expect(result).toMatchObject({ value: expected }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit result' }));
+  fireEvent.change(screen.getByLabelText('Flow pattern'), { target: { value: 'pass2' } });
+  fireEvent.change(screen.getByLabelText('Baseline value (ratio)'), { target: { value: '0.98' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save test values' }));
+  await waitFor(() => expect(parameters).toMatchObject({ flow_pattern: 'pass2', baseline: 0.98 }));
+  await waitFor(() => expect(screen.getByLabelText('Which labelled tile looks best?')).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('Which labelled tile looks best?'), { target: { value: '-9' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use value' }));
+  await waitFor(() => expect(result).toMatchObject({ value: 0.8918 }));
+});
+
+// Failure mode: a baseline whose extreme tiles fall outside the flow ratio limits saved, and
+// choosing such a tile then failed. Pass 1's +20 tile at 1.9 prints at 2.28, above the maximum of 2.
+it.each([['yolo', '0.03'], ['pass1', '1.9']])('rejects a %s baseline whose tiles leave the flow ratio limits', async (pattern, baseline) => {
+  const limits = { flow_rate: { min: 0, max: 2, item_type: 'float', units: '', default: [] } };
+  const session = { ...baseSession, setting_limits: limits, results: { temperature: 215 }, parameters: {} };
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([session])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json(session)),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'PLA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: { filament_flow_ratio: ['1'] } })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  await waitFor(() => expect(screen.getByRole('button', { name: /Flow rate/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: /Flow rate/ }));
+  fireEvent.change(await screen.findByLabelText('Flow pattern'), { target: { value: pattern } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save test values' })).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('Baseline value (ratio)'), { target: { value: baseline } });
+  expect(screen.getByRole('button', { name: 'Save test values' })).toBeDisabled();
+});
 function finishedSession(onSave: (body: unknown) => void, source: SlicerCatalogProfile['source'] = 'standard') {
   const results = finishedResults;
   server.use(
@@ -359,6 +457,31 @@ it('keeps photos taken before generation visible on the step', async () => {
   );
   renderCalibration('/profiles?calibration=guided&calibrationSession=1');
   expect(await screen.findByText('Photo saved with this step. Choose the result yourself.')).toBeInTheDocument();
+});
+
+// Failure mode: a tower generated before Orca's models (15 mm sections on a 0.6 mm nozzle) was read
+// with the caption for 10 mm sections and printed again as if current.
+it.each([[null, true], ['3', false]])('treats a completed test generated under protocol %s as outdated: %s', async (contract, outdated) => {
+  const parameters = { temperature: { lowest: 240, highest: 270, increment: 5, baseline: 265 } };
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([baseSession])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json({ ...baseSession, parameters, runs: { temperature: 70 } })),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slice-jobs/70', () => HttpResponse.json({ id: 70, status: 'completed', calibration_contract: contract })),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'Generic ASA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: {} })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  const notice = 'This test was generated before Orca calibration models. Generate it again.';
+  if (outdated) {
+    expect(await screen.findByText(notice)).toBeInTheDocument();
+    expect(screen.queryByText(/Each section is 10 mm tall/)).not.toBeInTheDocument();
+  } else {
+    expect(await screen.findByText(/Each section is 10 mm tall/)).toBeInTheDocument();
+    expect(screen.queryByText(notice)).not.toBeInTheDocument();
+  }
 });
 
 it('lets a session move to the filament profile version that replaced it', async () => {

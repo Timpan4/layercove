@@ -32,6 +32,128 @@ PLA_CONTENT = {
 }
 
 
+@pytest.mark.parametrize(
+    "values",
+    [
+        {"lowest": 200, "highest": 220, "increment": 10, "baseline": 210},
+        {"lowest": 201, "highest": 221, "increment": 5, "baseline": 210},
+        {"lowest": 340, "highest": 355, "increment": 5, "baseline": 345},
+        # The tower's lowest label is 5 °C.
+        {"lowest": 0, "highest": 20, "increment": 5, "baseline": 10},
+    ],
+)
+async def test_v3_temperature_rejects_unsupported_labels(async_client, db_session, values):
+    session = await create_session(async_client, db_session)
+    result = await async_client.put(
+        f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
+        json={"version": session["version"], **values},
+    )
+    assert result.status_code == 422, result.text
+
+
+@pytest.mark.parametrize("pattern", ["yolo", "yolo_perfectionist", "pass1", "pass2"])
+async def test_v3_flow_parameters_and_rerun(async_client, db_session, pattern):
+    session = await create_session(async_client, db_session)
+    path = f"/api/v1/calibration/sessions/{session['id']}/parameters/flow_rate"
+    for baseline in (1, 0.98):
+        result = await async_client.put(
+            path, json={"version": session["version"], "baseline": baseline, "flow_pattern": pattern}
+        )
+        assert result.status_code == 200, result.text
+        session = result.json()
+        assert session["parameters"]["flow_rate"] == {"baseline": baseline, "flow_pattern": pattern}
+    rejected = await async_client.put(
+        path,
+        json={
+            "version": session["version"],
+            "baseline": 1,
+            "flow_pattern": pattern,
+            "lowest": 0.8,
+            "highest": 1.2,
+            "increment": 0.05,
+        },
+    )
+    assert rejected.status_code == 422
+
+
+# Pass 1's +20 tile at a 1.9 baseline prints at 2.28, above the pinned flow ratio maximum of 2, and
+# YOLO's -0.05 tile at a 0.03 baseline would be negative.
+@pytest.mark.parametrize("pattern,baseline", [("pass1", 1.9), ("yolo", 0.03), ("yolo_perfectionist", 1.98)])
+async def test_flow_patterns_reject_tiles_outside_the_flow_ratio_limits(async_client, db_session, pattern, baseline):
+    session = await create_session(async_client, db_session)
+    rejected = await async_client.put(
+        f"/api/v1/calibration/sessions/{session['id']}/parameters/flow_rate",
+        json={"version": session["version"], "baseline": baseline, "flow_pattern": pattern},
+    )
+    assert rejected.status_code == 422, rejected.text
+
+
+@pytest.mark.parametrize("step", ["temperature", "pressure_advance", "retraction", "volumetric_flow"])
+async def test_flow_pattern_is_rejected_on_other_steps(async_client, db_session, step):
+    session = await create_session(async_client, db_session)
+    path = f"/api/v1/calibration/sessions/{session['id']}/parameters/{step}"
+    for values in (
+        {"flow_pattern": "yolo", "baseline": 1},
+        {"flow_pattern": "yolo", "baseline": 210, "lowest": 200, "highest": 220, "increment": 5},
+    ):
+        rejected = await async_client.put(path, json={"version": session["version"], **values})
+        assert rejected.status_code == 422
+
+
+async def test_switching_filament_revision_preserves_v3_flow_parameters(async_client, db_session):
+    session = await create_session(async_client, db_session)
+    base = f"/api/v1/calibration/sessions/{session['id']}"
+    values = {"flow_pattern": "pass2", "baseline": 0.98}
+    saved = await async_client.put(base + "/parameters/flow_rate", json={"version": session["version"], **values})
+    assert saved.status_code == 200, saved.text
+    await publish_filament(db_session, {**PLA_CONTENT, "filament_flow_ratio": ["0.98"]})
+    switched = await async_client.post(base + "/filament-revision", json={"version": saved.json()["version"]})
+    assert switched.status_code == 200, switched.text
+    assert switched.json()["parameters"]["flow_rate"] == values
+
+
+@pytest.mark.parametrize(
+    "step,values,height",
+    [
+        ("temperature", {"lowest": 200, "highest": 220, "increment": 5}, 50),
+        ("pressure_advance", {"lowest": 0, "highest": 0.1, "increment": 0.003}, 35),
+        ("retraction", {"lowest": 0, "highest": 2, "increment": 0.1}, 21.4),
+        ("volumetric_flow", {"lowest": 5, "highest": 20, "increment": 0.5}, 32),
+        ("flow_rate", {"flow_pattern": "yolo", "baseline": 1}, None),
+    ],
+)
+def test_v3_cut_heights(step, values, height):
+    from types import SimpleNamespace
+
+    from backend.app.api.routes.calibration import Step, test_height as height_for
+
+    assert height_for(SimpleNamespace(parameters={step: values}, nozzle_diameter=0.6), Step(step)) == height
+
+
+@pytest.mark.parametrize(
+    "step,values",
+    [
+        ("temperature", {"lowest": 200, "highest": 220, "increment": 10, "baseline": 210}),
+        # Whole-degree bounds were valid before the tower's 5 °C labels.
+        ("temperature", {"lowest": 197, "highest": 222, "increment": 5, "baseline": 212}),
+        ("temperature", {"lowest": 450, "highest": 500, "increment": 5, "baseline": 460}),
+        ("flow_rate", {"lowest": 0.8, "highest": 1.2, "increment": 0.05, "baseline": 1}),
+    ],
+)
+async def test_legacy_parameters_prompt_for_reentry(async_client, db_session, step, values):
+    session = await create_session(async_client, db_session)
+    row = await db_session.get(CalibrationSession, session["id"])
+    row.parameters = {step: values}
+    row.results = {"temperature": 210} if step == "flow_rate" else {}
+    await db_session.commit()
+    result = await async_client.post(
+        f"/api/v1/calibration/sessions/{session['id']}/generate/{step}",
+        json={"version": row.version, "binding_id": 1, "process_profile_id": 1},
+    )
+    assert result.status_code == 409
+    assert "Re-enter" in result.json()["detail"]
+
+
 async def publish_filament(db, content):
     catalog = await ingest_catalog(
         db,
@@ -80,7 +202,7 @@ async def test_temperature_range_is_limited_to_the_orca_dialog_maximum(async_cli
     session = await create_session(async_client, db_session)
     url = f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature"
     accepted = await async_client.put(
-        url, json={"version": session["version"], "lowest": 450, "highest": 500, "increment": 5, "baseline": 460}
+        url, json={"version": session["version"], "lowest": 300, "highest": 350, "increment": 5, "baseline": 310}
     )
     assert accepted.status_code == 200, accepted.text
     # A session started before this limit stored the schema's 1500 °C maximum.
@@ -88,10 +210,16 @@ async def test_temperature_range_is_limited_to_the_orca_dialog_maximum(async_cli
     row.setting_limits = {**row.setting_limits, "temperature": {**row.setting_limits["temperature"], "max": 1500}}
     await db_session.commit()
     rejected = await async_client.put(
-        url, json={"version": row.version, "lowest": 450, "highest": 505, "increment": 5, "baseline": 460}
+        url, json={"version": row.version, "lowest": 300, "highest": 355, "increment": 5, "baseline": 310}
     )
     assert rejected.status_code == 422, rejected.text
-    assert "500 °C" in rejected.json()["detail"]
+    assert "350 °C" in rejected.json()["detail"]
+    # 350 °C limits only the tower. A recorded result keeps the Orca dialog's 500 °C maximum.
+    results = f"/api/v1/calibration/sessions/{session['id']}/results/temperature"
+    recorded = await async_client.put(results, json={"version": row.version, "value": 400})
+    assert recorded.status_code == 200, recorded.text
+    above = await async_client.put(results, json={"version": recorded.json()["version"], "value": 505})
+    assert above.status_code == 422, above.text
 
 
 # Failure mode: a profile printing at 265 °C under its parent's 220-260 °C range showed
@@ -493,17 +621,18 @@ async def generate_pressure_advance(client, db, highest: float):
 
 # Failure mode: a protocol 1 sidecar still limits temperatures to the filament's range, so
 # generation passed LayerCove's checks and then failed in the slicer.
-async def test_generation_requires_calibration_protocol_2(async_client, db_session, monkeypatch):
+@pytest.mark.parametrize("version", ["1", "2"])
+async def test_generation_requires_calibration_protocol_3(async_client, db_session, monkeypatch, version):
     from types import SimpleNamespace
 
     monkeypatch.setattr(
         SlicerApiService,
         "capabilities",
-        AsyncMock(return_value=SimpleNamespace(calibration={"available": True, "version": "1"})),
+        AsyncMock(return_value=SimpleNamespace(calibration={"available": True, "version": version})),
     )
     generated = await generate_pressure_advance(async_client, db_session, 0.05)
     assert generated.status_code == 503, generated.text
-    assert "orca-slicer-api 0.1.8" in generated.json()["detail"]
+    assert "orca-slicer-api 0.2.0" in generated.json()["detail"]
 
 
 async def test_generating_a_test_taller_than_the_printer_profile_is_refused(async_client, db_session):

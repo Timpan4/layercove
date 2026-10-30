@@ -15,7 +15,7 @@ Syncs of shared cloud accounts and the bundled standard catalog still wait for r
 The steps run in order: temperature, flow rate, pressure advance, retraction, then volumetric flow. Advanced values stay visible and editable. A step without saved test values starts from OrcaSlicer 2.3.0's calibration dialog defaults:
 
 - Temperature: 5 °C steps between Orca's bounds for the profile's material, such as 190 to 230 °C for PLA and 230 to 250 °C for PETG, kept under the session's temperature limit.
-- Flow rate: nine tiles from 20% below to 20% above the profile's flow ratio, like Orca's first flow pass.
+- Flow rate: Orca YOLO by default, with labelled modifiers from -0.05 to +0.05 in steps of 0.01. YOLO perfectionist uses -0.04 to +0.035 in steps of 0.005. Both add the modifier to the baseline. Pass 1 uses -20 to +20 in steps of 5, and pass 2 uses -9 to 0 in steps of 1. These multiply the baseline by `1 + modifier / 100`. Choose the best labelled tile to store its absolute ratio. For pass 2, save a new pattern and use the pass 1 result as the baseline.
 - Pressure advance: 0 to 0.1 in steps of 0.002, Orca's direct-drive tower range. A Bowden extruder needs a wider range.
 - Retraction: 0 to 2 mm in steps of 0.1 mm.
 - Volumetric flow: 5 to 20 mm³/s in steps of 0.5 mm³/s. When a step cannot generate or print a test, the page says what is missing.
@@ -40,19 +40,19 @@ A session keeps its original filament revision, test ranges, setting limits, res
 
 ## Sidecar requirements
 
-The configured Rust Orca sidecar must support calibration protocol 2 (orca-slicer-api 0.1.8 or later) and the pinned filament schema. Protocol 1 sidecars limited temperatures to the filament's recommended range. It generates test geometry and slices with the checksum-pinned prebuilt Orca binary. Do not compile Orca from source. The printer, process, and filament selection uses the existing catalog binding and compatibility checks. Unsupported extrusion templates fail with an error.
+The configured Rust Orca sidecar must support calibration protocol 3, shipped in orca-slicer-api 0.2.0, and the pinned filament schema. Deploy LayerCove together with that release. It prints Orca's own calibration models using the checksum-pinned prebuilt Orca binary. Do not compile Orca from source. The printer, process, and filament selection uses the existing catalog binding and compatibility checks. Unsupported extrusion templates fail with an error.
 
 ## Test geometry and limits
 
-- Temperature sections run hottest at the bottom and are `25 × nozzle diameter` mm tall.
-- Flow tiles carry sample numbers starting at 1.
+- Temperature sections run hottest at the bottom and are 10 mm tall per 5 °C block, regardless of nozzle diameter.
+- Flow tiles carry modifier labels. They have no printable-height check.
 - Pressure advance and volumetric flow use 1 mm bands.
 - Retraction uses 1 mm bands above a 0.4 mm base.
 
-The UI explains the value-to-height mapping. The step size must reach the highest sample. Where available, LayerCove checks whole-degree temperatures, source setting bounds, the 500 °C limit of the sidecar's pinned OrcaSlicer temperature dialog, reported nozzle limits, printable height, and volumetric XY speed limits. Missing source maxima are not replaced with guessed physical limits.
+Temperature bounds must be multiples of 5, with increment 5 and highest at most 350 °C, the tower's top label. The sidecar reports bounds below its model's lowest label. Saved flow ranges and temperature increments other than 5 prompt for new values. Where available, LayerCove checks source setting bounds, reported nozzle limits, printable height, and volumetric XY speed limits. Missing source maxima are not replaced with guessed physical limits.
 
-- Recommended temperature: the filament's `nozzle_temperature_range_high` is a recommendation, as in OrcaSlicer. A test above it shows a warning but can still be generated. A profile that inherits takes the value from its bundled parent, the same parent the sidecar fills in. A complete profile without the value uses the schema default. Sessions started before this change keep the material cap they started with until they move to a newer filament revision, which reloads the limits. Values above 500 °C are refused in every session.
-- Printable height: before generating, LayerCove compares the band heights above with the printer profile's `printable_height`. This is a lower bound, because the sidecar may add a base or margins. A profile without a usable height leaves the check to the sidecar.
+- Recommended temperature: the filament's `nozzle_temperature_range_high` is a recommendation, as in OrcaSlicer. A test above it shows a warning but can still be generated. A profile that inherits takes the value from its bundled parent, the same parent the sidecar fills in. A complete profile without the value uses the schema default. Sessions started before this change keep the material cap they started with until they move to a newer filament revision, which reloads the limits. Values above 350 °C are refused in every session.
+- Printable height: LayerCove mirrors the cut heights in Orca's pinned `Plater.cpp`. Temperature uses `10 × ((highest - lowest) / 5 + 1)` mm, PA uses `ceil((highest - lowest) / increment) + 1` mm, retraction uses `1.4 + (highest - lowest) / increment` mm, and volumetric flow uses `(highest - lowest + 1) / increment` mm. A profile without a usable height leaves the check to the sidecar.
 
 ## Printing
 
