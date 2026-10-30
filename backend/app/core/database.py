@@ -33,6 +33,22 @@ def _normalize_postgres_datetime_params(parameters, context, executemany):
 
     binds = getattr(compiled, "binds", {})
     positiontup = getattr(compiled, "positiontup", None)
+    expanded = getattr(context, "_expanded_parameters", None)
+    if expanded and positiontup:
+        # An IN list expands one bind into several, so the DBAPI tuple no longer follows
+        # compiled.positiontup. Rebuild the order of SQLAlchemy's
+        # _process_parameters_for_postcompile: numeric styles such as asyncpg's $n keep the
+        # other binds first and append expanded values; literal-execute binds render inline.
+        # Each expanded value is typed by the bind it came from.
+        inline = {compiled.bind_names[bind] for bind in getattr(compiled, "literal_execute_params", ())}
+        pre_expanded = getattr(compiled, "_pre_expanded_positiontup", None) or positiontup
+        kept = [name for name in pre_expanded if name not in inline]
+        if getattr(compiled, "_numeric_binds", False):
+            positiontup = [name for name in kept if name not in expanded] + [
+                name for name in kept if name in expanded for _ in expanded[name]
+            ]
+        else:
+            positiontup = [source for name in kept for source in [name] * len(expanded.get(name, [name]))]
 
     def naive_utc(value):
         if isinstance(value, datetime) and value.tzinfo is not None:

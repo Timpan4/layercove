@@ -27,6 +27,8 @@ class FakeMoonraker:
     malformed_server_info: bool = False
     malformed_jsonrpc_method: str | None = None
     malformed_websocket_message: bool = False
+    # Moonraker replies to an upload only after its metadata and object processing finish.
+    upload_reply_delay: float = 0.0
 
     def __post_init__(self) -> None:
         self._app = web.Application(client_max_size=16 * 1024 * 1024)
@@ -172,6 +174,7 @@ class FakeMoonraker:
         self.uploads.append((filename, bytes(content)))
         remote_path = f"{directory}/{filename}"
         self.upload_paths.append(remote_path)
+        await asyncio.sleep(self.upload_reply_delay)
         return web.json_response({"item": {"root": "gcodes", "path": remote_path}}, status=201)
 
     async def _start_print(self, request: web.Request) -> web.StreamResponse:

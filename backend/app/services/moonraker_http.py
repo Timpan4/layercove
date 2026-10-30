@@ -476,6 +476,10 @@ class MoonrakerHTTPClient:
             "POST",
             "/server/files/upload",
             total_timeout=_UPLOAD_TOTAL_TIMEOUT_SECONDS,
+            # Moonraker replies only after metadata extraction finishes (_finish_gcode_upload in
+            # file_manager.py), which may take 300 s or longer with object processing and
+            # registered processors. The upload deadline bounds the wait instead.
+            timeout=httpx.Timeout(connect=_TIMEOUT.connect, read=None, write=_TIMEOUT.write, pool=_TIMEOUT.pool),
             data=data,
             files={"file": (filename, _BoundedUpload(file, size, progress_callback), "application/octet-stream")},
         )
