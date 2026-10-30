@@ -454,14 +454,15 @@ async def test_deleting_a_session_removes_its_photos(async_client, db_session, t
     assert not (tmp_path / "calibration" / str(session["id"])).exists()
 
 
-async def test_generating_a_test_taller_than_the_printer_profile_is_refused(async_client, db_session):
+async def generate_pressure_advance(client, db, highest: float):
+    """Generate a pressure advance test from 0 to `highest` in 0.001 steps on a 100 mm printer."""
     from backend.app.models.slicer_profile_catalog import PrinterSlicerBinding
 
-    session = await create_session(async_client, db_session)
-    session = await record(async_client, session, "temperature", 215)
-    session = await record(async_client, session, "flow_rate", 0.98)
+    session = await create_session(client, db)
+    session = await record(client, session, "temperature", 215)
+    session = await record(client, session, "flow_rate", 0.98)
     catalog = await ingest_catalog(
-        db_session,
+        db,
         CatalogInput(
             source="standard",
             remote_account_id="calibration-printer",
@@ -471,24 +472,43 @@ async def test_generating_a_test_taller_than_the_printer_profile_is_refused(asyn
             ],
         ),
     )
-    await approve_review_batch(db_session, catalog.review_batch_id)
-    printer, process = [await activate_revision(db_session, revision_id) for revision_id in catalog.revision_ids]
+    await approve_review_batch(db, catalog.review_batch_id)
+    printer, process = [await activate_revision(db, revision_id) for revision_id in catalog.revision_ids]
     binding = PrinterSlicerBinding(
         printer_id=session["printer_id"], profile_id=printer.profile_id, expected_nozzle_diameter=0.4
     )
-    db_session.add(binding)
-    await db_session.commit()
+    db.add(binding)
+    await db.commit()
     base = f"/api/v1/calibration/sessions/{session['id']}"
-    # 151 pressure advance bands of 1 mm.
-    saved = await async_client.put(
+    saved = await client.put(
         base + "/parameters/pressure_advance",
-        json={"version": session["version"], "lowest": 0, "highest": 0.15, "increment": 0.001, "baseline": 0.02},
+        json={"version": session["version"], "lowest": 0, "highest": highest, "increment": 0.001, "baseline": 0.02},
     )
     assert saved.status_code == 200, saved.text
-    generated = await async_client.post(
+    return await client.post(
         base + "/generate/pressure_advance",
         json={"version": saved.json()["version"], "binding_id": binding.id, "process_profile_id": process.profile_id},
     )
+
+
+# Failure mode: a protocol 1 sidecar still limits temperatures to the filament's range, so
+# generation passed LayerCove's checks and then failed in the slicer.
+async def test_generation_requires_calibration_protocol_2(async_client, db_session, monkeypatch):
+    from types import SimpleNamespace
+
+    monkeypatch.setattr(
+        SlicerApiService,
+        "capabilities",
+        AsyncMock(return_value=SimpleNamespace(calibration={"available": True, "version": "1"})),
+    )
+    generated = await generate_pressure_advance(async_client, db_session, 0.05)
+    assert generated.status_code == 503, generated.text
+    assert "orca-slicer-api 0.1.8" in generated.json()["detail"]
+
+
+async def test_generating_a_test_taller_than_the_printer_profile_is_refused(async_client, db_session):
+    # 151 pressure advance bands of 1 mm.
+    generated = await generate_pressure_advance(async_client, db_session, 0.15)
     assert generated.status_code == 409, generated.text
     assert "the printer profile allows 100 mm" in generated.json()["detail"]
 

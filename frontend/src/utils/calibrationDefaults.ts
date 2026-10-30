@@ -2,7 +2,7 @@ import type { CalibrationStep } from '../api/client';
 
 type TestValues = { lowest: string; highest: string; increment: string; baseline: string };
 
-// Orca's calibration dialog defaults, from OrcaSlicer v2.3.0 src/slic3r/GUI/calib_dlg.cpp.
+// Orca's calibration dialog defaults, from src/slic3r/GUI/calib_dlg.cpp at the sidecar's pinned OrcaSlicer 2.4.2 commit.
 // Temperature towers use 5 °C steps between these per-material bounds; PLA bounds cover other materials.
 const PLA: [number, number] = [190, 230];
 const temperatures: [RegExp, number, number][] = [
