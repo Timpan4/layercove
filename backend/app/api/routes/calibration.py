@@ -68,9 +68,8 @@ SETTINGS = {
     Step.RETRACTION: "filament_retraction_length",
     Step.VOLUMETRIC_FLOW: "filament_max_volumetric_speed",
 }
-# The sidecar's pinned OrcaSlicer temperature dialog (calib_dlg.cpp) starts at 500 °C at most, and the
-# sidecar enforces it.
-MAX_CALIBRATION_TEMPERATURE = 500
+# Highest label on Orca's bundled temperature tower.
+MAX_CALIBRATION_TEMPERATURE = 350
 
 
 class SessionCreate(BaseModel):
@@ -112,6 +111,17 @@ class ParameterEdit(VersionedEdit):
         if self.highest <= self.lowest:
             raise ValueError("Highest test value must exceed lowest test value")
         return self
+
+
+class FlowParameterEdit(VersionedEdit):
+    flow_pattern: Literal["yolo", "yolo_perfectionist", "pass1", "pass2"]
+    baseline: float = Field(gt=0, allow_inf_nan=False)
+
+
+def legacy_parameters(step: Step, parameters: dict) -> bool:
+    return (step is Step.FLOW_RATE and "flow_pattern" not in parameters) or (
+        step is Step.TEMPERATURE and parameters.get("increment") != 5
+    )
 
 
 class SaveRequest(VersionedEdit):
@@ -188,6 +198,8 @@ def test_request(session: CalibrationSession, step: Step) -> dict:
     parameters = session.parameters.get(step.value)
     if parameters is None:
         raise HTTPException(409, "Save test values before generating a test")
+    if legacy_parameters(step, parameters):
+        raise HTTPException(409, f"Re-enter test values for {step.value} to use Orca calibration models")
     return {
         "step": step.value,
         **parameters,
@@ -500,7 +512,12 @@ async def use_current_filament_revision(
     session.parameters = {
         step: values
         for step, values in session.parameters.items()
-        if all(setting_error(limits, Step(step), values[key]) is None for key in ("lowest", "highest", "baseline"))
+        if not legacy_parameters(Step(step), values)
+        and all(
+            setting_error(limits, Step(step), values[key]) is None
+            for key in ("lowest", "highest", "baseline")
+            if key in values
+        )
     }
     results = {}
     for step in STEPS:
@@ -543,14 +560,33 @@ async def get_session(session_id: int, caller: ReadCaller, db: AsyncSession = De
 
 @router.put("/sessions/{session_id}/parameters/{step}")
 async def edit_parameters(
-    session_id: int, step: Step, body: ParameterEdit, caller: WriteCaller, db: AsyncSession = Depends(get_db)
+    session_id: int,
+    step: Step,
+    body: ParameterEdit | FlowParameterEdit,
+    caller: WriteCaller,
+    db: AsyncSession = Depends(get_db),
 ):
     session = await load_session(db, session_id, caller)
     require_edit(session, body.version)
     await require_no_active_print(db, session)
     values = body.model_dump(exclude={"version"})
-    for value in (body.lowest, body.highest, body.baseline):
-        validate_setting(session, step, value)
+    if (step is Step.FLOW_RATE) != isinstance(body, FlowParameterEdit):
+        raise HTTPException(422, "Flow rate requires flow_pattern and baseline only; other steps require a range")
+    for key in ("lowest", "highest", "baseline"):
+        if key in values:
+            validate_setting(session, step, values[key])
+    if isinstance(body, ParameterEdit):
+        validate_range(step, body)
+    if session.parameters.get(step.value) != values:
+        await retire_runs(db, session, (step,))
+    session.parameters = {**session.parameters, step.value: values}
+    await commit(db)
+    return response(session)
+
+
+def validate_range(step: Step, body: ParameterEdit) -> None:
+    if step is Step.TEMPERATURE and (body.increment != 5 or body.lowest % 5 or body.highest % 5):
+        raise HTTPException(422, "Temperature requires 5 °C steps and labels that are multiples of 5")
     if body.increment > body.highest - body.lowest:
         raise HTTPException(422, "Step size must fit inside the test range")
     intervals = (body.highest - body.lowest) / body.increment
@@ -559,13 +595,6 @@ async def edit_parameters(
     last = body.lowest + round(intervals) * body.increment
     if not math.nextafter(body.highest, -math.inf) <= last <= math.nextafter(body.highest, math.inf):
         raise HTTPException(422, "Highest test value must be reached by the step size")
-    if step is Step.TEMPERATURE and not body.increment.is_integer():
-        raise HTTPException(422, "Temperature step size requires whole degrees")
-    if session.parameters.get(step.value) != values:
-        await retire_runs(db, session, (step,))
-    session.parameters = {**session.parameters, step.value: values}
-    await commit(db)
-    return response(session)
 
 
 @router.put("/sessions/{session_id}/results/{step}")
@@ -628,15 +657,20 @@ def require_temperature_capacity(session: CalibrationSession, step: Step, nozzle
 
 
 def test_height(session: CalibrationSession, step: Step) -> float | None:
-    """Lower bound on test height from the geometry in docs/calibration.md; flow tiles lie flat."""
+    """Cut heights from Orca Plater.cpp at 8500fcdccaa10b5099ac20d252af3a7c560046f1."""
+    if step is Step.FLOW_RATE:
+        return None
     parameters = session.parameters[step.value]
-    samples = round((parameters["highest"] - parameters["lowest"]) / parameters["increment"]) + 1
+    span = parameters["highest"] - parameters["lowest"]
+    intervals = span / parameters["increment"]
     if step is Step.TEMPERATURE:
-        return samples * 25 * float(session.nozzle_diameter)
-    if step in {Step.PRESSURE_ADVANCE, Step.VOLUMETRIC_FLOW}:
-        return float(samples)
+        return 10 * (span / 5 + 1)
+    if step is Step.PRESSURE_ADVANCE:
+        return math.ceil(intervals) + 1
     if step is Step.RETRACTION:
-        return 0.4 + samples
+        return 1.4 + intervals
+    if step is Step.VOLUMETRIC_FLOW:
+        return (span + 1) / parameters["increment"]
     return None
 
 
@@ -741,11 +775,10 @@ async def generate_test(
             if (
                 not capabilities.calibration
                 or capabilities.calibration.get("available") is not True
-                # Version 2 treats the filament's temperature range as a recommendation, as LayerCove does.
-                or capabilities.calibration.get("version") != "2"
+                or capabilities.calibration.get("version") != "3"
             ):
                 raise HTTPException(
-                    503, "The configured Orca sidecar needs calibration protocol 2 (orca-slicer-api 0.1.8 or later)"
+                    503, "The configured Orca sidecar needs calibration protocol 3 (orca-slicer-api 0.2.0)"
                 )
     except SlicerApiError as exc:
         raise HTTPException(503, str(exc)) from exc

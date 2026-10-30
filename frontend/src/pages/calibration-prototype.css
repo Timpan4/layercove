@@ -203,6 +203,9 @@
 .cal-result-editor input { font-size: 1.25rem; }
 .cal-result-editor > .cal-button { padding: .625rem .75rem; }
 .cal-result-editor > p { grid-column: 1 / -1; }
+.cal-result-editor > .cal-flow-tile { grid-column: 1 / -1; }
+.cal-flow-pattern { display: grid; gap: .625rem; font-size: .875rem; margin-bottom: .75rem; }
+.cal-flow-pattern select, .cal-flow-tile select { width: 100%; min-width: 0; padding: .75rem; border: 1px solid var(--cal-line); border-radius: .5rem; background: var(--bg-primary); color: var(--text-primary); }
 
 /* A: a property editor, with small right-aligned editable values. */
 .cal-row-editor > label { display: grid; grid-template-columns: minmax(0, 1fr) minmax(7rem, 42%); align-items: center; gap: 1rem; min-height: 4.25rem; padding: .625rem 0; border-bottom: 1px solid var(--cal-line); font-size: .875rem; }

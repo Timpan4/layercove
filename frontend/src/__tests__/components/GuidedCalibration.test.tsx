@@ -245,6 +245,77 @@ it('warns above the filament recommended temperature without blocking', async ()
 });
 
 const finishedResults = { temperature: 215, flow_rate: 0.98, pressure_advance: 0.02, retraction: 0.8, volumetric_flow: 15 };
+
+it.each(['temperature', 'flow_rate'] as const)('prompts to replace legacy %s parameters', async step => {
+  const session = { ...baseSession, results: step === 'flow_rate' ? { temperature: 210 } : {},
+    parameters: step === 'temperature' ? { temperature: { lowest: 200, highest: 220, increment: 10, baseline: 210 } }
+      : { flow_rate: { lowest: 0.8, highest: 1.2, increment: 0.05, baseline: 1 } } };
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([session])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json(session)),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'PLA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: { nozzle_temperature: ['210'], filament_flow_ratio: ['1'] } })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  expect(await screen.findByText('Re-enter test values for this step to use Orca calibration models.')).toBeInTheDocument();
+  expect(screen.getByRole('button', { name: 'Generate test' })).toBeDisabled();
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Save test values' })).toBeEnabled());
+});
+
+// Failure modes: flow sends obsolete range fields, tile modifiers are stored as ratios,
+// or pass 2 cannot use the result of pass 1 as its baseline.
+it.each([
+  ['yolo', '-0.05', 0.95], ['yolo_perfectionist', '0.035', 1.035],
+  ['pass1', '20', 1.2], ['pass2', '-9', 0.91],
+])('records the labelled tile for %s and allows a new baseline', async (pattern, tile, expected) => {
+  let session = { ...baseSession, results: { temperature: 215 }, parameters: {} };
+  let parameters: unknown;
+  let result: unknown;
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([session])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json(session)),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'PLA')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: { filament_flow_ratio: ['1'] } })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+    http.put('*/api/v1/calibration/sessions/1/parameters/flow_rate', async ({ request }) => {
+      const body = await request.json();
+      parameters = body;
+      session = { ...session, version: session.version + 1, parameters: { flow_rate: { baseline: body.baseline, flow_pattern: body.flow_pattern } } };
+      return HttpResponse.json(session);
+    }),
+    http.put('*/api/v1/calibration/sessions/1/results/flow_rate', async ({ request }) => {
+      result = await request.json();
+      return HttpResponse.json(session);
+    }),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  await waitFor(() => expect(screen.getByRole('button', { name: /Flow rate/ })).toBeEnabled());
+  fireEvent.click(screen.getByRole('button', { name: /Flow rate/ }));
+  const selector = await screen.findByLabelText('Flow pattern');
+  expect(selector).toHaveValue('yolo');
+  fireEvent.change(selector, { target: { value: pattern } });
+  await waitFor(() => expect(screen.getByLabelText('Baseline value (ratio)')).toHaveValue(1));
+  expect(screen.queryByLabelText('Lowest test value (ratio)')).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole('button', { name: 'Save test values' }));
+  await waitFor(() => expect(parameters).toEqual({ version: 1, flow_pattern: pattern, baseline: 1 }));
+  fireEvent.change(screen.getByLabelText('Best labelled tile'), { target: { value: tile } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use value' }));
+  await waitFor(() => expect(result).toMatchObject({ value: expected }));
+  fireEvent.click(await screen.findByRole('button', { name: 'Edit result' }));
+  fireEvent.change(screen.getByLabelText('Flow pattern'), { target: { value: 'pass2' } });
+  fireEvent.change(screen.getByLabelText('Baseline value (ratio)'), { target: { value: '0.98' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Save test values' }));
+  await waitFor(() => expect(parameters).toMatchObject({ flow_pattern: 'pass2', baseline: 0.98 }));
+  await waitFor(() => expect(screen.getByLabelText('Best labelled tile')).toBeEnabled());
+  fireEvent.change(screen.getByLabelText('Best labelled tile'), { target: { value: '-9' } });
+  fireEvent.click(screen.getByRole('button', { name: 'Use value' }));
+  await waitFor(() => expect(result).toMatchObject({ value: 0.8918 }));
+});
 function finishedSession(onSave: (body: unknown) => void, source: SlicerCatalogProfile['source'] = 'standard') {
   const results = finishedResults;
   server.use(

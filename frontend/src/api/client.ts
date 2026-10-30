@@ -1743,6 +1743,11 @@ export interface CalibrationParameters {
   increment: number;
   baseline: number;
 }
+export type FlowPattern = 'yolo' | 'yolo_perfectionist' | 'pass1' | 'pass2';
+export interface FlowParameters {
+  flow_pattern: FlowPattern;
+  baseline: number;
+}
 export interface CalibrationSession {
   id: number;
   printer_id: number;
@@ -1750,7 +1755,7 @@ export interface CalibrationSession {
   filament_revision_id: number;
   nozzle_diameter: number;
   tool_index: number;
-  parameters: Partial<Record<CalibrationStep, CalibrationParameters>>;
+  parameters: Partial<Record<Exclude<CalibrationStep, 'flow_rate'>, CalibrationParameters>> & { flow_rate?: CalibrationParameters | FlowParameters };
   setting_limits: Partial<Record<CalibrationStep, { min: number | null; max: number | null; item_type: string; units: string | null; default: unknown[];
     /** Temperature only: the filament's recommended maximum, which warns but does not limit. */
     recommended_max?: number | null }>>;
@@ -6855,7 +6860,7 @@ export const api = {
   // A new filament profile starts from a generic filament instead of an existing profile.
   createCalibrationSession: (body: { printer_id: number; nozzle_diameter: number; tool_index?: number }
     & ({ filament_profile_id: number; filament_revision_id: number } | { generic_filament: string })) => request<CalibrationSession>('/calibration/sessions', { method: 'POST', body: JSON.stringify(body) }),
-  updateCalibrationParameters: (id: number, step: CalibrationStep, body: CalibrationParameters & { version: number }) =>
+  updateCalibrationParameters: (id: number, step: CalibrationStep, body: (CalibrationParameters | FlowParameters) & { version: number }) =>
     request<CalibrationSession>(`/calibration/sessions/${id}/parameters/${step}`, { method: 'PUT', body: JSON.stringify(body) }),
   recordCalibrationResult: (id: number, step: CalibrationStep, body: { version: number; value: number }) =>
     request<CalibrationSession>(`/calibration/sessions/${id}/results/${step}`, { method: 'PUT', body: JSON.stringify(body) }),
