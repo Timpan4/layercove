@@ -211,6 +211,7 @@ async def test_moonraker_upload_rejects_non_object_json_response(response_json):
     [
         {"default_metadata_parser_timeout": "20"},
         {"default_metadata_parser_timeout": True},
+        {"default_metadata_parser_timeout": 10**400},
         {"enable_object_processing": "yes"},
     ],
 )

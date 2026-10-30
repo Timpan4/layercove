@@ -469,7 +469,15 @@ class MoonrakerHTTPClient:
             per_run = float(parser)
             if not math.isfinite(per_run):
                 raise ValueError("Unexpected metadata parser timeout")
-        except (UnicodeDecodeError, json.JSONDecodeError, KeyError, TypeError, AttributeError, ValueError) as exc:
+        except (
+            UnicodeDecodeError,
+            json.JSONDecodeError,
+            KeyError,
+            TypeError,
+            AttributeError,
+            ValueError,
+            OverflowError,
+        ) as exc:
             raise MoonrakerHTTPError("invalid_response", "Moonraker did not report its file manager settings.") from exc
         if objects:
             per_run = max(per_run, _MOONRAKER_OBJECT_PROCESSING_TIMEOUT)

@@ -180,6 +180,23 @@ async def test_upload_reply_wait_is_bounded_by_moonraker_metadata_limit(fake_moo
 
 
 @pytest.mark.asyncio
+async def test_upload_reads_file_manager_settings_with_the_printer_credentials(fake_moonraker, monkeypatch):
+    _allow_test_peer(monkeypatch)
+    fake_moonraker.require_api_key("stored-secret")
+
+    with pytest.raises(MoonrakerHTTPError) as error:
+        await _http_client(fake_moonraker, api_key="wrong-secret").upload_gcode(
+            io.BytesIO(b"G28\n"), filename="tower.gcode", size=4
+        )
+    assert error.value.code == "authentication_failed"
+    assert fake_moonraker.requests == [("GET", "/server/config")]
+    assert fake_moonraker.uploads == []
+
+    client = _http_client(fake_moonraker, api_key="stored-secret")
+    assert await client.upload_gcode(io.BytesIO(b"G28\n"), filename="tower.gcode", size=4) == "queue/tower.gcode"
+
+
+@pytest.mark.asyncio
 async def test_fake_auth_and_malformed_http_errors_are_safe(fake_moonraker, monkeypatch):
     _allow_test_peer(monkeypatch)
     fake_moonraker.require_api_key("stored-secret")
