@@ -29,10 +29,13 @@ class FakeMoonraker:
     malformed_websocket_message: bool = False
     # Moonraker replies to an upload only after its metadata and object processing finish.
     upload_reply_delay: float = 0.0
+    metadata_parser_timeout: float = 20.0
+    object_processing: bool = False
 
     def __post_init__(self) -> None:
         self._app = web.Application(client_max_size=16 * 1024 * 1024)
         self._app.router.add_get("/server/info", self._server_info)
+        self._app.router.add_get("/server/config", self._server_config)
         self._app.router.add_post("/server/files/upload", self._upload)
         self._app.router.add_post("/printer/print/start", self._start_print)
         self._app.router.add_post("/printer/print/pause", self._pause_print)
@@ -150,6 +153,16 @@ class FakeMoonraker:
         if self.malformed_server_info:
             return web.Response(body=b"{not-json", content_type="application/json")
         return web.json_response({"result": {"klippy_connected": True, "moonraker_version": "test"}})
+
+    async def _server_config(self, request: web.Request) -> web.StreamResponse:
+        self._record(request)
+        if not self._authorized(request):
+            raise web.HTTPUnauthorized(text="credentials rejected")
+        file_manager = {
+            "default_metadata_parser_timeout": self.metadata_parser_timeout,
+            "enable_object_processing": self.object_processing,
+        }
+        return web.json_response({"result": {"config": {"file_manager": file_manager}}})
 
     async def _upload(self, request: web.Request) -> web.StreamResponse:
         self._record(request)

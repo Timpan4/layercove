@@ -136,19 +136,46 @@ async def test_real_http_client_covers_upload_and_mvp_commands(fake_moonraker, m
 # Failure mode: a 1.4 MB calibration tower reached the printer, but Moonraker was still
 # processing its objects when the 10 s read timeout fired, so the print was reported as failed.
 @pytest.mark.asyncio
-async def test_upload_waits_for_moonraker_metadata_processing(fake_moonraker, monkeypatch):
+@pytest.mark.parametrize("parser_timeout, object_processing", [(0.5, False), (0.01, True)])
+async def test_upload_waits_for_moonraker_metadata_processing(
+    fake_moonraker, monkeypatch, parser_timeout, object_processing
+):
     import httpx
 
     from backend.app.services import moonraker_http
 
     _allow_test_peer(monkeypatch)
     monkeypatch.setattr(moonraker_http, "_TIMEOUT", httpx.Timeout(5.0, read=0.05))
+    monkeypatch.setattr(moonraker_http, "_MOONRAKER_OBJECT_PROCESSING_TIMEOUT", 0.5)
+    fake_moonraker.metadata_parser_timeout = parser_timeout
+    fake_moonraker.object_processing = object_processing
     fake_moonraker.upload_reply_delay = 0.3
     client = _http_client(fake_moonraker)
 
     path = await client.upload_gcode(io.BytesIO(b"G28\n"), filename="tower.gcode", size=4)
 
     assert path == "queue/tower.gcode"
+
+
+# A printer that stops answering after the body holds the print queue only for Moonraker's own
+# metadata limit plus the normal read timeout, not the whole upload deadline.
+@pytest.mark.asyncio
+async def test_upload_reply_wait_is_bounded_by_moonraker_metadata_limit(fake_moonraker, monkeypatch):
+    import httpx
+
+    from backend.app.services import moonraker_http
+
+    _allow_test_peer(monkeypatch)
+    monkeypatch.setattr(moonraker_http, "_TIMEOUT", httpx.Timeout(5.0, read=0.05))
+    fake_moonraker.metadata_parser_timeout = 0.1
+    fake_moonraker.upload_reply_delay = 2.0
+    client = _http_client(fake_moonraker)
+
+    with pytest.raises(MoonrakerHTTPError) as error:
+        async with asyncio.timeout(1.0):
+            await client.upload_gcode(io.BytesIO(b"G28\n"), filename="tower.gcode", size=4)
+
+    assert error.value.code == "timeout"
 
 
 @pytest.mark.asyncio
