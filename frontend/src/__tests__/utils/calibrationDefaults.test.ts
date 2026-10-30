@@ -22,6 +22,9 @@ it('keeps the flow range at plus and minus 20 percent', () => {
 it('takes the material from the parent profile when the profile inherits it', () => {
   expect(defaultTestValues('temperature', 'nozzle_temperature', { inherits: 'Generic PETG @System', nozzle_temperature: ['265'] }, 350))
     .toEqual({ lowest: '230', highest: '250', increment: '5', baseline: '265' });
+  // The printer named after "@" is not the material.
+  expect(defaultTestValues('temperature', 'nozzle_temperature', { inherits: 'Generic PETG @ASA Printer' }, 350))
+    .toEqual({ lowest: '230', highest: '250', increment: '5', baseline: '' });
 });
 
 it('keeps the temperature range under the session limit', () => {

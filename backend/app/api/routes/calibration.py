@@ -68,6 +68,9 @@ SETTINGS = {
     Step.RETRACTION: "filament_retraction_length",
     Step.VOLUMETRIC_FLOW: "filament_max_volumetric_speed",
 }
+# The sidecar's pinned OrcaSlicer temperature dialog (calib_dlg.cpp) starts at 500 °C at most, and the
+# sidecar enforces it.
+MAX_CALIBRATION_TEMPERATURE = 500
 
 
 class SessionCreate(BaseModel):
@@ -345,9 +348,11 @@ async def load_setting_limits(db: AsyncSession, content: Mapping[str, Any], prin
         for step, field in SETTINGS.items()
     }
     temperature = limits[Step.TEMPERATURE.value]
-    # The sidecar's pinned OrcaSlicer temperature dialog (calib_dlg.cpp) starts at 500 °C at most, and the
-    # sidecar enforces it.
-    temperature["max"] = 500 if temperature["max"] is None else min(temperature["max"], 500)
+    temperature["max"] = (
+        MAX_CALIBRATION_TEMPERATURE
+        if temperature["max"] is None
+        else min(temperature["max"], MAX_CALIBRATION_TEMPERATURE)
+    )
     # The filament's temperature range is a recommendation, as in Orca, so it only warns.
     recommended = content.get("nozzle_temperature_range_high")
     parent = content.get("inherits")
@@ -590,6 +595,9 @@ def setting_error(all_limits: dict, step: Step, value: float) -> str | None:
         return "This setting requires a whole number"
     if value < max(0, limits.get("min") or 0) or (limits.get("max") is not None and value > limits["max"]):
         return "Value is outside this filament setting's limits"
+    # Sessions started before this limit stored a higher maximum.
+    if step is Step.TEMPERATURE and value > MAX_CALIBRATION_TEMPERATURE:
+        return f"Calibration temperatures cannot exceed {MAX_CALIBRATION_TEMPERATURE} °C"
     if value == 0 and step not in {Step.PRESSURE_ADVANCE, Step.RETRACTION}:
         return "This setting must be greater than zero"
     return None

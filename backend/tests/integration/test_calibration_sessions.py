@@ -76,13 +76,22 @@ async def test_results_reject_values_outside_pinned_setting_limits(async_client,
     assert response.status_code == 422, response.text
 
 
-async def test_temperature_range_cannot_exceed_the_orca_tower_maximum(async_client, db_session):
+async def test_temperature_range_is_limited_to_the_orca_dialog_maximum(async_client, db_session):
     session = await create_session(async_client, db_session)
-    response = await async_client.put(
-        f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature",
-        json={"version": session["version"], "lowest": 450, "highest": 505, "increment": 5, "baseline": 460},
+    url = f"/api/v1/calibration/sessions/{session['id']}/parameters/temperature"
+    accepted = await async_client.put(
+        url, json={"version": session["version"], "lowest": 450, "highest": 500, "increment": 5, "baseline": 460}
     )
-    assert response.status_code == 422, response.text
+    assert accepted.status_code == 200, accepted.text
+    # A session started before this limit stored the schema's 1500 °C maximum.
+    row = await db_session.get(CalibrationSession, session["id"])
+    row.setting_limits = {**row.setting_limits, "temperature": {**row.setting_limits["temperature"], "max": 1500}}
+    await db_session.commit()
+    rejected = await async_client.put(
+        url, json={"version": row.version, "lowest": 450, "highest": 505, "increment": 5, "baseline": 460}
+    )
+    assert rejected.status_code == 422, rejected.text
+    assert "500 °C" in rejected.json()["detail"]
 
 
 # Failure mode: a profile printing at 265 °C under its parent's 220-260 °C range showed

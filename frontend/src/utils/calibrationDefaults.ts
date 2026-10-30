@@ -24,7 +24,8 @@ export function defaultTestValues(step: CalibrationStep, field: string, content:
   const baseline = first(content, field);
   if (step === 'temperature') {
     // A profile that inherits its type names it only through its parent, such as "Generic PETG @System".
-    const material = first(content, 'filament_type') || first(content, 'inherits');
+    // The part after "@" names a printer or vendor, not the material.
+    const material = first(content, 'filament_type') || first(content, 'inherits').split('@')[0];
     const [, low, high] = temperatures.find(([pattern]) => pattern.test(material)) ?? [null, 190, 230];
     // Stay under the session's temperature limit, on the 5 °C grid.
     const highest = maxTemperature == null ? high : Math.min(high, Math.floor(maxTemperature / 5) * 5);
