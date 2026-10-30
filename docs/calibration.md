@@ -40,7 +40,7 @@ A session keeps its original filament revision, test ranges, setting limits, res
 
 ## Sidecar requirements
 
-The configured Rust Orca sidecar must support calibration protocol 1 and the pinned filament schema. It generates test geometry and slices with the checksum-pinned prebuilt Orca binary. Do not compile Orca from source. The printer, process, and filament selection uses the existing catalog binding and compatibility checks. Unsupported extrusion templates fail with an error.
+The configured Rust Orca sidecar must support calibration protocol 2 (orca-slicer-api 0.1.8 or later) and the pinned filament schema. Protocol 1 sidecars limited temperatures to the filament's recommended range. It generates test geometry and slices with the checksum-pinned prebuilt Orca binary. Do not compile Orca from source. The printer, process, and filament selection uses the existing catalog binding and compatibility checks. Unsupported extrusion templates fail with an error.
 
 ## Test geometry and limits
 
@@ -49,9 +49,9 @@ The configured Rust Orca sidecar must support calibration protocol 1 and the pin
 - Pressure advance and volumetric flow use 1 mm bands.
 - Retraction uses 1 mm bands above a 0.4 mm base.
 
-The UI explains the value-to-height mapping. The step size must reach the highest sample. Where available, LayerCove checks whole-degree temperatures, source setting bounds, the material's maximum temperature, reported nozzle limits, printable height, and volumetric XY speed limits. Missing source maxima are not replaced with guessed physical limits.
+The UI explains the value-to-height mapping. The step size must reach the highest sample. Where available, LayerCove checks whole-degree temperatures, source setting bounds, the 500 °C limit of the sidecar's pinned OrcaSlicer temperature dialog, reported nozzle limits, printable height, and volumetric XY speed limits. Missing source maxima are not replaced with guessed physical limits.
 
-- Material maximum: a filament revision without `nozzle_temperature_range_high` uses the schema default only when it has no `inherits` parent. An inheriting profile gets its value from the parent, so the session applies no material cap and keeps the printer's reported nozzle limit.
+- Recommended temperature: the filament's `nozzle_temperature_range_high` is a recommendation, as in OrcaSlicer. A test above it shows a warning but can still be generated. A profile that inherits takes the value from its bundled parent, the same parent the sidecar fills in. A complete profile without the value uses the schema default. Sessions started before this change keep the material cap they started with until they move to a newer filament revision, which reloads the limits. Values above 500 °C are refused in every session.
 - Printable height: before generating, LayerCove compares the band heights above with the printer profile's `printable_height`. This is a lower bound, because the sidecar may add a base or margins. A profile without a usable height leaves the check to the sidecar.
 
 ## Printing

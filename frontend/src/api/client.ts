@@ -1751,7 +1751,9 @@ export interface CalibrationSession {
   nozzle_diameter: number;
   tool_index: number;
   parameters: Partial<Record<CalibrationStep, CalibrationParameters>>;
-  setting_limits: Partial<Record<CalibrationStep, { min: number | null; max: number | null; item_type: string; units: string | null; default: unknown[] }>>;
+  setting_limits: Partial<Record<CalibrationStep, { min: number | null; max: number | null; item_type: string; units: string | null; default: unknown[];
+    /** Temperature only: the filament's recommended maximum, which warns but does not limit. */
+    recommended_max?: number | null }>>;
   results: Partial<Record<CalibrationStep, number>>;
   runs: Partial<Record<CalibrationStep, number>>;
   prints: Partial<Record<CalibrationStep, number>>;

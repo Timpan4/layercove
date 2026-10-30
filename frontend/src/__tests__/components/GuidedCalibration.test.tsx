@@ -223,6 +223,27 @@ it('generates with a printer profile that has no usable defaults', async () => {
   expect(screen.queryByText(/default unavailable/)).not.toBeInTheDocument();
 });
 
+// Failure mode: the filament's recommended range read as a hard limit, so a profile printing
+// above its parent's range could not be calibrated at its own temperature.
+it('warns above the filament recommended temperature without blocking', async () => {
+  const limits = { temperature: { min: 0, max: 310, item_type: 'int', units: '°C', default: [], recommended_max: 260 } };
+  const session = { ...baseSession, setting_limits: limits, parameters: { temperature: { lowest: 240, highest: 270, increment: 5, baseline: 265 } } };
+  server.use(
+    http.get('*/api/v1/calibration/sessions', () => HttpResponse.json([session])),
+    http.get('*/api/v1/calibration/sessions/1', () => HttpResponse.json(session)),
+    http.get('*/api/v1/calibration/sessions/1/evidence', () => HttpResponse.json([])),
+    http.get('*/api/v1/slicer/catalog/profiles', () => HttpResponse.json([profile(1, 'filament', 'Printonion PETG'), profile(44, 'process', '0.20mm Standard')])),
+    http.get('*/api/v1/slicer/catalog/bindings', () => HttpResponse.json([binding(5, 'Voron 2.4 300 0.4 nozzle')])),
+    http.get('*/api/v1/slicer/catalog/printers/1/classification', () => HttpResponse.json(groups([1, 44]))),
+    http.get('*/api/v1/slicer/catalog/revisions/1', () => HttpResponse.json({ content: { inherits: 'Generic PETG @System', nozzle_temperature: ['265'] } })),
+    http.get('*/api/v1/printers/1/status', () => HttpResponse.json({ ams: [] })),
+  );
+  renderCalibration('/profiles?calibration=guided&calibrationSession=1');
+  expect(await screen.findByText('Above this filament’s recommended maximum of 260 °C. Check that the filament can take it.')).toBeInTheDocument();
+  fireEvent.change(await screen.findByLabelText('Process'), { target: { value: '44' } });
+  await waitFor(() => expect(screen.getByRole('button', { name: 'Generate test' })).toBeEnabled());
+});
+
 const finishedResults = { temperature: 215, flow_rate: 0.98, pressure_advance: 0.02, retraction: 0.8, volumetric_flow: 15 };
 function finishedSession(onSave: (body: unknown) => void, source: SlicerCatalogProfile['source'] = 'standard') {
   const results = finishedResults;
