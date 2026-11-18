@@ -4,9 +4,12 @@ import logging
 import os
 import shutil
 import sqlite3
+import struct
 import tempfile
 import zipfile
+from binascii import crc32
 from contextlib import closing
+from inspect import signature
 from pathlib import Path
 from typing import BinaryIO
 
@@ -28,12 +31,98 @@ _REQUIRED_BACKUP_COLUMNS = {
 }
 
 
+class _BackupZipFile(zipfile.ZipFile):
+    """Use ZipFile for member extraction with a bounded central directory reader."""
+
+    def __init__(self, file: BinaryIO, *, max_entries: int, path_limit: int) -> None:
+        self.max_entries = max_entries
+        self.path_limit = path_limit
+        super().__init__(file)
+
+    def _RealGetContents(self) -> None:
+        # The standard reader loads the whole central directory before parsing entries.
+        file = self.fp
+        end_record = zipfile._EndRecData(file)
+        if end_record is None:
+            raise zipfile.BadZipFile("Missing ZIP end record")
+        entry_count = end_record[zipfile._ECD_ENTRIES_TOTAL]
+        if entry_count > self.max_entries:
+            raise ZipTooLargeError(f"Backup contains {entry_count} ZIP entries, over the {self.max_entries} limit")
+
+        self._comment = end_record[zipfile._ECD_COMMENT]
+        end = end_record[zipfile._ECD_LOCATION]
+        if end_record[zipfile._ECD_SIGNATURE] == zipfile.stringEndArchive64:
+            file.seek(end)
+            if file.read(len(zipfile.stringEndArchive)) == zipfile.stringEndArchive:
+                # Older Python releases leave the location at the ZIP32 end record.
+                end -= zipfile.sizeEndCentDir64 + zipfile.sizeEndCentDir64Locator
+        self.start_dir = end - end_record[zipfile._ECD_SIZE]
+        offset = self.start_dir - end_record[zipfile._ECD_OFFSET]
+        if self.start_dir < 0 or offset < 0:
+            raise zipfile.BadZipFile("Invalid ZIP central directory offset")
+        file.seek(self.start_dir)
+        decode_takes_crc = len(signature(zipfile.ZipInfo._decodeExtra).parameters) > 1
+        while file.tell() < end:
+            if len(self.filelist) == self.max_entries:
+                raise ZipTooLargeError(f"Backup exceeds the {self.max_entries} ZIP entry limit")
+            header = file.read(zipfile.sizeCentralDir)
+            if len(header) != zipfile.sizeCentralDir or not header.startswith(zipfile.stringCentralDir):
+                raise zipfile.BadZipFile("Invalid ZIP central directory entry")
+            fields = struct.unpack(zipfile.structCentralDir, header)
+            name_size, extra_size, comment_size = fields[12:15]
+            if file.tell() + name_size + extra_size + comment_size > end:
+                raise zipfile.BadZipFile("Truncated ZIP directory entry")
+            if self.path_limit > 0 and name_size >= self.path_limit:
+                raise zipfile.BadZipFile("ZIP entry path is too long")
+
+            raw_name = file.read(name_size)
+            flags = fields[zipfile._CD_FLAG_BITS]
+            name = raw_name.decode("utf-8" if flags & zipfile._MASK_UTF_FILENAME else "cp437")
+            info = zipfile.ZipInfo(name)
+            info.extra = file.read(extra_size)
+            file.seek(comment_size, os.SEEK_CUR)
+            info.header_offset = fields[zipfile._CD_LOCAL_HEADER_OFFSET]
+            (
+                info.create_version,
+                info.create_system,
+                info.extract_version,
+                info.reserved,
+                info.flag_bits,
+                info.compress_type,
+                info._raw_time,
+                _date,
+                info.CRC,
+                info.compress_size,
+                info.file_size,
+            ) = fields[1:12]
+            if info.extract_version > zipfile.MAX_EXTRACT_VERSION:
+                raise NotImplementedError("Unsupported ZIP member version")
+            info.volume, info.internal_attr, info.external_attr = fields[15:18]
+            if decode_takes_crc:
+                info._decodeExtra(crc32(raw_name))
+            else:
+                info._decodeExtra()
+            info.extra = b""
+            if self.path_limit > 0 and len(os.fsencode(info.filename)) >= self.path_limit:
+                raise zipfile.BadZipFile("ZIP entry path is too long")
+            info.header_offset += offset
+            self.filelist.append(info)
+            self.NameToInfo[info.filename] = info
+
+        if len(self.filelist) != entry_count:
+            raise zipfile.BadZipFile("ZIP entry count does not match its central directory")
+        end_offset = self.start_dir
+        for info in sorted(self.filelist, key=lambda entry: entry.header_offset, reverse=True):
+            info._end_offset = end_offset
+            end_offset = info.header_offset
+
+
 def extract_backup(file: BinaryIO, destination: Path, *, max_bytes: int, max_entries: int) -> Path:
     try:
-        with zipfile.ZipFile(file) as archive:
+        with _BackupZipFile(
+            file, max_entries=max_entries, path_limit=os.pathconf(destination, "PC_PATH_MAX")
+        ) as archive:
             entries = archive.infolist()
-            if len(entries) > max_entries:
-                raise HTTPException(413, f"Backup contains {len(entries)} ZIP entries, over the {max_entries} limit")
             check_zip_size(archive, max_bytes=max_bytes)
             names = {entry.filename for entry in entries}
             legacy = names & {"bambutrack.db", "bambuddy.db"}
@@ -60,8 +149,10 @@ def extract_backup(file: BinaryIO, destination: Path, *, max_bytes: int, max_ent
 
             budget = ZipBudget(max_bytes)
             for target, entry in targets.items():
-                for parent in target.relative_to(destination).parents:
-                    parent_entry = targets.get(destination / parent)
+                for parent in target.parents:
+                    if parent == destination:
+                        break
+                    parent_entry = targets.get(parent)
                     if parent_entry is not None and not parent_entry.is_dir():
                         raise HTTPException(400, "Invalid backup: conflicting ZIP paths")
                 if entry.is_dir():
@@ -72,8 +163,10 @@ def extract_backup(file: BinaryIO, destination: Path, *, max_bytes: int, max_ent
                         budget.copy(reader, writer)
     except ZipTooLargeError as error:
         raise HTTPException(413, str(error)) from error
-    except (zipfile.BadZipFile, NotImplementedError) as error:
-        raise HTTPException(400, "Invalid backup file: invalid or unsupported ZIP") from error
+    except (UnicodeDecodeError, zipfile.BadZipFile) as error:
+        raise HTTPException(400, "Invalid backup file: not a valid ZIP") from error
+    except NotImplementedError as error:
+        raise HTTPException(400, "Invalid backup file: unsupported ZIP format") from error
     return destination / "layercove.db"
 
 

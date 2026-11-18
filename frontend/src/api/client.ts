@@ -149,7 +149,8 @@ export function withMediaToken(src: string): string {
   const url = parseMediaUrl(src);
   if (!url || url.searchParams.get('token') === mediaToken) return src;
   url.searchParams.set('token', mediaToken);
-  return src.startsWith('/') ? `${url.pathname}${url.search}${url.hash}` : url.href;
+  const rootRelative = src.startsWith('/') && !src.startsWith('//');
+  return rootRelative ? `${url.pathname}${url.search}${url.hash}` : url.href;
 }
 
 function parseContentDispositionFilename(header: string | null): string | null {

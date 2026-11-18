@@ -29,6 +29,7 @@ class SmartPlugManager:
         self._scheduler_task: asyncio.Task | None = None
         self._snapshot_task: asyncio.Task | None = None
         self._last_schedule_check: dict[int, str] = {}  # plug_id -> "HH:MM" last executed
+        self._retry_restored_auto_offs = False
 
     async def get_service_for_plug(self, plug: "SmartPlug", db: AsyncSession | None = None):
         """Get the appropriate service for the plug type.
@@ -93,6 +94,7 @@ class SmartPlugManager:
         pending_tasks = tuple(self._pending_off.values())
         self._pending_off.clear()
         self._last_schedule_check.clear()
+        self._retry_restored_auto_offs = False
         tasks = [task for task in (*scheduler_tasks, *pending_tasks) if task is not None and not task.done()]
         for task in tasks:
             task.cancel()
@@ -103,6 +105,8 @@ class SmartPlugManager:
         while True:
             try:
                 await self._check_schedules()
+                if self._retry_restored_auto_offs:
+                    await self.resume_pending_auto_offs(require_connected=True)
             except Exception as e:
                 logger.error("Error in schedule check: %s", e)
 
@@ -695,11 +699,13 @@ class SmartPlugManager:
                     )
                 )
                 pending_plugs = result.scalars().all()
+                retry = False
 
                 for plug in pending_plugs:
-                    if require_connected and not printer_manager.is_connected(plug.printer_id):
+                    if plug.id in self._pending_off:
                         continue
                     # Check how long it's been pending (timeout after 2 hours)
+                    elapsed = None
                     if plug.auto_off_pending_since:
                         pending_since = plug.auto_off_pending_since
                         if pending_since.tzinfo is None:
@@ -713,6 +719,16 @@ class SmartPlugManager:
                             plug.auto_off_pending = False
                             plug.auto_off_pending_since = None
                             await db.commit()
+                            continue
+
+                    if require_connected:
+                        status = printer_manager.get_status(plug.printer_id)
+                        if (
+                            not status
+                            or not printer_manager.is_connected(plug.printer_id)
+                            or status.state.lower() in {"", "unknown", "connecting", "offline"}
+                        ):
+                            retry = True
                             continue
 
                     logger.info("Resuming pending auto-off for plug '%s' (printer %s)", plug.name, plug.printer_id)
@@ -733,11 +749,18 @@ class SmartPlugManager:
                         await db.commit()
                         continue
 
+                    if require_connected:
+                        delay = plug.off_delay_minutes if plug.off_delay_mode == "time" else 0
+                        if plug.auto_off_after_drying:
+                            delay = max(delay, plug.off_delay_after_drying_minutes)
+                        if elapsed is None or elapsed < delay * 60:
+                            retry = retry or elapsed is not None
+                            continue
+
                     # Resume the appropriate off mode
                     if plug.off_delay_mode == "temperature":
                         self._schedule_temp_based_off(plug, plug.printer_id, plug.off_temp_threshold)
                     else:
-                        # For time mode, just turn off immediately since delay already passed
                         logger.info("Time-based auto-off was pending, turning off plug '%s' now", plug.name)
 
                         service = await self.get_service_for_plug(plug, db)
@@ -746,6 +769,8 @@ class SmartPlugManager:
                             await self._mark_auto_off_executed(plug.id)
                             printer_manager.mark_printer_offline(plug.printer_id)
 
+                if require_connected:
+                    self._retry_restored_auto_offs = retry
                 if pending_plugs:
                     logger.info("Resumed %s pending auto-off(s)", len(pending_plugs))
 

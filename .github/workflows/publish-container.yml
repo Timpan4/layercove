@@ -141,10 +141,26 @@ jobs:
 
       - name: Attest build provenance
         if: steps.existing.outputs.digest == ''
-        uses: actions/attest@v4
+        uses: actions/attest@1e69f48acb82d1966a394da916b4c1698aa569d6 # v4
         with:
           subject-name: ${{ env.IMAGE_NAME }}
           subject-digest: ${{ steps.build.outputs.digest }}
+          predicate-type: https://slsa.dev/provenance/v1
+          predicate: |
+            {
+              "buildDefinition": {
+                "buildType": "${{ github.server_url }}/${{ github.repository }}/blob/main/.github/workflows/publish-container.yml",
+                "externalParameters": {"sourceCommit": "${{ needs.verify.outputs.sha }}"},
+                "resolvedDependencies": [
+                  {"uri": "git+${{ github.server_url }}/${{ github.repository }}", "digest": {"gitCommit": "${{ needs.verify.outputs.sha }}"}},
+                  {"uri": "${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}/.github/workflows/publish-container.yml", "digest": {"gitCommit": "${{ github.sha }}"}}
+                ]
+              },
+              "runDetails": {
+                "builder": {"id": "https://github.com/actions/runner/github-hosted"},
+                "metadata": {"invocationId": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}/attempts/${{ github.run_attempt }}"}
+              }
+            }
           push-to-registry: true
           create-storage-record: false
 

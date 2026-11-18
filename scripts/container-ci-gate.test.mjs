@@ -151,10 +151,13 @@ const tipDigest = 'sha256:' + 'e'.repeat(64);
 
 function promote(releaseTag, mainDigest = tipDigest, { gitTags = '', registryTags = '', tipError = false } = {}) {
   return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', `
+    fixture_state=$(mktemp -d)
+    trap 'rm -rf -- "$fixture_state"' EXIT
     gh() {
       case "$2" in
         "repos/$GITHUB_REPOSITORY/commits/main")
-          if [[ "$TIP_ERROR" == true ]]; then return 1; fi
+          if [[ "$TIP_ERROR" == true && -f "$fixture_state/tip-checked" ]]; then return 1; fi
+          : > "$fixture_state/tip-checked"
           printf '%s\n' "$TIP" ;;
         "repos/$GITHUB_REPOSITORY/commits/tags/$RELEASE_TAG") printf '%s\n' "$SOURCE_SHA" ;;
         --paginate)

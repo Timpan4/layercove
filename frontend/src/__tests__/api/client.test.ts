@@ -439,6 +439,12 @@ describe('Project cover image URL (#1155)', () => {
       '/api/v1/printers/7/camera/snapshot',
     ]) expect(withMediaToken(url)).toBe(url);
   });
+
+  it('retains the validated origin for a protocol-relative media URL', () => {
+    const path = '/api/v1/archives/7/thumbnail';
+    setMediaToken('media-token');
+    expect(withMediaToken(`//${window.location.host}${path}`)).toBe(`${window.location.origin}${path}?token=media-token`);
+  });
 });
 
 describe('Historical slice errors', () => {

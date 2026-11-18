@@ -43,7 +43,7 @@ Restore validates the database and encrypted settings before replacing data. If 
 
 Restored pending print jobs stay in the queue and require a manual start. Check which jobs already ran before starting them.
 
-Uploaded and scheduled backup ZIPs are limited to 4 GiB uncompressed and 65,535 entries, counting both files and directories. Set `BACKUP_RESTORE_MAX_UNCOMPRESSED_BYTES` and `BACKUP_RESTORE_MAX_ENTRIES` in the environment or `.env` before starting LayerCove to change these limits. Allow space for extraction and staging on the destination filesystems.
+Backup creation and restore use the same limits of 4 GiB uncompressed and 65,535 ZIP entries, counting both files and directories. Set `BACKUP_RESTORE_MAX_UNCOMPRESSED_BYTES` and `BACKUP_RESTORE_MAX_ENTRIES` in the environment or `.env` before starting LayerCove to change these limits. Allow space for extraction and staging on the destination filesystems.
 
 ## Optional bundled Spoolman
 

@@ -260,14 +260,14 @@ class TestEncryption:
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
         enc_mod._fernet_instance = None
 
-        original_read_text = Path.read_text
+        original_open = Path.open
 
-        def _raising_read_text(self, *args, **kwargs):
+        def _raising_open(self, *args, **kwargs):
             if self.name == ".mfa_encryption_key":
                 raise OSError("simulated permission denied")
-            return original_read_text(self, *args, **kwargs)
+            return original_open(self, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "read_text", _raising_read_text)
+        monkeypatch.setattr(Path, "open", _raising_open)
 
         with caplog.at_level(logging.ERROR, logger="backend.app.core.encryption"):
             key, source = enc_mod._load_or_generate_key()

@@ -5,6 +5,8 @@ import shutil
 import sqlite3
 import zipfile
 from contextlib import closing
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
@@ -48,6 +50,44 @@ async def test_mqtt_configuration_loads_saved_plug_topics(db_session, monkeypatc
     await relay.configure_from_db(db_session)
 
     assert plug_service.subscriptions == {"fixture/power": [(1, "power")], "fixture/energy": [(2, "energy")]}
+
+
+async def test_restored_auto_off_waits_for_deadline_and_known_printer_state(db_session, test_engine, monkeypatch):
+    from backend.app.services.printer_manager import printer_manager
+    from backend.app.services.smart_plug_manager import SmartPlugManager
+
+    manager = SmartPlugManager()
+    plug = SmartPlug(
+        name="Fixture power plug",
+        printer_id=1,
+        auto_off=True,
+        auto_off_pending=True,
+        auto_off_pending_since=datetime.now(timezone.utc),
+        off_delay_mode="time",
+        off_delay_minutes=30,
+    )
+    db_session.add_all([Printer(id=1, name="Fixture printer"), plug])
+    await db_session.commit()
+    status = SimpleNamespace(connected=True, state="IDLE")
+    power = SimpleNamespace(turn_off=AsyncMock(return_value=True))
+    monkeypatch.setattr(database, "async_session", async_sessionmaker(test_engine, expire_on_commit=False))
+    monkeypatch.setattr(printer_manager, "get_status", lambda _printer_id: status)
+    monkeypatch.setattr(printer_manager, "is_connected", lambda _printer_id: status.connected)
+    monkeypatch.setattr(printer_manager, "mark_printer_offline", lambda _printer_id: None)
+    monkeypatch.setattr(manager, "get_service_for_plug", AsyncMock(return_value=power))
+
+    await manager.resume_pending_auto_offs(require_connected=True)
+    power.turn_off.assert_not_awaited()
+
+    plug.auto_off_pending_since -= timedelta(minutes=plug.off_delay_minutes)
+    await db_session.commit()
+    status.state = "unknown"
+    await manager.resume_pending_auto_offs(require_connected=True)
+    power.turn_off.assert_not_awaited()
+
+    status.state = "IDLE"
+    await manager.resume_pending_auto_offs(require_connected=True)
+    power.turn_off.assert_awaited_once()
 
 
 def write_database(path, value, *, settings_only=False):
@@ -137,6 +177,73 @@ async def test_restore_rejects_unsupported_backup_contents(async_client, restore
 
     assert response.status_code == 400, response.text
     assert_original()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("limit", ["max_uncompressed_bytes", "max_entries"])
+async def test_backup_creation_reports_when_its_restore_limit_is_too_low(
+    async_client, restore_fixture, monkeypatch, tmp_path, limit
+):
+    from backend.app.services.local_backup import LocalBackupService
+
+    monkeypatch.setattr(settings, f"backup_restore_{limit}", 1)
+    response = await async_client.get("/api/v1/settings/backup")
+    assert response.status_code == 413
+    assert f"BACKUP_RESTORE_{limit.upper()}" in response.json()["detail"]
+
+    backup_dir = tmp_path / "scheduled"
+    scheduled = await LocalBackupService().run_backup({"path": str(backup_dir), "retention": 1})
+    assert not scheduled["success"]
+    assert f"BACKUP_RESTORE_{limit.upper()}" in scheduled["message"]
+    assert list(backup_dir.iterdir()) == []
+
+
+def test_restore_checks_entry_count_before_loading_zip_directory(tmp_path):
+    from fastapi import HTTPException
+
+    from backend.app.services.backup_restore import extract_backup
+
+    class Reads(io.BytesIO):
+        read_sizes = []
+
+        def read(self, size=-1):
+            self.read_sizes.append(size)
+            return super().read(size)
+
+    payload = Reads()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.writestr("layercove.db", b"")
+        archive.mkdir("archive/")
+        archive.writestr("archive/example.gcode", b"")
+    with zipfile.ZipFile(payload) as archive:
+        central_bytes = len(payload.getvalue()) - archive.start_dir - zipfile.sizeEndCentDir
+    payload.read_sizes.clear()
+
+    with pytest.raises(HTTPException) as error:
+        extract_backup(payload, tmp_path, max_bytes=1, max_entries=2)
+
+    assert error.value.status_code == 413
+    assert central_bytes not in payload.read_sizes
+
+
+@pytest.mark.parametrize("zip64", [False, True])
+def test_restore_extracts_standard_and_zip64_backups(tmp_path, monkeypatch, zip64):
+    from backend.app.services.backup_restore import extract_backup
+
+    contents = b"fixture data"
+    if zip64:
+        monkeypatch.setattr(zipfile, "ZIP64_LIMIT", len(contents) - 1)
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.comment = b"fixture archive comment"
+        archive.writestr("layercove.db", contents)
+        archive.mkdir("archive/")
+        archive.writestr("archive/Gantry #1 µ.gcode", contents)
+
+    db = extract_backup(payload, tmp_path, max_bytes=2 * len(contents), max_entries=3)
+
+    assert db.read_bytes() == contents
+    assert (tmp_path / "archive" / "Gantry #1 µ.gcode").read_bytes() == contents
 
 
 @pytest.mark.integration
@@ -353,6 +460,113 @@ async def test_http_admission_stays_paused_until_printers_reconnect(async_client
 
 
 @pytest.mark.integration
+async def test_restore_processes_observation_from_reconnected_printer_before_resuming_http(
+    async_client, monkeypatch, restore_fixture
+):
+    from backend.app.core.restore_activity import restore_activity
+    from backend.app.services import printer_manager as manager_module
+    from backend.app.services.printer_backend import ProviderEvent
+    from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider, PrinterSnapshot
+
+    manager = manager_module.PrinterManager()
+    monkeypatch.setattr(manager_module, "printer_manager", manager)
+    observed = []
+
+    async def observe(event):
+        async with restore_activity.wait_for_admission():
+            observed.append((event.kind, restore_activity.paused))
+
+    manager.set_print_lifecycle_callback(observe)
+
+    def make_backend(_printer, emit):
+        async def connect():
+            emit(ProviderEvent("print_running_observed", {"filename": "fixture.gcode"}))
+
+        return SimpleNamespace(
+            provider=PrinterProvider.MOONRAKER,
+            connect=connect,
+            disconnect=AsyncMock(),
+            snapshot=lambda: PrinterSnapshot(
+                provider=PrinterProvider.MOONRAKER, connected=True, state=NormalizedPrinterState.PRINTING
+            ),
+        )
+
+    manager._registry.register(PrinterProvider.MOONRAKER, make_backend)
+    monkeypatch.setattr(manager, "_sync_moonraker_cameras_once", AsyncMock())
+
+    async def reconnect(_db):
+        await manager.connect_printer(
+            SimpleNamespace(id=7, provider="moonraker", name="Fixture", serial_number="S", model="Test")
+        )
+
+    monkeypatch.setattr(manager_module, "init_printer_connections", reconnect)
+    files, _ = restore_fixture
+    try:
+        assert (await async_client.post("/api/v1/settings/restore", files=files)).is_success
+        assert observed == [("print_running_observed", True)]
+    finally:
+        await manager.disconnect_all_async()
+
+
+@pytest.mark.integration
+async def test_restore_waits_for_color_catalog_stream_to_finish(async_client, monkeypatch, test_engine):
+    import httpx
+
+    from backend.app.api.routes import inventory
+    from backend.app.core.restore_activity import restore_activity
+
+    second_page_requested = asyncio.Event()
+    release_second_page = asyncio.Event()
+
+    async def load_page(_url, *, params):
+        page = params["page"]
+        if page == 2:
+            second_page_requested.set()
+            await release_second_page.wait()
+        return httpx.Response(
+            200,
+            request=httpx.Request("GET", "https://fixture.invalid/swatch/"),
+            json={
+                "count": 2,
+                "next": page == 1,
+                "results": [
+                    {"manufacturer": {"name": "Fixture"}, "color_name": f"Color {page}", "hex_color": "ff0000"}
+                ],
+            },
+        )
+
+    source = AsyncMock()
+    source.__aenter__.return_value = source
+    source.get.side_effect = load_page
+    monkeypatch.setattr(
+        inventory, "httpx", SimpleNamespace(AsyncClient=lambda **_kwargs: source, HTTPError=httpx.HTTPError)
+    )
+    db_session = async_sessionmaker(test_engine, expire_on_commit=False)
+    monkeypatch.setattr(database, "_session_factory", db_session)
+    syncing = asyncio.create_task(async_client.post("/api/v1/inventory/colors/sync"))
+    requested = asyncio.create_task(second_page_requested.wait())
+    drain = None
+    try:
+        await asyncio.wait((syncing, requested), return_when=asyncio.FIRST_COMPLETED)
+        assert second_page_requested.is_set()
+        drain = asyncio.create_task(restore_activity.pause())
+        await asyncio.sleep(0)
+        assert restore_activity.paused
+        assert not drain.done()
+    finally:
+        release_second_page.set()
+        requested.cancel()
+        if drain is not None and drain.done():
+            restore_activity.resume()
+        response = await syncing
+        if drain is not None and restore_activity.paused:
+            await drain
+            restore_activity.resume()
+    assert response.is_success
+    assert '"added": 2' in response.text
+
+
+@pytest.mark.integration
 async def test_restore_closes_websockets_admitted_before_replacement(
     async_client, restore_fixture, monkeypatch, test_engine
 ):
@@ -495,6 +709,21 @@ async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_cli
             await connection.execute(insert(Printer).values(id=7, name="Restored printer", awaiting_plate_clear=True))
             await connection.execute(insert(PrintQueueItem).values(id=41, status="pending", manual_start=False))
             await connection.execute(insert(PrintQueueItem).values(id=42, status="completed", manual_start=False))
+            finished = datetime.now(timezone.utc).replace(tzinfo=None)
+            await connection.execute(
+                insert(PrintQueueItem).values(
+                    id=43, printer_id=7, status="cancelled", started_at=finished, completed_at=finished
+                )
+            )
+            await connection.execute(
+                insert(PrintQueueItem).values(
+                    id=44,
+                    printer_id=7,
+                    status="skipped",
+                    completed_at=finished + timedelta(seconds=1),
+                    error_message="Previous print failed or was aborted",
+                )
+            )
             await connection.execute(insert(User).values(id=7, username="restored-user"))
             secret = "fernet:" + Fernet(source_key).encrypt(b"fixture-totp-seed").decode()
             await connection.execute(UserTOTP.__table__.insert().values(user_id=7, secret=secret))
@@ -561,7 +790,7 @@ async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_cli
             queue = await connection.execute(
                 select(PrintQueueItem.status, PrintQueueItem.manual_start).order_by(PrintQueueItem.id)
             )
-            assert queue.all() == [("pending", True), ("completed", False)]
+            assert queue.all() == [("pending", True), ("completed", False), ("cancelled", False), ("pending", True)]
             stored = await connection.scalar(select(UserTOTP._secret_enc).where(UserTOTP.user_id == 7))
             if encryption.mfa_decrypt(stored) != "fixture-totp-seed":
                 pytest.fail("The restored setting cannot be decrypted")

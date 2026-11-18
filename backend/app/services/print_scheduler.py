@@ -1727,6 +1727,8 @@ class PrintScheduler:
 
     def _is_printer_idle(self, printer_id: int, require_plate_clear: bool = True) -> bool:
         """Check if a printer is connected and idle."""
+        if printer_manager.is_reconciling_after_restore(printer_id) is True:
+            return False
         if not printer_manager.is_connected(printer_id):
             logger.debug("Printer %d: not connected", printer_id)
             return False

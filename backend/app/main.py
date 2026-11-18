@@ -1276,12 +1276,16 @@ async def on_printer_status_change(printer_id: int, state: PrinterState | Printe
     # fires again with the flag still False — reconcile then runs against
     # actual evidence.
     state_known = bool(state.state) and state.state.upper() not in ("", "UNKNOWN")
-    if state.connected and state_known and not _printer_reconciled_since_connect.get(printer_id, False):
+    recovering = printer_manager.is_reconciling_after_restore(printer_id) is True
+    if state.connected and state_known and (recovering or not _printer_reconciled_since_connect.get(printer_id, False)):
         _printer_reconciled_since_connect[printer_id] = True
-        spawn_background_task(
-            reconcile_stale_active_prints(printer_id),
-            name=f"reconcile-stale-prints-{printer_id}",
-        )
+        if recovering:
+            await reconcile_stale_active_prints(printer_id)
+        else:
+            spawn_background_task(
+                reconcile_stale_active_prints(printer_id),
+                name=f"reconcile-stale-prints-{printer_id}",
+            )
     elif not state.connected and _printer_reconciled_since_connect.get(printer_id, False):
         # Re-arm so the next reconnect triggers reconciliation again.
         _printer_reconciled_since_connect[printer_id] = False

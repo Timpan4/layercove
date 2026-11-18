@@ -28,6 +28,7 @@ from backend.app.services.settings_service import (
     save_settings,
     set_setting,
 )
+from backend.app.utils.safe_path import safe_join_under
 
 logger = logging.getLogger(__name__)
 
@@ -511,21 +512,34 @@ async def _create_backup_zip(output_path: Path | None) -> tuple[Path, str]:
                 )
                 raise
 
-        # Create ZIP
-        if output_path is not None:
-            zip_file = (
-                output_path / filename
-            )  # SEC-PATH-OK: filename = f"layercove-backup-{datetime.now()...}.zip" generated in create_backup_zip itself
-        else:
-            fd, tmp = tempfile.mkstemp(suffix=".zip")
-            os.close(fd)
-            zip_file = Path(tmp)
+        sources = []
+        uncompressed_bytes = 0
+        for file_path in temp_path.rglob("*"):
+            if file_path.is_file():
+                sources.append(file_path)
+                uncompressed_bytes += file_path.stat().st_size
+                if len(sources) > app_settings.backup_restore_max_entries:
+                    raise HTTPException(
+                        413, "Backup contains too many ZIP entries. Increase BACKUP_RESTORE_MAX_ENTRIES."
+                    )
+                if uncompressed_bytes > app_settings.backup_restore_max_uncompressed_bytes:
+                    raise HTTPException(
+                        413,
+                        "Backup exceeds the uncompressed size limit. Increase BACKUP_RESTORE_MAX_UNCOMPRESSED_BYTES.",
+                    )
 
-        with zipfile.ZipFile(zip_file, "w", zipfile.ZIP_DEFLATED) as zf:
-            for file_path in temp_path.rglob("*"):
-                if file_path.is_file():
-                    arcname = file_path.relative_to(temp_path)
-                    zf.write(file_path, arcname)
+        fd, tmp = tempfile.mkstemp(dir=output_path, suffix=".zip")
+        os.close(fd)
+        zip_file = Path(tmp)
+        try:
+            with zipfile.ZipFile(zip_file, "w", zipfile.ZIP_DEFLATED) as archive:
+                for file_path in sources:
+                    archive.write(file_path, file_path.relative_to(temp_path))
+            if output_path is not None:
+                zip_file = zip_file.replace(safe_join_under(output_path, filename))
+        except BaseException:
+            zip_file.unlink(missing_ok=True)
+            raise
 
     return zip_file, filename
 
@@ -738,6 +752,18 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
     printers_disconnected = False
     encryption_state = (encryption._fernet_instance, encryption._key_source, encryption._warn_shown)
 
+    async def reconfigure_mqtt_and_printers(*, reconnect: bool) -> None:
+        if reconnect:
+            printer_manager.begin_restore_reconnect()
+        try:
+            async with database.async_session() as db:
+                await mqtt_relay.configure_from_db(db)
+                if reconnect:
+                    await init_printer_connections(db)
+        finally:
+            if reconnect:
+                await printer_manager.replay_restored_printer_events()
+
     async with _restore_lock:
         try:
             with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
@@ -798,6 +824,7 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                         await run_in_threadpool(copy_sqlite_database, backup_db, db_path)
                         await database.init_db()
                         await run_in_threadpool(validate_restored_sqlite_columns, db_path, tables)
+                        await run_in_threadpool(require_manual_start_for_pending_prints, db_path)
                     else:
                         await _import_sqlite_to_postgres(backup_db)
                     committed = True
@@ -806,19 +833,19 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
             with CancelScope(shield=True):
                 plate_clear_loaded = await printer_manager.load_awaiting_plate_clear_from_db()
                 try:
-                    async with database.async_session() as db:
-                        await mqtt_relay.configure_from_db(db)
-                        await init_printer_connections(db)
+                    await reconfigure_mqtt_and_printers(reconnect=True)
                     await virtual_printer_manager.sync_from_db()
                     await smart_plug_manager.resume_pending_auto_offs(require_connected=True)
                 except Exception as error:
                     logger.error("Could not restart services after restore (%s)", type(error).__name__)
                     message = "Backup restored successfully. Restart LayerCove to finish restarting services."
-                finally:
-                    restore_activity.resume()
-                    activity_paused = False
+                else:
                     if plate_clear_loaded:
                         print_scheduler.resume_after_restore()
+                finally:
+                    restore_activity.resume()
+                    printer_manager.end_restore_reconnect()
+                    activity_paused = False
                 if _resume_background_services() is False or not plate_clear_loaded:
                     message = "Backup restored successfully. Restart LayerCove to finish restarting services."
             return {"success": True, "message": f"{message} Start restored pending prints manually from the queue."}
@@ -843,10 +870,7 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                 if services_paused and not needs_recovery:
                     plate_clear_loaded = await printer_manager.load_awaiting_plate_clear_from_db()
                     try:
-                        async with database.async_session() as db:
-                            await mqtt_relay.configure_from_db(db)
-                            if printers_disconnected:
-                                await init_printer_connections(db)
+                        await reconfigure_mqtt_and_printers(reconnect=printers_disconnected)
                         if virtual_printer_enabled:
                             await virtual_printer_manager.sync_from_db()
                         await smart_plug_manager.resume_pending_auto_offs(require_connected=True)
@@ -854,11 +878,13 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                         logger.error(
                             "Could not restart printer services after restore (%s)", type(service_error).__name__
                         )
-                    finally:
-                        restore_activity.resume()
-                        activity_paused = False
+                    else:
                         if plate_clear_loaded:
                             print_scheduler.resume_after_restore()
+                    finally:
+                        restore_activity.resume()
+                        printer_manager.end_restore_reconnect()
+                        activity_paused = False
                     _resume_background_services()
 
             if not isinstance(error, Exception) or isinstance(error, HTTPException) and not needs_recovery:

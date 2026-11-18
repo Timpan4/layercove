@@ -1083,7 +1083,20 @@ async def sync_from_filamentcolors(
             logger.error("Error syncing from FilamentColors.xyz: %s", e)
             yield f"data: {json.dumps({'type': 'error', 'error': 'Unexpected error during sync'})}\n\n"
 
-    return StreamingResponse(generate(), media_type="text/event-stream")
+    async def generate_with_admission():
+        from contextlib import aclosing
+
+        from backend.app.core.restore_activity import restore_activity
+
+        with restore_activity.admit() as admitted:
+            if not admitted:
+                yield f"data: {json.dumps({'type': 'error', 'error': 'Backup restoration is in progress'})}\n\n"
+                return
+            async with aclosing(generate()) as events:
+                async for event in events:
+                    yield event
+
+    return StreamingResponse(generate_with_admission(), media_type="text/event-stream")
 
 
 # ── Spool CRUD ───────────────────────────────────────────────────────────────

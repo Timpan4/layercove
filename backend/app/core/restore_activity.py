@@ -26,10 +26,15 @@ class RestoreActivity:
         return self._paused
 
     @contextmanager
-    def admit(self) -> Iterator[bool]:
+    def admit(self, *, restoring_printer_events: bool = False) -> Iterator[bool]:
         parent = self._admission.get()
         already_admitted = parent is not None and parent.active
-        if self._paused and not already_admitted and asyncio.current_task() is not self._restore_task:
+        if (
+            self._paused
+            and not already_admitted
+            and not restoring_printer_events
+            and asyncio.current_task() is not self._restore_task
+        ):
             yield False
             return
         admission = _Admission()
