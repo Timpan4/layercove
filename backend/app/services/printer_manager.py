@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.app.core.restore_activity import restore_activity
 from backend.app.models.printer import Printer
 from backend.app.services.bambu_backend import BambuBackend
 from backend.app.services.bambu_mqtt import BambuMQTTClient, MQTTLogEntry, PrinterState, get_stage_name
@@ -43,6 +44,9 @@ class PrintLifecycleEvent:
         "finish_photo_moment",
     ]
     data: dict
+
+
+PrinterEventQueue = asyncio.Queue[BackendEvent | asyncio.Future[None] | None]
 
 
 # Models that have a real chamber temperature sensor
@@ -352,13 +356,16 @@ class PrinterManager:
         self._on_bed_temp_update: Callable[[int, float], Awaitable[None] | None] | None = None
         self._on_drying_complete: Callable[[int, int], Awaitable[None] | None] | None = None
         self._loop: asyncio.AbstractEventLoop | None = None
-        self._event_queues: dict[int, asyncio.Queue[BackendEvent | None]] = {}
+        self._event_queues: dict[int, PrinterEventQueue] = {}
         self._event_tasks: dict[int, asyncio.Task[None]] = {}
         self._backend_sinks: dict[int, Callable[[BackendEvent], None]] = {}
         self._accepting_events: set[int] = set()
         self._seen_lifecycle_events: set[tuple[int, str, str]] = set()
         self._forced_offline: set[int] = set()
         self._moonraker_cameras_synced: set[int] = set()
+        self._restored_events_ready: asyncio.Event | None = None
+        self._restored_connections: set[int] = set()
+        self._waiting_for_restored_status: set[int] = set()
         # Track who started the current print (Issue #206)
         self._current_print_user: dict[int, dict] = {}  # {printer_id: {"user_id": int, "username": str}}
         # Track printers awaiting plate-clear acknowledgment after a finished/failed print.
@@ -387,6 +394,33 @@ class PrinterManager:
         user to acknowledge the plate is cleared before the queue may dispatch the next job.
         """
         return printer_id in self._awaiting_plate_clear
+
+    def is_reconciling_after_restore(self, printer_id: int) -> bool:
+        return printer_id in self._waiting_for_restored_status
+
+    def begin_restore_reconnect(self) -> None:
+        self._restored_events_ready = asyncio.Event()
+        self._restored_connections.clear()
+        self._waiting_for_restored_status.clear()
+        self._seen_lifecycle_events.clear()
+        self._current_print_user.clear()
+
+    async def replay_restored_printer_events(self) -> None:
+        ready = self._restored_events_ready
+        if ready is None:
+            return
+        loop = asyncio.get_running_loop()
+        barriers = []
+        for printer_id in self._restored_connections:
+            barrier = loop.create_future()
+            self._event_queues[printer_id].put_nowait(barrier)
+            barriers.append(barrier)
+        ready.set()
+        await asyncio.gather(*barriers)
+
+    def end_restore_reconnect(self) -> None:
+        self._restored_events_ready = None
+        self._restored_connections.clear()
 
     def set_awaiting_plate_clear(self, printer_id: int, awaiting: bool):
         """Set/clear the awaiting-plate-clear gate and persist it to DB.
@@ -472,7 +506,7 @@ class PrinterManager:
         except Exception as e:
             logger.warning("Failed to persist awaiting_plate_clear for printer %d: %s", printer_id, e)
 
-    async def load_awaiting_plate_clear_from_db(self):
+    async def load_awaiting_plate_clear_from_db(self) -> bool:
         """Rehydrate the awaiting-plate-clear set from the printers table on startup."""
         from backend.app.core.database import async_session
 
@@ -483,8 +517,10 @@ class PrinterManager:
                 self._awaiting_plate_clear = ids
                 if ids:
                     logger.info("Loaded %d printer(s) awaiting plate-clear acknowledgment: %s", len(ids), sorted(ids))
+            return True
         except Exception as e:
             logger.warning("Failed to load awaiting_plate_clear from DB: %s", e)
+            return False
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the event loop for async callbacks."""
@@ -551,10 +587,14 @@ class PrinterManager:
         self._moonraker_cameras_synced.discard(printer_id)
         loop = asyncio.get_running_loop()
         self._loop = loop
-        queue: asyncio.Queue[BackendEvent | None] = asyncio.Queue()
+        queue: PrinterEventQueue = asyncio.Queue()
         self._event_queues[printer_id] = queue
         self._accepting_events.add(printer_id)
-        self._event_tasks[printer_id] = loop.create_task(self._consume_backend_events(printer_id, queue))
+        ready = self._restored_events_ready
+        if ready is not None:
+            self._restored_connections.add(printer_id)
+            self._waiting_for_restored_status.add(printer_id)
+        self._event_tasks[printer_id] = loop.create_task(self._consume_backend_events(printer_id, queue, ready))
 
         def emit(event: BackendEvent) -> None:
             if loop.is_closed():
@@ -621,14 +661,24 @@ class PrinterManager:
     async def _consume_backend_events(
         self,
         printer_id: int,
-        queue: asyncio.Queue[BackendEvent | None],
+        queue: PrinterEventQueue,
+        restored_events_ready: asyncio.Event | None = None,
     ) -> None:
         while True:
             event = await queue.get()
             try:
                 if event is None:
                     return
-                await self._forward_backend_event(printer_id, event)
+                if isinstance(event, asyncio.Future):
+                    if not event.done():
+                        event.set_result(None)
+                    continue
+                if restored_events_ready is not None:
+                    await restored_events_ready.wait()
+                recovering = restored_events_ready is not None and restored_events_ready is self._restored_events_ready
+                with restore_activity.admit(restoring_printer_events=recovering) as admitted:
+                    if admitted:
+                        await self._forward_backend_event(printer_id, event)
             except Exception:
                 logger.exception("Backend event callback failed for printer %s", printer_id)
             finally:
@@ -643,6 +693,15 @@ class PrinterManager:
 
     async def _forward_backend_event(self, printer_id: int, event: BackendEvent) -> None:
         if isinstance(event, StatusChanged):
+            snapshot = event.snapshot
+            state_known = snapshot.connected and snapshot.state not in {
+                NormalizedPrinterState.CONNECTING,
+                NormalizedPrinterState.OFFLINE,
+                NormalizedPrinterState.UNKNOWN,
+            }
+            reconciling = state_known and self.is_reconciling_after_restore(printer_id)
+            if reconciling and snapshot.state is NormalizedPrinterState.COMPLETED:
+                self.set_awaiting_plate_clear(printer_id, True)
             if event.snapshot.connected:
                 self._forced_offline.discard(printer_id)
             else:
@@ -656,6 +715,8 @@ class PrinterManager:
                 printer_id,
                 event.provider_state if event.provider_state is not None else event.snapshot,
             )
+            if reconciling:
+                self._waiting_for_restored_status.discard(printer_id)
         elif isinstance(event, JobLifecycle):
             dedupe_key = (printer_id, event.correlation_id, event.kind)
             if event.kind == "started" and any(
@@ -715,6 +776,12 @@ class PrinterManager:
         task = self._event_tasks.get(printer_id)
         current_loop = asyncio.get_running_loop()
         stale_task = task is not None and (task.done() or task.get_loop() is not current_loop)
+        ready = self._restored_events_ready
+        waiting_for_restore = printer_id in self._restored_connections and ready is not None and not ready.is_set()
+        if task is not None and not stale_task and waiting_for_restore:
+            task.cancel()
+            await asyncio.gather(task, return_exceptions=True)
+            stale_task = True
         if stale_task and queue is not None:
             # Test/process loop teardown may cancel the consumer before manager
             # cleanup. Never wait forever on its now-orphaned unfinished count.
@@ -729,6 +796,8 @@ class PrinterManager:
         self._event_queues.pop(printer_id, None)
         self._event_tasks.pop(printer_id, None)
         self._backend_sinks.pop(printer_id, None)
+        self._restored_connections.discard(printer_id)
+        self._waiting_for_restored_status.discard(printer_id)
 
     async def disconnect_printer_async(self, printer_id: int, timeout: float = 0) -> None:
         """Stop the producer, drain accepted events, then remove the backend."""

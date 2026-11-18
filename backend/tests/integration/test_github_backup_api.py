@@ -585,6 +585,16 @@ class TestGitHubBackupTestConnectionBody:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
+    async def test_invalid_request_does_not_echo_credentials(self, async_client: AsyncClient):
+        fixture_token = "fixture-pat-must-not-be-returned"
+        response = await async_client.post("/api/v1/github-backup/test", json={"token": fixture_token})
+        assert response.status_code == 422
+        if fixture_token in response.text:
+            pytest.fail("Validation response echoed the submitted credential")
+        assert any(error["loc"] == ["body", "repo_url"] for error in response.json()["detail"])
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
     async def test_query_string_credentials_are_rejected(self, async_client: AsyncClient):
         mock = AsyncMock(return_value={"success": True, "message": "ok"})
         with patch("backend.app.api.routes.github_backup.github_backup_service.test_connection", mock):

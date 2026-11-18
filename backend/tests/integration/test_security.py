@@ -260,14 +260,14 @@ class TestEncryption:
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
         enc_mod._fernet_instance = None
 
-        original_read_text = Path.read_text
+        original_open = Path.open
 
-        def _raising_read_text(self, *args, **kwargs):
+        def _raising_open(self, *args, **kwargs):
             if self.name == ".mfa_encryption_key":
                 raise OSError("simulated permission denied")
-            return original_read_text(self, *args, **kwargs)
+            return original_open(self, *args, **kwargs)
 
-        monkeypatch.setattr(Path, "read_text", _raising_read_text)
+        monkeypatch.setattr(Path, "open", _raising_open)
 
         with caplog.at_level(logging.ERROR, logger="backend.app.core.encryption"):
             key, source = enc_mod._load_or_generate_key()
@@ -1914,13 +1914,30 @@ class TestEncryptionRoundtrip:
 
 class TestBackupKeyFiles:
     @staticmethod
+    def _create_sqlite_backup_file(path):
+        import sqlite3
+        from contextlib import closing
+
+        from sqlalchemy.dialects import sqlite
+        from sqlalchemy.schema import CreateTable
+
+        from backend.app.core.database import Base
+
+        with closing(sqlite3.connect(path)) as conn:
+            for name in ("settings", "users", "printers", "print_archives"):
+                conn.execute(str(CreateTable(Base.metadata.tables[name]).compile(dialect=sqlite.dialect())))
+            conn.commit()
+        return path
+
+    @staticmethod
     def _use_file_database(monkeypatch, tmp_path):
         from sqlalchemy.ext.asyncio import create_async_engine
 
         import backend.app.core.database as db_mod
         from backend.app.core.config import settings as app_settings
 
-        database_url = f"sqlite+aiosqlite:///{tmp_path / 'layercove.db'}"
+        db_path = TestBackupKeyFiles._create_sqlite_backup_file(tmp_path / "layercove.db")
+        database_url = f"sqlite+aiosqlite:///{db_path}"
         engine = create_async_engine(database_url, echo=False)
         monkeypatch.setattr(app_settings, "database_url", database_url)
         monkeypatch.setattr(db_mod, "engine", engine)
@@ -1984,25 +2001,24 @@ class TestBackupKeyFiles:
     async def test_restore_writes_key_files_with_chmod_0600(self, async_client, monkeypatch, tmp_path):
         """T1: restore endpoint writes key file with mode 0o600.
 
-        Bypasses the SQLite-copy step via patches so execution reaches the
-        key-write code unconditionally — the previous version used a stub
-        ``b"SQLite format 3"`` which made ``sqlite3.backup()`` fail and the
-        key-write code never ran.
+        Use a valid database and key to exercise the restore preflight.
         """
         import io
         import zipfile
         from unittest.mock import AsyncMock, patch
+
+        from cryptography.fernet import Fernet
 
         from backend.app.core.config import settings as app_settings
 
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
 
-        # Build a minimal ZIP with a stub DB and the key file.
+        restored_key_bytes = Fernet.generate_key()
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"SQLite format 3")
-            zf.writestr(".mfa_encryption_key", "test-restored-key")
+            zf.write(self._create_sqlite_backup_file(tmp_path / "backup.db"), "layercove.db")
+            zf.writestr(".mfa_encryption_key", restored_key_bytes)
         buf.seek(0)
 
         with (
@@ -2023,7 +2039,8 @@ class TestBackupKeyFiles:
         assert resp.status_code == 200
         restored_key = tmp_path / ".mfa_encryption_key"
         assert restored_key.exists()
-        assert restored_key.read_text() == "test-restored-key"
+        if restored_key.read_bytes() != restored_key_bytes:
+            pytest.fail("The restored key does not match the backup")
         assert (restored_key.stat().st_mode & 0o777) == 0o600
 
     @pytest.mark.asyncio
@@ -2041,7 +2058,7 @@ class TestBackupKeyFiles:
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"SQLite format 3")
+            zf.write(self._create_sqlite_backup_file(tmp_path / "backup.db"), "layercove.db")
             # Intentionally no .mfa_encryption_key entry.
         buf.seek(0)
 
@@ -2074,6 +2091,8 @@ class TestBackupKeyFiles:
         import zipfile
         from unittest.mock import AsyncMock, patch
 
+        from cryptography.fernet import Fernet
+
         from backend.app.core.config import settings as app_settings
 
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -2082,8 +2101,8 @@ class TestBackupKeyFiles:
         # Build ZIP with a key file that we will fail to write to DATA_DIR.
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"SQLite format 3 backup data")
-            zf.writestr(".mfa_encryption_key", "backup-key-content")
+            zf.write(self._create_sqlite_backup_file(tmp_path / "backup.db"), "layercove.db")
+            zf.writestr(".mfa_encryption_key", Fernet.generate_key())
         buf.seek(0)
 
         # Track whether the database swap functions were called.
@@ -2149,7 +2168,7 @@ class TestBackupKeyFiles:
 
         # Pre-warm the singleton with an "old" key so we can detect the reset.
         old_key = Fernet.generate_key().decode()
-        monkeypatch.setenv("MFA_ENCRYPTION_KEY", old_key)
+        (tmp_path / ".mfa_encryption_key").write_text(old_key)
         enc_mod._fernet_instance = None
         enc_mod._key_source = None
         # Trigger lazy load → singleton holds the old Fernet.
@@ -2162,7 +2181,7 @@ class TestBackupKeyFiles:
         assert new_key != old_key
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"SQLite format 3 backup data")
+            zf.write(self._create_sqlite_backup_file(tmp_path / "backup.db"), "layercove.db")
             zf.writestr(".mfa_encryption_key", new_key)
         buf.seek(0)
 
@@ -2262,8 +2281,9 @@ class TestBackupKeyFiles:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_restore_rejects_absolute_path_in_zip(self, async_client, monkeypatch, tmp_path):
-        """B1: ZIP with an absolute path entry must be rejected by is_relative_to check."""
+    @pytest.mark.parametrize("entry_name", ["/archive/entry.txt", r"\archive\entry.txt"])
+    async def test_restore_rejects_absolute_path_in_zip(self, async_client, monkeypatch, tmp_path, entry_name):
+        """Restore rejects absolute ZIP entries with either path separator."""
         import io
         import zipfile
 
@@ -2274,9 +2294,7 @@ class TestBackupKeyFiles:
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            # Absolute path in the archive — extracts outside temp_path on
-            # systems where (temp_path / "/etc/passwd") resolves to /etc/passwd.
-            zf.writestr("/etc/passwd", "root:x:0:0")
+            zf.writestr(entry_name, "fixture")
             zf.writestr("layercove.db", b"SQLite format 3")
         buf.seek(0)
 
@@ -2684,7 +2702,7 @@ class TestTOTPDecryptionBroken:
         # disable_totp's TOTP-decrypt path doesn't throw, AND seed real hashes.
         result = await db_session.execute(_select(UserTOTP).where(UserTOTP.user_id == user_id))
         totp = result.scalar_one()
-        totp.secret = "JBSWY3DPEHPK3PXP"  # via setter -> mfa_encrypt
+        totp.secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"  # via setter -> mfa_encrypt
         plain_codes, hashed_codes = _generate_backup_codes()
         totp.backup_code_hashes = hashed_codes
         await db_session.commit()
@@ -2732,7 +2750,7 @@ class TestTOTPDecryptionBroken:
 
         result = await db_session.execute(_select(UserTOTP).where(UserTOTP.user_id == user_id))
         totp = result.scalar_one()
-        totp.secret = "JBSWY3DPEHPK3PXP"
+        totp.secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
         plain_codes, hashed_codes = _generate_backup_codes()
         totp.backup_code_hashes = hashed_codes
         await db_session.commit()

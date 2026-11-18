@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { screen, fireEvent, waitFor } from '@testing-library/react';
 import { render } from '../utils';
 import { ModelViewerModal } from '../../components/ModelViewerModal';
+import { setMediaToken } from '../../api/client';
 import { http, HttpResponse } from 'msw';
 import { server } from '../mocks/server';
 
@@ -42,7 +43,7 @@ const mockPlatesResponse = {
       index: 1,
       name: 'Plate 1',
       has_thumbnail: true,
-      thumbnail_url: '/api/v1/archives/1/plates/1/thumbnail',
+      thumbnail_url: '/api/v1/archives/1/plate-thumbnail/1',
       print_time_seconds: 3600,
       filament_used_grams: 50.5,
       object_count: 3,
@@ -53,7 +54,7 @@ const mockPlatesResponse = {
       index: 2,
       name: 'Plate 2',
       has_thumbnail: true,
-      thumbnail_url: '/api/v1/archives/1/plates/2/thumbnail',
+      thumbnail_url: '/api/v1/archives/1/plate-thumbnail/2',
       print_time_seconds: 1800,
       filament_used_grams: 25.0,
       object_count: 2,
@@ -294,6 +295,18 @@ describe('ModelViewerModal', () => {
   });
 
   describe('plate selector', () => {
+    it('signs a plate thumbnail when the modal opens after token sync', async () => {
+      setMediaToken('fixture-media');
+      try {
+        render(<ModelViewerModal archiveId={1} title="Test Model" onClose={mockOnClose} />);
+        expect(await screen.findByRole('img', { name: 'Plate 1' })).toHaveAttribute(
+          'src', '/api/v1/archives/1/plate-thumbnail/1?token=fixture-media',
+        );
+      } finally {
+        setMediaToken(null);
+      }
+    });
+
     it('shows plates panel for multi-plate files', async () => {
       render(
         <ModelViewerModal

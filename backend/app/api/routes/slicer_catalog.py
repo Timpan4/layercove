@@ -362,6 +362,7 @@ async def sync_orca_catalog(
     if account is not None and account.sync_frozen:
         raise HTTPException(status_code=409, detail="Catalog account is frozen")
     service = await _build_authenticated_service(db, current_user)
+
     try:
         result = await sync_orca_account(
             db,
@@ -370,7 +371,7 @@ async def sync_orca_catalog(
             display_name=credentials.email or remote_account_id,
             user_id=current_user.id if current_user is not None else None,
         )
-    except OrcaCloudError as error:
+    except (OrcaCloudError, SlicerApiError) as error:
         raise HTTPException(status_code=502, detail=str(error)) from error
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from error

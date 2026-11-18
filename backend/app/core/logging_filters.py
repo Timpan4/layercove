@@ -14,6 +14,16 @@ import asyncio
 import logging
 
 
+class AccessQueryRedactionFilter(logging.Filter):
+    """Keep credentials in query parameters out of uvicorn access logs."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
+            client, method, path, *rest = record.args
+            record.args = (client, method, path.partition("?")[0], *rest)
+        return True
+
+
 class WriteRequestsOnlyFilter(logging.Filter):
     """Keep uvicorn access log records for state-changing HTTP methods only.
 
@@ -45,13 +55,6 @@ class WriteRequestsOnlyFilter(logging.Filter):
     )
 
     def filter(self, record: logging.LogRecord) -> bool:  # noqa: A003 — stdlib API name
-        # Drop the query string from uvicorn's args (client, method, path, ...):
-        # some endpoints take secrets there (e.g. github-backup/test ``token``)
-        # and the log file is readable through /support/logs.
-        if isinstance(record.args, tuple) and len(record.args) >= 3 and isinstance(record.args[2], str):
-            args = list(record.args)
-            args[2] = args[2].split("?", 1)[0]
-            record.args = tuple(args)
         message = record.getMessage()
         return any(token in message for token in self._WRITE_VERB_TOKENS)
 

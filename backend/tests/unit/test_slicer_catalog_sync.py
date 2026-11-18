@@ -161,6 +161,7 @@ def test_orca_inheritance_resolves_compatibility_and_full_content():
                 "type": "print",
                 "compatible_printers": ["Dremel 3D40"],
                 "layer_height": "0.20",
+                "inherits": "",
             },
         }
     )
@@ -233,6 +234,139 @@ def orca_inherited_entries(parent_compatibility: str = "P1S", child_value: int =
             },
         },
     ]
+
+
+async def test_orca_sync_preserves_bundled_parent_through_account_local_inheritance(db):
+    parent, child = orca_inherited_entries("Voron")
+    parent["content"]["inherits"] = "0.20mm Standard @Voron"
+    bundled = standard_entry("voron")
+    bundled["name"] = parent["content"]["inherits"]
+    other_slicer = standard_entry("bambu-voron", value=99)
+    other_slicer["name"] = bundled["name"]
+    await sync_standard_account(db, {"process": [other_slicer]})
+    load_bundled = AsyncMock(return_value={"process": [bundled]})
+    first = await orca_pull(db, OrcaProfilePull("1", [parent, child], [], True), load_bundled=load_bundled)
+    assert first.review_batch_id is not None
+    batch = await db.get(SlicerProfileReviewBatch, first.review_batch_id)
+    assert batch.status == "approved"
+    profiles = (await db.scalars(select(SlicerProfile).where(SlicerProfile.account_id == first.account_id))).all()
+    child_profile = next(profile for profile in profiles if profile.remote_profile_id == "child")
+    revision = await db.scalar(
+        select(SlicerProfileRevision).where(SlicerProfileRevision.profile_id == child_profile.id)
+    )
+    assert await active_content(db, child_profile.id) == revision.content
+
+    assert "inherits" not in revision.content
+    assert revision.content["value"] == 1
+    assert revision.content["parent_value"] == "Voron"
+    assert revision.content["child_value"] == 1
+    assert revision.resolved_metadata["metadata"]["compatible_printers"] == ["Voron"]
+
+    load_bundled.side_effect = RuntimeError("sidecar unavailable after the first pull")
+    replay = await orca_pull(db, OrcaProfilePull("2", [], [], False), load_bundled=load_bundled)
+    assert replay.revision_ids == ()
+    assert replay.current_revision_ids == first.current_revision_ids
+
+
+@pytest.mark.parametrize("invalid", ["wrong-base", "unresolved", "rejected", "ambiguous-with-rejection"])
+async def test_orca_sync_rejects_unusable_external_parents(db, invalid):
+    from backend.app.services.slicer_catalog import canonical_hash
+
+    profile = orca_entry()
+    bundled = standard_entry("orca-parent")
+    profile["content"]["inherits"] = bundled["name"]
+    if invalid == "wrong-base":
+        profile["content"]["base_id"] = "matching-setting-id"
+        bundled["content"]["setting_id"] = "different-setting-id"
+    elif invalid == "unresolved":
+        bundled["content"]["inherits"] = "Missing parent of bundled preset"
+    bundled["content_hash"] = canonical_hash(bundled["content"])
+    bundled_entries = [bundled]
+    if invalid in {"rejected", "ambiguous-with-rejection"}:
+        standard = await sync_standard_account(db, {"process": [bundled]})
+        revision = await db.get(SlicerProfileRevision, standard.revision_ids[0])
+        revision.review_state = "rejected"
+        await db.commit()
+        if invalid == "ambiguous-with-rejection":
+            alternate = standard_entry("other-orca-parent", compatible=["Another printer"])
+            alternate["name"] = bundled["name"]
+            bundled_entries.append(alternate)
+
+    with pytest.raises(ValueError):
+        await orca_pull(
+            db,
+            OrcaProfilePull("1", [profile], [], True),
+            load_bundled=AsyncMock(return_value={"process": bundled_entries}),
+        )
+
+
+async def test_orca_sync_uses_configured_bundle_without_a_route_loader(db, monkeypatch):
+    from backend.app.services.slicer_api import SlicerApiService
+
+    profile = orca_entry()
+    bundled = standard_entry("orca-parent", compatible=["Orca printer"])
+    profile["content"]["inherits"] = bundled["name"]
+    del profile["content"]["compatible_printers"]
+    monkeypatch.setattr(SlicerApiService, "list_bundled_profiles", AsyncMock(return_value={"process": [bundled]}))
+
+    result = await sync_orca_account(
+        db,
+        service_with(OrcaProfilePull("1", [profile], [], True)),
+        remote_account_id="account",
+        display_name=None,
+        user_id=None,
+    )
+
+    revision = await db.get(SlicerProfileRevision, result.revision_ids[0])
+    assert revision.content["compatible_printers"] == ["Orca printer"]
+
+
+async def test_orca_child_bed_overrides_equivalent_bundled_fields(db):
+    from backend.app.services.slicer_catalog import canonical_hash
+
+    child = {
+        "id": "child",
+        "name": "Custom bed",
+        "content": {
+            "type": "printer",
+            "inherits": "Standard bed",
+            "bed_shape": ["0x0", "200x200"],
+            "max_print_height": "200",
+        },
+    }
+    parent_content = {"printable_area": ["0x0", "250x250"], "printable_height": "250", "nozzle_diameter": ["0.4"]}
+    parent = {
+        "stable_id": "base",
+        "name": "Standard bed",
+        "content": parent_content,
+        "content_hash": canonical_hash(parent_content),
+    }
+    result = await orca_pull(
+        db, OrcaProfilePull("1", [child], [], True), load_bundled=AsyncMock(return_value={"printer": [parent]})
+    )
+    revision = await db.get(SlicerProfileRevision, result.revision_ids[0])
+
+    assert revision.content["bed_shape"] == ["0x0", "200x200"]
+    assert revision.content["max_print_height"] == "200"
+    assert revision.content["nozzle_diameter"] == ["0.4"]
+    assert "printable_area" not in revision.content
+    assert "printable_height" not in revision.content
+
+
+async def test_orca_sync_preserves_active_child_when_custom_parent_is_deleted(db):
+    parent, child = orca_inherited_entries()
+    first = await orca_pull(db, OrcaProfilePull("1", [parent, child], [], True))
+    child_id = await db.scalar(
+        select(SlicerProfile.id).where(
+            SlicerProfile.account_id == first.account_id, SlicerProfile.remote_profile_id == "child"
+        )
+    )
+    before = await active_content(db, child_id)
+
+    with pytest.raises(ValueError, match="missing process inheritance parent"):
+        await orca_pull(db, OrcaProfilePull("2", [], ["parent"], False))
+
+    assert await active_content(db, child_id) == before
 
 
 async def test_orca_incremental_parent_update_revises_inherited_child(db):
@@ -465,9 +599,14 @@ async def test_local_sync_keeps_a_rollback_until_the_preset_changes(db):
     assert await active_content(db, profile_id) == {"value": 3}
 
 
-async def orca_pull(db, pull):
+async def orca_pull(db, pull, *, load_bundled=None):
     return await sync_orca_account(
-        db, service_with(pull), remote_account_id="orca-history", display_name="Owner", user_id=None
+        db,
+        service_with(pull),
+        remote_account_id="orca-history",
+        display_name="Owner",
+        user_id=None,
+        load_bundled=load_bundled or AsyncMock(return_value={}),
     )
 
 

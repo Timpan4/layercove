@@ -223,7 +223,7 @@ export function GitHubBackupSettings() {
       setOperationStatus('');
       if (data.success) {
         setRestoreResult({ success: true, message: data.message });
-        showToast(t('backup.backupRestoredRestart'), 'success');
+        showToast(t('backup.restoreComplete'), 'success');
       } else {
         setRestoreResult({ success: false, message: data.message });
         showToast(data.message, 'error');
@@ -1400,7 +1400,7 @@ export function GitHubBackupSettings() {
               const result = await api.importBackup(restoreFile);
               setRestoreResult(result);
               if (result.success) {
-                showToast(t('backup.backupRestoredRestart'), 'success');
+                showToast(t('backup.restoreComplete'), 'success');
               } else {
                 showToast(result.message, 'error');
               }

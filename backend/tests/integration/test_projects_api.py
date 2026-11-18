@@ -171,8 +171,30 @@ class TestProjectUrlAndCoverImage:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_upload_cover_image_then_serve_then_delete(self, async_client: AsyncClient, project_factory):
+    @pytest.mark.parametrize("auth_enabled", [False, True])
+    async def test_upload_cover_image_then_serve_then_delete(
+        self, async_client: AsyncClient, project_factory, auth_enabled
+    ):
         project = await project_factory()
+        headers = {}
+        image_query = {}
+        if auth_enabled:
+            credentials = {"username": "cover-admin", "password": "CoverAdmin1!"}
+            setup = await async_client.post(
+                "/api/v1/auth/setup",
+                json={
+                    "auth_enabled": True,
+                    "admin_username": credentials["username"],
+                    "admin_password": credentials["password"],
+                },
+            )
+            assert setup.is_success, setup.text
+            login = await async_client.post("/api/v1/auth/login", json=credentials)
+            assert login.is_success, login.text
+            headers = {"Authorization": f"Bearer {login.json()['access_token']}"}
+            media = await async_client.post("/api/v1/auth/media-token", headers=headers)
+            assert media.is_success, media.text
+            image_query = {"token": media.json()["token"]}
 
         # 1x1 PNG (smallest valid PNG bytes)
         png_bytes = bytes.fromhex(
@@ -183,6 +205,7 @@ class TestProjectUrlAndCoverImage:
         upload = await async_client.post(
             f"/api/v1/projects/{project.id}/cover-image",
             files={"file": ("cover.png", png_bytes, "image/png")},
+            headers=headers,
         )
         assert upload.status_code == 200, upload.text
         body = upload.json()
@@ -191,22 +214,22 @@ class TestProjectUrlAndCoverImage:
         cover_filename = body["filename"]
 
         # GET should serve the bytes back
-        served = await async_client.get(f"/api/v1/projects/{project.id}/cover-image")
+        served = await async_client.get(f"/api/v1/projects/{project.id}/cover-image", params=image_query)
         assert served.status_code == 200
         assert served.headers["content-type"] == "image/png"
         assert served.content == png_bytes
 
         # Project response should reflect the cover_image_filename field
-        view = await async_client.get(f"/api/v1/projects/{project.id}")
+        view = await async_client.get(f"/api/v1/projects/{project.id}", headers=headers)
         assert view.json()["cover_image_filename"] == cover_filename
 
         # DELETE should clear the field
-        deleted = await async_client.delete(f"/api/v1/projects/{project.id}/cover-image")
+        deleted = await async_client.delete(f"/api/v1/projects/{project.id}/cover-image", headers=headers)
         assert deleted.status_code == 200
-        view2 = await async_client.get(f"/api/v1/projects/{project.id}")
+        view2 = await async_client.get(f"/api/v1/projects/{project.id}", headers=headers)
         assert view2.json()["cover_image_filename"] is None
         # And subsequent GET should 404
-        served2 = await async_client.get(f"/api/v1/projects/{project.id}/cover-image")
+        served2 = await async_client.get(f"/api/v1/projects/{project.id}/cover-image", params=image_query)
         assert served2.status_code == 404
 
     @pytest.mark.asyncio
@@ -218,46 +241,6 @@ class TestProjectUrlAndCoverImage:
             files={"file": ("evil.exe", b"MZ\x00\x00", "application/octet-stream")},
         )
         assert response.status_code == 400
-
-    @pytest.mark.integration
-    def test_cover_image_get_uses_stream_token_gate(self):
-        """Regression guard: GET /projects/{id}/cover-image MUST be gated by
-        ``RequireCameraStreamTokenIfAuthEnabled`` (accepts ``?token=…`` query
-        string) rather than by the bearer-token gate, because browsers can't
-        attach an ``Authorization`` header to ``<img src>`` requests. Swapping
-        back to the bearer gate would silently 401 every cover image when auth
-        is enabled."""
-        from fastapi.routing import APIRoute
-
-        from backend.app.api.routes.projects import router
-
-        # Find the GET cover-image route. The router exposes path/methods/
-        # dependencies via APIRoute objects.
-
-        cover_get = None
-        for route in router.routes:
-            if isinstance(route, APIRoute) and route.path.endswith("/cover-image") and "GET" in route.methods:
-                cover_get = route
-                break
-
-        assert cover_get is not None, "GET cover-image route missing"
-
-        # The route's dependant tree includes a Depends(require_camera_stream_token_if_auth_enabled())
-        # — its `call` is the inner check function returned by that factory.
-        # Walk the dependant tree and assert one of the dependencies came from
-        # the stream-token factory, NOT from require_permission_if_auth_enabled.
-        from backend.app.core.auth import (
-            require_camera_stream_token_if_auth_enabled,
-        )
-
-        # The factory returns a fresh closure each call; the most reliable
-        # signature is the qualified name of the function in the closure chain.
-        expected_qualname = require_camera_stream_token_if_auth_enabled().__qualname__
-
-        gate_qualnames = [dep.call.__qualname__ for dep in cover_get.dependant.dependencies if dep.call]
-        assert expected_qualname in gate_qualnames, (
-            f"GET cover-image route is not gated by RequireCameraStreamTokenIfAuthEnabled. Found: {gate_qualnames}"
-        )
 
 
 class TestProjectPartsTracking:

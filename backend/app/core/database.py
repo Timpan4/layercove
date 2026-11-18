@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, event
@@ -10,6 +12,7 @@ from sqlalchemy.types import NullType, TupleType
 
 from backend.app.core.config import settings
 from backend.app.core.db_dialect import is_sqlite
+from backend.app.core.restore_activity import restore_activity
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +109,7 @@ def _normalize_postgres_datetime_params(parameters, context, executemany):
     return normalize_row(parameters)
 
 
-def _create_engine():
+def _create_engine(*, hide_parameters: bool = False):
     """Create the async engine with dialect-appropriate settings."""
     if is_sqlite():
         kwargs = {} if ":memory:" in settings.database_url else {"pool_size": 20, "max_overflow": 200}
@@ -119,6 +122,7 @@ def _create_engine():
     eng = create_async_engine(
         settings.database_url,
         echo=settings.debug,
+        hide_parameters=hide_parameters,
         **kwargs,
     )
     if is_sqlite():
@@ -134,11 +138,17 @@ def _create_engine():
 
 engine = _create_engine()
 
-async_session = async_sessionmaker(
+_session_factory = async_sessionmaker(
     engine,
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+
+@asynccontextmanager
+async def async_session() -> AsyncIterator[AsyncSession]:
+    async with restore_activity.wait_for_admission(), _session_factory() as session:
+        yield session
 
 
 async def run_with_retry(fn, *, max_attempts: int = 3, label: str = ""):
@@ -185,9 +195,9 @@ async def close_all_connections():
 
 async def reinitialize_database():
     """Reinitialize database connection after restore."""
-    global engine, async_session
+    global engine, _session_factory
     engine = _create_engine()
-    async_session = async_sessionmaker(
+    _session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,
         expire_on_commit=False,
@@ -444,6 +454,32 @@ async def _migrate_encrypt_legacy_secrets() -> None:
         )
 
 
+ARCHIVE_FTS_DEFINITION = (
+    "archive_fts USING fts5(print_name, filename, tags, notes, designer, filament_type, "
+    "content='print_archives', content_rowid='id')"
+)
+ARCHIVE_FTS_TRIGGERS = {
+    name: f"{name} AFTER {event} ON print_archives BEGIN {body} END"
+    for name, event, body in (
+        (
+            "archive_fts_insert",
+            "INSERT",
+            "INSERT INTO archive_fts(rowid, print_name, filename, tags, notes, designer, filament_type) VALUES (new.id, new.print_name, new.filename, new.tags, new.notes, new.designer, new.filament_type);",
+        ),
+        (
+            "archive_fts_delete",
+            "DELETE",
+            "INSERT INTO archive_fts(archive_fts, rowid, print_name, filename, tags, notes, designer, filament_type) VALUES ('delete', old.id, old.print_name, old.filename, old.tags, old.notes, old.designer, old.filament_type);",
+        ),
+        (
+            "archive_fts_update",
+            "UPDATE",
+            "INSERT INTO archive_fts(archive_fts, rowid, print_name, filename, tags, notes, designer, filament_type) VALUES ('delete', old.id, old.print_name, old.filename, old.tags, old.notes, old.designer, old.filament_type); INSERT INTO archive_fts(rowid, print_name, filename, tags, notes, designer, filament_type) VALUES (new.id, new.print_name, new.filename, new.tags, new.notes, new.designer, new.filament_type);",
+        ),
+    )
+}
+
+
 async def run_migrations(conn):
     """Apply current runtime invariants absent from ORM metadata.
 
@@ -454,33 +490,9 @@ async def run_migrations(conn):
     from sqlalchemy import text
 
     if is_sqlite():
-        await conn.execute(
-            text(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS archive_fts USING fts5("
-                "print_name, filename, tags, notes, designer, filament_type, "
-                "content='print_archives', content_rowid='id')"
-            )
-        )
-        for name, event, body in (
-            (
-                "archive_fts_insert",
-                "INSERT",
-                "INSERT INTO archive_fts(rowid, print_name, filename, tags, notes, designer, filament_type) VALUES (new.id, new.print_name, new.filename, new.tags, new.notes, new.designer, new.filament_type);",
-            ),
-            (
-                "archive_fts_delete",
-                "DELETE",
-                "INSERT INTO archive_fts(archive_fts, rowid, print_name, filename, tags, notes, designer, filament_type) VALUES ('delete', old.id, old.print_name, old.filename, old.tags, old.notes, old.designer, old.filament_type);",
-            ),
-            (
-                "archive_fts_update",
-                "UPDATE",
-                "INSERT INTO archive_fts(archive_fts, rowid, print_name, filename, tags, notes, designer, filament_type) VALUES ('delete', old.id, old.print_name, old.filename, old.tags, old.notes, old.designer, old.filament_type); INSERT INTO archive_fts(rowid, print_name, filename, tags, notes, designer, filament_type) VALUES (new.id, new.print_name, new.filename, new.tags, new.notes, new.designer, new.filament_type);",
-            ),
-        ):
-            await conn.execute(
-                text(f"CREATE TRIGGER IF NOT EXISTS {name} AFTER {event} ON print_archives BEGIN {body} END")
-            )
+        await conn.execute(text(f"CREATE VIRTUAL TABLE IF NOT EXISTS {ARCHIVE_FTS_DEFINITION}"))
+        for trigger in ARCHIVE_FTS_TRIGGERS.values():
+            await conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger}"))
 
     async with conn.begin_nested():
         for table in ("user_oidc_links", "user_totp", "user_otp_codes", "long_lived_tokens"):

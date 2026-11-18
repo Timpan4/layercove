@@ -127,12 +127,11 @@ class TestSmartPlugManager:
     async def test_on_print_start_cancels_pending_off(self, manager, mock_plug, mock_db):
         """Verify starting a new print cancels any pending auto-off."""
         # Set up a pending task
-        mock_task = MagicMock()
-        manager._pending_off[mock_plug.id] = mock_task
+        task = asyncio.create_task(asyncio.Event().wait())
+        manager._pending_off[mock_plug.id] = task
 
         with (
             patch.object(manager, "_get_plugs_for_printer", new_callable=AsyncMock) as mock_get_plug,
-            patch.object(manager, "_mark_auto_off_pending", new_callable=AsyncMock),
             patch("backend.app.services.smart_plug_manager.tasmota_service") as mock_tasmota,
         ):
             mock_get_plug.return_value = [mock_plug]
@@ -140,7 +139,7 @@ class TestSmartPlugManager:
 
             await manager.on_print_start(printer_id=1, db=mock_db)
 
-            mock_task.cancel.assert_called_once()
+            assert task.cancelled()
             assert mock_plug.id not in manager._pending_off
 
     @pytest.mark.asyncio
@@ -779,6 +778,7 @@ class TestPendingAutoOffPersistence:
         mock_plug.printer_id = 1
         mock_plug.auto_off_pending = True
         mock_plug.auto_off_pending_since = datetime.now(timezone.utc)
+        mock_plug.auto_off_timer = None
         mock_plug.off_delay_mode = "temperature"
         mock_plug.off_temp_threshold = 70
 
@@ -810,6 +810,7 @@ class TestPendingAutoOffPersistence:
         mock_plug.printer_id = 1
         mock_plug.auto_off_pending = True
         mock_plug.auto_off_pending_since = datetime.now(timezone.utc)
+        mock_plug.auto_off_timer = None
         mock_plug.off_delay_mode = "time"
 
         with (
@@ -844,6 +845,7 @@ class TestPendingAutoOffPersistence:
         mock_plug.printer_id = 1
         mock_plug.auto_off_pending = True
         mock_plug.auto_off_pending_since = datetime.now(timezone.utc)
+        mock_plug.auto_off_timer = None
         mock_plug.off_delay_mode = "time"
 
         with (
@@ -902,6 +904,34 @@ class TestActivePrintGuard:
         return plug
 
     # ---- _delayed_off (time mode) ----------------------------------------
+
+    @pytest.mark.parametrize("mode", ["time", "temperature"])
+    async def test_restore_cancels_replacement_auto_off(self, manager, mock_plug, monkeypatch, mode):
+        never = asyncio.Event()
+
+        async def wait_before_auto_off(_delay):
+            await never.wait()
+
+        monkeypatch.setattr("backend.app.services.smart_plug_manager.asyncio.sleep", wait_before_auto_off)
+        monkeypatch.setattr(manager, "_mark_auto_off_pending", AsyncMock())
+        schedule = manager._schedule_delayed_off if mode == "time" else manager._schedule_temp_based_off
+        next_turn = asyncio.get_running_loop().create_future
+        schedule(mock_plug, 1, 60)
+        started = next_turn()
+        asyncio.get_running_loop().call_soon(started.set_result, None)
+        await started
+
+        schedule(mock_plug, 1, 60)
+        replacement = manager._pending_off[mock_plug.id]
+        try:
+            started = next_turn()
+            asyncio.get_running_loop().call_soon(started.set_result, None)
+            await started
+            await manager.pause_for_restore()
+            assert replacement.done()
+        finally:
+            replacement.cancel()
+            await asyncio.gather(replacement, return_exceptions=True)
 
     @pytest.mark.asyncio
     async def test_delayed_off_skips_when_printer_printing_again(self, manager):
@@ -1037,17 +1067,16 @@ class TestActivePrintGuard:
         auto_on disabled kept its pending off and cut power mid-reprint.
         """
         mock_plug.auto_on = False
-        mock_task = MagicMock()
-        manager._pending_off[mock_plug.id] = mock_task
+        task = asyncio.create_task(asyncio.Event().wait())
+        manager._pending_off[mock_plug.id] = task
         with (
             patch.object(manager, "_get_plugs_for_printer", new_callable=AsyncMock, return_value=[mock_plug]),
-            patch.object(manager, "_mark_auto_off_pending", new_callable=AsyncMock),
             patch("backend.app.services.smart_plug_manager.tasmota_service") as mock_tasmota,
         ):
             mock_tasmota.turn_on = AsyncMock()
 
             await manager.on_print_start(printer_id=1, db=AsyncMock())
 
-            mock_task.cancel.assert_called_once()  # cancelled despite auto_on=False
+            assert task.cancelled()
             assert mock_plug.id not in manager._pending_off
             mock_tasmota.turn_on.assert_not_called()  # but not powered on

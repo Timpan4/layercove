@@ -10,6 +10,7 @@ from enum import Enum
 from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from sqlalchemy import delete, or_, select
 from sqlalchemy.exc import IntegrityError
@@ -709,7 +710,7 @@ def test_height(session: CalibrationSession, step: Step) -> float | None:
 
 def require_printable_height(session: CalibrationSession, step: Step, printer_content: dict) -> None:
     height = test_height(session, step)
-    raw = printer_content.get("printable_height")
+    raw = printer_content.get("printable_height", printer_content.get("max_print_height"))
     try:
         printable = float(raw[0] if isinstance(raw, list) else raw)
     except (TypeError, ValueError, IndexError):
@@ -1097,7 +1098,11 @@ async def upload_evidence(
     return evidence_response(row)
 
 
-@router.get("/sessions/{session_id}/evidence/{evidence_id}/image")
+@router.get(
+    "/sessions/{session_id}/evidence/{evidence_id}/image",
+    response_class=Response,
+    responses={200: {"content": {"image/png": {"schema": {"type": "string", "format": "binary"}}}}},
+)
 async def evidence_image(session_id: int, evidence_id: int, caller: ReadCaller, db: AsyncSession = Depends(get_db)):
     import re
 

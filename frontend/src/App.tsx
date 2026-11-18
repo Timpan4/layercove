@@ -1,7 +1,7 @@
-import { Component, type ReactNode, type ErrorInfo } from 'react';
+import { Component, useState, useSyncExternalStore, type ReactNode, type ErrorInfo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from './components/Button';
-import { BrowserRouter, Routes, Route, Navigate, useLocation } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Outlet, useLocation } from 'react-router-dom';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { Layout } from './components/Layout';
 import { PrintersPage } from './pages/PrintersPage';
@@ -34,7 +34,7 @@ import { ThemeProvider } from './contexts/ThemeContext';
 import { ToastProvider } from './contexts/ToastContext';
 import { SliceJobTrackerProvider } from './contexts/SliceJobTrackerContext';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
-import type { Permission } from './api/client';
+import { getAuthSessionGeneration, subscribeAuthSession, type Permission } from './api/client';
 import { ColorCatalogProvider } from './contexts/ColorCatalogContext';
 import { SpoolBuddyLayout } from './components/spoolbuddy/SpoolBuddyLayout';
 import { SpoolBuddyDashboard } from './pages/spoolbuddy/SpoolBuddyDashboard';
@@ -77,14 +77,17 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { error: Error | 
   }
 }
 
-const queryClient = new QueryClient({
-  defaultOptions: {
-    queries: {
-      staleTime: 1000 * 60,
-      retry: 1,
+function SessionQueryProvider({ children }: { children: ReactNode }) {
+  const [client] = useState(() => new QueryClient({
+    defaultOptions: {
+      queries: {
+        staleTime: 1000 * 60,
+        retry: 1,
+      },
     },
-  },
-});
+  }));
+  return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+}
 
 function StreamTokenSync() {
   useStreamTokenSync();
@@ -173,11 +176,11 @@ function SetupRoute({ children }: { children: React.ReactNode }) {
 }
 
 function App() {
+  const session = useSyncExternalStore(subscribeAuthSession, getAuthSessionGeneration);
   return (
     <ErrorBoundary>
       <ToastProvider>
-        <QueryClientProvider client={queryClient}>
-          <AuthProvider>
+        <AuthProvider>
             {/* ThemeProvider sits inside AuthProvider so its initial
                 ``api.getSettings()`` fetch can wait for AuthContext to
                 resolve — otherwise it fires unconditionally on every
@@ -185,16 +188,21 @@ function App() {
                 inline styles, so a missing theme on a crash screen is
                 not a regression. */}
             <ThemeProvider>
-            <ColorCatalogProvider>
-            <SliceJobTrackerProvider>
-            <StreamTokenSync />
             <BrowserRouter>
               <Routes>
+                <Route path="/login" element={<SessionQueryProvider><LoginPage /></SessionQueryProvider>} />
+                <Route element={(
+                  <SessionQueryProvider key={session}>
+                    <ColorCatalogProvider>
+                      <SliceJobTrackerProvider>
+                        <StreamTokenSync />
+                        <Outlet />
+                      </SliceJobTrackerProvider>
+                    </ColorCatalogProvider>
+                  </SessionQueryProvider>
+                )}>
                 {/* Setup page - only accessible if auth not enabled */}
                 <Route path="/setup" element={<SetupRoute><SetupPage /></SetupRoute>} />
-
-                {/* Login page */}
-                <Route path="/login" element={<LoginPage />} />
 
                 {import.meta.env.DEV && <Route path="/prototype/printers" element={<PrintersPrototypeDemo />} />}
 
@@ -244,13 +252,11 @@ function App() {
                   <Route path="external/:id" element={<ExternalLinkPage />} />
                   <Route path="camera-tokens" element={<Navigate to="/settings?tab=apikeys#card-camera-tokens" replace />} />
                 </Route>
+                </Route>
               </Routes>
             </BrowserRouter>
-            </SliceJobTrackerProvider>
-            </ColorCatalogProvider>
             </ThemeProvider>
-          </AuthProvider>
-        </QueryClientProvider>
+        </AuthProvider>
       </ToastProvider>
     </ErrorBoundary>
   );

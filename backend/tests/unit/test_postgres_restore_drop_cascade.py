@@ -24,6 +24,8 @@ from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from sqlalchemy import Insert
+from sqlalchemy.dialects import postgresql
 
 import backend.app.models.slice_job  # noqa: F401  (register every FK target in Base.metadata)
 
@@ -36,6 +38,7 @@ def _make_sqlite_source() -> Path:
     conn = sqlite3.connect(str(path))
     # `users` is in the ORM metadata so `tables_to_import` is non-empty.
     conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
+    conn.executemany("INSERT INTO users VALUES (?, ?)", [(7, "alice"), (8, "bob"), (9, "carrier")])
     conn.commit()
     conn.close()
     return path
@@ -56,12 +59,18 @@ async def test_restore_drops_tables_with_cascade_not_metadata_drop_all():
     try:
         executed_sql: list[str] = []
         run_sync_calls: list[str] = []
+        user_insert_ids: list[list[int]] = []
 
         # Capture the exact SQL emitted on the Postgres connection.
         mock_conn = MagicMock()
-        mock_conn.execute = AsyncMock(
-            side_effect=lambda stmt, *a, **k: executed_sql.append(getattr(stmt, "text", str(stmt)))
-        )
+
+        def record_command(stmt, *parameters):
+            executed_sql.append(str(stmt.compile(dialect=postgresql.dialect())))
+            if isinstance(stmt, Insert) and stmt.table.name == "users":
+                user_insert_ids.append([row["id"] for row in parameters[0]])
+
+        mock_conn.execute = AsyncMock(side_effect=record_command)
+        mock_conn.scalar = AsyncMock(side_effect=["public.users_id_seq", 9])
 
         # `await conn.run_sync(metadata.create_all)` is the only run_sync
         # the fix should issue. `metadata.drop_all` must never appear.
@@ -81,6 +90,7 @@ async def test_restore_drops_tables_with_cascade_not_metadata_drop_all():
         mock_engine = MagicMock()
         mock_engine.begin = MagicMock(return_value=begin_cm)
         mock_engine.dispose = AsyncMock()
+        mock_engine.dialect.insertmanyvalues_page_size = 2
 
         # `_create_engine` is imported lazily inside the function via
         # `from backend.app.core.database import ... _create_engine`,
@@ -89,7 +99,7 @@ async def test_restore_drops_tables_with_cascade_not_metadata_drop_all():
             "backend.app.core.database._create_engine",
             new=MagicMock(return_value=mock_engine),
         ):
-            await settings_module._import_sqlite_to_postgres(sqlite_path, "postgresql+asyncpg://test/test")
+            await settings_module._import_sqlite_to_postgres(sqlite_path)
 
         # 1. Every ORM table and known legacy orphan is dropped with CASCADE.
         cascade_drops = [s for s in executed_sql if "DROP TABLE" in s and "CASCADE" in s]
@@ -113,6 +123,9 @@ async def test_restore_drops_tables_with_cascade_not_metadata_drop_all():
         # No drop_all anywhere — the cascade DO block (executed via .execute,
         # not run_sync) is what runs first. Its presence is confirmed above.
         assert first_create_idx >= 0
+        assert user_insert_ids == [[7, 8], [9]]
+        sequence_resets = [sql for sql in executed_sql if "setval" in sql]
+        assert len(sequence_resets) == 1
     finally:
         sqlite_path.unlink(missing_ok=True)
 
@@ -129,9 +142,10 @@ async def test_restore_does_not_drop_unrelated_public_tables():
         executed_sql: list[str] = []
         mock_conn = MagicMock()
         mock_conn.execute = AsyncMock(
-            side_effect=lambda stmt, *a, **k: executed_sql.append(getattr(stmt, "text", str(stmt)))
+            side_effect=lambda stmt, *a, **k: executed_sql.append(str(stmt.compile(dialect=postgresql.dialect())))
         )
         mock_conn.run_sync = AsyncMock()
+        mock_conn.scalar = AsyncMock(return_value=None)
 
         begin_cm = MagicMock()
         begin_cm.__aenter__ = AsyncMock(return_value=mock_conn)
@@ -139,12 +153,13 @@ async def test_restore_does_not_drop_unrelated_public_tables():
         mock_engine = MagicMock()
         mock_engine.begin = MagicMock(return_value=begin_cm)
         mock_engine.dispose = AsyncMock()
+        mock_engine.dialect.insertmanyvalues_page_size = 2
 
         with patch(
             "backend.app.core.database._create_engine",
             new=MagicMock(return_value=mock_engine),
         ):
-            await settings_module._import_sqlite_to_postgres(sqlite_path, "postgresql+asyncpg://test/test")
+            await settings_module._import_sqlite_to_postgres(sqlite_path)
 
         drops = [s for s in executed_sql if "DROP TABLE" in s]
         allowed = set(Base.metadata.tables) | set(settings_module._LEGACY_RESTORE_DROP_TABLES)

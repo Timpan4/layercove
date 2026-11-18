@@ -84,6 +84,7 @@ from backend.app.api.routes.support import init_debug_logging
 from backend.app.core.config import APP_VERSION, settings as app_settings
 from backend.app.core.database import async_session, engine, init_db
 from backend.app.core.moonraker_upload_limit import MoonrakerUploadBodyLimitMiddleware
+from backend.app.core.restore_activity import restore_activity
 from backend.app.core.tasks import spawn_background_task
 from backend.app.core.websocket import ws_manager
 from backend.app.models.smart_plug import SmartPlug
@@ -288,6 +289,7 @@ root_logger.setLevel(log_level)
 # dropped — which is exactly the "logs/bambuddy.log only shows logs
 # partially" bug we hit. See backend/app/core/trace.py for the
 # ContextVar the filter reads.
+from backend.app.core.logging_filters import AccessQueryRedactionFilter
 from backend.app.core.trace import TraceIDFilter
 
 _trace_id_filter = TraceIDFilter()
@@ -298,6 +300,8 @@ console_handler.setLevel(log_level)
 console_handler.setFormatter(logging.Formatter(log_format))
 console_handler.addFilter(_trace_id_filter)
 root_logger.addHandler(console_handler)
+uvicorn_access_logger = logging.getLogger("uvicorn.access")
+uvicorn_access_logger.addFilter(AccessQueryRedactionFilter())
 
 # File handler - only in production or if explicitly enabled
 if app_settings.log_to_file:
@@ -326,7 +330,6 @@ if app_settings.log_to_file:
         WriteRequestsOnlyFilter,
     )
 
-    uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.addHandler(file_handler)
     uvicorn_access_logger.addFilter(WriteRequestsOnlyFilter())
     # Uvicorn's access logger has propagate=False (its own default), so the
@@ -1273,12 +1276,16 @@ async def on_printer_status_change(printer_id: int, state: PrinterState | Printe
     # fires again with the flag still False — reconcile then runs against
     # actual evidence.
     state_known = bool(state.state) and state.state.upper() not in ("", "UNKNOWN")
-    if state.connected and state_known and not _printer_reconciled_since_connect.get(printer_id, False):
+    recovering = printer_manager.is_reconciling_after_restore(printer_id) is True
+    if state.connected and state_known and (recovering or not _printer_reconciled_since_connect.get(printer_id, False)):
         _printer_reconciled_since_connect[printer_id] = True
-        spawn_background_task(
-            reconcile_stale_active_prints(printer_id),
-            name=f"reconcile-stale-prints-{printer_id}",
-        )
+        if recovering:
+            await reconcile_stale_active_prints(printer_id)
+        else:
+            spawn_background_task(
+                reconcile_stale_active_prints(printer_id),
+                name=f"reconcile-stale-prints-{printer_id}",
+            )
     elif not state.connected and _printer_reconciled_since_connect.get(printer_id, False):
         # Re-arm so the next reconnect triggers reconciliation again.
         _printer_reconciled_since_connect[printer_id] = False
@@ -2421,14 +2428,17 @@ def _load_objects_from_archive(archive, printer_id: int, logger) -> None:
 
 async def on_print_lifecycle(event: PrintLifecycleEvent) -> None:
     """Dispatch provider-neutral lifecycle events to application policy."""
-    if event.kind == "started":
-        await on_print_start(event.printer_id, event.data)
-    elif event.kind in {"completed", "failed", "cancelled"}:
-        await on_print_complete(event.printer_id, event.data)
-    elif event.kind == "print_running_observed":
-        await on_print_running_observed(event.printer_id, event.data)
-    else:
-        await on_finish_photo_moment(event.printer_id, event.data)
+    with restore_activity.admit() as admitted:
+        if not admitted:
+            return
+        if event.kind == "started":
+            await on_print_start(event.printer_id, event.data)
+        elif event.kind in {"completed", "failed", "cancelled"}:
+            await on_print_complete(event.printer_id, event.data)
+        elif event.kind == "print_running_observed":
+            await on_print_running_observed(event.printer_id, event.data)
+        else:
+            await on_finish_photo_moment(event.printer_id, event.data)
 
 
 async def on_print_start(printer_id: int, data: dict):
@@ -6382,32 +6392,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize MQTT relay from settings
     async with async_session() as db:
-        from backend.app.api.routes.settings import get_setting
-
-        mqtt_settings = {
-            "mqtt_enabled": (await get_setting(db, "mqtt_enabled") or "false") == "true",
-            "mqtt_broker": await get_setting(db, "mqtt_broker") or "",
-            "mqtt_port": int(await get_setting(db, "mqtt_port") or "1883"),
-            "mqtt_username": await get_setting(db, "mqtt_username") or "",
-            "mqtt_password": await get_setting(db, "mqtt_password") or "",
-            "mqtt_topic_prefix": await get_setting(db, "mqtt_topic_prefix") or "bambuddy",
-            "mqtt_use_tls": (await get_setting(db, "mqtt_use_tls") or "false") == "true",
-        }
-        await mqtt_relay.configure(mqtt_settings)
-
-        # Restore MQTT smart plug subscriptions
-        if mqtt_settings.get("mqtt_enabled"):
-            from backend.app.models.smart_plug import SmartPlug
-            from backend.app.services.mqtt_smart_plug import subscribe_plug_to_mqtt
-
-            result = await db.execute(select(SmartPlug).where(SmartPlug.plug_type == "mqtt"))
-            mqtt_plugs = result.scalars().all()
-            restored = 0
-            for plug in mqtt_plugs:
-                if subscribe_plug_to_mqtt(mqtt_relay.smart_plug_service, plug):
-                    restored += 1
-            if restored:
-                logging.info("Restored %s MQTT smart plug subscriptions", restored)
+        await mqtt_relay.configure_from_db(db)
 
     # Connect to all active printers
     async with async_session() as db:
@@ -6617,6 +6602,16 @@ PUBLIC_API_PREFIXES = [
     "/api/v1/auth/oidc/authorize/",
 ]
 
+# Browser media elements cannot send Authorization headers. Route
+# dependencies authorize these exact resources with a media credential.
+_MEDIA_PATH = re.compile(
+    r"/api/v1/(?:"
+    r"archives/\d+/(?:thumbnail|timelapse|plate-preview|plate-thumbnail/\d+|photos/[^/]+|project-image/.+|qrcode)"
+    r"|library/files/\d+/(?:thumbnail|plate-thumbnail/\d+)"
+    r"|print-log/\d+/thumbnail|projects/\d+/cover-image|external-links/\d+/icon"
+    r"|printers/\d+/(?:cover|files/plate-thumbnail/\d+))"
+)
+
 # Route patterns that are public (read-only display data)
 # These are checked with "in path" - needed because browsers load images/videos
 # via <img src> and <video src> which don't include Authorization headers
@@ -6823,6 +6818,11 @@ async def auth_middleware(request, call_next):
     if not path.startswith("/api/"):
         return await call_next(request)
 
+    if request.method in {"GET", "HEAD"} and _MEDIA_PATH.fullmatch(path):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
+
     # Allow public routes
     if path in PUBLIC_API_ROUTES:
         return await call_next(request)
@@ -6948,6 +6948,27 @@ async def auth_middleware(request, call_next):
         )
 
     return await call_next(request)
+
+
+@app.middleware("http")
+async def restore_activity_middleware(request, call_next):
+    from starlette.responses import JSONResponse
+
+    path = request.url.path
+    prefix = app_settings.api_prefix
+    if not path.startswith(f"{prefix}/"):
+        return await call_next(request)
+    route = path.removeprefix(prefix)
+    if request.method == "POST" and (
+        route == "/settings/restore" or re.fullmatch(r"/local-backup/backups/[^/]+/restore", route)
+    ):
+        if restore_activity.paused:
+            return JSONResponse({"detail": "Backup restoration is in progress"}, status_code=409)
+        return await call_next(request)
+    with restore_activity.admit() as admitted:
+        if not admitted:
+            return JSONResponse({"detail": "Backup restoration is in progress"}, status_code=503)
+        return await call_next(request)
 
 
 @app.middleware("http")

@@ -4,13 +4,14 @@ from __future__ import annotations
 
 import json
 import logging
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping, Sequence, Set
 from dataclasses import replace
 from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.core.config import settings
 from backend.app.models.local_preset import LocalPreset
 from backend.app.models.slicer_profile_catalog import (
     SlicerProfile,
@@ -19,7 +20,10 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileSourceRevision,
 )
 from backend.app.services.orca_cloud import OrcaCloudService, OrcaProfilePull
+from backend.app.services.settings_service import get_setting
+from backend.app.services.slicer_api import SlicerApiService
 from backend.app.services.slicer_catalog import (
+    BED_GEOMETRY_FIELDS,
     CatalogInput,
     CatalogProfile,
     CatalogProfileReferences,
@@ -42,6 +46,10 @@ class LocalCatalogReferenceError(ValueError):
     def __init__(self, references: CatalogProfileReferences):
         super().__init__("Local profile has catalog references")
         self.references = references
+
+
+class MissingProfileParentError(ValueError):
+    pass
 
 
 def _validate_profile_content(value: Any, path: str = "content") -> None:
@@ -100,13 +108,22 @@ def orca_profile_adapter(entry: Mapping[str, Any]) -> CatalogProfile:
     )
 
 
-def resolve_profile_inheritance(profiles: list[CatalogProfile]) -> list[CatalogProfile]:
-    """Resolve one source snapshot using explicit inherits edges within its account."""
+def resolve_profile_inheritance(
+    profiles: list[CatalogProfile],
+    *,
+    bundled_parents: Sequence[CatalogProfile] = (),
+    rejected_bundled: Set[tuple[str, str]] = frozenset(),
+    retained: Mapping[tuple[str, str], CatalogProfile] | None = None,
+) -> list[CatalogProfile]:
+    """Resolve account and bundled inheritance into immutable revision content."""
     by_id = {(profile.profile_type, profile.remote_profile_id): profile for profile in profiles}
     by_name: dict[tuple[str, str], list[CatalogProfile]] = {}
     for profile in profiles:
         by_name.setdefault((profile.profile_type, profile.display_name), []).append(profile)
-    resolved: dict[tuple[str, str], CatalogProfile] = {}
+    bundled_by_name: dict[tuple[str, str], list[CatalogProfile]] = {}
+    for profile in bundled_parents:
+        bundled_by_name.setdefault((profile.profile_type, profile.display_name), []).append(profile)
+    resolved = dict(retained or {})
     resolving: set[tuple[str, str]] = set()
 
     def resolve(profile: CatalogProfile) -> CatalogProfile:
@@ -122,22 +139,51 @@ def resolve_profile_inheritance(profiles: list[CatalogProfile]) -> list[CatalogP
         else:
             parent_ref = parent_ref.strip()
             parent = by_id.get((profile.profile_type, parent_ref))
+            bundled = False
             if parent is None:
                 candidates = by_name.get((profile.profile_type, parent_ref), [])
-                if len(candidates) != 1:
-                    reason = "missing" if not candidates else "ambiguous"
+                if not candidates:
+                    candidates = bundled_by_name.get((profile.profile_type, parent_ref), [])
+                    bundled = True
+                    base_id = profile.content.get("base_id")
+                    if isinstance(base_id, str) and base_id.strip():
+                        candidates = [
+                            candidate
+                            for candidate in candidates
+                            if candidate.content.get("setting_id") == base_id.strip()
+                        ]
+                if not candidates:
+                    raise MissingProfileParentError(
+                        f"missing {profile.profile_type} inheritance parent {parent_ref!r} "
+                        f"for {profile.remote_profile_id!r}"
+                    )
+                if len(candidates) > 1:
                     raise ValueError(
-                        f"{reason} {profile.profile_type} inheritance parent {parent_ref!r} "
+                        f"ambiguous {profile.profile_type} inheritance parent {parent_ref!r} "
                         f"for {profile.remote_profile_id!r}"
                     )
                 parent = candidates[0]
-            resolved_parent = resolve(parent)
-            content = {**resolved_parent.content, **profile.content}
-            content.pop("inherits", None)
+            if bundled:
+                if (parent.profile_type, canonical_hash(parent.content)) in rejected_bundled:
+                    raise ValueError(f"Orca bundled parent {parent_ref!r} was rejected")
+                if parent.content.get("inherits"):
+                    raise ValueError(f"Orca bundled parent {parent_ref!r} contains unresolved inheritance")
+            resolved_parent = parent if bundled else resolve(parent)
+            content = {k: v for k, v in (resolved_parent.content | profile.content).items() if k != "inherits"}
+            if profile.profile_type == "printer":
+                for fields in BED_GEOMETRY_FIELDS:
+                    if any(field in profile.content for field in fields):
+                        for field in fields:
+                            if field not in profile.content:
+                                content.pop(field, None)
             metadata = dict(profile.metadata or {})
             metadata["compatible_printers"] = _string_list(content.get("compatible_printers"))
             metadata["source_inherits"] = parent.remote_profile_id
             metadata["source_content"] = dict(profile.content)
+            if bundled:
+                metadata["bundled_parent"] = {"name": parent_ref, "content_hash": canonical_hash(parent.content)}
+            elif bundled_parent := (resolved_parent.metadata or {}).get("bundled_parent"):
+                metadata["bundled_parent"] = bundled_parent
             result = replace(profile, content=content, metadata=metadata)
         resolving.remove(key)
         resolved[key] = result
@@ -488,19 +534,58 @@ async def _existing_orca_profiles(
         if revision is None:
             continue
         metadata = dict((revision.resolved_metadata or {}).get("metadata") or {})
-        source_content = metadata.get("source_content")
-        content = source_content if isinstance(source_content, Mapping) else revision.content
         result.append(
-            orca_profile_adapter(
-                {
-                    "id": profile.remote_profile_id,
-                    "name": profile.display_name,
-                    "revision_id": revision.remote_revision_id,
-                    "content": content,
-                }
+            CatalogProfile(
+                remote_profile_id=profile.remote_profile_id,
+                profile_type=profile.profile_type,
+                display_name=profile.display_name,
+                remote_revision_id=revision.remote_revision_id,
+                content=revision.content,
+                metadata=metadata,
             )
         )
     return result
+
+
+def _orca_delta_snapshot(
+    existing: list[CatalogProfile], upserts: list[CatalogProfile], deletes: Sequence[str]
+) -> tuple[list[CatalogProfile], dict[tuple[str, str], CatalogProfile]]:
+    updates = {(profile.profile_type, profile.remote_profile_id): profile for profile in upserts}
+    deleted_ids = set(deletes)
+    source_profiles: dict[tuple[str, str], CatalogProfile] = {}
+    retained: dict[tuple[str, str], CatalogProfile] = {}
+    changed_aliases = [(profile.profile_type, profile.display_name) for profile in upserts] + list(updates)
+    children_by_parent: dict[tuple[str, str], list[tuple[str, str]]] = {}
+    for profile in existing:
+        key = (profile.profile_type, profile.remote_profile_id)
+        if key in updates:
+            changed_aliases.append((profile.profile_type, profile.display_name))
+            source_profiles[key] = updates[key]
+            continue
+        if profile.remote_profile_id in deleted_ids:
+            changed_aliases.extend([key, (profile.profile_type, profile.display_name)])
+            continue
+        raw = (profile.metadata or {}).get("source_content")
+        content = raw if isinstance(raw, Mapping) else profile.content
+        source_profiles[key] = orca_profile_adapter(
+            {
+                "id": profile.remote_profile_id,
+                "name": profile.display_name,
+                "revision_id": profile.remote_revision_id,
+                "content": content,
+            }
+        )
+        retained[key] = profile
+        reference = content.get("inherits")
+        if isinstance(reference, str) and reference.strip():
+            children_by_parent.setdefault((profile.profile_type, reference.strip()), []).append(key)
+
+    while changed_aliases:
+        for dependent in children_by_parent.pop(changed_aliases.pop(), ()):
+            if (profile := retained.pop(dependent, None)) is not None:
+                changed_aliases.extend([dependent, (profile.profile_type, profile.display_name)])
+    source_profiles.update(updates)
+    return list(source_profiles.values()), retained
 
 
 async def _lacks_source_revisions(session: AsyncSession, account: SlicerProfileAccount) -> bool:
@@ -517,6 +602,56 @@ async def _lacks_source_revisions(session: AsyncSession, account: SlicerProfileA
     return missing is not None
 
 
+async def _resolve_orca_inheritance(
+    session: AsyncSession,
+    profiles: list[CatalogProfile],
+    load_bundled: Callable[[], Awaitable[Mapping[str, Any]]] | None,
+    retained: Mapping[tuple[str, str], CatalogProfile],
+) -> list[CatalogProfile]:
+    try:
+        return resolve_profile_inheritance(profiles, retained=retained)
+    except MissingProfileParentError:
+        pass
+
+    names = {
+        reference.strip()
+        for profile in profiles
+        if isinstance((reference := profile.content.get("inherits")), str) and reference.strip()
+    }
+    if load_bundled is None:
+        configured = await get_setting(session, "orcaslicer_api_url")
+        url = (configured or settings.slicer_api_url).strip()
+        if url:
+            async with SlicerApiService(base_url=url) as slicer:
+                snapshot = await slicer.list_bundled_profiles()
+        else:
+            snapshot = {}
+    else:
+        snapshot = await load_bundled()
+
+    bundled = [
+        standard_profile_adapter(profile_type, entry)
+        for profile_type in ("printer", "process", "filament")
+        for entry in snapshot.get(profile_type, [])
+        if entry.get("name") in names
+    ]
+    rejected = set()
+    if bundled:
+        # Standard may contain either slicer's bundle. It only supplies review decisions here.
+        rejected_rows = await session.execute(
+            select(SlicerProfile.profile_type, SlicerProfileRevision.content)
+            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+            .join(SlicerProfileRevision, SlicerProfileRevision.profile_id == SlicerProfile.id)
+            .where(
+                SlicerProfileAccount.source == "standard",
+                SlicerProfileAccount.remote_account_id == STANDARD_ACCOUNT_ID,
+                SlicerProfileRevision.review_state == "rejected",
+            )
+        )
+        rejected = {(profile_type, canonical_hash(content)) for profile_type, content in rejected_rows}
+    return resolve_profile_inheritance(profiles, bundled_parents=bundled, rejected_bundled=rejected, retained=retained)
+
+
 async def sync_orca_account(
     session: AsyncSession,
     service: OrcaCloudService,
@@ -524,6 +659,7 @@ async def sync_orca_account(
     remote_account_id: str,
     display_name: str | None,
     user_id: int | None,
+    load_bundled: Callable[[], Awaitable[Mapping[str, Any]]] | None = None,
 ) -> IngestResult:
     """Pull and commit one Orca mirror page, freezing active data on failure."""
     account = await session.scalar(
@@ -543,16 +679,11 @@ async def sync_orca_account(
     try:
         pull = await service.pull_profiles(cursor)
         upserts = [orca_profile_adapter(entry) for entry in pull.upserts]
+        retained = {}
         if account is not None and not pull.full_snapshot:
-            snapshot = {
-                (profile.profile_type, profile.remote_profile_id): profile
-                for profile in await _existing_orca_profiles(session, account)
-                if profile.remote_profile_id not in pull.deletes
-            }
-            snapshot.update({(profile.profile_type, profile.remote_profile_id): profile for profile in upserts})
-            profiles = resolve_profile_inheritance(list(snapshot.values()))
-        else:
-            profiles = resolve_profile_inheritance(upserts)
+            existing = await _existing_orca_profiles(session, account)
+            upserts, retained = _orca_delta_snapshot(existing, upserts, pull.deletes)
+        profiles = await _resolve_orca_inheritance(session, upserts, load_bundled, retained)
         if account is not None and pull.full_snapshot:
             existing = (
                 await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))

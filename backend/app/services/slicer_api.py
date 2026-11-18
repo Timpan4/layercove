@@ -350,17 +350,33 @@ class SlicerApiService:
         includes a stable id (or content hash), resolved full ``content``, and
         authoritative metadata such as ``compatible_printers``.
 
-        Returns an empty-shaped dict when the sidecar is unreachable so the
-        unified-presets endpoint can degrade to "no standard tier" without
-        crashing the modal — cloud + local-imported profiles still render.
+        Raises SlicerApiError when the sidecar is unavailable or returns an invalid snapshot.
         """
         try:
             response = await self._client.get(f"{self.base_url}/profiles/bundled", timeout=10.0)
+        except httpx.InvalidURL:
+            raise SlicerApiUnavailableError("Invalid slicer sidecar URL") from None
         except httpx.RequestError as exc:
             raise SlicerApiUnavailableError(f"Slicer sidecar unreachable: {exc}") from exc
         if response.status_code >= 400:
             raise SlicerApiUnavailableError(f"Slicer sidecar /profiles/bundled returned {response.status_code}")
-        return response.json()
+        try:
+            payload = response.json()
+        except (ValueError, RecursionError) as exc:
+            raise SlicerSchemaMismatchError("Slicer sidecar /profiles/bundled returned invalid JSON") from exc
+        if not isinstance(payload, dict):
+            raise SlicerSchemaMismatchError("Slicer sidecar /profiles/bundled must return a JSON object")
+        for profile_type in ("printer", "process", "filament"):
+            entries = payload.get(profile_type, [])
+            if not isinstance(entries, list) or any(not isinstance(entry, dict) for entry in entries):
+                raise SlicerSchemaMismatchError(
+                    f"Slicer sidecar /profiles/bundled {profile_type} must be a list of objects"
+                )
+            if any(not isinstance(entry.get("name"), str) or not entry["name"].strip() for entry in entries):
+                raise SlicerSchemaMismatchError(
+                    f"Slicer sidecar /profiles/bundled {profile_type} entries must have a name"
+                )
+        return payload
 
     async def _poll_progress(
         self,

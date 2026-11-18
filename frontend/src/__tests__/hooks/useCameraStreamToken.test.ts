@@ -3,16 +3,18 @@
 import { createElement } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { api, ApiError, getStreamToken, setAuthToken, setStreamToken } from '../../api/client';
+import { api, ApiError, getStreamToken, setAuthToken, setMediaToken, setStreamToken, withMediaToken } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { CameraTile } from '../../components/CameraTile';
 import { StreamOverlayPage } from '../../pages/StreamOverlayPage';
 import { useStreamTokenSync } from '../../hooks/useCameraStreamToken';
 
+const auth = vi.hoisted(() => ({ canViewCamera: true }));
+
 vi.mock('../../contexts/AuthContext', () => ({
-  useAuth: () => ({ authEnabled: true, user: { id: 1 }, loading: false }),
+  useAuth: () => ({ authEnabled: true, user: { id: 1 }, loading: false, hasPermission: () => auth.canViewCamera }),
 }));
 
 function StreamTokenSync() {
@@ -21,8 +23,12 @@ function StreamTokenSync() {
 }
 
 describe('useStreamTokenSync', () => {
+  beforeEach(() => setAuthToken('fixture-auth-session'));
+
   afterEach(() => {
+    auth.canViewCamera = true;
     setAuthToken(null);
+    setMediaToken(null);
     setStreamToken(null);
     vi.restoreAllMocks();
   });
@@ -68,10 +74,7 @@ describe('useStreamTokenSync', () => {
     await waitFor(() => expect(image.src).toContain('token=fresh-token'));
   });
 
-  it.each([
-    '/api/v1/archives/5/thumbnail',
-    '/api/v1/printers/42/camera/plate-detection/references/1/thumbnail',
-  ])('recovers a delayed token for thumbnail %s', async (src) => {
+  it('recovers a delayed token for camera calibration references', async () => {
     vi.spyOn(api, 'getCameraStreamToken').mockResolvedValue({ token: 'camera-token' });
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(
@@ -79,12 +82,87 @@ describe('useStreamTokenSync', () => {
         QueryClientProvider,
         { client: queryClient },
         createElement(StreamTokenSync),
-        createElement('img', { alt: 'archive', src }),
+        createElement('img', { alt: 'camera reference', src: '/api/v1/printers/42/camera/plate-detection/references/1/thumbnail' }),
       ),
     );
 
     await waitFor(() => expect(api.getCameraStreamToken).toHaveBeenCalled());
-    await waitFor(() => expect((screen.getByAltText('archive') as HTMLImageElement).src).toContain('token=camera-token'));
+    await waitFor(() => expect(screen.getByAltText('camera reference')).toHaveAttribute(
+      'src', '/api/v1/printers/42/camera/plate-detection/references/1/thumbnail?token=camera-token',
+    ));
+  });
+
+  it('loads archive images and video for a reader without camera access', async () => {
+    auth.canViewCamera = false;
+    vi.spyOn(api, 'getMediaToken').mockResolvedValue({ token: 'media-token' });
+    const camera = vi.spyOn(api, 'getCameraStreamToken');
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(createElement(QueryClientProvider, { client: queryClient },
+      createElement(StreamTokenSync),
+      createElement('img', { alt: 'archive thumbnail', src: '/api/v1/archives/5/thumbnail' }),
+      createElement('video', { 'data-testid': 'timelapse', src: '/api/v1/archives/5/timelapse' }),
+    ));
+    await waitFor(() => expect(screen.getByAltText('archive thumbnail')).toHaveAttribute(
+      'src', '/api/v1/archives/5/thumbnail?token=media-token',
+    ));
+    expect(screen.getByTestId('timelapse')).toHaveAttribute('src', '/api/v1/archives/5/timelapse?token=media-token');
+    expect(camera).not.toHaveBeenCalled();
+  });
+
+  it('mints new media credentials after the same user signs in again', async () => {
+    auth.canViewCamera = false;
+    const getToken = vi.spyOn(api, 'getMediaToken')
+      .mockResolvedValueOnce({ token: 'old-media-token' })
+      .mockResolvedValueOnce({ token: 'new-media-token' });
+    setAuthToken('old-session');
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const thumbnail = '/api/v1/archives/5/thumbnail';
+    render(createElement(QueryClientProvider, { client: queryClient }, createElement(StreamTokenSync)));
+    await waitFor(() => expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=old-media-token`));
+
+    await act(async () => { setAuthToken('new-session'); });
+
+    await waitFor(() => expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=new-media-token`));
+    expect(getToken).toHaveBeenCalledTimes(2);
+  });
+
+  it('keeps signing media and lets a missing image fail without refreshing credentials', async () => {
+    auth.canViewCamera = false;
+    const getToken = vi.spyOn(api, 'getMediaToken').mockResolvedValue({ token: 'media-token' });
+    const showFallback = vi.fn();
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(createElement(QueryClientProvider, { client: queryClient },
+      createElement(StreamTokenSync),
+      createElement('img', { alt: 'missing cover', src: '/api/v1/printers/5/cover', onError: showFallback }),
+    ));
+    const cover = screen.getByAltText('missing cover');
+    await waitFor(() => expect(cover).toHaveAttribute('src', '/api/v1/printers/5/cover?token=media-token'));
+
+    await act(async () => { fireEvent.error(cover); });
+    expect(showFallback).toHaveBeenCalledOnce();
+    expect(getToken).toHaveBeenCalledTimes(1);
+    const thumbnail = '/api/v1/archives/5/thumbnail';
+    expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=media-token`);
+  });
+
+  it('keeps a loaded timelapse on its current source when the credential rotates', async () => {
+    auth.canViewCamera = false;
+    vi.spyOn(api, 'getMediaToken')
+      .mockResolvedValueOnce({ token: 'first-media-token' })
+      .mockResolvedValueOnce({ token: 'next-media-token' });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(createElement(QueryClientProvider, { client: queryClient },
+      createElement(StreamTokenSync),
+      createElement('video', { 'data-testid': 'timelapse', src: '/api/v1/archives/5/timelapse' }),
+    ));
+    const video = screen.getByTestId('timelapse');
+    await waitFor(() => expect(video).toHaveAttribute('src', '/api/v1/archives/5/timelapse?token=first-media-token'));
+    Object.defineProperty(video, 'readyState', { value: HTMLMediaElement.HAVE_METADATA });
+
+    await act(async () => queryClient.invalidateQueries({ queryKey: ['media-token'] }));
+    const image = '/api/v1/archives/5/thumbnail';
+    await waitFor(() => expect(withMediaToken(image)).toBe(`${image}?token=next-media-token`));
+    expect(video).toHaveAttribute('src', '/api/v1/archives/5/timelapse?token=first-media-token');
   });
 
   it('keeps failed media mounted while replacing a stale stream token', async () => {

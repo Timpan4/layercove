@@ -36,6 +36,10 @@ class LoginRequest(BaseModel):
     password: str = Field(..., max_length=256)
 
 
+class MediaTokenResponse(BaseModel):
+    token: str | None
+
+
 class LoginResponse(BaseModel):
     access_token: str | None = None
     token_type: str = "bearer"

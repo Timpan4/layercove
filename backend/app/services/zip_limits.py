@@ -2,6 +2,7 @@
 
 import copy
 import zipfile
+from typing import BinaryIO
 
 from backend.app.services.virtual_printer.ftp_server import MAX_UPLOAD_BYTES
 
@@ -15,18 +16,28 @@ class ZipTooLargeError(ValueError):
     """Raised when an archive would expand past MAX_ZIP_UNCOMPRESSED_BYTES."""
 
 
-def check_zip_size(zf: zipfile.ZipFile) -> None:
+def check_zip_size(zf: zipfile.ZipFile, *, max_bytes: int | None = None) -> None:
     """Reject the archive when its declared uncompressed total exceeds the cap."""
+    if max_bytes is None:
+        max_bytes = MAX_ZIP_UNCOMPRESSED_BYTES
     total = sum(info.file_size for info in zf.infolist())
-    if total > MAX_ZIP_UNCOMPRESSED_BYTES:
-        raise ZipTooLargeError(f"Archive expands to {total} bytes, over the {MAX_ZIP_UNCOMPRESSED_BYTES} byte limit")
+    if total > max_bytes:
+        raise ZipTooLargeError(f"Archive expands to {total} bytes, over the {max_bytes} byte limit")
 
 
 class ZipBudget:
     """Tracks bytes actually read across members of one archive."""
 
-    def __init__(self) -> None:
-        self.remaining = MAX_ZIP_UNCOMPRESSED_BYTES
+    def __init__(self, max_bytes: int | None = None) -> None:
+        self.max_bytes = MAX_ZIP_UNCOMPRESSED_BYTES if max_bytes is None else max_bytes
+        self.remaining = self.max_bytes
+
+    def copy(self, reader: BinaryIO, writer: BinaryIO) -> None:
+        while chunk := reader.read(min(_CHUNK, self.remaining + 1)):
+            self.remaining -= len(chunk)
+            if self.remaining < 0:
+                raise ZipTooLargeError(f"Archive expands past the {self.max_bytes} byte limit")
+            writer.write(chunk)
 
     def copy_member(self, src: zipfile.ZipFile, dst: zipfile.ZipFile, info: zipfile.ZipInfo) -> None:
         """Stream one member from ``src`` into ``dst``, failing once the budget is spent.
@@ -35,8 +46,4 @@ class ZipBudget:
         needs the original offsets.
         """
         with src.open(info) as reader, dst.open(copy.copy(info), "w", force_zip64=True) as writer:
-            while chunk := reader.read(_CHUNK):
-                self.remaining -= len(chunk)
-                if self.remaining < 0:
-                    raise ZipTooLargeError(f"Archive expands past the {MAX_ZIP_UNCOMPRESSED_BYTES} byte limit")
-                writer.write(chunk)
+            self.copy(reader, writer)

@@ -35,6 +35,16 @@ LayerCove starts only from its current schema and has no historical migration ch
 
 Pin a release tag or digest instead of `latest` when reproducible production updates are required.
 
+## Verify a backup before upgrading
+
+Restore the backup into a disposable LayerCove instance and restart that instance. Confirm that the restored settings and files open. If the source uses an environment variable for its encryption key, configure the same key on the disposable instance before restoring. The ZIP contains a key only when the source uses a key file.
+
+Restore validates the database and encrypted settings before replacing data. If automatic recovery after a failed restore is incomplete, the server logs identify the directories containing the retained recovery files.
+
+Restored pending print jobs stay in the queue and require a manual start. Check which jobs already ran before starting them.
+
+Backup creation and restore use the same limits of 4 GiB uncompressed and 65,535 ZIP entries, counting both files and directories. Set `BACKUP_RESTORE_MAX_UNCOMPRESSED_BYTES` and `BACKUP_RESTORE_MAX_ENTRIES` in the environment or `.env` before starting LayerCove to change these limits. Allow space for extraction and staging on the destination filesystems.
+
 ## Optional bundled Spoolman
 
 The bundled service is opt-in and does not change existing external Spoolman settings. It uses the pinned `ghcr.io/donkie/spoolman:0.21.0` image and the durable `spoolman_data` named volume. It has no `depends_on` relationship with LayerCove, so stopping, restoring, or upgrading it does not block LayerCove startup or normal printer operation.

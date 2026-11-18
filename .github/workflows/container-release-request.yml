@@ -1,0 +1,22 @@
+name: Container release request
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  request:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Record the requested ref
+        run: printf '%s\n' "$GITHUB_REF" > container-ref.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: container-release-ref-${{ github.run_attempt }}
+          path: container-ref.txt
+          if-no-files-found: error

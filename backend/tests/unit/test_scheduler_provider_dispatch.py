@@ -123,7 +123,7 @@ async def test_confirmed_external_spool_dispatch_keeps_ams_disabled(moonraker_qu
         patch.object(scheduler_module, "delete_file_async", AsyncMock(return_value=True)),
         patch.object(scheduler_module, "upload_file_async", AsyncMock(return_value=True)),
         patch.object(scheduler_module, "cache_3mf_download"),
-        patch.object(scheduler_module, "spawn_background_task", side_effect=lambda coroutine, **_: coroutine.close()),
+        patch.object(scheduler, "_watchdog_print_start", AsyncMock()),
         patch.object(main_module, "register_expected_print"),
         patch.object(scheduler, "_is_printer_idle", return_value=True),
         patch.object(scheduler, "_find_idle_printer_for_model", AsyncMock(return_value=(ids.printer, None))),
@@ -526,6 +526,31 @@ async def test_restart_observation_rebinds_durable_path_then_terminal_job_id(moo
         assert item.provider_correlation_id == "moonraker:42"
         assert item.provider_job_id == "42"
         assert item.status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_restore_drains_an_in_flight_start_monitor(monkeypatch):
+    scheduler = PrintScheduler()
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    finished = asyncio.Event()
+
+    async def reconcile(*args):
+        entered.set()
+        try:
+            await release.wait()
+        finally:
+            finished.set()
+
+    monkeypatch.setattr(scheduler, "_reconcile_moonraker_start", reconcile)
+    scheduler._schedule_moonraker_start_reconciliation(1, 1, "queue-job", "queue/cube.gcode")
+    await entered.wait()
+    try:
+        await scheduler.pause_for_restore()
+        assert finished.is_set()
+    finally:
+        release.set()
+        await finished.wait()
 
 
 @pytest.mark.asyncio

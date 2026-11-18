@@ -21,7 +21,7 @@ from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
 from backend.app.core.auth import (
-    RequireCameraStreamTokenIfAuthEnabled,
+    MediaCaller,
     RequirePermissionIfAuthEnabled,
     is_auth_enabled,
 )
@@ -1368,9 +1368,9 @@ def clear_cover_cache(printer_id: int) -> None:
 @router.get("/{printer_id}/cover")
 async def get_printer_cover(
     printer_id: int,
+    caller: MediaCaller,
     view: str | None = None,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
 ):
     """Get the cover image for the current print job.
 
@@ -1378,6 +1378,8 @@ async def get_printer_cover(
         view: Optional view type. Use "top" for top-down build plate view (useful for skip objects).
               Default returns angled 3D perspective view.
     """
+    caller.require_permissions(Permission.PRINTERS_READ)
+    caller.require_printer_access(printer_id)
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()
     if not printer:
@@ -1414,7 +1416,11 @@ async def get_printer_cover(
     # late plate resolution the cache check would always miss.
     cache_key = (subtask_name, view_key)
     if printer_id in _cover_cache and cache_key in _cover_cache[printer_id]:
-        return Response(content=_cover_cache[printer_id][cache_key], media_type="image/png")
+        return Response(
+            content=_cover_cache[printer_id][cache_key],
+            media_type="image/png",
+            headers={"Cache-Control": "private, no-store"},
+        )
 
     # Negative-cache short-circuit (#1420): if a prior lookup for this same
     # subtask + view already failed, don't replay 8 FTP retries on every page
@@ -1585,7 +1591,9 @@ async def get_printer_cover(
                     if printer_id not in _cover_cache:
                         _cover_cache[printer_id] = {}
                     _cover_cache[printer_id][(subtask_name, view_key)] = image_data
-                    return Response(content=image_data, media_type="image/png")
+                    return Response(
+                        content=image_data, media_type="image/png", headers={"Cache-Control": "private, no-store"}
+                    )
                 except KeyError:
                     continue
 
@@ -1596,7 +1604,9 @@ async def get_printer_cover(
                     if printer_id not in _cover_cache:
                         _cover_cache[printer_id] = {}
                     _cover_cache[printer_id][(subtask_name, view_key)] = image_data
-                    return Response(content=image_data, media_type="image/png")
+                    return Response(
+                        content=image_data, media_type="image/png", headers={"Cache-Control": "private, no-store"}
+                    )
 
             _cover_404_cache.setdefault(printer_id, set()).add(cache_key)
             raise HTTPException(404, "No thumbnail found in 3MF file")
@@ -2086,12 +2096,14 @@ async def get_printer_file_plates(
 async def get_printer_file_plate_thumbnail(
     printer_id: int,
     plate_index: int,
+    caller: MediaCaller,
     path: str = Query(..., description="Full path to the 3MF file on the printer"),
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a plate thumbnail image from a printer-stored 3MF file."""
 
+    caller.require_permissions(Permission.PRINTERS_FILES)
+    caller.require_printer_access(printer_id)
     printer = await _file_printer(db, printer_id)
 
     try:
@@ -2099,7 +2111,9 @@ async def get_printer_file_plate_thumbnail(
             thumb_path = f"Metadata/plate_{plate_index}.png"
             if thumb_path in zf.namelist():
                 image_data = zf.read(thumb_path)
-                return Response(content=image_data, media_type="image/png")
+                return Response(
+                    content=image_data, media_type="image/png", headers={"Cache-Control": "private, no-store"}
+                )
     except HTTPException:
         raise
     except Exception:

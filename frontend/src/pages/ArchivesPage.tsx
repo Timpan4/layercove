@@ -92,6 +92,7 @@ import { PlatePickerModal } from '../components/PlatePickerModal';
 import type { PlateMetadata } from '../types/plates';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useMediaToken } from '../hooks/useCameraStreamToken';
 import { formatFileSize } from '../utils/file';
 
 type TFunction = (key: string, options?: Record<string, unknown>) => string;
@@ -2625,6 +2626,22 @@ const collections: { id: Collection; label: string; icon: React.ReactNode }[] = 
   { id: 'duplicates', label: 'Duplicates', icon: <Copy className="w-4 h-4" /> },
 ];
 
+function PrintLogThumbnail({ id }: { id: number }) {
+  const { authEnabled, loading } = useAuth();
+  const mediaToken = useMediaToken();
+  if (loading || (authEnabled && !mediaToken)) return null;
+
+  return (
+    <img
+      src={api.getPrintLogThumbnail(id)}
+      alt=""
+      className="w-8 h-8 rounded object-cover flex-shrink-0"
+      onError={(event) => { event.currentTarget.style.display = 'none'; }}
+      onLoad={(event) => { event.currentTarget.style.display = ''; }}
+    />
+  );
+}
+
 export function ArchivesPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
@@ -3947,14 +3964,7 @@ export function ArchivesPage() {
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              {entry.thumbnail_path && (
-                                <img
-                                  src={api.getPrintLogThumbnail(entry.id)}
-                                  alt=""
-                                  className="w-8 h-8 rounded object-cover flex-shrink-0"
-                                  onError={(e) => { (e.target as HTMLImageElement).style.display = 'none'; }}
-                                />
-                              )}
+                              {entry.thumbnail_path && <PrintLogThumbnail id={entry.id} />}
                               <span className="text-white break-words" title={entry.print_name || ''}>
                                 {entry.print_name || '—'}
                               </span>

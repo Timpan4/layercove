@@ -29,6 +29,24 @@ def _mock_client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, timeout=10.0)
 
 
+@pytest.mark.parametrize(
+    "payload", [b"[{}]", b'{"process": null}', b'{"printer": [false]}', b'{"process": [{"name": []}]}', b"invalid json"]
+)
+async def test_bundled_profiles_rejects_invalid_response(payload):
+    async with _mock_client(lambda request: httpx.Response(200, content=payload)) as client:
+        service = SlicerApiService("http://sidecar", client=client)
+        with pytest.raises(SlicerSchemaMismatchError, match="/profiles/bundled"):
+            await service.list_bundled_profiles()
+
+
+async def test_bundled_profiles_reports_invalid_sidecar_url_without_echoing_it():
+    url = "http://fixture-credentials@sidecar:invalid-port"
+    async with SlicerApiService(url) as service:
+        with pytest.raises(SlicerApiUnavailableError, match="Invalid slicer sidecar URL") as error:
+            await service.list_bundled_profiles()
+    assert url not in str(error.value)
+
+
 class TestGuessModelContentType:
     """The sidecar's multer middleware rejects octet-stream for STL uploads,
     so we guess by extension."""

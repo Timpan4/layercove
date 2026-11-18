@@ -67,7 +67,7 @@ async function installFixture(page: Page, url: string, width: number) {
     const address = new URL(request.url());
     const path = address.pathname.replace(/\/$/, '');
     if (request.method() !== 'GET') {
-      if (request.method() === 'POST' && ['/api/v1/auth/ws-token', '/api/v1/printers/camera/stream-token'].includes(path)) return route.fulfill({ json: { token: 'fictional-token' } });
+      if (request.method() === 'POST' && ['/api/v1/auth/ws-token', '/api/v1/auth/media-token', '/api/v1/printers/camera/stream-token'].includes(path)) return route.fulfill({ json: { token: 'fictional-token' } });
       writes.push(request.method() + ' ' + path);
       return route.fulfill({ status: 405, json: { detail: 'Read-only export fixture' } });
     }

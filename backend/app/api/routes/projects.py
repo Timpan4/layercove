@@ -15,9 +15,9 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.api.routes.library import get_library_dir
 from backend.app.core.auth import (
-    RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
     require_caller_identity_if_auth_enabled,
+    require_media_permission,
 )
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
@@ -1119,13 +1119,9 @@ async def upload_project_cover_image(
 async def get_project_cover_image(
     project_id: int,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    _: None = Depends(require_media_permission(Permission.PROJECTS_READ)),
 ):
-    """Stream the project's cover image (#1155).
-
-    Browsers can't attach `Authorization: Bearer ...` to `<img src>` requests,
-    so this route accepts the same `?token=` stream-credential as
-    /archives/{id}/thumbnail. The frontend wraps URLs with `withStreamToken`."""
+    """Stream the project's cover image using project read permission."""
     result = await db.execute(select(Project).where(Project.id == project_id))
     project = result.scalar_one_or_none()
     if not project:
@@ -1145,7 +1141,7 @@ async def get_project_cover_image(
 
     ext = os.path.splitext(project.cover_image_filename)[1].lower()
     media_type = COVER_IMAGE_CONTENT_TYPES.get(ext, "application/octet-stream")
-    return FileResponse(file_path, media_type=media_type)
+    return FileResponse(file_path, media_type=media_type, headers={"Cache-Control": "private, no-store"})
 
 
 @router.delete("/{project_id}/cover-image")

@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { SlicerCatalogAdmin } from '../../components/SlicerCatalogAdmin';
 
@@ -51,8 +51,28 @@ describe('SlicerCatalogAdmin', () => {
     await waitFor(() => expect(api.setSlicerCatalogSharing).toHaveBeenCalledWith(1, true));
   });
 
+  it('shows a profile as inactive after sharing removes its active revision', async () => {
+    auth.permissions.add('cloud:auth');
+    renderAdmin();
+    const revisions = await screen.findByRole('button', { name: 'Revisions' });
+    fireEvent.click(revisions);
+    expect(await screen.findByText('Revision 3')).toBeVisible();
+    fireEvent.click(revisions);
+
+    api.listSlicerCatalogProfiles.mockResolvedValue([{
+      profile_id: 7, revision_id: 4, latest_revision_id: 4, active_revision_id: null, active: false,
+      source: 'cloud', account_id: 1, display_name: 'Printer profile', sharing_state: 'shared',
+    }]);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Share' }));
+    fireEvent.click(await screen.findByLabelText('I consent to sharing this account.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm sharing' }));
+
+    expect(await screen.findByText('not active')).toBeVisible();
+  });
+
   it('disables lifecycle mutations for a normal user', async () => {
     renderAdmin();
+    fireEvent.click(await screen.findByRole('button', { name: 'Revisions' }));
     expect(await screen.findByRole('button', { name: 'Activate' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Rollback' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Freeze' })).toBeDisabled();
@@ -65,6 +85,7 @@ describe('SlicerCatalogAdmin', () => {
     api.rollbackSlicerCatalogRevision.mockResolvedValue({ profile_id: 7, revision_id: 2 });
     renderAdmin();
 
+    fireEvent.click(await screen.findByRole('button', { name: 'Revisions' }));
     fireEvent.click(await screen.findByRole('button', { name: 'Activate' }));
     await waitFor(() => expect(api.activateSlicerCatalogRevision).toHaveBeenCalledWith(7, 4));
     fireEvent.click(screen.getByRole('button', { name: 'Rollback' }));
@@ -133,13 +154,19 @@ describe('SlicerCatalogAdmin', () => {
       const { offset = 0, limit } = options;
       return Promise.resolve(profiles.slice(offset, limit === undefined ? undefined : offset + limit));
     });
-    api.listSlicerCatalogProfileRevisions.mockResolvedValue([]);
+    api.listSlicerCatalogProfileRevisions.mockImplementation(async (id: number) => [
+      { id, content_hash: `hash-${id}`, review_state: 'approved', active: true },
+    ]);
 
     renderAdmin();
 
-    expect(await screen.findByRole('article', { name: 'Profile 1' })).toBeInTheDocument();
-    await waitFor(() => expect(api.listSlicerCatalogProfiles).toHaveBeenCalledWith({ includeInactive: true, limit: 26, offset: 0 }));
-    await waitFor(() => expect(api.listSlicerCatalogProfileRevisions).toHaveBeenCalledTimes(25));
+    const first = await screen.findByRole('article', { name: 'Profile 1' });
+    const second = screen.getByRole('article', { name: 'Profile 2' });
+    expect(within(first).queryByText('Revision 1')).not.toBeInTheDocument();
+    fireEvent.click(within(first).getByRole('button', { name: 'Revisions' }));
+    expect(await within(first).findByText('Revision 1')).toBeInTheDocument();
+    expect(within(second).queryByText('Revision 2')).not.toBeInTheDocument();
+    expect(api.listSlicerCatalogProfileRevisions).toHaveBeenCalledTimes(1);
     expect(screen.queryByRole('article', { name: 'Profile 26' })).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole('button', { name: 'Next' }));

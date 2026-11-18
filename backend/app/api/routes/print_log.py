@@ -7,14 +7,15 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.auth import (
-    RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
     caller_is_api_key,
+    require_media_ownership,
     require_ownership_permission,
 )
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
+from backend.app.models.archive import PrintArchive
 from backend.app.models.print_log import PrintLogEntry
 from backend.app.models.user import User
 from backend.app.schemas.print_log import PrintLogEntrySchema, PrintLogEntryUpdate, PrintLogResponse
@@ -77,6 +78,19 @@ async def get_print_log(
     query = query.order_by(PrintLogEntry.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     entries = result.scalars().all()
+    visible_archives = set()
+    if user is not None and not can_read_all:
+        thumbnail_archives = {
+            entry.archive_id for entry in entries if entry.thumbnail_path and entry.archive_id is not None
+        }
+        if thumbnail_archives:
+            visible_archives = set(
+                await db.scalars(
+                    select(PrintArchive.id).where(
+                        PrintArchive.id.in_(thumbnail_archives), PrintArchive.created_by_id == user.id
+                    )
+                )
+            )
 
     return PrintLogResponse(
         items=[
@@ -97,7 +111,9 @@ async def get_print_log(
                 # before #1687 part 4 — without it the Print Log table couldn't
                 # surface what the Failure Analysis widget already groups by.
                 failure_reason=e.failure_reason,
-                thumbnail_path=e.thumbnail_path,
+                thumbnail_path=e.thumbnail_path
+                if can_read_all or e.archive_id is None or e.archive_id in visible_archives
+                else None,
                 created_by_id=e.created_by_id,
                 created_by_username=e.created_by_username,
                 created_at=e.created_at,
@@ -112,11 +128,13 @@ async def get_print_log(
 async def get_print_log_thumbnail(
     entry_id: int,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    auth_result: tuple[User | None, bool] = Depends(
+        require_media_ownership(Permission.ARCHIVES_READ_ALL, Permission.ARCHIVES_READ_OWN)
+    ),
 ):
     """Get the thumbnail for a print log entry.
 
-    Requires a stream token query param (?token=xxx) when auth is enabled.
+    Accepts a media token and applies the print log's ownership rules.
 
     Self-heals stale entries: when thumbnail_path points to a file that no
     longer exists on disk (archive was deleted, or print failed before the
@@ -128,6 +146,14 @@ async def get_print_log_thumbnail(
     entry = await db.get(PrintLogEntry, entry_id)
     if not entry or not entry.thumbnail_path:
         raise HTTPException(404, "Thumbnail not found")
+    user, can_read_all = auth_result
+    if not can_read_all:
+        if user is None or entry.created_by_id != user.id:
+            raise HTTPException(404, "Thumbnail not found")
+        if entry.archive_id is not None:
+            archive = await db.get(PrintArchive, entry.archive_id)
+            if archive is None or archive.created_by_id != user.id:
+                raise HTTPException(404, "Thumbnail not found")
 
     thumb_path = settings.base_dir / entry.thumbnail_path
     if not thumb_path.exists():
@@ -138,7 +164,7 @@ async def get_print_log_thumbnail(
     return FileResponse(
         path=thumb_path,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 

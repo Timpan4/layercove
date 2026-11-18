@@ -722,7 +722,8 @@ async def delete_filament_rule(
     await db.commit()
 
 
-@router.get("/preferences/{binding_id}")
+@router.get("/preferences/{binding_id}", include_in_schema=False)
+@router.get("/bindings/{binding_id}/preferences")
 async def list_preferences(
     binding_id: int,
     current_user: User | None = RequirePermissionIfAuthEnabled(Permission.PRINTERS_READ),

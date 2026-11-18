@@ -61,6 +61,7 @@ from backend.app.services.orca_cloud import (
     generate_pkce,
     parse_callback_url,
 )
+from backend.app.services.slicer_api import SlicerApiError
 from backend.app.services.slicer_catalog_sync import sync_orca_account
 
 logger = logging.getLogger(__name__)
@@ -453,7 +454,7 @@ async def _sync_catalog_after_connect(
             display_name=email or remote_account_id,
             user_id=current_user.id if current_user is not None else None,
         )
-    except (OrcaCloudError, ValueError) as error:
+    except (OrcaCloudError, SlicerApiError, ValueError) as error:
         logger.warning("Initial Orca catalog sync failed after successful connection: %s", error)
 
 

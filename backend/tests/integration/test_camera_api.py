@@ -3,12 +3,14 @@
 Tests the full request/response cycle for /api/v1/printers/{id}/camera/ endpoints.
 """
 
+import asyncio
 import time
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from httpx import AsyncClient
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import event
+from sqlalchemy.ext.asyncio import async_sessionmaker
 from starlette.responses import Response
 
 
@@ -57,7 +59,7 @@ class TestCameraAPI:
     @pytest.mark.asyncio
     @pytest.mark.integration
     @pytest.mark.parametrize("auth_enabled", [False, True])
-    async def test_library_thumbnail_token_gate_does_not_require_printer_id(
+    async def test_library_thumbnail_rejects_camera_tokens_when_auth_is_enabled(
         self, async_client, db_session, auth_enabled
     ):
         from backend.app.core.auth import create_camera_stream_token
@@ -67,8 +69,11 @@ class TestCameraAPI:
         await db_session.commit()
         token = await create_camera_stream_token()
         response = await async_client.get("/api/v1/library/files/999999/thumbnail", params={"token": token})
-        assert response.status_code == 404
-        assert response.json()["detail"] == "File not found"
+        if auth_enabled:
+            assert response.status_code == 401
+        else:
+            assert response.status_code == 404
+            assert response.json()["detail"] == "File not found"
 
     """Integration tests for /api/v1/printers/{id}/camera/ endpoints."""
 
@@ -720,6 +725,80 @@ class TestCameraAPI:
         ):
             response = await async_client.get(f"/api/v1/printers/{printer_id}/camera/stream")
 
+        assert response.status_code == 200
+
+    @pytest.mark.asyncio
+    @pytest.mark.integration
+    @pytest.mark.parametrize("selected", [False, True])
+    async def test_camera_stream_does_not_block_restore_admission(
+        self, async_client, printer_factory, db_session, test_engine, monkeypatch, selected
+    ):
+        from backend.app.core import database
+        from backend.app.core.restore_activity import restore_activity
+        from backend.app.main import app
+        from backend.app.models.printer_camera import PrinterCamera
+
+        printer = await printer_factory(provider="moonraker" if selected else "bambu", model="P1S")
+        stream_path = f"/api/v1/printers/{printer.id}/camera/stream"
+        if selected:
+            camera = PrinterCamera(
+                printer_id=printer.id,
+                source="moonraker",
+                source_uid="selected",
+                name="Selected",
+                camera_type="mjpeg",
+                stream_url="http://camera.test/stream",
+            )
+            db_session.add(camera)
+            await db_session.commit()
+            stream_path = f"/api/v1/printers/{printer.id}/cameras/{camera.id}/stream"
+        await db_session.rollback()
+
+        async def admitted_db():
+            factory = async_sessionmaker(test_engine)
+            async with restore_activity.wait_for_admission(), factory() as session:
+                yield session
+
+        monkeypatch.setitem(app.dependency_overrides, database.get_db, admitted_db)
+        broadcaster = MagicMock(subscriber_count=1)
+        broadcaster.subscribe = AsyncMock(return_value=object())
+        monkeypatch.setattr(
+            "backend.app.api.routes.camera.get_or_create_broadcaster", AsyncMock(return_value=broadcaster)
+        )
+        finish_stream = asyncio.Event()
+        headers_sent = asyncio.Event()
+
+        async def hold_stream(*args, **kwargs):
+            yield b"--frame\r\nContent-Type: image/jpeg\r\n\r\n\xff\xd8\xff\xd9\r\n"
+            await finish_stream.wait()
+
+        async def observe_headers(scope, receive, send):
+            async def observe(message):
+                if message["type"] == "http.response.start":
+                    headers_sent.set()
+                await send(message)
+
+            await app(scope, receive, observe)
+
+        monkeypatch.setattr("backend.app.api.routes.camera.iter_subscriber", hold_stream)
+        async with AsyncClient(transport=ASGITransport(app=observe_headers), base_url="http://test") as client:
+            stream = asyncio.create_task(client.get(stream_path))
+            headers = asyncio.create_task(headers_sent.wait())
+            pause = None
+            try:
+                await asyncio.wait((stream, headers), return_when=asyncio.FIRST_COMPLETED)
+                assert not stream.done()
+                pause = asyncio.create_task(restore_activity.pause())
+                await asyncio.sleep(0)
+                assert restore_activity.paused
+                assert pause.done(), "The streaming response still holds restore admission"
+            finally:
+                finish_stream.set()
+                headers.cancel()
+                response = await stream
+                if pause is not None:
+                    await pause
+                    restore_activity.resume()
         assert response.status_code == 200
 
     @pytest.mark.asyncio

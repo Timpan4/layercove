@@ -18,11 +18,12 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, Query, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, Depends, Query, WebSocket, WebSocketDisconnect, status
 from sqlalchemy import select
 
 from backend.app.core.auth import is_auth_enabled, verify_websocket_token
 from backend.app.core.database import async_session
+from backend.app.core.restore_activity import restore_activity
 from backend.app.core.websocket import ws_manager
 from backend.app.models.user import User
 from backend.app.services.printer_manager import printer_manager, printer_status_to_dict
@@ -38,8 +39,7 @@ router = APIRouter()
 _WS_CLOSE_UNAUTHORIZED = 4401
 
 
-@router.websocket("/ws")
-async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(default=None)) -> None:
+async def _accept_websocket(websocket: WebSocket, token: str | None) -> bool:
     """WebSocket endpoint for real-time updates.
 
     Connection auth (GHSA-r2qv follow-up):
@@ -65,23 +65,22 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
     except Exception:  # SEC-AUTH-EXC: DB failure on auth probe → fail-closed (refuse connect), matches is_auth_enabled itself which returns True on error
         logger.error("WebSocket auth probe failed; refusing connection", exc_info=True)
         await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
-        return
+        return False
 
     principal: str | None = None
     if auth_required:
         if not token:
             logger.info("WebSocket connect refused: no token (auth enabled)")
             await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
-            return
+            return False
         principal = await verify_websocket_token(token)
         if principal is None:
             logger.info("WebSocket connect refused: invalid or expired token")
             await websocket.close(code=_WS_CLOSE_UNAUTHORIZED)
-            return
+            return False
 
     # Token verified (or auth disabled); now safe to admit the connection.
     logger.info("WebSocket client connecting (principal=%s)", principal if principal else "<anonymous>")
-    await ws_manager.connect(websocket)
     # Stash on connection state for any future per-message permission
     # logic; today the message handlers are read-only and only respond
     # to the requesting socket, so the stash is informational. The
@@ -104,7 +103,23 @@ async def websocket_endpoint(websocket: WebSocket, token: str | None = Query(def
         except Exception:  # SEC-AUTH-EXC: resolution failure is non-fatal — degrades to no per-user routing
             logger.warning("WebSocket principal resolve failed for %s", principal, exc_info=True)
     websocket.state.bambuddy_principal_user_id = principal_user_id
+    await ws_manager.connect(websocket)
     logger.info("WebSocket client connected")
+    return True
+
+
+async def require_websocket_connection(websocket: WebSocket, token: str | None = Query(default=None)) -> bool:
+    with restore_activity.admit() as admitted:
+        if not admitted:
+            await websocket.close(code=status.WS_1012_SERVICE_RESTART)
+            return False
+        return await _accept_websocket(websocket, token)
+
+
+@router.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket, connected: bool = Depends(require_websocket_connection)) -> None:
+    if not connected:
+        return
 
     try:
         # Send initial status of all printers.

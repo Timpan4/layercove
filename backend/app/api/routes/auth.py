@@ -30,6 +30,7 @@ from backend.app.core.auth import (
     get_user_by_email,
     get_user_by_username,
     is_jti_revoked,
+    mint_media_token,
     resolve_session_max_minutes,
     revoke_jti,
     security,
@@ -52,6 +53,7 @@ from backend.app.schemas.auth import (
     LDAPSearchResultResponse,
     LoginRequest,
     LoginResponse,
+    MediaTokenResponse,
     ResetPasswordRequest,
     ResetPasswordResponse,
     SetupRequest,
@@ -659,6 +661,11 @@ async def get_current_user_info(
         detail="Authentication required",
         headers={"WWW-Authenticate": "Bearer"},
     )
+
+
+@router.post("/media-token", response_model=MediaTokenResponse)
+async def get_media_token(token: Annotated[str | None, Depends(mint_media_token)]) -> MediaTokenResponse:
+    return MediaTokenResponse(token=token)
 
 
 @router.post("/logout")

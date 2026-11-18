@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from backend.app.core.restore_activity import restore_activity
 from backend.app.services.printer_backend import JobLifecycle, ProviderEvent, StatusChanged
 from backend.app.services.printer_backend_registry import PrinterBackendRegistry
 from backend.app.services.printer_manager import PrinterManager, PrintLifecycleEvent, printer_status_to_dict
@@ -103,6 +104,52 @@ async def test_manager_uses_backend_for_lifecycle_status_and_common_commands():
     await manager.disconnect_printer_async(1, timeout=3)
 
     assert backend.calls == ["connect", "start:cube.3mf", "pause", "resume", "cancel", "disconnect:3"]
+
+
+@pytest.mark.asyncio
+async def test_restore_drains_running_printer_callback_and_drops_pending_events():
+    backend = FakeBackend()
+    registry = PrinterBackendRegistry()
+
+    def make_backend(printer, emit):
+        backend.emit = emit
+        return backend
+
+    registry.register(PrinterProvider.BAMBU, make_backend)
+    manager = PrinterManager(registry=registry)
+    printer = SimpleNamespace(id=1, provider="bambu", name="Test", serial_number="S", model="X1C")
+    entered = asyncio.Event()
+    finish_callback = asyncio.Event()
+    observed = []
+
+    async def on_lifecycle(event):
+        if event.data["name"] == "in progress":
+            entered.set()
+            await finish_callback.wait()
+        async with restore_activity.wait_for_admission():
+            observed.append(event.data["name"])
+
+    manager.set_print_lifecycle_callback(on_lifecycle)
+    await manager.connect_printer(printer)
+    pause = None
+    try:
+        backend.emit(lifecycle("started", "in progress"))
+        await entered.wait()
+        pause = asyncio.create_task(restore_activity.pause())
+        await asyncio.sleep(0)
+        assert restore_activity.paused
+        assert not pause.done(), "Restore started before an active printer callback finished"
+        backend.emit(lifecycle("started", "queued", "job-2"))
+        finish_callback.set()
+        await pause
+        await manager.disconnect_printer_async(1)
+        assert observed == ["in progress"]
+    finally:
+        finish_callback.set()
+        if pause is not None:
+            await pause
+        restore_activity.resume()
+        await manager.disconnect_printer_async(1)
 
 
 @pytest.mark.asyncio

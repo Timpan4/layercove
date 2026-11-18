@@ -5,9 +5,10 @@ import json
 import logging
 import time
 import traceback
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Coroutine
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from sqlalchemy import and_, func, or_, select, update
@@ -16,6 +17,7 @@ from sqlalchemy.orm import selectinload
 
 from backend.app.core.config import settings
 from backend.app.core.database import async_session
+from backend.app.core.restore_activity import restore_activity
 from backend.app.core.tasks import spawn_background_task
 from backend.app.core.websocket import ws_manager
 from backend.app.models.archive import PrintArchive
@@ -175,6 +177,9 @@ class PrintScheduler:
 
     def __init__(self):
         self._running = False
+        self._run_task: asyncio.Task | None = None
+        self._start_monitors: set[asyncio.Task] = set()
+        self._restore_paused = False
         self._queue_lock = asyncio.Lock()
         self._queue_changed = asyncio.Event()
         self._check_interval = 30  # seconds
@@ -211,21 +216,28 @@ class PrintScheduler:
 
     async def run(self):
         """Main loop - check queue every interval."""
+        if self._run_task is not None or self._restore_paused:
+            return
+        self._run_task = asyncio.current_task()
         self._running = True
         logger.info("Print scheduler started")
 
-        while self._running:
-            self._queue_changed.clear()
-            try:
-                await self.check_queue()
-            except Exception as e:
-                self._log_dispatch_error(None, e)
-
-            if self._running:
+        try:
+            while self._running:
+                self._queue_changed.clear()
                 try:
-                    await asyncio.wait_for(self._queue_changed.wait(), timeout=self._check_interval)
-                except asyncio.TimeoutError:
-                    pass
+                    await self.check_queue()
+                except Exception as e:
+                    self._log_dispatch_error(None, e)
+
+                if self._running:
+                    try:
+                        await asyncio.wait_for(self._queue_changed.wait(), timeout=self._check_interval)
+                    except asyncio.TimeoutError:
+                        pass
+        finally:
+            self._run_task = None
+            self._running = False
 
     def notify_queue_changed(self) -> None:
         """Wake a running scheduler after a committed enqueue/start, without lost wakeups."""
@@ -237,10 +249,33 @@ class PrintScheduler:
         self._queue_changed.set()
         logger.info("Print scheduler stopped")
 
+    async def pause_for_restore(self) -> None:
+        self._restore_paused = True
+        self.stop()
+        async with self._queue_lock:
+            monitors = tuple(self._start_monitors)
+            for task in monitors:
+                task.cancel()
+            if monitors:
+                await asyncio.gather(*monitors, return_exceptions=True)
+        if self._run_task is not None:
+            await self._run_task
+
+    def resume_after_restore(self) -> None:
+        self._restore_paused = False
+
+    def _start_monitor(self, work: Coroutine[Any, Any, None], *, name: str) -> None:
+        task = spawn_background_task(work, name=name)
+        self._start_monitors.add(task)
+        task.add_done_callback(self._start_monitors.discard)
+
     async def check_queue(self):
         """Serialize queue passes so two callers cannot transfer the same pending job."""
-        async with self._queue_lock:
-            await self._check_queue_locked()
+        with restore_activity.admit() as admitted:
+            if admitted:
+                async with self._queue_lock:
+                    if not self._restore_paused:
+                        await self._check_queue_locked()
 
     async def _check_queue_locked(self):
         """Check for prints ready to start."""
@@ -1692,6 +1727,8 @@ class PrintScheduler:
 
     def _is_printer_idle(self, printer_id: int, require_plate_clear: bool = True) -> bool:
         """Check if a printer is connected and idle."""
+        if printer_manager.is_reconciling_after_restore(printer_id) is True:
+            return False
         if not printer_manager.is_connected(printer_id):
             logger.debug("Printer %d: not connected", printer_id)
             return False
@@ -2847,7 +2884,7 @@ class PrintScheduler:
         correlation_id: str,
         remote_path: str,
     ) -> None:
-        spawn_background_task(
+        self._start_monitor(
             self._reconcile_moonraker_start(item_id, printer_id, correlation_id, remote_path),
             name=f"reconcile-moonraker-start-{item_id}",
         )
@@ -3824,7 +3861,7 @@ class PrintScheduler:
             if file_path is not None:
                 cache_3mf_download(item.printer_id, remote_filename, file_path)
             self._mark_printer_dispatched(item.printer_id, pre_state, pre_subtask_id)
-            spawn_background_task(
+            self._start_monitor(
                 self._watchdog_print_start(
                     item.id,
                     item.printer_id,

@@ -3,6 +3,9 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
+from fastapi.routing import APIRoute
 from sqlalchemy import delete, desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -25,7 +28,22 @@ from backend.app.services.github_backup import github_backup_service
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/github-backup", tags=["github-backup"])
+
+class GitHubBackupRoute(APIRoute):
+    def get_route_handler(self):
+        handle = super().get_route_handler()
+
+        async def without_credentials(request):
+            try:
+                return await handle(request)
+            except RequestValidationError as error:
+                detail = [{key: item[key] for key in ("loc", "msg", "type")} for item in error.errors()]
+                return JSONResponse(status_code=422, content={"detail": detail})
+
+        return without_credentials
+
+
+router = APIRouter(prefix="/github-backup", tags=["github-backup"], route_class=GitHubBackupRoute)
 
 
 _PUBLIC_REPO_ERROR = (

@@ -920,7 +920,7 @@ async def selected_camera_stream(
     camera_id: int,
     request: Request,
     fps: int = 10,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: None = RequireCameraStreamOrLongLivedTokenIfAuthEnabled,
 ):
     camera = await _camera_or_404(printer_id, camera_id, db)
@@ -962,7 +962,7 @@ async def camera_stream(
     printer_id: int,
     request: Request,
     fps: int = 10,
-    db: AsyncSession = Depends(get_db),
+    db: AsyncSession = Depends(get_db, scope="function"),
     _: None = RequireCameraStreamOrLongLivedTokenIfAuthEnabled,
 ):
     """Stream live video from printer camera as MJPEG.

@@ -14,6 +14,10 @@ from datetime import datetime, timezone
 from typing import Any
 
 import paho.mqtt.client as mqtt
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from backend.app.services.settings_service import get_setting
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +41,25 @@ class MQTTRelayService:
         self._smart_plug_service = None  # Lazy import to avoid circular dependency
         self._settings: dict = {}  # Store settings for smart plug service
         self._disconnection_event: threading.Event | None = None
+
+    async def configure_from_db(self, db: AsyncSession) -> None:
+        from backend.app.models.smart_plug import SmartPlug
+        from backend.app.services.mqtt_smart_plug import subscribe_plug_to_mqtt
+
+        settings = {
+            "mqtt_enabled": (await get_setting(db, "mqtt_enabled") or "false") == "true",
+            "mqtt_broker": await get_setting(db, "mqtt_broker") or "",
+            "mqtt_port": int(await get_setting(db, "mqtt_port") or "1883"),
+            "mqtt_username": await get_setting(db, "mqtt_username") or "",
+            "mqtt_password": await get_setting(db, "mqtt_password") or "",
+            "mqtt_topic_prefix": await get_setting(db, "mqtt_topic_prefix") or "bambuddy",
+            "mqtt_use_tls": (await get_setting(db, "mqtt_use_tls") or "false") == "true",
+        }
+        await self.configure(settings)
+        plugs = await db.scalars(select(SmartPlug).where(SmartPlug.plug_type == "mqtt"))
+        restored = sum(bool(subscribe_plug_to_mqtt(self.smart_plug_service, plug)) for plug in plugs)
+        if restored:
+            logger.info("Restored MQTT subscriptions for %s smart plugs", restored)
 
     async def configure(self, settings: dict) -> bool:
         """Configure MQTT connection from settings.

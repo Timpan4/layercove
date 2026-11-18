@@ -10,7 +10,7 @@
 # practice, but pip-audit flags the package itself and breaks CI.
 # Hold to 0.135.x (which has all features we use, including SSE)
 # until upstream removes the dep or explains the rationale.
-fastapi>=0.109.0,<0.136.0
+fastapi>=0.121.1,<0.136.0
 uvicorn[standard]>=0.27.0
 
 # Database

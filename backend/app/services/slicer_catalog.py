@@ -27,6 +27,7 @@ from backend.app.models.slicer_profile_catalog import (
 )
 
 SOURCES = {"local", "orca_cloud", "cloud", "standard"}
+BED_GEOMETRY_FIELDS = (("printable_area", "bed_shape"), ("printable_height", "max_print_height"))
 
 
 @dataclass(frozen=True)
@@ -601,7 +602,7 @@ async def get_revision_bed_content(
     Read each parent as it existed when the selected revision was stored. This
     never approves a profile or changes the content sent to the slicer.
     """
-    field_pairs = (("printable_area", "bed_shape"), ("printable_height", "max_print_height"))
+    field_pairs = BED_GEOMETRY_FIELDS
     profile = await session.get(SlicerProfile, revision.profile_id)
     if profile is None or profile.profile_type != "printer":
         return (

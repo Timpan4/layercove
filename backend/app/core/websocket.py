@@ -2,7 +2,7 @@ import asyncio
 import json
 from typing import Any
 
-from fastapi import WebSocket
+from fastapi import WebSocket, status
 
 
 class ConnectionManager:
@@ -23,6 +23,16 @@ class ConnectionManager:
         async with self._lock:
             if websocket in self.active_connections:
                 self.active_connections.remove(websocket)
+
+    async def close_for_restore(self) -> None:
+        """Disconnect clients authenticated against the pre-restore database."""
+        async with self._lock:
+            connections = tuple(self.active_connections)
+            self.active_connections.clear()
+        await asyncio.gather(
+            *(connection.close(code=status.WS_1012_SERVICE_RESTART) for connection in connections),
+            return_exceptions=True,
+        )
 
     async def broadcast(self, message: dict[str, Any]):
         """Broadcast a message to all connected clients."""

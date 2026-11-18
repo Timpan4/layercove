@@ -15,6 +15,7 @@ test for a one-line predicate.
 from __future__ import annotations
 
 import logging
+from io import StringIO
 
 import pytest
 
@@ -115,18 +116,27 @@ class TestEdgeCases:
 
 
 class TestQueryStringRedacted:
-    def test_query_string_not_written_to_access_log(self, filter_under_test):
-        """POST /github-backup/test takes the PAT as a query param; the file
-        log is readable via /support/logs, so the query must never be kept."""
-        record = logging.LogRecord(
-            name="uvicorn.access",
-            level=logging.INFO,
-            pathname="",
-            lineno=0,
-            msg='%s - "%s %s HTTP/%s" %d',
-            args=("127.0.0.1:5000", "POST", "/api/v1/github-backup/test?repo_url=x&token=ghp_SECRET", "1.1", 200),
-            exc_info=None,
-        )
-        assert filter_under_test.filter(record) is True
-        assert "ghp_SECRET" not in record.getMessage()
-        assert "/api/v1/github-backup/test" in record.getMessage()
+    @pytest.mark.parametrize(
+        "method,path", [("GET", "/api/v1/archives/1/thumbnail"), ("POST", "/api/v1/github-backup/test")]
+    )
+    def test_console_access_log_omits_media_query_parameters(self, method, path):
+        from backend.app.main import app
+
+        assert app is not None
+        access_logger = logging.getLogger("uvicorn.access")
+        console = StringIO()
+        handler = logging.StreamHandler(console)
+        access_logger.addHandler(handler)
+        try:
+            access_logger.warning(
+                '%s - "%s %s HTTP/%s" %d',
+                "127.0.0.1:5000",
+                method,
+                f"{path}?token=fixture-only",
+                "1.1",
+                200,
+            )
+        finally:
+            access_logger.removeHandler(handler)
+        assert path in console.getvalue()
+        assert "fixture-only" not in console.getvalue()

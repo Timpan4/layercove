@@ -285,6 +285,21 @@ describe('AuthContext', () => {
       setAuthToken(null);
     });
 
+    it('sends the current session when the user signs out', async () => {
+      let authorization: string | null | undefined;
+      server.use(http.post('/api/v1/auth/logout', ({ request }) => {
+        authorization = request.headers.get('Authorization');
+        return HttpResponse.json({ message: 'Logged out' });
+      }));
+      const { result } = renderHook(() => useAuth(), { wrapper: createWrapper() });
+      await waitFor(() => expect(result.current.user).not.toBeNull());
+
+      await act(async () => result.current.logout());
+
+      await waitFor(() => expect(authorization).toBe('Bearer valid-token'));
+      expect(getAuthToken()).toBeNull();
+    });
+
     it('clears user when an auth:expired event is dispatched', async () => {
       const { result } = renderHook(() => useAuth(), {
         wrapper: createWrapper(),

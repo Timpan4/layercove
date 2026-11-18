@@ -56,7 +56,7 @@ async function installFixture(page: Page, width: number) {
         classification: { group: 'selected_printer', compatibility: 'match', readiness: 'ready', reason_codes: [], reason_details: [], selectable: true, auto_selectable: true, acknowledgement_required: false },
       })), other_installed_printers: [], unclassified: [], incompatible: [],
     };
-    if (path.endsWith('/preferences/5')) body = [{ id: 1, key: 'filament_profile', value: { profile_id: 3 } }];
+    if (path.endsWith('/slicer/catalog/bindings/5/preferences')) body = [{ id: 1, key: 'filament_profile', value: { profile_id: 3 } }];
     if (path.endsWith('/slicer/profiles/process')) body = { preset_type: 'process', source: 'orca_cloud', id: 'profile-2', values: {} };
     if (path.endsWith('/printers')) body = [{ id: 1, name: 'Tim Voron', model: null, provider: 'moonraker', is_active: true, capabilities: { camera: false, ams: false } }];
     if (/\/printers\/1\/status$/.test(path)) body = { connected: true, state: 'IDLE', vt_tray: [], ams: [], temperatures: { nozzle: 27, bed: 24 } };
