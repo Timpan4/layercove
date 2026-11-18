@@ -23,7 +23,7 @@ from backend.app.core.database import async_session as application_session
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
-from backend.app.models.smart_plug import SmartPlug
+from backend.app.models.smart_plug import SmartPlug, SmartPlugAutoOffTimer
 from backend.app.models.user import User
 from backend.app.models.user_totp import UserTOTP
 from backend.app.services.mqtt_relay import MQTTRelayService
@@ -103,7 +103,8 @@ async def test_restored_auto_off_waits_for_idle_printer_and_retries_failure(db_s
 
 
 @pytest.mark.parametrize("print_mode", ["time", "temperature"])
-async def test_drying_auto_off_keeps_its_deadline_after_restore(db_session, test_engine, monkeypatch, print_mode):
+@pytest.mark.parametrize("print_started", [False, True], ids=["keeps-deadline", "cancels-on-new-print"])
+async def test_drying_auto_off_after_restore(db_session, test_engine, monkeypatch, print_mode, print_started):
     from backend.app.services import smart_plug_manager as plug_manager
     from backend.app.services.printer_manager import printer_manager
 
@@ -117,6 +118,7 @@ async def test_drying_auto_off_keeps_its_deadline_after_restore(db_session, test
                 name="Fixture plug",
                 printer_id=1,
                 plug_type="tasmota",
+                auto_on=False,
                 auto_off_after_drying=True,
                 off_delay_after_drying_minutes=10,
                 off_delay_mode=print_mode,
@@ -127,23 +129,22 @@ async def test_drying_auto_off_keeps_its_deadline_after_restore(db_session, test
     await db_session.commit()
 
     scheduled = plug_manager.SmartPlugManager()
-    writes = []
+    persisted = asyncio.Event()
+    mark_pending = scheduled._mark_auto_off_pending
 
-    def track_write(work, *, name):
-        task = asyncio.create_task(work, name=name)
-        writes.append(task)
-        return task
+    async def observe_persistence(*args, **kwargs):
+        await mark_pending(*args, **kwargs)
+        persisted.set()
 
-    monkeypatch.setattr(plug_manager, "spawn_background_task", track_write)
+    monkeypatch.setattr(scheduled, "_mark_auto_off_pending", observe_persistence)
     await scheduled.on_drying_complete(1, db_session)
-    await asyncio.gather(*writes)
+    await persisted.wait()
     await scheduled.pause_for_restore()
 
     power = SimpleNamespace(turn_off=AsyncMock(return_value=True))
     recovered = plug_manager.SmartPlugManager()
-    monkeypatch.setattr(
-        printer_manager, "get_status", lambda _id: SimpleNamespace(connected=True, state="IDLE", temperatures={})
-    )
+    status = SimpleNamespace(connected=True, state="IDLE", temperatures={})
+    monkeypatch.setattr(printer_manager, "get_status", lambda _id: status)
     monkeypatch.setattr(printer_manager, "is_connected", lambda _id: True)
     monkeypatch.setattr(printer_manager, "mark_printer_offline", lambda _id: None)
     monkeypatch.setattr(recovered, "get_service_for_plug", AsyncMock(return_value=power))
@@ -153,11 +154,18 @@ async def test_drying_auto_off_keeps_its_deadline_after_restore(db_session, test
         await recovered.resume_pending_auto_offs(require_connected=True)
         power.turn_off.assert_not_awaited()
 
+        if print_started:
+            status.state = "RUNNING"
+            await recovered.on_print_start(1, db_session)
+            assert (await db_session.scalar(select(SmartPlug.auto_off_pending))) is False
+            assert (await db_session.scalar(select(SmartPlugAutoOffTimer))) is None
+            status.state = "FAILED"
+            await recovered.on_print_complete(1, "failed", db_session)
+
         now += timedelta(minutes=2)
         await recovered.resume_pending_auto_offs(require_connected=True)
-        power.turn_off.assert_awaited_once()
+        assert power.turn_off.await_count == (0 if print_started else 1)
     finally:
-        await asyncio.gather(*writes)
         await recovered.pause_for_restore()
 
 

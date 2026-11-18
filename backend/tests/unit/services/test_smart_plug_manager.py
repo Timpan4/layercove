@@ -127,12 +127,11 @@ class TestSmartPlugManager:
     async def test_on_print_start_cancels_pending_off(self, manager, mock_plug, mock_db):
         """Verify starting a new print cancels any pending auto-off."""
         # Set up a pending task
-        mock_task = MagicMock()
-        manager._pending_off[mock_plug.id] = mock_task
+        task = asyncio.create_task(asyncio.Event().wait())
+        manager._pending_off[mock_plug.id] = task
 
         with (
             patch.object(manager, "_get_plugs_for_printer", new_callable=AsyncMock) as mock_get_plug,
-            patch.object(manager, "_mark_auto_off_pending", new_callable=AsyncMock),
             patch("backend.app.services.smart_plug_manager.tasmota_service") as mock_tasmota,
         ):
             mock_get_plug.return_value = [mock_plug]
@@ -140,7 +139,7 @@ class TestSmartPlugManager:
 
             await manager.on_print_start(printer_id=1, db=mock_db)
 
-            mock_task.cancel.assert_called_once()
+            assert task.cancelled()
             assert mock_plug.id not in manager._pending_off
 
     @pytest.mark.asyncio
@@ -1068,17 +1067,16 @@ class TestActivePrintGuard:
         auto_on disabled kept its pending off and cut power mid-reprint.
         """
         mock_plug.auto_on = False
-        mock_task = MagicMock()
-        manager._pending_off[mock_plug.id] = mock_task
+        task = asyncio.create_task(asyncio.Event().wait())
+        manager._pending_off[mock_plug.id] = task
         with (
             patch.object(manager, "_get_plugs_for_printer", new_callable=AsyncMock, return_value=[mock_plug]),
-            patch.object(manager, "_mark_auto_off_pending", new_callable=AsyncMock),
             patch("backend.app.services.smart_plug_manager.tasmota_service") as mock_tasmota,
         ):
             mock_tasmota.turn_on = AsyncMock()
 
             await manager.on_print_start(printer_id=1, db=AsyncMock())
 
-            mock_task.cancel.assert_called_once()  # cancelled despite auto_on=False
+            assert task.cancelled()
             assert mock_plug.id not in manager._pending_off
             mock_tasmota.turn_on.assert_not_called()  # but not powered on
