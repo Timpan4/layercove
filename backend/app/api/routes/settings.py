@@ -481,7 +481,8 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
         # Copy data directories (if they exist)
         for name, src_dir in _backup_directories():
             if src_dir.exists() and any(src_dir.iterdir()):
-                shutil.copytree(src_dir, temp_path / name, ignore=shutil.ignore_patterns(".layercove-restore-*"))
+                backup_dir = temp_path / name  # SEC-PATH-OK: _backup_directories supplies fixed names.
+                shutil.copytree(src_dir, backup_dir, ignore=shutil.ignore_patterns(".layercove-restore-*"))
 
         # Include the MFA encryption key as a ZIP top-level entry alongside
         # layercove.db. Without it, encrypted client_secret / TOTP secret rows

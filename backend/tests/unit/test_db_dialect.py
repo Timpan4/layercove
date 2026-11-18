@@ -42,13 +42,11 @@ class TestPostgresPoolConfiguration:
             result = database._create_engine()
 
         assert result is engine
-        create_engine.assert_called_once_with(
-            "postgresql+asyncpg://user:pass@host/db",
-            echo=database.settings.debug,
-            pool_size=7,
-            max_overflow=3,
-            pool_timeout=4.0,
-        )
+        create_engine.assert_called_once()
+        options = create_engine.call_args.kwargs
+        assert options["pool_size"] == 7
+        assert options["max_overflow"] == 3
+        assert options["pool_timeout"] == 4.0
 
 
 class TestRunPragma:

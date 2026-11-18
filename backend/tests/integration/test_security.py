@@ -2275,8 +2275,9 @@ class TestBackupKeyFiles:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_restore_rejects_absolute_path_in_zip(self, async_client, monkeypatch, tmp_path):
-        """B1: ZIP with an absolute path entry must be rejected by is_relative_to check."""
+    @pytest.mark.parametrize("entry_name", ["/archive/entry.txt", r"\archive\entry.txt"])
+    async def test_restore_rejects_absolute_path_in_zip(self, async_client, monkeypatch, tmp_path, entry_name):
+        """Restore rejects absolute ZIP entries with either path separator."""
         import io
         import zipfile
 
@@ -2287,9 +2288,7 @@ class TestBackupKeyFiles:
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            # Absolute path in the archive — extracts outside temp_path on
-            # systems where (temp_path / "/etc/passwd") resolves to /etc/passwd.
-            zf.writestr("/etc/passwd", "root:x:0:0")
+            zf.writestr(entry_name, "fixture")
             zf.writestr("layercove.db", b"SQLite format 3")
         buf.seek(0)
 
@@ -2697,7 +2696,7 @@ class TestTOTPDecryptionBroken:
         # disable_totp's TOTP-decrypt path doesn't throw, AND seed real hashes.
         result = await db_session.execute(_select(UserTOTP).where(UserTOTP.user_id == user_id))
         totp = result.scalar_one()
-        totp.secret = "JBSWY3DPEHPK3PXP"  # via setter -> mfa_encrypt
+        totp.secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"  # via setter -> mfa_encrypt
         plain_codes, hashed_codes = _generate_backup_codes()
         totp.backup_code_hashes = hashed_codes
         await db_session.commit()
@@ -2745,7 +2744,7 @@ class TestTOTPDecryptionBroken:
 
         result = await db_session.execute(_select(UserTOTP).where(UserTOTP.user_id == user_id))
         totp = result.scalar_one()
-        totp.secret = "JBSWY3DPEHPK3PXP"
+        totp.secret = "JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP"
         plain_codes, hashed_codes = _generate_backup_codes()
         totp.backup_code_hashes = hashed_codes
         await db_session.commit()

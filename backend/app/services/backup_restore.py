@@ -14,6 +14,8 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
 from sqlalchemy import Table
 
+from backend.app.utils.safe_path import PathTraversalError, safe_join_under
+
 logger = logging.getLogger(__name__)
 RESTORE_WORKSPACE_PREFIX = ".layercove-restore-"
 
@@ -33,8 +35,10 @@ def extract_backup(file: BinaryIO, destination: Path) -> Path:
             if "layercove.db" not in names:
                 raise HTTPException(400, "Invalid backup: missing layercove.db")
             for name in names:
-                if not (destination / name).resolve().is_relative_to(destination):
-                    raise HTTPException(400, f"Invalid backup: unsafe path in ZIP: {name!r}")
+                try:
+                    safe_join_under(destination, name, http=False)
+                except PathTraversalError:
+                    raise HTTPException(400, f"Invalid backup: unsafe path in ZIP: {name!r}") from None
             archive.extractall(destination)
     except zipfile.BadZipFile:
         raise HTTPException(400, "Invalid backup file: not a valid ZIP")

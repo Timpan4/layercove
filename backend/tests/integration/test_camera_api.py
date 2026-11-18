@@ -57,7 +57,7 @@ class TestCameraAPI:
     @pytest.mark.asyncio
     @pytest.mark.integration
     @pytest.mark.parametrize("auth_enabled", [False, True])
-    async def test_library_thumbnail_token_gate_does_not_require_printer_id(
+    async def test_library_thumbnail_rejects_camera_tokens_when_auth_is_enabled(
         self, async_client, db_session, auth_enabled
     ):
         from backend.app.core.auth import create_camera_stream_token
@@ -67,8 +67,11 @@ class TestCameraAPI:
         await db_session.commit()
         token = await create_camera_stream_token()
         response = await async_client.get("/api/v1/library/files/999999/thumbnail", params={"token": token})
-        assert response.status_code == 404
-        assert response.json()["detail"] == "File not found"
+        if auth_enabled:
+            assert response.status_code == 401
+        else:
+            assert response.status_code == 404
+            assert response.json()["detail"] == "File not found"
 
     """Integration tests for /api/v1/printers/{id}/camera/ endpoints."""
 

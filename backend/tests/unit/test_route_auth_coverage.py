@@ -40,6 +40,8 @@ _AUTH_QUALNAME_PATTERNS: tuple[str, ...] = (
     "resolve_api_key_cloud_owner",  # used by slicer routes that need the API key's owner
     "get_current_user",  # JWT identity resolution
     "get_current_active_user",  # JWT identity resolution
+    "get_media_caller",  # validates media, bearer, or API-key credentials
+    "mint_media_token",  # validates the user session before issuing a media token
     "get_api_key",  # webhook routes use this directly
     "verify_websocket_token",  # WebSocket route inline check (GHSA-r2qv I-WS)
 )

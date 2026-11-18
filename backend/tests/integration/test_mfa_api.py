@@ -1404,7 +1404,7 @@ class TestTOTPReplay:
         self, async_client: AsyncClient, fixed_totp_time: list[int], monkeypatch: pytest.MonkeyPatch
     ):
         """Replacing a secret must not carry its replay counter into the new secret."""
-        secrets_to_issue = iter(["JBSWY3DPEHPK3PXP", "KRUGS4ZANFZSAYJA"])
+        secrets_to_issue = iter(["JBSWY3DPEHPK3PXPJBSWY3DPEHPK3PXP", "KRUGS4ZANFZSAYJAKRUGS4ZANFZSAYJA"])
         monkeypatch.setattr(pyotp, "random_base32", lambda: next(secrets_to_issue))
         token = await _setup_and_login(async_client, "replayreplace", "replayreplace1")
         setup = await async_client.post("/api/v1/auth/2fa/totp/setup", headers=_auth_header(token))
