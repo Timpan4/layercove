@@ -308,3 +308,48 @@ test('finishing a slow sign-out keeps a newer sign-in open', async ({ page }) =>
     finishLogout.resolve();
   }
 });
+
+test('a second account can only see its own archives while its list loads', async ({ page }) => {
+  const nextArchives = Promise.withResolvers<void>();
+  const firstUser = { id: 1, username: 'first-user', permissions: ['archives:read_own', 'printers:read'], groups: [] };
+  const secondUser = { ...firstUser, id: 2, username: 'second-user' };
+  await page.addInitScript(() => sessionStorage.setItem('auth_token', 'first-session'));
+  await page.routeWebSocket(url => url.pathname === '/api/v1/ws', socket => socket.close());
+  await page.route(url => url.pathname.startsWith('/api/'), async route => {
+    const path = new URL(route.request().url()).pathname.replace(/\/$/, '');
+    const isSecond = route.request().headers().authorization === 'Bearer second-session';
+    if (path === '/api/v1/archives') {
+      if (isSecond) await nextArchives.promise;
+      return route.fulfill({ json: [{
+        id: isSecond ? 2 : 1, filename: isSecond ? 'second-private.3mf' : 'first-private.3mf',
+        printer_id: 1, status: 'completed', photos: [], created_at: '2026-10-01T10:00:00Z',
+      }] });
+    }
+    const body = path === '/api/v1/auth/status' ? { auth_enabled: true, requires_setup: false }
+      : path === '/api/v1/auth/advanced-auth/status' ? { advanced_auth_enabled: false, local_login_enabled: true }
+      : path === '/api/v1/auth/me' ? (isSecond ? secondUser : firstUser)
+      : path === '/api/v1/auth/login' ? { access_token: 'second-session', user: secondUser }
+      : path === '/api/v1/settings' ? { check_updates: false }
+      : path === '/api/v1/archives/stats' ? { total_archives: 1, total_print_time_seconds: 0, total_filament_grams: 0 }
+      : path === '/api/v1/auth/media-token' || path === '/api/v1/auth/ws-token' ? { token: 'fixture-resource-token' }
+      : [];
+    return route.fulfill({ json: body });
+  });
+
+  try {
+    await page.goto('/archives');
+    const firstArchive = page.locator('[data-archive-id="1"]');
+    await expect(firstArchive).toBeVisible();
+    await page.getByTitle('Logout', { exact: true }).filter({ visible: true }).click();
+    await page.evaluate(() => sessionStorage.setItem('auth_post_login_redirect', '/archives'));
+    await page.getByLabel('Username', { exact: true }).fill('second-user');
+    await page.getByLabel('Password', { exact: true }).fill('fixture-password');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(page).toHaveURL(/\/archives$/);
+    await expect(firstArchive).toHaveCount(0);
+    nextArchives.resolve();
+    await expect(page.locator('[data-archive-id="2"]')).toBeVisible();
+  } finally {
+    nextArchives.resolve();
+  }
+});

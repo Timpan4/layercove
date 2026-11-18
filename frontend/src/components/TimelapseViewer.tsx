@@ -3,7 +3,7 @@ import { X, Download, Film, Play, Pause, SkipBack, SkipForward, Pencil } from 'l
 import { Button } from './Button';
 import { TimelapseEditorModal } from './TimelapseEditorModal';
 import { formatMediaTime } from '../utils/date';
-import { withMediaToken } from '../api/client';
+import { subscribeMediaToken, withMediaToken } from '../api/client';
 
 interface TimelapseViewerProps {
   src: string;
@@ -25,6 +25,8 @@ export function TimelapseViewer({
   onEdit,
 }: TimelapseViewerProps) {
   const videoRef = useRef<HTMLVideoElement>(null);
+  const [initialSource] = useState(() => withMediaToken(src));
+  const failedPlayback = useRef<{ position: number; playing: boolean } | null>(null);
   const [isPlaying, setIsPlaying] = useState(true);
   const [playbackRate, setPlaybackRate] = useState(1); // Default to 1x
   const [currentTime, setCurrentTime] = useState(0);
@@ -34,6 +36,7 @@ export function TimelapseViewer({
   useEffect(() => {
     const video = videoRef.current;
     if (video) {
+      video.defaultPlaybackRate = playbackRate;
       video.playbackRate = playbackRate;
     }
   }, [playbackRate]);
@@ -106,19 +109,32 @@ export function TimelapseViewer({
     link.click();
   };
 
-  const retryWithCurrentCredential = (event: React.SyntheticEvent<HTMLVideoElement>) => {
-    const video = event.currentTarget;
-    const failedUrl = video.getAttribute('src');
-    if (!failedUrl) return;
+  const retryWithCurrentCredential = () => {
+    const video = videoRef.current;
+    const playback = failedPlayback.current;
+    const failedUrl = video?.getAttribute('src');
+    if (!video || !playback || !failedUrl) return;
     const retryUrl = withMediaToken(failedUrl);
-    if (retryUrl === failedUrl) return;
+    if (retryUrl !== failedUrl) {
+      video.autoplay = playback.playing;
+      video.setAttribute('src', retryUrl);
+    }
+  };
 
-    const position = video.currentTime;
-    video.autoplay = isPlaying;
-    video.addEventListener('loadedmetadata', () => {
-      if (video.getAttribute('src') === retryUrl) video.currentTime = Math.min(position, video.duration);
-    }, { once: true });
-    video.setAttribute('src', retryUrl);
+  useEffect(() => subscribeMediaToken(retryWithCurrentCredential), []);
+
+  const handleVideoError = (event: React.SyntheticEvent<HTMLVideoElement>) => {
+    failedPlayback.current ??= { position: event.currentTarget.currentTime, playing: isPlaying };
+    retryWithCurrentCredential();
+  };
+
+  const restorePlayback = (event: React.SyntheticEvent<HTMLVideoElement>) => {
+    const playback = failedPlayback.current;
+    if (!playback) return;
+    failedPlayback.current = null;
+    const video = event.currentTarget;
+    video.currentTime = Math.min(playback.position, video.duration);
+    video.playbackRate = playbackRate;
   };
 
   return (
@@ -154,11 +170,13 @@ export function TimelapseViewer({
         <div className="p-4">
           <video
             ref={videoRef}
-            src={src}
+            src={initialSource}
             autoPlay
             className="w-full rounded-lg"
+            data-manages-media-credential
             onClick={togglePlay}
-            onError={retryWithCurrentCredential}
+            onError={handleVideoError}
+            onLoadedMetadata={restorePlayback}
           />
 
           {/* Custom Controls */}

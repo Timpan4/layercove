@@ -104,6 +104,8 @@ const digest = 'sha256:' + 'b'.repeat(64);
 for (const [name, response, registryStatus, verifiedRevision, attestationStatus, status, stdout] of [
   ['existing attested image despite a registry warning', digest, '0', sha, '0', 0, digest + '\n'],
   ['missing image', `ERROR: ${image}: not found`, '1', sha, '0', 0, ''],
+  ['missing image with a warning', `WARNING: registry returned a fallback media type\nERROR: ${image}: not found`, '1', sha, '0', 0, ''],
+  ['registry error alongside a missing image', `ERROR: ${image}: not found\nERROR: registry unavailable`, '1', sha, '0', 1, ''],
   ['registry outage', '502 Bad Gateway', '1', sha, '0', 1, ''],
   ['invalid registry digest', 'invalid', '0', sha, '0', 1, ''],
   ['unattested image at the commit tag', digest, '0', sha, '1', 1, ''],
@@ -147,19 +149,32 @@ const promotion = publisher.split('        run: |\n').at(-1).trimEnd().split('\n
 const tip = 'd'.repeat(40);
 const tipDigest = 'sha256:' + 'e'.repeat(64);
 
-function promote(releaseTag, mainDigest = tipDigest, publishedTags = '') {
+function promote(releaseTag, mainDigest = tipDigest, { gitTags = '', registryTags = '', tipError = false } = {}) {
   return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', `
     gh() {
       case "$2" in
-        "repos/$GITHUB_REPOSITORY/commits/main") printf '%s\n' "$TIP" ;;
+        "repos/$GITHUB_REPOSITORY/commits/main")
+          if [[ "$TIP_ERROR" == true ]]; then return 1; fi
+          printf '%s\n' "$TIP" ;;
         "repos/$GITHUB_REPOSITORY/commits/tags/$RELEASE_TAG") printf '%s\n' "$SOURCE_SHA" ;;
-        --paginate) printf '%s\n' "$PUBLISHED_TAGS" ;;
+        --paginate)
+          if [[ "$3" == "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v1.2." ]]; then
+            printf '%s\n' "$GIT_TAGS"
+          fi ;;
         *) return 64 ;;
       esac
     }
     bash() {
-      [[ "$*" == "scripts/find-container-digest.sh $IMAGE_NAME $TIP" ]] || return 64
-      printf '%s\n' "$TIP_DIGEST"
+      case "$1" in
+        scripts/find-container-digest.sh)
+          [[ "$*" == "scripts/find-container-digest.sh $IMAGE_NAME $TIP" ]] || return 64
+          printf '%s\n' "$TIP_DIGEST" ;;
+        scripts/registry-container-digest.sh)
+          if [[ $'\n'"$REGISTRY_TAGS"$'\n' == *$'\n'"\u0024{2#*:}"$'\n'* ]]; then
+            printf '%s\n' "$TIP_DIGEST"
+          fi ;;
+        *) return 64 ;;
+      esac
     }
     docker() { printf '%s\n' "$*"; }
     ${promotion}
@@ -168,7 +183,7 @@ function promote(releaseTag, mainDigest = tipDigest, publishedTags = '') {
     env: {
       ...process.env, GITHUB_REPOSITORY: repository, IMAGE_NAME: imageName, IMAGE_DIGEST: digest,
       SOURCE_SHA: sha, RELEASE_TAG: releaseTag, TIP: tip, TIP_DIGEST: mainDigest,
-      PUBLISHED_TAGS: publishedTags, GITHUB_REPOSITORY_OWNER: 'Timpan4',
+      GIT_TAGS: gitTags, REGISTRY_TAGS: registryTags, TIP_ERROR: String(tipError),
     },
   });
 }
@@ -188,11 +203,23 @@ test('a late publisher leaves latest in place before the main tip is published',
 test('release tags use the attested digest instead of rereading a mutable commit tag', () => {
   const result = promote('v1.2.3');
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, `buildx imagetools create --tag ${imageName}:1.2.3 --tag ${imageName}:1.2 ${imageName}@${digest}\n`);
+  assert.equal(result.stdout, `buildx imagetools create --tag ${imageName}:1.2.3 --tag ${imageName}:1.2 ${imageName}@${digest}\nbuildx imagetools create --tag ${imageName}:latest ${imageName}@${tipDigest}\n`);
 });
 
 test('rerunning an older release publishes its exact tag without moving the minor alias back', () => {
-  const result = promote('v1.2.3', tipDigest, '1.2.10\n1.2.2');
+  const result = promote('v1.2.3', tipDigest, { gitTags: '1.2.10\n1.2.2', registryTags: '1.2.10\n1.2.2' });
   assert.equal(result.status, 0, result.stderr);
-  assert.equal(result.stdout, `buildx imagetools create --tag ${imageName}:1.2.3 ${imageName}@${digest}\n`);
+  assert.match(result.stdout, new RegExp(`^buildx imagetools create --tag ${imageName}:1\\.2\\.3 ${imageName}@${digest}\\n`));
+});
+
+test('a newer Git tag without a published image does not block minor promotion', () => {
+  const result = promote('v1.2.3', tipDigest, { gitTags: '1.2.10' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(` --tag ${imageName}:1\\.2 `));
+});
+
+test('a failed main-tip lookup fails promotion', () => {
+  const result = promote('', tipDigest, { tipError: true });
+  assert.equal(result.status, 1, result.stderr);
+  assert.doesNotMatch(result.stdout, /imagetools create/);
 });

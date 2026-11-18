@@ -262,12 +262,13 @@ async def test_orca_sync_preserves_bundled_parent_through_account_local_inherita
     assert revision.content["child_value"] == 1
     assert revision.resolved_metadata["metadata"]["compatible_printers"] == ["Voron"]
 
+    load_bundled.side_effect = RuntimeError("sidecar unavailable after the first pull")
     replay = await orca_pull(db, OrcaProfilePull("2", [], [], False), load_bundled=load_bundled)
     assert replay.revision_ids == ()
     assert replay.current_revision_ids == first.current_revision_ids
 
 
-@pytest.mark.parametrize("invalid", ["wrong-base", "unresolved", "rejected"])
+@pytest.mark.parametrize("invalid", ["wrong-base", "unresolved", "rejected", "ambiguous-with-rejection"])
 async def test_orca_sync_rejects_unusable_external_parents(db, invalid):
     from backend.app.services.slicer_catalog import canonical_hash
 
@@ -280,15 +281,22 @@ async def test_orca_sync_rejects_unusable_external_parents(db, invalid):
     elif invalid == "unresolved":
         bundled["content"]["inherits"] = "Missing parent of bundled preset"
     bundled["content_hash"] = canonical_hash(bundled["content"])
-    if invalid == "rejected":
+    bundled_entries = [bundled]
+    if invalid in {"rejected", "ambiguous-with-rejection"}:
         standard = await sync_standard_account(db, {"process": [bundled]})
         revision = await db.get(SlicerProfileRevision, standard.revision_ids[0])
         revision.review_state = "rejected"
         await db.commit()
+        if invalid == "ambiguous-with-rejection":
+            alternate = standard_entry("other-orca-parent", compatible=["Another printer"])
+            alternate["name"] = bundled["name"]
+            bundled_entries.append(alternate)
 
     with pytest.raises(ValueError):
         await orca_pull(
-            db, OrcaProfilePull("1", [profile], [], True), load_bundled=AsyncMock(return_value={"process": [bundled]})
+            db,
+            OrcaProfilePull("1", [profile], [], True),
+            load_bundled=AsyncMock(return_value={"process": bundled_entries}),
         )
 
 

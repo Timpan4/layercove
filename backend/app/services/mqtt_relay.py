@@ -56,11 +56,10 @@ class MQTTRelayService:
             "mqtt_use_tls": (await get_setting(db, "mqtt_use_tls") or "false") == "true",
         }
         await self.configure(settings)
-        if settings["mqtt_enabled"]:
-            plugs = await db.scalars(select(SmartPlug).where(SmartPlug.plug_type == "mqtt"))
-            restored = sum(subscribe_plug_to_mqtt(self.smart_plug_service, plug) for plug in plugs)
-            if restored:
-                logger.info("Restored %s MQTT smart plug subscriptions", restored)
+        plugs = await db.scalars(select(SmartPlug).where(SmartPlug.plug_type == "mqtt"))
+        restored = sum(bool(subscribe_plug_to_mqtt(self.smart_plug_service, plug)) for plug in plugs)
+        if restored:
+            logger.info("Restored MQTT subscriptions for %s smart plugs", restored)
 
     async def configure(self, settings: dict) -> bool:
         """Configure MQTT connection from settings.

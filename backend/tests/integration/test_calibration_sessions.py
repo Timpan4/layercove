@@ -652,7 +652,8 @@ async def test_generating_a_test_taller_than_the_printer_profile_is_refused(asyn
         ("flow_rate", 0.5, 1.5, 0.001, True),
     ],
 )
-def test_tests_taller_than_the_printer_profile_are_rejected(step, lowest, highest, increment, fits):
+@pytest.mark.parametrize("height_field", ["printable_height", "max_print_height"])
+def test_tests_taller_than_the_printer_profile_are_rejected(step, lowest, highest, increment, fits, height_field):
     from decimal import Decimal
     from types import SimpleNamespace
 
@@ -664,7 +665,7 @@ def test_tests_taller_than_the_printer_profile_are_rejected(step, lowest, highes
         nozzle_diameter=Decimal("0.4"),
         parameters={step: {"lowest": lowest, "highest": highest, "increment": increment, "baseline": lowest}},
     )
-    printer = {"printable_height": "180"}
+    printer = {height_field: "180"}
     if fits:
         require_printable_height(session, Step(step), printer)
     else:

@@ -64,7 +64,7 @@ export function useStreamTokenSync() {
     const token = mediaData?.token ?? null;
     setMediaToken(token);
     if (token) {
-      document.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img[src], video[src]').forEach(el => {
+      document.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img[src], video[src]:not([data-manages-media-credential])').forEach(el => {
         const src = el.getAttribute('src');
         if (!src) return;
         if (el instanceof HTMLVideoElement && !el.error && el.readyState >= HTMLMediaElement.HAVE_METADATA) return;

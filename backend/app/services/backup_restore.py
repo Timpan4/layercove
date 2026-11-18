@@ -14,6 +14,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
 from sqlalchemy import Table, literal_column, select
 
+from backend.app.core.database import ARCHIVE_FTS_DEFINITION, ARCHIVE_FTS_TRIGGERS
 from backend.app.services.zip_limits import ZipBudget, ZipTooLargeError, check_zip_size
 from backend.app.utils.safe_path import PathTraversalError, safe_join_under
 
@@ -45,12 +46,24 @@ def extract_backup(file: BinaryIO, destination: Path, *, max_bytes: int, max_ent
                 )
             if "layercove.db" not in names:
                 raise HTTPException(400, "Invalid backup: missing layercove.db")
-            budget = ZipBudget(max_bytes)
+            targets: dict[Path, zipfile.ZipInfo] = {}
             for entry in entries:
+                if entry.flag_bits & 1:
+                    raise HTTPException(400, "Invalid backup: encrypted ZIP entries are unsupported")
                 try:
                     target = safe_join_under(destination, entry.filename, http=False)
                 except PathTraversalError:
                     raise HTTPException(400, f"Invalid backup: unsafe path in ZIP: {entry.filename!r}") from None
+                if target == destination or target in targets:
+                    raise HTTPException(400, "Invalid backup: conflicting ZIP paths")
+                targets[target] = entry
+
+            budget = ZipBudget(max_bytes)
+            for target, entry in targets.items():
+                for parent in target.relative_to(destination).parents:
+                    parent_entry = targets.get(destination / parent)
+                    if parent_entry is not None and not parent_entry.is_dir():
+                        raise HTTPException(400, "Invalid backup: conflicting ZIP paths")
                 if entry.is_dir():
                     target.mkdir(parents=True, exist_ok=True)
                 else:
@@ -59,8 +72,8 @@ def extract_backup(file: BinaryIO, destination: Path, *, max_bytes: int, max_ent
                         budget.copy(reader, writer)
     except ZipTooLargeError as error:
         raise HTTPException(413, str(error)) from error
-    except zipfile.BadZipFile:
-        raise HTTPException(400, "Invalid backup file: not a valid ZIP")
+    except (zipfile.BadZipFile, NotImplementedError) as error:
+        raise HTTPException(400, "Invalid backup file: invalid or unsupported ZIP") from error
     return destination / "layercove.db"
 
 
@@ -94,6 +107,20 @@ def require_manual_start_for_pending_prints(database: Path) -> None:
 def validate_backup_database(path: Path, postgres_tables: tuple[Table, ...] = ()) -> None:
     try:
         with closing(open_source_database(path)) as source:
+            for name, kind, ddl in source.execute(
+                "SELECT objects.name, objects.type, objects.sql FROM sqlite_schema AS objects "
+                "LEFT JOIN pragma_table_list AS tables ON tables.schema = 'main' AND tables.name = objects.name "
+                "WHERE objects.type IN ('trigger', 'view') OR tables.type = 'virtual' OR objects.name = 'archive_fts'"
+            ):
+                if kind == "trigger" and ddl == f"CREATE TRIGGER {ARCHIVE_FTS_TRIGGERS.get(name, '')}":
+                    continue
+                if (
+                    kind == "table"
+                    and name == "archive_fts"
+                    and ddl == f"CREATE VIRTUAL TABLE {ARCHIVE_FTS_DEFINITION}"
+                ):
+                    continue
+                raise HTTPException(400, "Invalid backup: unexpected SQLite schema object")
             if source.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                 raise HTTPException(400, "Invalid backup: database integrity check failed")
             for table_name, required_columns in _REQUIRED_BACKUP_COLUMNS.items():
@@ -137,18 +164,19 @@ def validate_restored_sqlite_columns(path: Path, tables: tuple[Table, ...]) -> N
 
 
 def prepare_backup_secrets(database: Path, backup_key: Path, current_key: Path) -> None:
-    from backend.app.core.encryption import _FERNET_PREFIX, configured_fernet_key
+    from backend.app.core.encryption import _FERNET_PREFIX, configured_fernet_key, read_fernet_key_file
 
     env_key, key_source = configured_fernet_key()
     key_path = backup_key if backup_key.exists() else current_key
     if backup_key.exists() and not backup_key.is_file():
         raise HTTPException(400, "Invalid backup: the MFA encryption key is invalid")
-    file_key = key_path.read_bytes().strip() if key_path.is_file() else None
-    if backup_key.exists() and file_key is not None:
+    file_key = None
+    if key_path.is_file():
         try:
-            Fernet(file_key)
-        except ValueError:
-            raise HTTPException(400, "Invalid backup: the MFA encryption key is invalid")
+            file_key = read_fernet_key_file(key_path).encode("ascii")
+        except ValueError as error:
+            if key_path == backup_key:
+                raise HTTPException(400, "Invalid backup: the MFA encryption key is invalid") from error
     key = file_key if key_source == "file" else env_key.encode() if env_key else None
     try:
         cipher = Fernet(key) if key is not None else None

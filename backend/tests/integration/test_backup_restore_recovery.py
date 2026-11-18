@@ -21,8 +21,33 @@ from backend.app.core.database import async_session as application_session
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
+from backend.app.models.smart_plug import SmartPlug
 from backend.app.models.user import User
 from backend.app.models.user_totp import UserTOTP
+from backend.app.services.mqtt_relay import MQTTRelayService
+from backend.app.services.mqtt_smart_plug import MQTTSmartPlugService
+
+
+@pytest.mark.parametrize("mqtt_enabled", [True, False])
+async def test_mqtt_configuration_loads_saved_plug_topics(db_session, monkeypatch, mqtt_enabled):
+    db_session.add_all(
+        [
+            Settings(key="mqtt_enabled", value=str(mqtt_enabled).lower()),
+            Settings(key="mqtt_broker", value="fixture.invalid"),
+            SmartPlug(id=1, name="Power plug", plug_type="mqtt", mqtt_power_topic="fixture/power"),
+            SmartPlug(id=2, name="Energy plug", plug_type="mqtt", mqtt_energy_topic="fixture/energy"),
+        ]
+    )
+    await db_session.commit()
+    relay = MQTTRelayService()
+    plug_service = MQTTSmartPlugService()
+    monkeypatch.setattr(relay, "_smart_plug_service", plug_service)
+    monkeypatch.setattr(relay, "_connect", AsyncMock(return_value=True))
+    monkeypatch.setattr(plug_service, "_connect", AsyncMock(return_value=True))
+
+    await relay.configure_from_db(db_session)
+
+    assert plug_service.subscriptions == {"fixture/power": [(1, "power")], "fixture/energy": [(2, "energy")]}
 
 
 def write_database(path, value, *, settings_only=False):
@@ -50,12 +75,20 @@ def restore_fixture(monkeypatch, tmp_path, request):
     if getattr(request, "param", None) == "missing-printer-column":
         with closing(sqlite3.connect(backup)) as connection, connection:
             connection.execute("ALTER TABLE printers DROP COLUMN ip_address")
+    if getattr(request, "param", None) == "unexpected-trigger":
+        with closing(sqlite3.connect(backup)) as connection, connection:
+            connection.execute("CREATE TRIGGER fixture_trigger AFTER INSERT ON settings BEGIN SELECT 1; END")
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as zipped:
         zipped.write(backup, "layercove.db")
-        zipped.writestr(".mfa_encryption_key", Fernet.generate_key())
+        key_file = Fernet.generate_key()
+        if getattr(request, "param", None) == "invalid-key-text":
+            key_file += b"\xff"
+        zipped.writestr(".mfa_encryption_key", key_file)
         zipped.mkdir("archive/")
         zipped.writestr("archive/new.txt", "replacement")
+        if getattr(request, "param", None) == "conflicting-paths":
+            zipped.writestr("archive/new.txt/child", "conflict")
 
     monkeypatch.setenv("DATA_DIR", str(live))
     monkeypatch.setattr(settings, "base_dir", live)
@@ -90,6 +123,19 @@ async def test_settings_only_backup_is_rejected_before_changing_live_data(async_
 
     assert response.status_code == 400, response.text
     assert "missing" in response.json()["detail"].lower()
+    assert_original()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize(
+    "restore_fixture", ["unexpected-trigger", "invalid-key-text", "conflicting-paths"], indirect=True
+)
+async def test_restore_rejects_unsupported_backup_contents(async_client, restore_fixture):
+    files, assert_original = restore_fixture
+
+    response = await async_client.post("/api/v1/settings/restore", files=files)
+
+    assert response.status_code == 400, response.text
     assert_original()
 
 
@@ -406,6 +452,24 @@ async def test_restore_discards_spoolman_client_from_previous_settings(async_cli
 
     assert (await async_client.post("/api/v1/settings/restore", files=files)).is_success
     assert await spoolman.get_spoolman_client() is None
+
+
+@pytest.mark.integration
+async def test_restore_discards_camera_broadcasters_from_previous_settings(async_client, restore_fixture):
+    from backend.app.services.camera_fanout import get_or_create_broadcaster, shutdown_broadcaster
+
+    async def upstream():
+        yield b"fixture frame"
+
+    files, _ = restore_fixture
+    old_camera = await get_or_create_broadcaster("fixture:restore", upstream)
+    try:
+        assert (await async_client.post("/api/v1/settings/restore", files=files)).is_success
+        restored_camera = await get_or_create_broadcaster("fixture:restore", upstream)
+        assert restored_camera is not old_camera
+        assert old_camera.stopped
+    finally:
+        await shutdown_broadcaster("fixture:restore")
 
 
 @pytest.mark.integration

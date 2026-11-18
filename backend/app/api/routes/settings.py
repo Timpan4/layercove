@@ -710,6 +710,7 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
         validate_backup_database,
         validate_restored_sqlite_columns,
     )
+    from backend.app.services.camera_fanout import shutdown_all_broadcasters
     from backend.app.services.mqtt_relay import mqtt_relay
     from backend.app.services.notification_service import notification_service
     from backend.app.services.print_scheduler import scheduler as print_scheduler
@@ -768,6 +769,7 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                 with CancelScope(shield=True):
                     services_paused = True
                     await ws_manager.close_for_restore()
+                    await shutdown_all_broadcasters()
                     await close_spoolman_client()
                     await print_scheduler.pause_for_restore()
                     await smart_plug_manager.pause_for_restore()

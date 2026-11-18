@@ -710,7 +710,7 @@ def test_height(session: CalibrationSession, step: Step) -> float | None:
 
 def require_printable_height(session: CalibrationSession, step: Step, printer_content: dict) -> None:
     height = test_height(session, step)
-    raw = printer_content.get("printable_height")
+    raw = printer_content.get("printable_height", printer_content.get("max_print_height"))
     try:
         printable = float(raw[0] if isinstance(raw, list) else raw)
     except (TypeError, ValueError, IndexError):

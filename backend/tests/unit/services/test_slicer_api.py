@@ -29,7 +29,9 @@ def _mock_client(handler) -> httpx.AsyncClient:
     return httpx.AsyncClient(transport=transport, timeout=10.0)
 
 
-@pytest.mark.parametrize("payload", [b"[{}]", b'{"process": null}', b'{"printer": [false]}', b"invalid json"])
+@pytest.mark.parametrize(
+    "payload", [b"[{}]", b'{"process": null}', b'{"printer": [false]}', b'{"process": [{"name": []}]}', b"invalid json"]
+)
 async def test_bundled_profiles_rejects_invalid_response(payload):
     async with _mock_client(lambda request: httpx.Response(200, content=payload)) as client:
         service = SlicerApiService("http://sidecar", client=client)

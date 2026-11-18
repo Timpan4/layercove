@@ -372,6 +372,10 @@ class SlicerApiService:
                 raise SlicerSchemaMismatchError(
                     f"Slicer sidecar /profiles/bundled {profile_type} must be a list of objects"
                 )
+            if any(not isinstance(entry.get("name"), str) or not entry["name"].strip() for entry in entries):
+                raise SlicerSchemaMismatchError(
+                    f"Slicer sidecar /profiles/bundled {profile_type} entries must have a name"
+                )
         return payload
 
     async def _poll_progress(

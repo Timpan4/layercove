@@ -254,13 +254,15 @@ def test_openapi_export_preserves_request_optionality_and_response_defaults(tmp_
 
     repo = Path(os.environ.get("TEST_REPOSITORY_ROOT", Path(__file__).resolve().parents[3]))
     export = repo / "scripts" / "export_openapi.py"
+    static = tmp_path / "static"
+    (static / "assets").mkdir(parents=True)
     result = subprocess.run(
         [sys.executable, str(export)],
-        check=True,
         capture_output=True,
         text=True,
-        env={**os.environ, "DATA_DIR": str(tmp_path), "LOG_DIR": str(tmp_path)},
+        env={**os.environ, "DATA_DIR": str(tmp_path), "LOG_DIR": str(tmp_path), "STATIC_DIR": str(static)},
     )
+    assert result.returncode == 0, result.stderr
     spec = json.loads(result.stdout)
     schemas = spec["components"]["schemas"]
     slice_body = spec["paths"]["/api/v1/library/files/{file_id}/slice"]["post"]["requestBody"]

@@ -38,7 +38,7 @@ jobs:
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
         if: github.event.workflow_run.path == '.github/workflows/container-release-request.yml'
         with:
-          name: container-release-ref
+          name: container-release-ref-${{ github.event.workflow_run.run_attempt }}
           path: ${{ runner.temp }}/container-release-request
           run-id: ${{ github.event.workflow_run.id }}
           github-token: ${{ github.token }}
@@ -199,16 +199,20 @@ jobs:
             tags=(--tag "$IMAGE_NAME:$version")
             if [[ "$version" != *-* ]]; then
               minor=${version%.*}
-              package="users/$GITHUB_REPOSITORY_OWNER/packages/container/${IMAGE_NAME##*/}/versions"
-              filter=".[].metadata.container.tags[]? | select(startswith(\"$minor.\") and test(\"^[0-9]+[.][0-9]+[.][0-9]+$\"))"
-              published=$(gh api --paginate "$package" --jq "$filter")
-              newest=$(printf '%s\n' "$published" "$version" | sort -V | tail -n 1)
-              if [[ "$newest" == "$version" ]]; then
+              candidates=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v$minor." \
+                --jq '.[].ref | ltrimstr("refs/tags/v") | select(test("^[0-9]+[.][0-9]+[.][0-9]+$"))')
+              ordered=$(printf '%s\n' "$candidates" "$version" | sort -Vr)
+              while IFS= read -r candidate && [[ "$candidate" != "$version" ]]; do
+                newer_digest=$(bash scripts/registry-container-digest.sh "$IMAGE_NAME:$candidate")
+                if [[ -n "$newer_digest" ]]; then
+                  break
+                fi
+              done <<< "$ordered"
+              if [[ "$candidate" == "$version" ]]; then
                 tags+=(--tag "$IMAGE_NAME:$minor")
               fi
             fi
             docker buildx imagetools create "${tags[@]}" "$IMAGE_NAME@$IMAGE_DIGEST"
-            exit 0
           fi
           tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           if [[ "$tip" != "$SOURCE_SHA" ]]; then
@@ -218,7 +222,8 @@ jobs:
             echo "::notice::Main tip $tip has no published image."
             exit 0
           fi
-          if [[ $(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha) != "$tip" ]]; then
+          current_tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
+          if [[ "$current_tip" != "$tip" ]]; then
             echo "::notice::Main advanced during promotion."
             exit 0
           fi

@@ -454,6 +454,32 @@ async def _migrate_encrypt_legacy_secrets() -> None:
         )
 
 
+ARCHIVE_FTS_DEFINITION = (
+    "archive_fts USING fts5(print_name, filename, tags, notes, designer, filament_type, "
+    "content='print_archives', content_rowid='id')"
+)
+ARCHIVE_FTS_TRIGGERS = {
+    name: f"{name} AFTER {event} ON print_archives BEGIN {body} END"
+    for name, event, body in (
+        (
+            "archive_fts_insert",
+            "INSERT",
+            "INSERT INTO archive_fts(rowid, print_name, filename, tags, notes, designer, filament_type) VALUES (new.id, new.print_name, new.filename, new.tags, new.notes, new.designer, new.filament_type);",
+        ),
+        (
+            "archive_fts_delete",
+            "DELETE",
+            "INSERT INTO archive_fts(archive_fts, rowid, print_name, filename, tags, notes, designer, filament_type) VALUES ('delete', old.id, old.print_name, old.filename, old.tags, old.notes, old.designer, old.filament_type);",
+        ),
+        (
+            "archive_fts_update",
+            "UPDATE",
+            "INSERT INTO archive_fts(archive_fts, rowid, print_name, filename, tags, notes, designer, filament_type) VALUES ('delete', old.id, old.print_name, old.filename, old.tags, old.notes, old.designer, old.filament_type); INSERT INTO archive_fts(rowid, print_name, filename, tags, notes, designer, filament_type) VALUES (new.id, new.print_name, new.filename, new.tags, new.notes, new.designer, new.filament_type);",
+        ),
+    )
+}
+
+
 async def run_migrations(conn):
     """Apply current runtime invariants absent from ORM metadata.
 
@@ -464,33 +490,9 @@ async def run_migrations(conn):
     from sqlalchemy import text
 
     if is_sqlite():
-        await conn.execute(
-            text(
-                "CREATE VIRTUAL TABLE IF NOT EXISTS archive_fts USING fts5("
-                "print_name, filename, tags, notes, designer, filament_type, "
-                "content='print_archives', content_rowid='id')"
-            )
-        )
-        for name, event, body in (
-            (
-                "archive_fts_insert",
-                "INSERT",
-                "INSERT INTO archive_fts(rowid, print_name, filename, tags, notes, designer, filament_type) VALUES (new.id, new.print_name, new.filename, new.tags, new.notes, new.designer, new.filament_type);",
-            ),
-            (
-                "archive_fts_delete",
-                "DELETE",
-                "INSERT INTO archive_fts(archive_fts, rowid, print_name, filename, tags, notes, designer, filament_type) VALUES ('delete', old.id, old.print_name, old.filename, old.tags, old.notes, old.designer, old.filament_type);",
-            ),
-            (
-                "archive_fts_update",
-                "UPDATE",
-                "INSERT INTO archive_fts(archive_fts, rowid, print_name, filename, tags, notes, designer, filament_type) VALUES ('delete', old.id, old.print_name, old.filename, old.tags, old.notes, old.designer, old.filament_type); INSERT INTO archive_fts(rowid, print_name, filename, tags, notes, designer, filament_type) VALUES (new.id, new.print_name, new.filename, new.tags, new.notes, new.designer, new.filament_type);",
-            ),
-        ):
-            await conn.execute(
-                text(f"CREATE TRIGGER IF NOT EXISTS {name} AFTER {event} ON print_archives BEGIN {body} END")
-            )
+        await conn.execute(text(f"CREATE VIRTUAL TABLE IF NOT EXISTS {ARCHIVE_FTS_DEFINITION}"))
+        for trigger in ARCHIVE_FTS_TRIGGERS.values():
+            await conn.execute(text(f"CREATE TRIGGER IF NOT EXISTS {trigger}"))
 
     async with conn.begin_nested():
         for table in ("user_oidc_links", "user_totp", "user_otp_codes", "long_lived_tokens"):

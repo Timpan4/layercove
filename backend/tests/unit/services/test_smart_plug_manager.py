@@ -903,6 +903,34 @@ class TestActivePrintGuard:
 
     # ---- _delayed_off (time mode) ----------------------------------------
 
+    @pytest.mark.parametrize("mode", ["time", "temperature"])
+    async def test_restore_cancels_replacement_auto_off(self, manager, mock_plug, monkeypatch, mode):
+        never = asyncio.Event()
+
+        async def wait_before_auto_off(_delay):
+            await never.wait()
+
+        monkeypatch.setattr("backend.app.services.smart_plug_manager.asyncio.sleep", wait_before_auto_off)
+        monkeypatch.setattr(manager, "_mark_auto_off_pending", AsyncMock())
+        schedule = manager._schedule_delayed_off if mode == "time" else manager._schedule_temp_based_off
+        next_turn = asyncio.get_running_loop().create_future
+        schedule(mock_plug, 1, 60)
+        started = next_turn()
+        asyncio.get_running_loop().call_soon(started.set_result, None)
+        await started
+
+        schedule(mock_plug, 1, 60)
+        replacement = manager._pending_off[mock_plug.id]
+        try:
+            started = next_turn()
+            asyncio.get_running_loop().call_soon(started.set_result, None)
+            await started
+            await manager.pause_for_restore()
+            assert replacement.done()
+        finally:
+            replacement.cancel()
+            await asyncio.gather(replacement, return_exceptions=True)
+
     @pytest.mark.asyncio
     async def test_delayed_off_skips_when_printer_printing_again(self, manager):
         """Time-delay fires after N min; if a reprint is running, skip the off."""

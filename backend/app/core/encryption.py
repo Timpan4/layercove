@@ -25,8 +25,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 import logging
 import os
+from pathlib import Path
 from typing import Literal
 
 logger = logging.getLogger(__name__)
@@ -61,6 +63,32 @@ def _validate_fernet_key(key: str) -> bool:
     except (binascii.Error, ValueError):
         return False
     return len(decoded) == 32
+
+
+def read_fernet_key_file(path: Path) -> str:
+    """Read a UTF-8, URL-safe base64 Fernet key with optional surrounding whitespace."""
+    encoded_length = len(base64.urlsafe_b64encode(bytes(32)))
+    key = ""
+    trailing_whitespace = False
+    with path.open(encoding="utf-8") as source:
+        while chunk := source.read(io.DEFAULT_BUFFER_SIZE):
+            content = chunk.strip()
+            if content:
+                if key and (trailing_whitespace or chunk[0].isspace()):
+                    raise ValueError("Fernet key contains internal whitespace")
+                if len(key) + len(content) > encoded_length:
+                    raise ValueError("Fernet key is longer than its encoded length")
+                key += content
+            if key:
+                trailing_whitespace = chunk[-1].isspace()
+
+    try:
+        decoded = base64.urlsafe_b64decode(key)
+    except (binascii.Error, ValueError) as error:
+        raise ValueError("Invalid Fernet key encoding") from error
+    if len(decoded) != 32 or base64.urlsafe_b64encode(decoded).decode("ascii") != key:
+        raise ValueError("Invalid Fernet key encoding")
+    return key
 
 
 def configured_fernet_key() -> tuple[str | None, Literal["env", "none", "file"]]:
@@ -119,7 +147,7 @@ def _load_or_generate_key() -> tuple[str | None, _InternalSource]:
     # 2. Existing file in DATA_DIR
     if key_file.exists():
         try:
-            file_key = key_file.read_text().strip()
+            return read_fernet_key_file(key_file), "file"
         except OSError as exc:
             # Refusing to fall through to regeneration — overwriting the file
             # would destroy access to every row already encrypted under the
@@ -133,15 +161,14 @@ def _load_or_generate_key() -> tuple[str | None, _InternalSource]:
                 exc,
             )
             return None, "none_corrupted"
-        if _validate_fernet_key(file_key):
-            return file_key, "file"
-        logger.error(
-            "%s is present but is not a valid Fernet key. "
-            "Refusing to overwrite — fix the file or set MFA_ENCRYPTION_KEY. "
-            "Falling back to plaintext storage.",
-            key_file,
-        )
-        return None, "none_corrupted"
+        except ValueError:
+            logger.error(
+                "%s is present but is not a valid Fernet key. "
+                "Refusing to overwrite — fix the file or set MFA_ENCRYPTION_KEY. "
+                "Falling back to plaintext storage.",
+                key_file,
+            )
+            return None, "none_corrupted"
 
     # 3. Generate a new key and persist it.
     # S1: Use os.open(O_WRONLY|O_CREAT|O_EXCL, 0o600) to avoid the TOCTOU

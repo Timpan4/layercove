@@ -7,20 +7,9 @@ if [[ ! "$sha" =~ ^[0-9a-f]{40}$ ]]; then
     printf 'Expected a full commit SHA.\n' >&2
     exit 1
 fi
-tag="$image:sha-$sha"
-error_log=$(mktemp)
-trap 'rm -f -- "$error_log"' EXIT
-if digest=$(docker buildx imagetools inspect "$tag" --format '{{.Manifest.Digest}}' 2>"$error_log"); then
-    if [[ ! "$digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
-        printf 'Registry returned an invalid manifest digest for %s.\n' "$tag" >&2
-        exit 1
-    fi
-else
-    if [[ $(<"$error_log") == "ERROR: $tag: not found" ]]; then
-        exit 0
-    fi
-    printf 'Could not look up %s in the registry.\n' "$tag" >&2
-    exit 1
+digest=$(bash "${BASH_SOURCE[0]%/*}/registry-container-digest.sh" "$image:sha-$sha")
+if [[ -z "$digest" ]]; then
+    exit 0
 fi
 
 subject="$image@$digest"

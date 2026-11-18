@@ -481,7 +481,8 @@ class SmartPlugManager:
         except asyncio.CancelledError:
             logger.debug("Delayed turn-off cancelled for plug %s", plug_id)
         finally:
-            self._pending_off.pop(plug_id, None)
+            if self._pending_off.get(plug_id) is asyncio.current_task():
+                del self._pending_off[plug_id]
 
     def _schedule_temp_based_off(self, plug: "SmartPlug", printer_id: int, temp_threshold: int):
         """Monitor temperature and turn off when below threshold."""
@@ -616,7 +617,8 @@ class SmartPlugManager:
         except asyncio.CancelledError:
             logger.debug("Temperature-based turn-off cancelled for plug %s", plug_id)
         finally:
-            self._pending_off.pop(plug_id, None)
+            if self._pending_off.get(plug_id) is asyncio.current_task():
+                del self._pending_off[plug_id]
 
     async def _mark_auto_off_pending(self, plug_id: int, pending: bool):
         """Mark a plug as having a pending auto-off (survives restarts)."""
