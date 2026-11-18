@@ -7043,7 +7043,7 @@ export interface paths {
                         [name: string]: unknown;
                     };
                     content: {
-                        "application/json": unknown;
+                        "image/png": string;
                     };
                 };
                 /** @description Validation Error */
@@ -22277,7 +22277,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number | null;
+                    printer_id: number;
                     index: number;
                 };
                 cookie?: never;
@@ -22396,7 +22396,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number | null;
+                    printer_id: number;
                 };
                 cookie?: never;
             };
@@ -22628,7 +22628,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number | null;
+                    printer_id: number;
                 };
                 cookie?: never;
             };
@@ -22967,7 +22967,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number | null;
+                    printer_id: number;
                     camera_id: number;
                 };
                 cookie?: never;
@@ -23018,7 +23018,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number | null;
+                    printer_id: number;
                     camera_id: number;
                 };
                 cookie?: never;
@@ -29066,7 +29066,10 @@ export interface paths {
         put?: never;
         /**
          * Restore Backup
-         * @description Restore a staged backup and preserve the previous state if an operation fails.
+         * @description Restore a staged backup and hold restored pending prints for manual start.
+         *
+         *     An incomplete rollback returns an error and retains recovery files. A committed
+         *     restore can report success and request a restart if service recovery fails.
          */
         post: {
             parameters: {
@@ -30366,6 +30369,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/slicer/catalog/bindings/{binding_id}/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Preferences */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    binding_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/slicer/catalog/cloud/sync": {
         parameters: {
             query?: never;
@@ -30829,57 +30883,6 @@ export interface paths {
                 };
             };
         };
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/v1/slicer/catalog/preferences/{binding_id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path?: never;
-            cookie?: never;
-        };
-        /** List Preferences */
-        get: {
-            parameters: {
-                query?: never;
-                header?: {
-                    "X-API-Key"?: string | null;
-                };
-                path: {
-                    binding_id: number;
-                };
-                cookie?: never;
-            };
-            requestBody?: never;
-            responses: {
-                /** @description Successful Response */
-                200: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": {
-                            [key: string]: unknown;
-                        }[];
-                    };
-                };
-                /** @description Validation Error */
-                422: {
-                    headers: {
-                        [name: string]: unknown;
-                    };
-                    content: {
-                        "application/json": components["schemas"]["HTTPValidationError"];
-                    };
-                };
-            };
-        };
-        put?: never;
         post?: never;
         delete?: never;
         options?: never;

@@ -7077,7 +7077,7 @@ export const api = {
   deleteSlicerFilamentRule: (ruleId: number) =>
     request<void>(`/slicer/catalog/filament-rules/${ruleId}`, { method: 'DELETE' }),
   listSlicerCatalogPreferences: (bindingId: number) =>
-    request<SlicerCatalogPreference[]>(`/slicer/catalog/preferences/${bindingId}`),
+    request<SlicerCatalogPreference[]>(`/slicer/catalog/bindings/${bindingId}/preferences`),
   saveSlicerCatalogPreference: (
     bindingId: number,
     profileId: number,

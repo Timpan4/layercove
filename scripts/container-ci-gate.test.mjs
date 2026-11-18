@@ -12,7 +12,7 @@ function gate(runs, {
 } = {}) {
   return spawnSync('bash', ['-c', `
     gh() {
-      if [[ "$*" == "api repos/$GITHUB_REPOSITORY/commits/tags/v1.2.3 --jq .sha" ]]; then
+      if [[ "$SOURCE_REF" == refs/tags/* && "$*" == "api repos/$GITHUB_REPOSITORY/commits/tags/\${SOURCE_REF#refs/tags/} --jq .sha" ]]; then
         printf '%s\n' "$TAG_SHA"
         return
       fi
@@ -56,6 +56,12 @@ test('publishing accepts a release tag that points to the exact tested commit', 
   assert.equal(result.stdout, '42\n');
 });
 
+test('publishing accepts a valid prerelease tag', () => {
+  const result = gate([valid], { ref: 'refs/tags/v1.2.3-rc.1' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '42\n');
+});
+
 test('publishing rejects a moved release tag despite successful CI for the original commit', () => {
   const result = gate([valid], { ref: 'refs/tags/v1.2.3', tagSha: 'b'.repeat(40) });
   assert.equal(result.status, 1);
@@ -67,6 +73,14 @@ test('publishing rejects a manual request from a feature branch', () => {
   assert.equal(result.status, 1);
   assert.equal(result.stdout, '');
 });
+
+for (const version of ['01.2.3', '1.2.3-rc..1', '1.2.3-rc.01']) {
+  test(`publishing rejects the malformed release version ${version}`, () => {
+    const result = gate([valid], { ref: `refs/tags/v${version}` });
+    assert.equal(result.status, 1);
+    assert.match(result.stderr, /valid SemVer/);
+  });
+}
 
 for (const [name, runs] of [
   ['no CI run', []],

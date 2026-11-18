@@ -1902,7 +1902,7 @@ def require_camera_stream_token_if_auth_enabled(*, allow_long_lived: bool = Fals
     POST /printers/camera/stream-token and appends it as ?token=xxx.
     """
 
-    async def checker(token: str | None = None, printer_id: int | None = None) -> None:
+    async def checker(printer_id: int, token: str | None = None) -> None:
         async with async_session() as db:
             if not await is_auth_enabled(db):
                 return  # Auth disabled, allow access

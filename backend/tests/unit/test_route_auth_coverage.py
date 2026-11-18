@@ -230,3 +230,16 @@ def test_public_routes_allowlist_matches_real_routes() -> None:
         "Remove these stale entries (the route was renamed, removed, or its method changed).\n\n"
         + "\n".join(f"  {m:7} {p}" for m, p in stale)
     )
+
+
+def test_openapi_describes_calibration_images_camera_ids_and_catalog_preferences():
+    paths = app.openapi()["paths"]
+    evidence = paths["/api/v1/calibration/sessions/{session_id}/evidence/{evidence_id}/image"]["get"]
+    assert evidence["responses"]["200"]["content"] == {"image/png": {"schema": {"type": "string", "format": "binary"}}}
+
+    for route in ("camera/stream", "camera/snapshot", "camera/plate-detection/references/{index}/thumbnail"):
+        operation = paths[f"/api/v1/printers/{{printer_id}}/{route}"]["get"]
+        printer_id = next(parameter for parameter in operation["parameters"] if parameter["name"] == "printer_id")
+        assert printer_id["schema"]["type"] == "integer"
+    assert "get" in paths["/api/v1/slicer/catalog/bindings/{binding_id}/preferences"]
+    assert "/api/v1/slicer/catalog/preferences/{binding_id}" not in paths

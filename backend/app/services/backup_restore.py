@@ -77,6 +77,20 @@ def source_columns(source: sqlite3.Connection, table_name: str) -> set[str]:
     return {row[0] for row in source.execute("SELECT name FROM pragma_table_info(?)", (table_name,))}
 
 
+def require_manual_start_for_pending_prints(database: Path) -> None:
+    """Hold pending jobs in the staged database before either backend restores them."""
+    with closing(sqlite3.connect(database)) as source, source:
+        if not source.execute("SELECT 1 FROM sqlite_schema WHERE name = 'print_queue' AND type = 'table'").fetchone():
+            return
+        columns = source_columns(source, "print_queue")
+        if "status" not in columns:
+            raise HTTPException(400, "Invalid backup: print_queue is missing the status column")
+        source.execute("BEGIN")
+        if "manual_start" not in columns:
+            source.execute("ALTER TABLE print_queue ADD COLUMN manual_start BOOLEAN NOT NULL DEFAULT FALSE")
+        source.execute("UPDATE print_queue SET manual_start = TRUE WHERE status = 'pending'")
+
+
 def validate_backup_database(path: Path, postgres_tables: tuple[Table, ...] = ()) -> None:
     try:
         with closing(open_source_database(path)) as source:
@@ -112,7 +126,17 @@ def validate_backup_database(path: Path, postgres_tables: tuple[Table, ...] = ()
         raise HTTPException(400, "Invalid backup: layercove.db is not a readable SQLite database")
 
 
-def validate_backup_secrets(database: Path, backup_key: Path, current_key: Path) -> None:
+def validate_restored_sqlite_columns(path: Path, tables: tuple[Table, ...]) -> None:
+    """Check existing tables after startup migrations and before accepting a SQLite restore."""
+    with closing(open_source_database(path)) as source:
+        for table in tables:
+            columns = source_columns(source, table.name)
+            if columns and (missing := set(table.columns.keys()) - columns):
+                names = ", ".join(sorted(missing))
+                raise HTTPException(400, f"Invalid backup: {table.name} is missing required columns: {names}")
+
+
+def prepare_backup_secrets(database: Path, backup_key: Path, current_key: Path) -> None:
     from backend.app.core.encryption import _FERNET_PREFIX, configured_fernet_key
 
     env_key, key_source = configured_fernet_key()
@@ -126,8 +150,12 @@ def validate_backup_secrets(database: Path, backup_key: Path, current_key: Path)
         except ValueError:
             raise HTTPException(400, "Invalid backup: the MFA encryption key is invalid")
     key = file_key if key_source == "file" else env_key.encode() if env_key else None
+    try:
+        cipher = Fernet(key) if key is not None else None
+    except ValueError:
+        cipher = None
 
-    with closing(open_source_database(database)) as source:
+    with closing(sqlite3.connect(database)) as source, source:
         fernet_pattern = (_FERNET_PREFIX + "%",)
         encrypted_columns = (
             (
@@ -155,11 +183,32 @@ def validate_backup_secrets(database: Path, backup_key: Path, current_key: Path)
                 continue
             for (value,) in source.execute(query, parameters):
                 try:
-                    if key is None or not isinstance(value, str) or not value.startswith(_FERNET_PREFIX):
+                    if cipher is None or not isinstance(value, str) or not value.startswith(_FERNET_PREFIX):
                         raise ValueError
-                    Fernet(key).decrypt(value.removeprefix(_FERNET_PREFIX).encode())
+                    cipher.decrypt(value.removeprefix(_FERNET_PREFIX).encode())
                 except (InvalidToken, ValueError):
                     raise HTTPException(400, "Invalid backup: encrypted settings cannot be opened with the restore key")
+
+        if cipher is not None:
+            legacy_columns = (
+                (
+                    "oidc_providers",
+                    "client_secret",
+                    "SELECT id, client_secret FROM oidc_providers WHERE client_secret <> '' AND client_secret NOT LIKE ?",
+                    "UPDATE oidc_providers SET client_secret = ? WHERE id = ?",
+                ),
+                (
+                    "user_totp",
+                    "secret",
+                    "SELECT id, secret FROM user_totp WHERE secret <> '' AND secret NOT LIKE ?",
+                    "UPDATE user_totp SET secret = ? WHERE id = ?",
+                ),
+            )
+            for table, column, query, update in legacy_columns:
+                if {"id", column} <= source_columns(source, table):
+                    for row_id, plaintext in source.execute(query, fernet_pattern):
+                        encrypted = _FERNET_PREFIX + cipher.encrypt(plaintext.encode()).decode()
+                        source.execute(update, (encrypted, row_id))
 
 
 class RestoreFiles:

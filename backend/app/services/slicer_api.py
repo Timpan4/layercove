@@ -354,6 +354,8 @@ class SlicerApiService:
         """
         try:
             response = await self._client.get(f"{self.base_url}/profiles/bundled", timeout=10.0)
+        except httpx.InvalidURL:
+            raise SlicerApiUnavailableError("Invalid slicer sidecar URL") from None
         except httpx.RequestError as exc:
             raise SlicerApiUnavailableError(f"Slicer sidecar unreachable: {exc}") from exc
         if response.status_code >= 400:

@@ -10,6 +10,7 @@ from sqlalchemy import insert, select
 from sqlalchemy.engine import make_url
 
 from backend.app.core import database, encryption
+from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
 from backend.app.models.user_totp import UserTOTP
@@ -58,8 +59,12 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
         if failure == "import":
             source.execute("INSERT INTO settings VALUES (2, 'currency', 'USD')")
         source.execute("CREATE TABLE user_totp (id INTEGER PRIMARY KEY, user_id INTEGER, secret TEXT)")
-        encrypted = Fernet(source_key).encrypt(b"fixture-totp-seed").decode()
-        source.execute("INSERT INTO user_totp VALUES (9, 7, ?)", ("fernet:" + encrypted,))
+        fixture_secret = "fixture-totp-seed"
+        if failure != "cleanup":
+            fixture_secret = "fernet:" + Fernet(source_key).encrypt(fixture_secret.encode()).decode()
+        source.execute("INSERT INTO user_totp VALUES (9, 7, ?)", (fixture_secret,))
+        source.execute("CREATE TABLE print_queue (id INTEGER PRIMARY KEY, status TEXT, manual_start BOOLEAN)")
+        source.executemany("INSERT INTO print_queue VALUES (?, ?, ?)", [(1, "pending", False), (2, "completed", False)])
 
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
@@ -101,10 +106,16 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
             else:
                 assert response.status_code == 200
                 assert currency == "EUR"
+                queue = await conn.execute(
+                    select(PrintQueueItem.status, PrintQueueItem.manual_start).order_by(PrintQueueItem.id)
+                )
+                assert queue.all() == [("pending", True), ("completed", False)]
                 assert await conn.scalar(select(User.role).where(User.id == 7)) == "user"
                 new_id = await conn.scalar(insert(User).values(username="after-restore").returning(User.id))
                 assert new_id == 8
                 secret = await conn.scalar(select(UserTOTP._secret_enc).where(UserTOTP.user_id == 7))
+                if not secret.startswith("fernet:"):
+                    pytest.fail("Restore stored the legacy setting without encryption")
                 if encryption.mfa_decrypt(secret) != "fixture-totp-seed":
                     pytest.fail("The restored key did not decrypt the restored setting")
                 assert (archive_dir / "restored.txt").read_text(encoding="utf-8") == "restored archive"

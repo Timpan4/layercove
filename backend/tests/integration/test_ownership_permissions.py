@@ -1376,6 +1376,10 @@ class TestReadIDORClosure(TestOwnershipPermissionsSetup):
         archive.created_by_id = auth_setup["operator2_user"]["id"]
         await db_session.commit()
         assert (await async_client.get(f"/api/v1/print-log/{log_entry.id}/thumbnail", params=query)).status_code == 404
+        log_list = await async_client.get("/api/v1/print-log/", headers=headers)
+        assert log_list.is_success
+        listed_entry = next(entry for entry in log_list.json()["items"] if entry["id"] == log_entry.id)
+        assert listed_entry["thumbnail_path"] is None
 
         assert (await async_client.post("/api/v1/auth/logout", headers=headers)).is_success
         assert (await async_client.get(thumb_path, params=query)).status_code == 401

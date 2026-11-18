@@ -41,6 +41,8 @@ Restore the backup into a disposable LayerCove instance and restart that instanc
 
 Restore validates the database and encrypted settings before replacing data. If automatic recovery after a failed restore is incomplete, the server logs identify the directories containing the retained recovery files.
 
+Restored pending print jobs stay in the queue and require a manual start. Check which jobs already ran before starting them.
+
 Uploaded and scheduled backup ZIPs are limited to 4 GiB uncompressed and 65,535 entries, counting both files and directories. Set `BACKUP_RESTORE_MAX_UNCOMPRESSED_BYTES` and `BACKUP_RESTORE_MAX_ENTRIES` in the environment or `.env` before starting LayerCove to change these limits. Allow space for extraction and staging on the destination filesystems.
 
 ## Optional bundled Spoolman

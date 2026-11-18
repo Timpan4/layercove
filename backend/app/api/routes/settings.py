@@ -683,7 +683,11 @@ async def restore_backup(
     file: UploadFile = File(...),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_RESTORE),
 ):
-    """Restore a staged backup and preserve the previous state if an operation fails."""
+    """Restore a staged backup and hold restored pending prints for manual start.
+
+    An incomplete rollback returns an error and retains recovery files. A committed
+    restore can report success and request a restart if service recovery fails.
+    """
     return await restore_backup_zip(file.file, file.filename)
 
 
@@ -696,18 +700,22 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
     from backend.app.core import database, encryption
     from backend.app.core.db_dialect import is_sqlite
     from backend.app.core.paths import resolve_data_dir
+    from backend.app.core.websocket import ws_manager
     from backend.app.services.backup_restore import (
         RestoreFiles,
         copy_sqlite_database,
         extract_backup,
+        prepare_backup_secrets,
+        require_manual_start_for_pending_prints,
         validate_backup_database,
-        validate_backup_secrets,
+        validate_restored_sqlite_columns,
     )
     from backend.app.services.mqtt_relay import mqtt_relay
     from backend.app.services.notification_service import notification_service
     from backend.app.services.print_scheduler import scheduler as print_scheduler
     from backend.app.services.printer_manager import init_printer_connections, printer_manager
     from backend.app.services.smart_plug_manager import smart_plug_manager
+    from backend.app.services.spoolman import close_spoolman_client
     from backend.app.services.virtual_printer import virtual_printer_manager
 
     if not filename or not filename.endswith(".zip"):
@@ -716,7 +724,7 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
         raise HTTPException(409, "A restore is already in progress")
 
     sqlite_target = is_sqlite()
-    postgres_tables = () if sqlite_target else tuple(database.Base.metadata.tables.values())
+    tables = tuple(database.Base.metadata.tables.values())
     files = RestoreFiles()
     services_paused = False
     previous_db = db_path = None
@@ -740,24 +748,27 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                     max_bytes=app_settings.backup_restore_max_uncompressed_bytes,
                     max_entries=app_settings.backup_restore_max_entries,
                 )
-                await run_in_threadpool(validate_backup_database, backup_db, postgres_tables)
+                await run_in_threadpool(validate_backup_database, backup_db, () if sqlite_target else tables)
                 destination_key = resolve_data_dir() / ".mfa_encryption_key"
                 await run_in_threadpool(
-                    validate_backup_secrets, backup_db, extracted / destination_key.name, destination_key
+                    prepare_backup_secrets, backup_db, extracted / destination_key.name, destination_key
                 )
-                activity_paused = True
-                await restore_activity.pause()
-                await _backup_restore_lock.acquire()
-                backup_locked = True
+                await run_in_threadpool(require_manual_start_for_pending_prints, backup_db)
                 await run_in_threadpool(
                     files.stage,
                     extracted,
                     _backup_directories(),
                     destination_key,
                 )
+                activity_paused = True
+                await restore_activity.pause()
+                await _backup_restore_lock.acquire()
+                backup_locked = True
 
                 with CancelScope(shield=True):
                     services_paused = True
+                    await ws_manager.close_for_restore()
+                    await close_spoolman_client()
                     await print_scheduler.pause_for_restore()
                     await smart_plug_manager.pause_for_restore()
                     notification_service.stop_digest_scheduler()
@@ -784,6 +795,7 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                         sqlite_replaced = True
                         await run_in_threadpool(copy_sqlite_database, backup_db, db_path)
                         await database.init_db()
+                        await run_in_threadpool(validate_restored_sqlite_columns, db_path, tables)
                     else:
                         await _import_sqlite_to_postgres(backup_db)
                     committed = True
@@ -807,7 +819,7 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                         print_scheduler.resume_after_restore()
                 if _resume_background_services() is False or not plate_clear_loaded:
                     message = "Backup restored successfully. Restart LayerCove to finish restarting services."
-            return {"success": True, "message": message}
+            return {"success": True, "message": f"{message} Start restored pending prints manually from the queue."}
         except BaseException as error:
             if committed:
                 raise

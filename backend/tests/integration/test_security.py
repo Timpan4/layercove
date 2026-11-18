@@ -1918,13 +1918,14 @@ class TestBackupKeyFiles:
         import sqlite3
         from contextlib import closing
 
+        from sqlalchemy.dialects import sqlite
+        from sqlalchemy.schema import CreateTable
+
+        from backend.app.core.database import Base
+
         with closing(sqlite3.connect(path)) as conn:
-            conn.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
-            conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
-            conn.execute("CREATE TABLE printers (id INTEGER PRIMARY KEY, name TEXT)")
-            conn.execute(
-                "CREATE TABLE print_archives (id INTEGER PRIMARY KEY, filename TEXT, file_path TEXT, file_size INTEGER)"
-            )
+            for name in ("settings", "users", "printers", "print_archives"):
+                conn.execute(str(CreateTable(Base.metadata.tables[name]).compile(dialect=sqlite.dialect())))
             conn.commit()
         return path
 

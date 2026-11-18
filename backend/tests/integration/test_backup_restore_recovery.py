@@ -10,12 +10,15 @@ from unittest.mock import AsyncMock
 import pytest
 from cryptography.fernet import Fernet
 from sqlalchemy import insert, select, text
+from sqlalchemy.dialects import sqlite
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.schema import CreateTable
 
 from backend.app.api.routes import settings as settings_routes
 from backend.app.core import database, encryption
 from backend.app.core.config import settings
 from backend.app.core.database import async_session as application_session
+from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
@@ -24,14 +27,10 @@ from backend.app.models.user_totp import UserTOTP
 
 def write_database(path, value, *, settings_only=False):
     with closing(sqlite3.connect(path)) as connection, connection:
-        connection.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
-        connection.execute("INSERT INTO settings VALUES (1, 'currency', ?)", (value,))
-        if not settings_only:
-            connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
-            connection.execute("CREATE TABLE printers (id INTEGER PRIMARY KEY, name TEXT)")
-            connection.execute(
-                "CREATE TABLE print_archives (id INTEGER PRIMARY KEY, filename TEXT, file_path TEXT, file_size INTEGER)"
-            )
+        tables = ("settings",) if settings_only else ("settings", "users", "printers", "print_archives")
+        for table in tables:
+            connection.execute(str(CreateTable(database.Base.metadata.tables[table]).compile(dialect=sqlite.dialect())))
+        connection.execute("INSERT INTO settings (id, key, value) VALUES (1, 'currency', ?)", (value,))
 
 
 @pytest.fixture
@@ -48,6 +47,9 @@ def restore_fixture(monkeypatch, tmp_path, request):
     write_database(current_db, "SEK")
     backup = tmp_path / "backup.db"
     write_database(backup, "EUR", settings_only=getattr(request, "param", None) == "settings-only")
+    if getattr(request, "param", None) == "missing-printer-column":
+        with closing(sqlite3.connect(backup)) as connection, connection:
+            connection.execute("ALTER TABLE printers DROP COLUMN ip_address")
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as zipped:
         zipped.write(backup, "layercove.db")
@@ -88,6 +90,16 @@ async def test_settings_only_backup_is_rejected_before_changing_live_data(async_
 
     assert response.status_code == 400, response.text
     assert "missing" in response.json()["detail"].lower()
+    assert_original()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("restore_fixture", ["missing-printer-column"], indirect=True)
+async def test_sqlite_restore_rejects_missing_runtime_columns(async_client, restore_fixture):
+    files, assert_original = restore_fixture
+    response = await async_client.post("/api/v1/settings/restore", files=files)
+    assert response.status_code == 400
+    assert "ip_address" in response.json()["detail"]
     assert_original()
 
 
@@ -295,6 +307,41 @@ async def test_http_admission_stays_paused_until_printers_reconnect(async_client
 
 
 @pytest.mark.integration
+async def test_restore_closes_websockets_admitted_before_replacement(
+    async_client, restore_fixture, monkeypatch, test_engine
+):
+    from backend.app.main import app
+
+    files, _ = restore_fixture
+    monkeypatch.setattr("backend.app.api.routes.websocket.async_session", async_sessionmaker(test_engine))
+    scope = {
+        "type": "websocket",
+        "path": "/api/v1/ws",
+        "root_path": "",
+        "query_string": b"",
+        "scheme": "ws",
+        "headers": [],
+        "subprotocols": [],
+    }
+    incoming = asyncio.Queue()
+    outgoing = asyncio.Queue()
+    await incoming.put({"type": "websocket.connect"})
+    socket = asyncio.create_task(app(scope, incoming.get, outgoing.put))
+    accepted = asyncio.create_task(outgoing.get())
+    try:
+        await asyncio.wait((socket, accepted), return_when=asyncio.FIRST_COMPLETED)
+        assert accepted.done()
+        assert (await accepted)["type"] == "websocket.accept"
+        assert (await async_client.post("/api/v1/settings/restore", files=files)).is_success
+        assert not outgoing.empty(), "Restore left a pre-restore WebSocket open"
+        assert outgoing.get_nowait()["type"] == "websocket.close"
+    finally:
+        accepted.cancel()
+        await incoming.put({"type": "websocket.disconnect", "code": 1000})
+        await socket
+
+
+@pytest.mark.integration
 async def test_restore_cancels_old_auto_off_before_printers_reconnect(async_client, monkeypatch, restore_fixture):
     from backend.app.services.smart_plug_manager import smart_plug_manager
 
@@ -331,9 +378,13 @@ async def test_restore_cancels_old_auto_off_before_printers_reconnect(async_clie
 async def test_file_failure_aborts_restore_with_original_files(async_client, monkeypatch, restore_fixture):
     files, assert_original = restore_fixture
     copy2 = shutil.copy2
+    loop = asyncio.get_running_loop()
+    staging_status = []
 
     def copy_file(source, target, *args, **kwargs):
         if os.fspath(source).endswith("/new.txt"):
+            request = asyncio.run_coroutine_threadsafe(async_client.get("/api/v1/settings/"), loop)
+            staging_status.append(request.result().status_code)
             raise OSError("fixture storage failure")
         return copy2(source, target, *args, **kwargs)
 
@@ -341,7 +392,20 @@ async def test_file_failure_aborts_restore_with_original_files(async_client, mon
     response = await async_client.post("/api/v1/settings/restore", files=files)
 
     assert response.status_code == 500
+    assert staging_status == [200]
     assert_original()
+
+
+@pytest.mark.integration
+async def test_restore_discards_spoolman_client_from_previous_settings(async_client, monkeypatch, restore_fixture):
+    from backend.app.services import spoolman
+
+    files, _ = restore_fixture
+    old_client = AsyncMock()
+    monkeypatch.setattr(spoolman, "_spoolman_client", old_client)
+
+    assert (await async_client.post("/api/v1/settings/restore", files=files)).is_success
+    assert await spoolman.get_spoolman_client() is None
 
 
 @pytest.mark.integration
@@ -365,6 +429,8 @@ async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_cli
             await connection.execute(insert(Settings).values(key="currency", value="SEK"))
             await connection.execute(insert(Settings).values(key="mqtt_enabled", value="false"))
             await connection.execute(insert(Printer).values(id=7, name="Restored printer", awaiting_plate_clear=True))
+            await connection.execute(insert(PrintQueueItem).values(id=41, status="pending", manual_start=False))
+            await connection.execute(insert(PrintQueueItem).values(id=42, status="completed", manual_start=False))
             await connection.execute(insert(User).values(id=7, username="restored-user"))
             secret = "fernet:" + Fernet(source_key).encrypt(b"fixture-totp-seed").decode()
             await connection.execute(UserTOTP.__table__.insert().values(user_id=7, secret=secret))
@@ -428,6 +494,10 @@ async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_cli
     try:
         async with reopened.connect() as connection:
             assert await connection.scalar(select(Settings.value).where(Settings.key == "currency")) == "EUR"
+            queue = await connection.execute(
+                select(PrintQueueItem.status, PrintQueueItem.manual_start).order_by(PrintQueueItem.id)
+            )
+            assert queue.all() == [("pending", True), ("completed", False)]
             stored = await connection.scalar(select(UserTOTP._secret_enc).where(UserTOTP.user_id == 7))
             if encryption.mfa_decrypt(stored) != "fixture-totp-seed":
                 pytest.fail("The restored setting cannot be decrypted")

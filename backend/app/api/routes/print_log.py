@@ -78,6 +78,19 @@ async def get_print_log(
     query = query.order_by(PrintLogEntry.created_at.desc()).offset(offset).limit(limit)
     result = await db.execute(query)
     entries = result.scalars().all()
+    visible_archives = set()
+    if user is not None and not can_read_all:
+        thumbnail_archives = {
+            entry.archive_id for entry in entries if entry.thumbnail_path and entry.archive_id is not None
+        }
+        if thumbnail_archives:
+            visible_archives = set(
+                await db.scalars(
+                    select(PrintArchive.id).where(
+                        PrintArchive.id.in_(thumbnail_archives), PrintArchive.created_by_id == user.id
+                    )
+                )
+            )
 
     return PrintLogResponse(
         items=[
@@ -98,7 +111,9 @@ async def get_print_log(
                 # before #1687 part 4 — without it the Print Log table couldn't
                 # surface what the Failure Analysis widget already groups by.
                 failure_reason=e.failure_reason,
-                thumbnail_path=e.thumbnail_path,
+                thumbnail_path=e.thumbnail_path
+                if can_read_all or e.archive_id is None or e.archive_id in visible_archives
+                else None,
                 created_by_id=e.created_by_id,
                 created_by_username=e.created_by_username,
                 created_at=e.created_at,
