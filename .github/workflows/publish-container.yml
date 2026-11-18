@@ -205,13 +205,20 @@ jobs:
           IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
           RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
         run: |
-          if [[ -n "$RELEASE_TAG" ]]; then
-            tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/$RELEASE_TAG" --jq .sha)
+          source scripts/container-release-tag.sh
+          release_tags=$RELEASE_TAG
+          if [[ -z "$RELEASE_TAG" ]]; then
+            release_tags=$(gh api --paginate "repos/$GITHUB_REPOSITORY/tags" |
+              jq -r --arg sha "$SOURCE_SHA" '.[] | select(.commit.sha == $sha) | .name')
+          fi
+          while IFS= read -r release_tag; do
+            is_container_release_tag "$release_tag" || continue
+            tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/$release_tag" --jq .sha)
             if [[ "$tag_sha" != "$SOURCE_SHA" ]]; then
               echo 'The Git tag moved after verification.' >&2
               exit 1
             fi
-            version=${RELEASE_TAG#v}
+            version=${release_tag#v}
             tags=(--tag "$IMAGE_NAME:$version")
             if [[ "$version" != *-* ]]; then
               minor=${version%.*}
@@ -229,7 +236,7 @@ jobs:
               fi
             fi
             docker buildx imagetools create "${tags[@]}" "$IMAGE_NAME@$IMAGE_DIGEST"
-          fi
+          done <<< "$release_tags"
           tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           if [[ "$tip" != "$SOURCE_SHA" ]]; then
             IMAGE_DIGEST=$(bash scripts/find-container-digest.sh "$IMAGE_NAME" "$tip")

@@ -149,7 +149,7 @@ const promotion = publisher.split('        run: |\n').at(-1).trimEnd().split('\n
 const tip = 'd'.repeat(40);
 const tipDigest = 'sha256:' + 'e'.repeat(64);
 
-function promote(releaseTag, mainDigest = tipDigest, { gitTags = '', registryTags = '', tipError = false } = {}) {
+function promote(releaseTag, mainDigest = tipDigest, { gitTags = '', registryTags = '', releaseRefs = [], tipError = false } = {}) {
   return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', `
     fixture_state=$(mktemp -d)
     trap 'rm -rf -- "$fixture_state"' EXIT
@@ -160,9 +160,13 @@ function promote(releaseTag, mainDigest = tipDigest, { gitTags = '', registryTag
           : > "$fixture_state/tip-checked"
           printf '%s\n' "$TIP" ;;
         "repos/$GITHUB_REPOSITORY/commits/tags/$RELEASE_TAG") printf '%s\n' "$SOURCE_SHA" ;;
+        "repos/$GITHUB_REPOSITORY/commits/tags/"*)
+          jq -er --arg name "\u0024{2##*/}" '.[] | select(.name == $name) | .commit.sha' <<< "$RELEASE_REFS" ;;
         --paginate)
           if [[ "$3" == "repos/$GITHUB_REPOSITORY/git/matching-refs/tags/v1.2." ]]; then
             printf '%s\n' "$GIT_TAGS"
+          elif [[ "$3" == "repos/$GITHUB_REPOSITORY/tags" ]]; then
+            printf '%s\n' "$RELEASE_REFS"
           fi ;;
         *) return 64 ;;
       esac
@@ -186,7 +190,7 @@ function promote(releaseTag, mainDigest = tipDigest, { gitTags = '', registryTag
     env: {
       ...process.env, GITHUB_REPOSITORY: repository, IMAGE_NAME: imageName, IMAGE_DIGEST: digest,
       SOURCE_SHA: sha, RELEASE_TAG: releaseTag, TIP: tip, TIP_DIGEST: mainDigest,
-      GIT_TAGS: gitTags, REGISTRY_TAGS: registryTags, TIP_ERROR: String(tipError),
+      GIT_TAGS: gitTags, REGISTRY_TAGS: registryTags, RELEASE_REFS: JSON.stringify(releaseRefs), TIP_ERROR: String(tipError),
     },
   });
 }
@@ -195,6 +199,24 @@ test('a late publisher reconciles latest to the verified main tip digest', () =>
   const result = promote('');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, `buildx imagetools create --tag ${imageName}:latest ${imageName}@${tipDigest}\n`);
+});
+
+test('main CI completion picks up an existing release tag for its verified commit', () => {
+  const result = promote('', tipDigest, {
+    releaseRefs: [
+      { name: 'v1.2.3', commit: { sha } },
+      { name: 'v1.2.4', commit: { sha: tip } },
+      { name: 'v1.2.3-rc.01', commit: { sha } },
+      { name: 'v1.2.3-rc.1', commit: { sha } },
+    ],
+  });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, [
+    `buildx imagetools create --tag ${imageName}:1.2.3 --tag ${imageName}:1.2 ${imageName}@${digest}`,
+    `buildx imagetools create --tag ${imageName}:1.2.3-rc.1 ${imageName}@${digest}`,
+    `buildx imagetools create --tag ${imageName}:latest ${imageName}@${tipDigest}`,
+    '',
+  ].join('\n'));
 });
 
 test('a late publisher leaves latest in place before the main tip is published', () => {

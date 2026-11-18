@@ -8,21 +8,11 @@ if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
     exit 1
 fi
 if [[ "$source_ref" != refs/heads/main ]]; then
-    number='(0|[1-9][0-9]*)'
-    identifier='[0-9A-Za-z-]+'
-    if [[ ! "$source_ref" =~ ^refs/tags/v$number\.$number\.$number(-$identifier(\.$identifier)*)?$ ]]; then
+    source "${BASH_SOURCE[0]%/*}/container-release-tag.sh"
+    tag=${source_ref#refs/tags/}
+    if [[ "$tag" == "$source_ref" ]] || ! is_container_release_tag "$tag"; then
         printf 'Container release requires a valid SemVer vX.Y.Z tag or main.\n' >&2
         exit 1
-    fi
-    tag=${source_ref#refs/tags/}
-    if [[ "$tag" == *-* ]]; then
-        IFS=. read -r -a prerelease <<< "${tag#*-}"
-        for component in "${prerelease[@]}"; do
-            if [[ "$component" =~ ^0[0-9]+$ ]]; then
-                printf 'Container release requires valid SemVer prerelease identifiers.\n' >&2
-                exit 1
-            fi
-        done
     fi
     if ! tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/$tag" --jq .sha) || [[ "$tag_sha" != "$source_sha" ]]; then
         printf 'Release tag %s does not resolve to the requested commit.\n' "$tag" >&2
