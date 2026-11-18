@@ -768,6 +768,8 @@ class SmartPlugManager:
                         if success:
                             await self._mark_auto_off_executed(plug.id)
                             printer_manager.mark_printer_offline(plug.printer_id)
+                        else:
+                            retry = True
 
                 if require_connected:
                     self._retry_restored_auto_offs = retry

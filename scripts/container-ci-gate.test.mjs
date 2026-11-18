@@ -62,6 +62,21 @@ test('publishing accepts a valid prerelease tag', () => {
   assert.equal(result.stdout, '42\n');
 });
 
+test('publishing accepts a release at the OCI tag length boundary', () => {
+  const prefix = '1.2.3-';
+  const result = gate([valid], { ref: `refs/tags/v${prefix}${'a'.repeat(128 - prefix.length)}` });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, '42\n');
+});
+
+test('publishing rejects a release beyond the OCI tag length boundary', () => {
+  const prefix = '1.2.3-';
+  const result = gate([valid], { ref: `refs/tags/v${prefix}${'a'.repeat(129 - prefix.length)}` });
+  assert.equal(result.status, 1);
+  assert.equal(result.stdout, '');
+  assert.match(result.stderr, /128/);
+});
+
 test('publishing rejects a moved release tag despite successful CI for the original commit', () => {
   const result = gate([valid], { ref: 'refs/tags/v1.2.3', tagSha: 'b'.repeat(40) });
   assert.equal(result.status, 1);
@@ -177,6 +192,8 @@ function promote(releaseTag, mainDigest = tipDigest, { gitTags = '', registryTag
           [[ "$*" == "scripts/find-container-digest.sh $IMAGE_NAME $TIP" ]] || return 64
           printf '%s\n' "$TIP_DIGEST" ;;
         scripts/registry-container-digest.sh)
+          local tag="\u0024{2#*:}"
+          if (( \u0024{#tag} > 128 )); then return 64; fi
           if [[ $'\n'"$REGISTRY_TAGS"$'\n' == *$'\n'"\u0024{2#*:}"$'\n'* ]]; then
             printf '%s\n' "$TIP_DIGEST"
           fi ;;
@@ -239,6 +256,12 @@ test('rerunning an older release publishes its exact tag without moving the mino
 
 test('a newer Git tag without a published image does not block minor promotion', () => {
   const result = promote('v1.2.3', tipDigest, { gitTags: '1.2.10' });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, new RegExp(` --tag ${imageName}:1\\.2 `));
+});
+
+test('an oversized Git tag does not block minor promotion', () => {
+  const result = promote('v1.2.3', tipDigest, { gitTags: `1.2.${'9'.repeat(125)}` });
   assert.equal(result.status, 0, result.stderr);
   assert.match(result.stdout, new RegExp(` --tag ${imageName}:1\\.2 `));
 });

@@ -52,11 +52,11 @@ async def test_mqtt_configuration_loads_saved_plug_topics(db_session, monkeypatc
     assert plug_service.subscriptions == {"fixture/power": [(1, "power")], "fixture/energy": [(2, "energy")]}
 
 
-async def test_restored_auto_off_waits_for_deadline_and_known_printer_state(db_session, test_engine, monkeypatch):
+async def test_restored_auto_off_waits_for_idle_printer_and_retries_failure(db_session, test_engine, monkeypatch):
+    from backend.app.services import smart_plug_manager as plug_manager
     from backend.app.services.printer_manager import printer_manager
-    from backend.app.services.smart_plug_manager import SmartPlugManager
 
-    manager = SmartPlugManager()
+    manager = plug_manager.SmartPlugManager()
     plug = SmartPlug(
         name="Fixture power plug",
         printer_id=1,
@@ -69,7 +69,7 @@ async def test_restored_auto_off_waits_for_deadline_and_known_printer_state(db_s
     db_session.add_all([Printer(id=1, name="Fixture printer"), plug])
     await db_session.commit()
     status = SimpleNamespace(connected=True, state="IDLE")
-    power = SimpleNamespace(turn_off=AsyncMock(return_value=True))
+    power = SimpleNamespace(turn_off=AsyncMock(side_effect=[False, True]))
     monkeypatch.setattr(database, "async_session", async_sessionmaker(test_engine, expire_on_commit=False))
     monkeypatch.setattr(printer_manager, "get_status", lambda _printer_id: status)
     monkeypatch.setattr(printer_manager, "is_connected", lambda _printer_id: status.connected)
@@ -88,6 +88,18 @@ async def test_restored_auto_off_waits_for_deadline_and_known_printer_state(db_s
     status.state = "IDLE"
     await manager.resume_pending_auto_offs(require_connected=True)
     power.turn_off.assert_awaited_once()
+
+    async def finish_schedule_tick(_seconds):
+        raise asyncio.CancelledError
+
+    monkeypatch.setattr(manager, "_check_schedules", AsyncMock())
+    monkeypatch.setattr(plug_manager, "asyncio", SimpleNamespace(sleep=finish_schedule_tick))
+    with pytest.raises(asyncio.CancelledError):
+        await manager._schedule_loop()
+
+    assert power.turn_off.await_count == 2
+    await db_session.refresh(plug)
+    assert not plug.auto_off_pending
 
 
 def write_database(path, value, *, settings_only=False):

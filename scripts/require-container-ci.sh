@@ -11,7 +11,8 @@ if [[ "$source_ref" != refs/heads/main ]]; then
     source "${BASH_SOURCE[0]%/*}/container-release-tag.sh"
     tag=${source_ref#refs/tags/}
     if [[ "$tag" == "$source_ref" ]] || ! is_container_release_tag "$tag"; then
-        printf 'Container release requires a valid SemVer vX.Y.Z tag or main.\n' >&2
+        printf 'Container release requires main or a valid SemVer vX.Y.Z tag with at most %s characters after v.\n' \
+            "$CONTAINER_TAG_MAX_LENGTH" >&2
         exit 1
     fi
     if ! tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/$tag" --jq .sha) || [[ "$tag_sha" != "$source_sha" ]]; then

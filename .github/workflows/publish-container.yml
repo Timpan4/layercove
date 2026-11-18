@@ -226,6 +226,7 @@ jobs:
                 --jq '.[].ref | ltrimstr("refs/tags/v") | select(test("^[0-9]+[.][0-9]+[.][0-9]+$"))')
               ordered=$(printf '%s\n' "$candidates" "$version" | sort -Vr)
               while IFS= read -r candidate && [[ "$candidate" != "$version" ]]; do
+                is_container_release_tag "v$candidate" || continue
                 newer_digest=$(bash scripts/registry-container-digest.sh "$IMAGE_NAME:$candidate")
                 if [[ -n "$newer_digest" ]]; then
                   break
