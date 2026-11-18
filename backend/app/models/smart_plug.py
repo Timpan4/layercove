@@ -131,6 +131,16 @@ class SmartPlug(Base):
 
     # Relationship
     printer: Mapped["Printer"] = relationship(back_populates="smart_plugs")
+    auto_off_timer: Mapped["SmartPlugAutoOffTimer | None"] = relationship(passive_deletes="all")
+
+
+class SmartPlugAutoOffTimer(Base):
+    """Deadline for a pending timed shutdown, including after drying."""
+
+    __tablename__ = "smart_plug_auto_off_timers"
+
+    plug_id: Mapped[int] = mapped_column(ForeignKey("smart_plugs.id", ondelete="CASCADE"), primary_key=True)
+    due_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
 
 
 from backend.app.models.printer import Printer  # noqa: E402

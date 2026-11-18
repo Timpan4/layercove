@@ -2,11 +2,12 @@
 
 import asyncio
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import selectinload
 
 from backend.app.core.tasks import spawn_background_task
 from backend.app.services.homeassistant import homeassistant_service
@@ -29,7 +30,7 @@ class SmartPlugManager:
         self._scheduler_task: asyncio.Task | None = None
         self._snapshot_task: asyncio.Task | None = None
         self._last_schedule_check: dict[int, str] = {}  # plug_id -> "HH:MM" last executed
-        self._retry_restored_auto_offs = False
+        self._retry_pending_auto_offs = False
 
     async def get_service_for_plug(self, plug: "SmartPlug", db: AsyncSession | None = None):
         """Get the appropriate service for the plug type.
@@ -94,7 +95,7 @@ class SmartPlugManager:
         pending_tasks = tuple(self._pending_off.values())
         self._pending_off.clear()
         self._last_schedule_check.clear()
-        self._retry_restored_auto_offs = False
+        self._retry_pending_auto_offs = False
         tasks = [task for task in (*scheduler_tasks, *pending_tasks) if task is not None and not task.done()]
         for task in tasks:
             task.cancel()
@@ -105,7 +106,7 @@ class SmartPlugManager:
         while True:
             try:
                 await self._check_schedules()
-                if self._retry_restored_auto_offs:
+                if self._retry_pending_auto_offs:
                     await self.resume_pending_auto_offs(require_connected=True)
             except Exception as e:
                 logger.error("Error in schedule check: %s", e)
@@ -395,13 +396,14 @@ class SmartPlugManager:
 
     def _schedule_delayed_off(self, plug: "SmartPlug", printer_id: int, delay_seconds: int):
         """Schedule turn-off after delay."""
-        # Cancel any existing task for this plug
-        self._cancel_pending_off(plug.id)
+        self._cancel_pending_off(plug.id, clear_state=False)
 
         logger.info("Scheduling turn-off for plug '%s' in %s seconds", plug.name, delay_seconds)
 
-        # Mark as pending in database (survives restarts)
-        spawn_background_task(self._mark_auto_off_pending(plug.id, True), name=f"plug-auto-off-pending-{plug.id}")
+        due_at = datetime.now(timezone.utc) + timedelta(seconds=delay_seconds)
+        spawn_background_task(
+            self._mark_auto_off_pending(plug.id, True, due_at=due_at), name=f"plug-auto-off-pending-{plug.id}"
+        )
 
         task = asyncio.create_task(
             self._delayed_off(
@@ -490,8 +492,7 @@ class SmartPlugManager:
 
     def _schedule_temp_based_off(self, plug: "SmartPlug", printer_id: int, temp_threshold: int):
         """Monitor temperature and turn off when below threshold."""
-        # Cancel any existing task for this plug
-        self._cancel_pending_off(plug.id)
+        self._cancel_pending_off(plug.id, clear_state=False)
 
         logger.info("Scheduling temperature-based turn-off for plug '%s' (threshold: %s°C)", plug.name, temp_threshold)
 
@@ -624,11 +625,11 @@ class SmartPlugManager:
             if self._pending_off.get(plug_id) is asyncio.current_task():
                 del self._pending_off[plug_id]
 
-    async def _mark_auto_off_pending(self, plug_id: int, pending: bool):
+    async def _mark_auto_off_pending(self, plug_id: int, pending: bool, *, due_at: datetime | None = None):
         """Mark a plug as having a pending auto-off (survives restarts)."""
         try:
             from backend.app.core.database import async_session
-            from backend.app.models.smart_plug import SmartPlug
+            from backend.app.models.smart_plug import SmartPlug, SmartPlugAutoOffTimer
 
             async with async_session() as db:
                 result = await db.execute(select(SmartPlug).where(SmartPlug.id == plug_id))
@@ -636,6 +637,10 @@ class SmartPlugManager:
                 if plug:
                     plug.auto_off_pending = pending
                     plug.auto_off_pending_since = datetime.now(timezone.utc) if pending else None
+                    if due_at is not None:
+                        await db.merge(SmartPlugAutoOffTimer(plug_id=plug_id, due_at=due_at))
+                    else:
+                        await db.execute(delete(SmartPlugAutoOffTimer).where(SmartPlugAutoOffTimer.plug_id == plug_id))
                     await db.commit()
                     logger.debug("Marked plug %s auto_off_pending=%s", plug_id, pending)
         except Exception as e:
@@ -645,7 +650,7 @@ class SmartPlugManager:
         """Disable auto-off after it was executed (one-shot behavior unless persistent)."""
         try:
             from backend.app.core.database import async_session
-            from backend.app.models.smart_plug import SmartPlug
+            from backend.app.models.smart_plug import SmartPlug, SmartPlugAutoOffTimer
 
             async with async_session() as db:
                 result = await db.execute(select(SmartPlug).where(SmartPlug.id == plug_id))
@@ -658,6 +663,7 @@ class SmartPlugManager:
                     plug.auto_off_pending_since = None
                     plug.last_state = "OFF"
                     plug.last_checked = datetime.now(timezone.utc)
+                    await db.execute(delete(SmartPlugAutoOffTimer).where(SmartPlugAutoOffTimer.plug_id == plug_id))
                     await db.commit()
                     if plug.auto_off_persistent:
                         logger.info("Auto-off executed for plug %s (persistent, stays enabled)", plug_id)
@@ -666,14 +672,16 @@ class SmartPlugManager:
         except Exception as e:
             logger.warning("Failed to update plug %s after auto-off: %s", plug_id, e)
 
-    def _cancel_pending_off(self, plug_id: int):
+    def _cancel_pending_off(self, plug_id: int, *, clear_state: bool = True):
         """Cancel any pending off task for this plug."""
         if plug_id in self._pending_off:
             logger.debug("Cancelling pending turn-off for plug %s", plug_id)
             self._pending_off[plug_id].cancel()
             del self._pending_off[plug_id]
-            # Clear pending state in database
-            spawn_background_task(self._mark_auto_off_pending(plug_id, False), name=f"plug-auto-off-pending-{plug_id}")
+            if clear_state:
+                spawn_background_task(
+                    self._mark_auto_off_pending(plug_id, False), name=f"plug-auto-off-pending-{plug_id}"
+                )
 
     def cancel_all_pending(self):
         """Cancel all pending turn-off tasks."""
@@ -693,7 +701,9 @@ class SmartPlugManager:
             async with async_session() as db:
                 # Find all plugs with pending auto-off
                 result = await db.execute(
-                    select(SmartPlug).where(
+                    select(SmartPlug)
+                    .options(selectinload(SmartPlug.auto_off_timer))
+                    .where(
                         SmartPlug.auto_off_pending.is_(True),
                         SmartPlug.printer_id.isnot(None),
                     )
@@ -704,13 +714,13 @@ class SmartPlugManager:
                 for plug in pending_plugs:
                     if plug.id in self._pending_off:
                         continue
-                    # Check how long it's been pending (timeout after 2 hours)
+                    now = datetime.now(timezone.utc)
+                    timer = plug.auto_off_timer
+                    due_at = timer.due_at if timer is not None else None
+                    age_anchor = due_at or plug.auto_off_pending_since
                     elapsed = None
-                    if plug.auto_off_pending_since:
-                        pending_since = plug.auto_off_pending_since
-                        if pending_since.tzinfo is None:
-                            pending_since = pending_since.replace(tzinfo=timezone.utc)
-                        elapsed = (datetime.now(timezone.utc) - pending_since).total_seconds()
+                    if age_anchor is not None:
+                        elapsed = (now - age_anchor.replace(tzinfo=age_anchor.tzinfo or timezone.utc)).total_seconds()
                         if elapsed > 7200:  # 2 hours
                             logger.warning(
                                 f"Auto-off for plug '{plug.name}' was pending for {elapsed / 60:.0f} minutes, "
@@ -718,10 +728,12 @@ class SmartPlugManager:
                             )
                             plug.auto_off_pending = False
                             plug.auto_off_pending_since = None
+                            if timer is not None:
+                                await db.delete(timer)
                             await db.commit()
                             continue
 
-                    if require_connected:
+                    if require_connected or timer is not None:
                         status = printer_manager.get_status(plug.printer_id)
                         if (
                             not status
@@ -746,10 +758,16 @@ class SmartPlugManager:
                         )
                         plug.auto_off_pending = False
                         plug.auto_off_pending_since = None
+                        if timer is not None:
+                            await db.delete(timer)
                         await db.commit()
                         continue
 
-                    if require_connected:
+                    if timer is not None and elapsed is not None and elapsed < 0:
+                        retry = True
+                        continue
+
+                    if timer is None and require_connected:
                         delay = plug.off_delay_minutes if plug.off_delay_mode == "time" else 0
                         if plug.auto_off_after_drying:
                             delay = max(delay, plug.off_delay_after_drying_minutes)
@@ -758,7 +776,7 @@ class SmartPlugManager:
                             continue
 
                     # Resume the appropriate off mode
-                    if plug.off_delay_mode == "temperature":
+                    if timer is None and plug.off_delay_mode == "temperature":
                         self._schedule_temp_based_off(plug, plug.printer_id, plug.off_temp_threshold)
                     else:
                         logger.info("Time-based auto-off was pending, turning off plug '%s' now", plug.name)
@@ -771,8 +789,7 @@ class SmartPlugManager:
                         else:
                             retry = True
 
-                if require_connected:
-                    self._retry_restored_auto_offs = retry
+                self._retry_pending_auto_offs = retry
                 if pending_plugs:
                     logger.info("Resumed %s pending auto-off(s)", len(pending_plugs))
 

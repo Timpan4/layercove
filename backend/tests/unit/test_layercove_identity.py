@@ -215,7 +215,7 @@ def test_container_publish_workflow_matches_documented_image():
     assert "id: build" in workflow
     assert "sbom: true" in workflow
     assert "provenance: mode=max" in workflow
-    assert "uses: actions/attest@v4" in workflow
+    assert re.search(r"(?m)^\s*uses: actions/attest@[0-9a-f]{40}\b", workflow)
     assert "subject-name: ${{ env.IMAGE_NAME }}" in workflow
     assert "steps.meta.outputs.images" not in workflow
     assert "subject-digest: ${{ steps.build.outputs.digest }}" in workflow

@@ -3,6 +3,7 @@ import os
 import sqlite3
 import zipfile
 from contextlib import closing
+from datetime import datetime, timezone
 
 import pytest
 from cryptography.fernet import Fernet
@@ -12,6 +13,7 @@ from sqlalchemy.engine import make_url
 from backend.app.core import database, encryption
 from backend.app.models.print_queue import PrintQueueItem
 from backend.app.models.settings import Settings
+from backend.app.models.smart_plug import SmartPlugAutoOffTimer
 from backend.app.models.user import User
 from backend.app.models.user_totp import UserTOTP
 
@@ -43,6 +45,7 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
     (archive_dir / "existing.txt").write_text("existing archive", encoding="utf-8")
 
     backup = tmp_path / "backup.db"
+    due_at = datetime(2026, 11, 18, 15, 0, tzinfo=timezone.utc)
     with closing(sqlite3.connect(backup)) as source, source:
         source.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
         source.execute("INSERT INTO settings VALUES (1, 'currency', 'EUR')")
@@ -65,6 +68,11 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
         source.execute("INSERT INTO user_totp VALUES (9, 7, ?)", (fixture_secret,))
         source.execute("CREATE TABLE print_queue (id INTEGER PRIMARY KEY, status TEXT, manual_start BOOLEAN)")
         source.executemany("INSERT INTO print_queue VALUES (?, ?, ?)", [(1, "pending", False), (2, "completed", False)])
+        if failure in {"cleanup", None}:
+            source.execute("CREATE TABLE smart_plugs (id INTEGER PRIMARY KEY, name TEXT)")
+            source.execute("INSERT INTO smart_plugs VALUES (1, 'Restored plug')")
+            source.execute("CREATE TABLE smart_plug_auto_off_timers (plug_id INTEGER PRIMARY KEY, due_at TEXT)")
+            source.execute("INSERT INTO smart_plug_auto_off_timers VALUES (1, ?)", (due_at.isoformat(),))
 
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as archive:
@@ -110,6 +118,7 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
                     select(PrintQueueItem.status, PrintQueueItem.manual_start).order_by(PrintQueueItem.id)
                 )
                 assert queue.all() == [("pending", True), ("completed", False)]
+                assert await conn.scalar(select(SmartPlugAutoOffTimer.due_at)) == due_at
                 assert await conn.scalar(select(User.role).where(User.id == 7)) == "user"
                 new_id = await conn.scalar(insert(User).values(username="after-restore").returning(User.id))
                 assert new_id == 8

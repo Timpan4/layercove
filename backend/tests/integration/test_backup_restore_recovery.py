@@ -102,6 +102,65 @@ async def test_restored_auto_off_waits_for_idle_printer_and_retries_failure(db_s
     assert not plug.auto_off_pending
 
 
+@pytest.mark.parametrize("print_mode", ["time", "temperature"])
+async def test_drying_auto_off_keeps_its_deadline_after_restore(db_session, test_engine, monkeypatch, print_mode):
+    from backend.app.services import smart_plug_manager as plug_manager
+    from backend.app.services.printer_manager import printer_manager
+
+    now = datetime.now(timezone.utc)
+    monkeypatch.setattr(plug_manager, "datetime", SimpleNamespace(now=lambda _timezone: now))
+    monkeypatch.setattr(database, "async_session", async_sessionmaker(test_engine, expire_on_commit=False))
+    db_session.add_all(
+        [
+            Printer(id=1, name="Fixture printer"),
+            SmartPlug(
+                name="Fixture plug",
+                printer_id=1,
+                plug_type="tasmota",
+                auto_off_after_drying=True,
+                off_delay_after_drying_minutes=10,
+                off_delay_mode=print_mode,
+                off_delay_minutes=30,
+            ),
+        ]
+    )
+    await db_session.commit()
+
+    scheduled = plug_manager.SmartPlugManager()
+    writes = []
+
+    def track_write(work, *, name):
+        task = asyncio.create_task(work, name=name)
+        writes.append(task)
+        return task
+
+    monkeypatch.setattr(plug_manager, "spawn_background_task", track_write)
+    await scheduled.on_drying_complete(1, db_session)
+    await asyncio.gather(*writes)
+    await scheduled.pause_for_restore()
+
+    power = SimpleNamespace(turn_off=AsyncMock(return_value=True))
+    recovered = plug_manager.SmartPlugManager()
+    monkeypatch.setattr(
+        printer_manager, "get_status", lambda _id: SimpleNamespace(connected=True, state="IDLE", temperatures={})
+    )
+    monkeypatch.setattr(printer_manager, "is_connected", lambda _id: True)
+    monkeypatch.setattr(printer_manager, "mark_printer_offline", lambda _id: None)
+    monkeypatch.setattr(recovered, "get_service_for_plug", AsyncMock(return_value=power))
+
+    try:
+        now += timedelta(minutes=9)
+        await recovered.resume_pending_auto_offs(require_connected=True)
+        power.turn_off.assert_not_awaited()
+
+        now += timedelta(minutes=2)
+        await recovered.resume_pending_auto_offs(require_connected=True)
+        power.turn_off.assert_awaited_once()
+    finally:
+        await asyncio.gather(*writes)
+        await recovered.pause_for_restore()
+
+
 def write_database(path, value, *, settings_only=False):
     with closing(sqlite3.connect(path)) as connection, connection:
         tables = ("settings",) if settings_only else ("settings", "users", "printers", "print_archives")

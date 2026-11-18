@@ -779,6 +779,7 @@ class TestPendingAutoOffPersistence:
         mock_plug.printer_id = 1
         mock_plug.auto_off_pending = True
         mock_plug.auto_off_pending_since = datetime.now(timezone.utc)
+        mock_plug.auto_off_timer = None
         mock_plug.off_delay_mode = "temperature"
         mock_plug.off_temp_threshold = 70
 
@@ -810,6 +811,7 @@ class TestPendingAutoOffPersistence:
         mock_plug.printer_id = 1
         mock_plug.auto_off_pending = True
         mock_plug.auto_off_pending_since = datetime.now(timezone.utc)
+        mock_plug.auto_off_timer = None
         mock_plug.off_delay_mode = "time"
 
         with (
@@ -844,6 +846,7 @@ class TestPendingAutoOffPersistence:
         mock_plug.printer_id = 1
         mock_plug.auto_off_pending = True
         mock_plug.auto_off_pending_since = datetime.now(timezone.utc)
+        mock_plug.auto_off_timer = None
         mock_plug.off_delay_mode = "time"
 
         with (
