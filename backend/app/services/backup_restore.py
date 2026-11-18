@@ -12,12 +12,18 @@ from typing import BinaryIO
 
 from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
-from sqlalchemy import Table
+from sqlalchemy import Table, literal_column, select
 
 from backend.app.utils.safe_path import PathTraversalError, safe_join_under
 
 logger = logging.getLogger(__name__)
 RESTORE_WORKSPACE_PREFIX = ".layercove-restore-"
+_REQUIRED_BACKUP_COLUMNS = {
+    "settings": {"id", "key", "value"},
+    "users": {"id", "username"},
+    "printers": {"id", "name"},
+    "print_archives": {"id", "filename", "file_path", "file_size"},
+}
 
 
 def extract_backup(file: BinaryIO, destination: Path) -> Path:
@@ -54,9 +60,8 @@ def copy_sqlite_database(source: Path, destination: Path) -> None:
         reader.backup(writer)
 
 
-def source_columns(source: sqlite3.Connection, table: Table) -> set[str]:
-    # Table names come from the application's SQLAlchemy metadata.
-    return {row[1] for row in source.execute(f'PRAGMA table_info("{table.name}")')}
+def source_columns(source: sqlite3.Connection, table_name: str) -> set[str]:
+    return {row[0] for row in source.execute("SELECT name FROM pragma_table_info(?)", (table_name,))}
 
 
 def validate_backup_database(path: Path, postgres_tables: tuple[Table, ...] = ()) -> None:
@@ -64,10 +69,17 @@ def validate_backup_database(path: Path, postgres_tables: tuple[Table, ...] = ()
         with closing(open_source_database(path)) as source:
             if source.execute("PRAGMA quick_check").fetchall() != [("ok",)]:
                 raise HTTPException(400, "Invalid backup: database integrity check failed")
-            if source.execute("PRAGMA table_info(settings)").fetchone() is None:
-                raise HTTPException(400, "Invalid backup: layercove.db has no settings table")
+            for table_name, required_columns in _REQUIRED_BACKUP_COLUMNS.items():
+                is_table = source.execute(
+                    "SELECT 1 FROM sqlite_schema WHERE name = ? AND type = 'table'", (table_name,)
+                ).fetchone()
+                if not is_table:
+                    raise HTTPException(400, f"Invalid backup: layercove.db is missing the {table_name} table")
+                if missing_columns := required_columns - source_columns(source, table_name):
+                    names = ", ".join(sorted(missing_columns))
+                    raise HTTPException(400, f"Invalid backup: {table_name} is missing required columns: {names}")
             for table in postgres_tables:
-                columns = source_columns(source, table)
+                columns = source_columns(source, table.name)
                 if not columns:
                     continue
                 missing = [
@@ -76,20 +88,21 @@ def validate_backup_database(path: Path, postgres_tables: tuple[Table, ...] = ()
                     if col.name not in columns
                     and (col.primary_key or (not col.nullable and col.default is None and col.server_default is None))
                 ]
-                if missing and source.execute(f'SELECT 1 FROM "{table.name}" LIMIT 1').fetchone():  # noqa: S608
-                    raise HTTPException(
-                        400, f"Invalid backup: {table.name} is missing required columns: {', '.join(missing)}"
-                    )
+                if missing:
+                    first_row = select(literal_column("1")).select_from(table).limit(1)
+                    query = first_row.compile(compile_kwargs={"literal_binds": True})
+                    if source.execute(str(query)).fetchone():
+                        raise HTTPException(
+                            400, f"Invalid backup: {table.name} is missing required columns: {', '.join(missing)}"
+                        )
     except sqlite3.DatabaseError:
         raise HTTPException(400, "Invalid backup: layercove.db is not a readable SQLite database")
 
 
 def validate_backup_secrets(database: Path, backup_key: Path, current_key: Path) -> None:
-    from backend.app.core.encryption import _FERNET_PREFIX, _LEGACY_ENV_KEY, _PREFERRED_ENV_KEY
+    from backend.app.core.encryption import _FERNET_PREFIX, configured_fernet_key
 
-    configured_keys = [
-        value.encode() for name in (_PREFERRED_ENV_KEY, _LEGACY_ENV_KEY) if (value := os.environ.get(name)) is not None
-    ]
+    env_key, key_source = configured_fernet_key()
     key_path = backup_key if backup_key.exists() else current_key
     if backup_key.exists() and not backup_key.is_file():
         raise HTTPException(400, "Invalid backup: the MFA encryption key is invalid")
@@ -99,18 +112,18 @@ def validate_backup_secrets(database: Path, backup_key: Path, current_key: Path)
             Fernet(file_key)
         except ValueError:
             raise HTTPException(400, "Invalid backup: the MFA encryption key is invalid")
+    key = file_key if key_source == "file" else env_key.encode() if env_key else None
 
     with closing(open_source_database(database)) as source:
-        for table, column in (("oidc_providers", "client_secret"), ("user_totp", "secret")):
-            columns = {item[1] for item in source.execute(f"PRAGMA table_info({table})")}
-            if column not in columns:
+        encrypted_columns = (
+            ("oidc_providers", "client_secret", "SELECT client_secret FROM oidc_providers WHERE client_secret LIKE ?"),
+            ("user_totp", "secret", "SELECT secret FROM user_totp WHERE secret LIKE ?"),
+        )
+        for table, column, query in encrypted_columns:
+            if column not in source_columns(source, table):
                 continue
-            rows = source.execute(f"SELECT {column} FROM {table} WHERE {column} LIKE ?", (_FERNET_PREFIX + "%",))  # noqa: S608
-            for (value,) in rows:
+            for (value,) in source.execute(query, (_FERNET_PREFIX + "%",)):
                 try:
-                    if configured_keys and any(other != configured_keys[0] for other in configured_keys):
-                        raise ValueError
-                    key = configured_keys[0] if configured_keys else file_key
                     if key is None:
                         raise ValueError
                     Fernet(key).decrypt(value.removeprefix(_FERNET_PREFIX).encode())

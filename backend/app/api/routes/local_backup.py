@@ -80,24 +80,15 @@ async def restore_backup(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_RESTORE),
 ):
     """Restore from a scheduled backup file on the server."""
-    import io
-
-    from fastapi import UploadFile
-    from fastapi.responses import JSONResponse
+    from backend.app.api.routes.settings import restore_backup_zip
 
     settings = await local_backup_service._load_settings()
     file_path = local_backup_service.resolve_backup_file(settings["path"], filename)
     if file_path is None:
         return JSONResponse(status_code=404, content={"success": False, "message": "Backup not found"})
 
-    from backend.app.api.routes.settings import restore_backup as settings_restore_backup
-    from backend.app.core.database import async_session
-
-    content = file_path.read_bytes()
-    upload = UploadFile(filename=filename, file=io.BytesIO(content))
-
-    async with async_session() as db:
-        return await settings_restore_backup(file=upload, db=db)
+    with file_path.open("rb") as file:
+        return await restore_backup_zip(file, filename)
 
 
 @router.delete("/backups/{filename}")

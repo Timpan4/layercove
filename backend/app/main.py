@@ -84,6 +84,7 @@ from backend.app.api.routes.support import init_debug_logging
 from backend.app.core.config import APP_VERSION, settings as app_settings
 from backend.app.core.database import async_session, engine, init_db
 from backend.app.core.moonraker_upload_limit import MoonrakerUploadBodyLimitMiddleware
+from backend.app.core.restore_activity import restore_activity
 from backend.app.core.tasks import spawn_background_task
 from backend.app.core.websocket import ws_manager
 from backend.app.models.smart_plug import SmartPlug
@@ -2423,14 +2424,17 @@ def _load_objects_from_archive(archive, printer_id: int, logger) -> None:
 
 async def on_print_lifecycle(event: PrintLifecycleEvent) -> None:
     """Dispatch provider-neutral lifecycle events to application policy."""
-    if event.kind == "started":
-        await on_print_start(event.printer_id, event.data)
-    elif event.kind in {"completed", "failed", "cancelled"}:
-        await on_print_complete(event.printer_id, event.data)
-    elif event.kind == "print_running_observed":
-        await on_print_running_observed(event.printer_id, event.data)
-    else:
-        await on_finish_photo_moment(event.printer_id, event.data)
+    with restore_activity.admit() as admitted:
+        if not admitted:
+            return
+        if event.kind == "started":
+            await on_print_start(event.printer_id, event.data)
+        elif event.kind in {"completed", "failed", "cancelled"}:
+            await on_print_complete(event.printer_id, event.data)
+        elif event.kind == "print_running_observed":
+            await on_print_running_observed(event.printer_id, event.data)
+        else:
+            await on_finish_photo_moment(event.printer_id, event.data)
 
 
 async def on_print_start(printer_id: int, data: dict):
@@ -6965,6 +6969,27 @@ async def auth_middleware(request, call_next):
         )
 
     return await call_next(request)
+
+
+@app.middleware("http")
+async def restore_activity_middleware(request, call_next):
+    from starlette.responses import JSONResponse
+
+    path = request.url.path
+    prefix = app_settings.api_prefix
+    if not path.startswith(f"{prefix}/"):
+        return await call_next(request)
+    route = path.removeprefix(prefix)
+    if request.method == "POST" and (
+        route == "/settings/restore" or re.fullmatch(r"/local-backup/backups/[^/]+/restore", route)
+    ):
+        if restore_activity.paused:
+            return JSONResponse({"detail": "Backup restoration is in progress"}, status_code=409)
+        return await call_next(request)
+    with restore_activity.admit() as admitted:
+        if not admitted:
+            return JSONResponse({"detail": "Backup restoration is in progress"}, status_code=503)
+        return await call_next(request)
 
 
 @app.middleware("http")

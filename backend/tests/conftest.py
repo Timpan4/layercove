@@ -216,6 +216,7 @@ async def async_client(test_engine, db_session) -> AsyncGenerator[AsyncClient, N
         patch("backend.app.core.auth.async_session", test_async_session),
         patch("backend.app.main.async_session", test_async_session),
         patch("backend.app.main.init_printer_connections", mock_init_printer_connections),
+        patch("backend.app.services.printer_manager.init_printer_connections", mock_init_printer_connections),
     ):
         # Seed default groups for tests that need them
         from backend.app.core.database import seed_default_groups

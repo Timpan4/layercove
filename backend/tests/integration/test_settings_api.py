@@ -966,6 +966,11 @@ class TestSimplifiedBackupRestore:
         backup_db = tmp_path / "backup.db"
         with closing(sqlite3.connect(backup_db)) as conn:
             conn.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
+            conn.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
+            conn.execute("CREATE TABLE printers (id INTEGER PRIMARY KEY, name TEXT)")
+            conn.execute(
+                "CREATE TABLE print_archives (id INTEGER PRIMARY KEY, filename TEXT, file_path TEXT, file_size INTEGER)"
+            )
             conn.commit()
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:

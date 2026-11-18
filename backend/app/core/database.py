@@ -1,5 +1,7 @@
 import asyncio
 import logging
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 
 from sqlalchemy import DateTime, event
@@ -10,6 +12,7 @@ from sqlalchemy.types import NullType, TupleType
 
 from backend.app.core.config import settings
 from backend.app.core.db_dialect import is_sqlite
+from backend.app.core.restore_activity import restore_activity
 
 logger = logging.getLogger(__name__)
 
@@ -135,11 +138,17 @@ def _create_engine(*, hide_parameters: bool = False):
 
 engine = _create_engine()
 
-async_session = async_sessionmaker(
+_session_factory = async_sessionmaker(
     engine,
     class_=AsyncSession,
     expire_on_commit=False,
 )
+
+
+@asynccontextmanager
+async def async_session() -> AsyncIterator[AsyncSession]:
+    async with restore_activity.wait_for_admission(), _session_factory() as session:
+        yield session
 
 
 async def run_with_retry(fn, *, max_attempts: int = 3, label: str = ""):
@@ -186,9 +195,9 @@ async def close_all_connections():
 
 async def reinitialize_database():
     """Reinitialize database connection after restore."""
-    global engine, async_session
+    global engine, _session_factory
     engine = _create_engine()
-    async_session = async_sessionmaker(
+    _session_factory = async_sessionmaker(
         engine,
         class_=AsyncSession,
         expire_on_commit=False,

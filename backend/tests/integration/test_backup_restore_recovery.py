@@ -1,3 +1,4 @@
+import asyncio
 import io
 import os
 import shutil
@@ -8,25 +9,32 @@ from unittest.mock import AsyncMock
 
 import pytest
 from cryptography.fernet import Fernet
-from sqlalchemy import insert, select
+from sqlalchemy import insert, select, text
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
 from backend.app.api.routes import settings as settings_routes
 from backend.app.core import database, encryption
 from backend.app.core.config import settings
+from backend.app.core.database import async_session as application_session
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
 from backend.app.models.user_totp import UserTOTP
 
 
-def write_database(path, value):
+def write_database(path, value, *, settings_only=False):
     with closing(sqlite3.connect(path)) as connection, connection:
         connection.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
         connection.execute("INSERT INTO settings VALUES (1, 'currency', ?)", (value,))
+        if not settings_only:
+            connection.execute("CREATE TABLE users (id INTEGER PRIMARY KEY, username TEXT)")
+            connection.execute("CREATE TABLE printers (id INTEGER PRIMARY KEY, name TEXT)")
+            connection.execute(
+                "CREATE TABLE print_archives (id INTEGER PRIMARY KEY, filename TEXT, file_path TEXT, file_size INTEGER)"
+            )
 
 
 @pytest.fixture
-def restore_fixture(monkeypatch, tmp_path):
+def restore_fixture(monkeypatch, tmp_path, request):
     live = tmp_path / "live"
     live.mkdir()
     key = live / ".mfa_encryption_key"
@@ -38,7 +46,7 @@ def restore_fixture(monkeypatch, tmp_path):
     current_db = live / "layercove.db"
     write_database(current_db, "SEK")
     backup = tmp_path / "backup.db"
-    write_database(backup, "EUR")
+    write_database(backup, "EUR", settings_only=getattr(request, "param", None) == "settings-only")
     payload = io.BytesIO()
     with zipfile.ZipFile(payload, "w") as zipped:
         zipped.write(backup, "layercove.db")
@@ -70,17 +78,103 @@ def restore_fixture(monkeypatch, tmp_path):
 
 
 @pytest.mark.integration
-async def test_import_failure_preserves_live_key_database_and_files(async_client, monkeypatch, restore_fixture):
+@pytest.mark.parametrize("restore_fixture", ["settings-only"], indirect=True)
+async def test_settings_only_backup_is_rejected_before_changing_live_data(async_client, restore_fixture):
+    files, assert_original = restore_fixture
+
+    response = await async_client.post("/api/v1/settings/restore", files=files)
+
+    assert response.status_code == 400, response.text
+    assert "missing" in response.json()["detail"].lower()
+    assert_original()
+
+
+@pytest.mark.integration
+async def test_scheduled_backup_restores_through_the_same_preflight(
+    async_client, monkeypatch, tmp_path, restore_fixture
+):
+    from backend.app.services.local_backup import local_backup_service
+
+    files, _ = restore_fixture
+    filename = "layercove-backup-20261118-120000.zip"
+    (tmp_path / filename).write_bytes(files["file"][1])
+    monkeypatch.setattr(local_backup_service, "_load_settings", AsyncMock(return_value={"path": str(tmp_path)}))
+
+    response = await async_client.post(f"/api/v1/local-backup/backups/{filename}/restore")
+
+    assert response.is_success, response.text
+    with closing(sqlite3.connect(tmp_path / "live" / "layercove.db")) as connection:
+        assert connection.execute("SELECT value FROM settings WHERE key = 'currency'").fetchone() == ("EUR",)
+
+
+@pytest.mark.integration
+async def test_import_failure_preserves_live_key_database_and_files(async_client, monkeypatch, restore_fixture, caplog):
     files, assert_original = restore_fixture
     monkeypatch.setattr("backend.app.core.db_dialect.is_sqlite", lambda: False)
     monkeypatch.setattr(
-        settings_routes, "_import_sqlite_to_postgres", AsyncMock(side_effect=RuntimeError("fixture import failure"))
+        settings_routes, "_import_sqlite_to_postgres", AsyncMock(side_effect=RuntimeError("fixture private backup row"))
     )
 
     response = await async_client.post("/api/v1/settings/restore", files=files)
 
     assert response.status_code == 500
     assert_original()
+    assert "fixture private backup row" not in caplog.text
+
+
+@pytest.mark.integration
+async def test_http_requests_wait_for_restore_recovery(async_client, monkeypatch, restore_fixture):
+    from backend.app import main
+    from backend.app.services.printer_manager import PrintLifecycleEvent
+
+    files, assert_original = restore_fixture
+    importing = asyncio.Event()
+    finish_import = asyncio.Event()
+    background_started = asyncio.Event()
+    background_entered = asyncio.Event()
+    printer_events = []
+
+    async def record_event(printer_id, data):
+        printer_events.append(printer_id)
+
+    async def fail_import(*args):
+        importing.set()
+        await finish_import.wait()
+        raise RuntimeError("fixture import failure")
+
+    async def background_query():
+        background_started.set()
+        async with application_session() as db:
+            background_entered.set()
+            return await db.scalar(text("SELECT 1"))
+
+    monkeypatch.setattr("backend.app.core.db_dialect.is_sqlite", lambda: False)
+    monkeypatch.setattr(settings_routes, "_import_sqlite_to_postgres", fail_import)
+    monkeypatch.setattr(main, "on_print_start", record_event)
+    restore = asyncio.create_task(async_client.post("/api/v1/settings/restore", files=files))
+    entered = asyncio.create_task(importing.wait())
+    background = None
+    try:
+        await asyncio.wait((restore, entered), return_when=asyncio.FIRST_COMPLETED)
+        assert importing.is_set()
+        response = await async_client.get("/api/v1/settings/")
+        assert response.status_code == 503
+        background = asyncio.create_task(background_query())
+        await background_started.wait()
+        assert not background_entered.is_set()
+        await main.on_print_lifecycle(PrintLifecycleEvent(1, "started", {}))
+        assert printer_events == []
+    finally:
+        finish_import.set()
+        entered.cancel()
+        response = await restore
+        if background is not None:
+            assert await background == 1
+    assert response.status_code == 500
+    assert_original()
+    assert (await async_client.get("/api/v1/settings/")).status_code == 200
+    await main.on_print_lifecycle(PrintLifecycleEvent(1, "started", {}))
+    assert printer_events == [1]
 
 
 @pytest.mark.integration
@@ -101,7 +195,8 @@ async def test_file_failure_aborts_restore_with_original_files(async_client, mon
 
 
 @pytest.mark.integration
-async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_client, monkeypatch, tmp_path):
+@pytest.mark.parametrize("legacy_key", [None, "invalid-legacy-key"])
+async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_client, monkeypatch, tmp_path, legacy_key):
     source = tmp_path / "source"
     source.mkdir()
     source_db = source / "layercove.db"
@@ -145,6 +240,8 @@ async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_cli
     monkeypatch.setattr(settings, "database_url", destination_url)
     monkeypatch.setattr(database, "engine", destination_engine)
     monkeypatch.setattr(database, "async_session", async_sessionmaker(destination_engine, expire_on_commit=False))
+    if legacy_key is not None:
+        monkeypatch.setenv("MFA_ENCRYPTION_KEY", legacy_key)
     try:
         await database.init_db()
         restored = await async_client.post(

@@ -63,13 +63,8 @@ def _validate_fernet_key(key: str) -> bool:
     return len(decoded) == 32
 
 
-def _load_or_generate_key() -> tuple[str | None, _InternalSource]:
-    # Lazy import: keeps cryptography out of import-time even when the helper
-    # is patched in tests that never invoke encryption.
-    from cryptography.fernet import Fernet
-
-    from backend.app.core.paths import resolve_data_dir
-
+def configured_fernet_key() -> tuple[str | None, Literal["env", "none", "file"]]:
+    """Resolve environment precedence and report whether file fallback is allowed."""
     # 1. Environment variables. The preferred LayerCove name and legacy MFA
     # alias must agree when both are configured, so deployments cannot silently
     # select a key based on environment ordering.
@@ -105,6 +100,18 @@ def _load_or_generate_key() -> tuple[str | None, _InternalSource]:
             "MFA_ENCRYPTION_KEY is set but is not a valid Fernet key "
             "(must decode to exactly 32 bytes). Falling back to file-based key."
         )
+
+    return None, "file"
+
+
+def _load_or_generate_key() -> tuple[str | None, _InternalSource]:
+    from cryptography.fernet import Fernet
+
+    from backend.app.core.paths import resolve_data_dir
+
+    env_key, source = configured_fernet_key()
+    if source != "file":
+        return env_key, source
 
     data_dir = resolve_data_dir()
     key_file = data_dir / _KEY_FILE_NAME

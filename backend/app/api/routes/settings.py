@@ -4,6 +4,7 @@ import os
 import zipfile
 from datetime import datetime
 from pathlib import Path
+from typing import BinaryIO
 
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
@@ -15,6 +16,7 @@ from backend.app.core.auth import RequirePermissionIfAuthEnabled, caller_is_api_
 from backend.app.core.config import settings as app_settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
+from backend.app.core.restore_activity import restore_activity
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
 from backend.app.schemas.settings import AppSettings, AppSettingsUpdate
@@ -413,6 +415,13 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
     Otherwise a temporary file is created (caller must clean up).
     Returns (zip_path, filename).
     """
+    async with _backup_restore_lock:
+        if restore_activity.paused:
+            raise HTTPException(503, "Backup restoration is in progress")
+        return await _create_backup_zip(output_path)
+
+
+async def _create_backup_zip(output_path: Path | None) -> tuple[Path, str]:
     import shutil
     import tempfile
 
@@ -537,6 +546,8 @@ async def create_backup(
             media_type="application/zip",
             background=BackgroundTask(lambda: zip_file.unlink(missing_ok=True)),
         )
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error("Backup failed: %s", e, exc_info=True)
         return JSONResponse(
@@ -545,8 +556,8 @@ async def create_backup(
         )
 
 
-def _resume_background_services() -> None:
-    """Restart the schedulers paused for a restore that then failed."""
+def _resume_background_services() -> bool:
+    """Restart the schedulers paused for a restore."""
     from backend.app.core.tasks import spawn_background_task
     from backend.app.services.notification_service import notification_service
     from backend.app.services.print_scheduler import scheduler as print_scheduler
@@ -556,15 +567,17 @@ def _resume_background_services() -> None:
         spawn_background_task(print_scheduler.run(), name="print-scheduler")
         smart_plug_manager.start_scheduler()
         notification_service.start_digest_scheduler()
-        logger.info("Resumed background services after failed restore")
+        logger.info("Resumed background services after restore")
+        return True
     except Exception as e:
-        logger.warning("Could not resume background services after failed restore: %s", e)
+        logger.warning("Could not resume background services after restore (%s)", type(e).__name__)
+        return False
 
 
 _LEGACY_RESTORE_DROP_TABLES = ("spoolman_slot_assignments", "spoolman_k_profile")
 
 
-async def _import_sqlite_to_postgres(sqlite_path: Path, postgres_url: str) -> None:
+async def _import_sqlite_to_postgres(sqlite_path: Path) -> None:
     """Restore the current PostgreSQL schema and its data in one transaction."""
     import json
     import sqlite3
@@ -572,7 +585,7 @@ async def _import_sqlite_to_postgres(sqlite_path: Path, postgres_url: str) -> No
     from contextlib import closing
     from datetime import date, datetime, timezone
 
-    from sqlalchemy import JSON, Boolean, Date, DateTime, MetaData, func, select, text
+    from sqlalchemy import JSON, Boolean, Date, DateTime, MetaData, func, literal_column, select, text
     from sqlalchemy.schema import AddConstraint
 
     from backend.app.core.database import Base, _create_engine
@@ -606,21 +619,22 @@ async def _import_sqlite_to_postgres(sqlite_path: Path, postgres_url: str) -> No
 
     pg_engine = _create_engine(hide_parameters=True)
     try:
-        with closing(open_source_database(sqlite_path)) as source:
-            source.row_factory = sqlite3.Row
-            async with pg_engine.begin() as conn:
+        async with pg_engine.begin() as conn:
+            with closing(open_source_database(sqlite_path)) as source:
+                source.row_factory = sqlite3.Row
                 await conn.execute(text("SET LOCAL lock_timeout = '10s'"))
                 for table_name in [*metadata.tables, *_LEGACY_RESTORE_DROP_TABLES]:
                     await conn.execute(text(f'DROP TABLE IF EXISTS public."{table_name}" CASCADE'))  # noqa: S608
                 await conn.run_sync(without_foreign_keys.create_all)
 
                 for table in metadata.sorted_tables:
-                    existing = source_columns(source, table)
+                    existing = source_columns(source, table.name)
                     if not existing:
                         continue
                     columns = [column for column in table.columns if column.name in existing]
                     batches = defaultdict(list)
-                    for row in source.execute(f'SELECT * FROM "{table.name}"'):  # noqa: S608
+                    read_rows = select(literal_column("*")).select_from(table)
+                    for row in source.execute(str(read_rows)):
                         values = {}
                         for column in columns:
                             value = row[column.name]
@@ -642,10 +656,14 @@ async def _import_sqlite_to_postgres(sqlite_path: Path, postgres_url: str) -> No
                 for constraint in foreign_keys:
                     await conn.execute(AddConstraint(constraint))
     finally:
-        await pg_engine.dispose()
+        try:
+            await pg_engine.dispose()
+        except Exception as error:
+            logger.warning("Restore database engine cleanup failed (%s)", type(error).__name__)
 
 
 _restore_lock = asyncio.Lock()
+_backup_restore_lock = asyncio.Lock()
 
 
 @router.post("/restore")
@@ -654,6 +672,10 @@ async def restore_backup(
     _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_RESTORE),
 ):
     """Restore a staged backup and preserve the previous state if an operation fails."""
+    return await restore_backup_zip(file.file, file.filename)
+
+
+async def restore_backup_zip(file: BinaryIO, filename: str | None):
     import tempfile
 
     from anyio import CancelScope
@@ -671,10 +693,11 @@ async def restore_backup(
     )
     from backend.app.services.notification_service import notification_service
     from backend.app.services.print_scheduler import scheduler as print_scheduler
+    from backend.app.services.printer_manager import init_printer_connections, printer_manager
     from backend.app.services.smart_plug_manager import smart_plug_manager
     from backend.app.services.virtual_printer import virtual_printer_manager
 
-    if not file.filename or not file.filename.endswith(".zip"):
+    if not filename or not filename.endswith(".zip"):
         raise HTTPException(400, "Invalid backup file: must be a .zip file")
     if _restore_lock.locked():
         raise HTTPException(409, "A restore is already in progress")
@@ -687,18 +710,26 @@ async def restore_backup(
     sqlite_replaced = False
     virtual_printer_enabled = False
     needs_recovery = False
+    activity_paused = False
+    backup_locked = False
+    committed = False
+    printers_disconnected = False
     encryption_state = (encryption._fernet_instance, encryption._key_source, encryption._warn_shown)
 
     async with _restore_lock:
         try:
-            with tempfile.TemporaryDirectory() as temp_dir:
+            with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 extracted = Path(temp_dir).resolve()
-                backup_db = await run_in_threadpool(extract_backup, file.file, extracted)
+                backup_db = await run_in_threadpool(extract_backup, file, extracted)
                 await run_in_threadpool(validate_backup_database, backup_db, postgres_tables)
                 destination_key = resolve_data_dir() / ".mfa_encryption_key"
                 await run_in_threadpool(
                     validate_backup_secrets, backup_db, extracted / destination_key.name, destination_key
                 )
+                activity_paused = True
+                await restore_activity.pause()
+                await _backup_restore_lock.acquire()
+                backup_locked = True
                 await run_in_threadpool(
                     files.stage,
                     extracted,
@@ -714,8 +745,8 @@ async def restore_backup(
                     virtual_printer_enabled = virtual_printer_manager.is_enabled
                     if virtual_printer_enabled:
                         await virtual_printer_manager.stop_all()
-                    # Give cancelled loops time to release checked-out connections.
-                    await asyncio.sleep(1)
+                    printers_disconnected = True
+                    await printer_manager.disconnect_all_async()
                     await database.close_all_connections()
 
                     if sqlite_target:
@@ -733,15 +764,27 @@ async def restore_backup(
                         await run_in_threadpool(copy_sqlite_database, backup_db, db_path)
                         await database.init_db()
                     else:
-                        await _import_sqlite_to_postgres(backup_db, app_settings.database_url)
+                        await _import_sqlite_to_postgres(backup_db)
+                    committed = True
 
-            # The application restart initializes printer connections and resumes
-            # schedulers against the restored configuration.
-            return {
-                "success": True,
-                "message": "Backup restored successfully. Restart LayerCove to resume services.",
-            }
+            message = "Backup restored successfully."
+            with CancelScope(shield=True):
+                restore_activity.resume()
+                activity_paused = False
+                print_scheduler.resume_after_restore()
+                try:
+                    async with database.async_session() as db:
+                        await init_printer_connections(db)
+                    await virtual_printer_manager.sync_from_db()
+                    if _resume_background_services() is False:
+                        message = "Backup restored successfully. Restart LayerCove to finish restarting services."
+                except Exception as error:
+                    logger.error("Could not restart services after restore (%s)", type(error).__name__)
+                    message = "Backup restored successfully. Restart LayerCove to finish restarting services."
+            return {"success": True, "message": message}
         except BaseException as error:
+            if committed:
+                raise
             with CancelScope(shield=True):
                 if sqlite_replaced:
                     try:
@@ -758,16 +801,29 @@ async def restore_backup(
                 encryption._fernet_instance, encryption._key_source, encryption._warn_shown = encryption_state
 
                 if services_paused and not needs_recovery:
-                    _resume_background_services()
-                    if virtual_printer_enabled:
-                        try:
+                    restore_activity.resume()
+                    activity_paused = False
+                    print_scheduler.resume_after_restore()
+                    try:
+                        if printers_disconnected:
+                            async with database.async_session() as db:
+                                await init_printer_connections(db)
+                        if virtual_printer_enabled:
                             await virtual_printer_manager.sync_from_db()
-                        except Exception:
-                            logger.exception("Could not resume virtual printers after failed restore")
+                    except Exception as service_error:
+                        logger.error(
+                            "Could not restart printer services after restore (%s)", type(service_error).__name__
+                        )
+                    _resume_background_services()
 
             if not isinstance(error, Exception) or isinstance(error, HTTPException) and not needs_recovery:
                 raise
-            logger.exception("Restore failed")
+            driver_error = getattr(error, "orig", None)
+            logger.error(
+                "Restore failed (%s, SQLSTATE %s)",
+                type(error).__name__,
+                getattr(driver_error, "sqlstate", None) or "unavailable",
+            )
             message = (
                 "Restore failed and automatic recovery was incomplete. Recovery files were retained. Check server logs."
                 if needs_recovery
@@ -775,9 +831,15 @@ async def restore_backup(
             )
             return JSONResponse(status_code=500, content={"success": False, "message": message})
         finally:
+            if backup_locked:
+                _backup_restore_lock.release()
             if not needs_recovery:
                 with CancelScope(shield=True):
-                    await run_in_threadpool(files.clean_up)
+                    try:
+                        await run_in_threadpool(files.clean_up)
+                    finally:
+                        if activity_paused:
+                            restore_activity.resume()
 
 
 @router.get("/network-interfaces")

@@ -15,7 +15,7 @@ from backend.app.models.user import User
 from backend.app.models.user_totp import UserTOTP
 
 
-@pytest.mark.parametrize("failure", ["schema", "import", "encryption", None])
+@pytest.mark.parametrize("failure", ["schema", "import", "encryption", "cleanup", None])
 async def test_postgres_restore_keeps_previous_database_on_failure(async_client, tmp_path, monkeypatch, failure):
     url = os.environ.get("TEST_POSTGRES_DATABASE_URL")
     if not url:
@@ -45,6 +45,10 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
     with closing(sqlite3.connect(backup)) as source, source:
         source.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
         source.execute("INSERT INTO settings VALUES (1, 'currency', 'EUR')")
+        source.execute("CREATE TABLE printers (id INTEGER PRIMARY KEY, name TEXT)")
+        source.execute(
+            "CREATE TABLE print_archives (id INTEGER PRIMARY KEY, filename TEXT, file_path TEXT, file_size INTEGER)"
+        )
         if failure == "schema":
             source.execute("CREATE TABLE users (id INTEGER PRIMARY KEY)")
             source.execute("INSERT INTO users VALUES (7)")
@@ -64,6 +68,15 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
         archive.writestr("archive/restored.txt", "restored archive")
 
     engine = database._create_engine()
+    if failure == "cleanup":
+        dispose = type(engine).dispose
+
+        async def fail_after_import_dispose(disposed_engine):
+            await dispose(disposed_engine)
+            if disposed_engine.sync_engine.hide_parameters:
+                raise RuntimeError("fixture cleanup failure")
+
+        monkeypatch.setattr(type(engine), "dispose", fail_after_import_dispose)
     try:
         async with engine.begin() as conn:
             await conn.run_sync(Settings.__table__.create, checkfirst=True)
@@ -79,7 +92,7 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
         )
         async with engine.connect() as conn:
             currency = await conn.scalar(select(Settings.value).where(Settings.key == "currency"))
-            if failure is not None:
+            if failure in {"schema", "import", "encryption"}:
                 assert response.status_code == (500 if failure == "import" else 400)
                 assert currency == "SEK"
                 assert (archive_dir / "existing.txt").is_file()
