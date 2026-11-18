@@ -79,6 +79,27 @@ class TestApiKeyRbacDenied:
 class TestApiKeyRbacAllowed:
     """API keys must still work for non-admin endpoints."""
 
+    @pytest.mark.integration
+    async def test_media_header_keeps_printer_allowlist(self, async_client, db_session, api_key_data, printer_factory):
+        from sqlalchemy import select
+
+        from backend.app.models.api_key import APIKey
+        from backend.app.models.settings import Settings
+
+        allowed = await printer_factory()
+        other = await printer_factory(name="Other printer")
+        key = await db_session.scalar(select(APIKey).where(APIKey.name == "test-key"))
+        key.printer_ids = [allowed.id]
+        db_session.add(Settings(key="auth_enabled", value="true"))
+        await db_session.commit()
+        headers = {"X-API-Key": api_key_data}
+
+        response = await async_client.get(f"/api/v1/printers/{allowed.id}/cover", headers=headers)
+        assert response.status_code == 404
+        assert response.json()["detail"] == "Printer not connected"
+        response = await async_client.get(f"/api/v1/printers/{other.id}/cover", headers=headers)
+        assert response.status_code == 403
+
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_api_key_can_access_inventory_read(

@@ -21,7 +21,7 @@ from starlette.datastructures import UploadFile
 from starlette.formparsers import MultiPartException, MultiPartParser
 
 from backend.app.core.auth import (
-    RequireCameraStreamTokenIfAuthEnabled,
+    MediaCaller,
     RequirePermissionIfAuthEnabled,
     is_auth_enabled,
 )
@@ -1368,9 +1368,9 @@ def clear_cover_cache(printer_id: int) -> None:
 @router.get("/{printer_id}/cover")
 async def get_printer_cover(
     printer_id: int,
+    caller: MediaCaller,
     view: str | None = None,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
 ):
     """Get the cover image for the current print job.
 
@@ -1378,6 +1378,8 @@ async def get_printer_cover(
         view: Optional view type. Use "top" for top-down build plate view (useful for skip objects).
               Default returns angled 3D perspective view.
     """
+    caller.require_permissions(Permission.PRINTERS_READ)
+    caller.require_printer_access(printer_id)
     result = await db.execute(select(Printer).where(Printer.id == printer_id))
     printer = result.scalar_one_or_none()
     if not printer:
@@ -2086,12 +2088,14 @@ async def get_printer_file_plates(
 async def get_printer_file_plate_thumbnail(
     printer_id: int,
     plate_index: int,
+    caller: MediaCaller,
     path: str = Query(..., description="Full path to the 3MF file on the printer"),
-    _=RequirePermissionIfAuthEnabled(Permission.PRINTERS_FILES),
     db: AsyncSession = Depends(get_db),
 ):
     """Get a plate thumbnail image from a printer-stored 3MF file."""
 
+    caller.require_permissions(Permission.PRINTERS_FILES)
+    caller.require_printer_access(printer_id)
     printer = await _file_printer(db, printer_id)
 
     try:

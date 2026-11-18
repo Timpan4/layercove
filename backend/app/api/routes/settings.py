@@ -1,4 +1,4 @@
-import io
+import asyncio
 import logging
 import os
 import zipfile
@@ -395,6 +395,17 @@ async def update_spoolman_settings(
     return await get_spoolman_settings(db)
 
 
+def _backup_directories() -> list[tuple[str, Path]]:
+    base_dir = app_settings.base_dir
+    return [
+        ("archive", app_settings.archive_dir),
+        ("virtual_printer", base_dir / "virtual_printer"),
+        ("plate_calibration", app_settings.plate_calibration_dir),
+        ("icons", base_dir / "icons"),
+        ("projects", base_dir / "projects"),
+    ]
+
+
 async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]:
     """Create a complete backup ZIP (database + all data directories).
 
@@ -407,25 +418,19 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
 
     from backend.app.core.db_dialect import is_sqlite
 
-    base_dir = app_settings.base_dir
     filename = f"layercove-backup-{datetime.now().strftime('%Y%m%d-%H%M%S')}.zip"
 
     with tempfile.TemporaryDirectory() as temp_dir:
         temp_path = Path(temp_dir)
 
         if is_sqlite():
-            from sqlalchemy import text
+            from starlette.concurrency import run_in_threadpool
 
-            from backend.app.core.database import engine
+            from backend.app.services.backup_restore import copy_sqlite_database
 
             db_path = Path(app_settings.database_url.replace("sqlite+aiosqlite:///", ""))
 
-            # Checkpoint WAL to ensure all data is in main db file
-            async with engine.begin() as conn:
-                await conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
-
-            # Copy database file
-            shutil.copy2(db_path, temp_path / "layercove.db")
+            await run_in_threadpool(copy_sqlite_database, db_path, temp_path / "layercove.db")
         else:
             # PostgreSQL: export to a portable SQLite file via SQLAlchemy.
             # This makes backups restorable on both SQLite and Postgres installs.
@@ -474,24 +479,9 @@ async def create_backup_zip(output_path: Path | None = None) -> tuple[Path, str]
             logger.info("PostgreSQL backup exported to portable SQLite format")
 
         # Copy data directories (if they exist)
-        dirs_to_backup = [
-            ("archive", base_dir / "archive"),
-            ("virtual_printer", base_dir / "virtual_printer"),
-            ("plate_calibration", app_settings.plate_calibration_dir),
-            ("icons", base_dir / "icons"),
-            ("projects", base_dir / "projects"),
-        ]
-
-        for name, src_dir in dirs_to_backup:
+        for name, src_dir in _backup_directories():
             if src_dir.exists() and any(src_dir.iterdir()):
-                try:
-                    shutil.copytree(
-                        src_dir, temp_path / name
-                    )  # SEC-PATH-OK: name iterates the dirs_to_backup tuple of constant strings ("archive", "virtual_printer", ...)
-                except shutil.Error as e:
-                    logger.warning("Some files in %s could not be copied: %s", name, e)
-                except PermissionError as e:
-                    logger.warning("Permission denied copying %s: %s", name, e)
+                shutil.copytree(src_dir, temp_path / name, ignore=shutil.ignore_patterns(".layercove-restore-*"))
 
         # Include the MFA encryption key as a ZIP top-level entry alongside
         # layercove.db. Without it, encrypted client_secret / TOTP secret rows
@@ -573,478 +563,220 @@ def _resume_background_services() -> None:
 _LEGACY_RESTORE_DROP_TABLES = ("spoolman_slot_assignments", "spoolman_k_profile")
 
 
-async def _import_sqlite_to_postgres(sqlite_path: Path, postgres_url: str):
-    """Import data from a SQLite database file into the current PostgreSQL database.
-
-    Used for cross-database restore (SQLite backup → PostgreSQL).
-    Reads all tables from the SQLite file and bulk-inserts into Postgres.
-    """
+async def _import_sqlite_to_postgres(sqlite_path: Path, postgres_url: str) -> None:
+    """Restore the current PostgreSQL schema and its data in one transaction."""
+    import json
     import sqlite3
+    from collections import defaultdict
+    from contextlib import closing
+    from datetime import date, datetime, timezone
 
-    from sqlalchemy import text
+    from sqlalchemy import JSON, Boolean, Date, DateTime, MetaData, func, select, text
+    from sqlalchemy.schema import AddConstraint
 
     from backend.app.core.database import Base, _create_engine
+    from backend.app.services.backup_restore import open_source_database, source_columns
 
-    # Create a temporary engine for the import (current engine was disposed)
-    pg_engine = _create_engine()
+    metadata = Base.metadata
+    without_foreign_keys = MetaData()
+    foreign_keys = []
+    for table in metadata.tables.values():
+        copied = table.to_metadata(without_foreign_keys)
+        for constraint in copied.foreign_key_constraints:
+            foreign_keys.append(constraint)
+            copied.constraints.remove(constraint)
+            for key in constraint.elements:
+                copied.foreign_keys.discard(key)
+                key.parent.foreign_keys.discard(key)
 
+    def value_for(column, value):
+        if isinstance(column.type, Boolean):
+            return bool(value)
+        if isinstance(column.type, JSON):
+            return json.loads(value)
+        if isinstance(column.type, DateTime):
+            parsed = datetime.fromisoformat(value)
+            if column.type.timezone:
+                return parsed if parsed.tzinfo else parsed.replace(tzinfo=timezone.utc)
+            return parsed.astimezone(timezone.utc).replace(tzinfo=None) if parsed.tzinfo else parsed
+        if isinstance(column.type, Date):
+            return date.fromisoformat(value)
+        return value
+
+    pg_engine = _create_engine(hide_parameters=True)
     try:
-        # Open SQLite file directly (sync — it's a local file read)
-        src = sqlite3.connect(str(sqlite_path))
-        src.row_factory = sqlite3.Row
+        with closing(open_source_database(sqlite_path)) as source:
+            source.row_factory = sqlite3.Row
+            async with pg_engine.begin() as conn:
+                await conn.execute(text("SET LOCAL lock_timeout = '10s'"))
+                for table_name in [*metadata.tables, *_LEGACY_RESTORE_DROP_TABLES]:
+                    await conn.execute(text(f'DROP TABLE IF EXISTS public."{table_name}" CASCADE'))  # noqa: S608
+                await conn.run_sync(without_foreign_keys.create_all)
 
-        # Get list of tables from SQLite (skip internal/FTS tables)
-        cursor = src.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' "
-            "AND name NOT LIKE 'sqlite_%' AND name NOT LIKE 'archive_fts%'"
-        )
-        src_tables = {row["name"] for row in cursor.fetchall()}
+                for table in metadata.sorted_tables:
+                    existing = source_columns(source, table)
+                    if not existing:
+                        continue
+                    columns = [column for column in table.columns if column.name in existing]
+                    batches = defaultdict(list)
+                    for row in source.execute(f'SELECT * FROM "{table.name}"'):  # noqa: S608
+                        values = {}
+                        for column in columns:
+                            value = row[column.name]
+                            has_default = column.default is not None or column.server_default is not None
+                            if value is None and not column.nullable and has_default:
+                                continue
+                            values[column.name] = value_for(column, value) if value is not None else None
+                        batches[tuple(values)].append(values)
+                    for values in batches.values():
+                        await conn.execute(table.insert(), values)
 
-        # Get Postgres tables from our ORM models
-        metadata = Base.metadata
-        pg_tables = set(metadata.tables.keys())
+                    if batches and "id" in table.primary_key.columns:
+                        sequence = await conn.scalar(select(func.pg_get_serial_sequence(f"public.{table.name}", "id")))
+                        if sequence:
+                            last_id = await conn.scalar(select(func.max(table.c.id)))
+                            if last_id is not None:
+                                await conn.execute(select(func.setval(sequence, last_id)))
 
-        # Only import tables that exist in both source and destination
-        tables_to_import = src_tables & pg_tables
-        sorted_tables = [t.name for t in metadata.sorted_tables if t.name in tables_to_import]
-
-        # Phase 1: Drop all tables and recreate WITHOUT foreign keys.
-        # This avoids all FK ordering/orphan issues during import.
-        saved_fks = {}
-        for table in metadata.sorted_tables:
-            fks = list(table.foreign_key_constraints)
-            if fks:
-                saved_fks[table.name] = fks
-                for fk in fks:
-                    table.constraints.discard(fk)
-
-        async with pg_engine.begin() as conn:
-            # Cap how long DROP TABLE will wait for AccessExclusiveLock so
-            # any residual concurrent writer (per-printer MQTT clients
-            # writing reactively, an AMS history recorder firing on its
-            # hourly cadence) surfaces a fast `lock_timeout` error instead
-            # of blocking the restore for 30 s or producing a deadlock.
-            # SET LOCAL scopes to this transaction only; outside this
-            # restore path the global default (no timeout) applies.
-            await conn.execute(text("SET LOCAL lock_timeout = '10s'"))
-
-            # Drop the ORM tables (plus known legacy ones) with CASCADE rather
-            # than `metadata.drop_all`, and never unrelated public-schema
-            # tables that may belong to another application. CASCADE removes
-            # FK constraints that orphan legacy tables hold back to ORM
-            # tables, which would otherwise make a plain DROP fail.
-            for table_name in [*metadata.tables, *_LEGACY_RESTORE_DROP_TABLES]:
-                await conn.execute(text(f'DROP TABLE IF EXISTS public."{table_name}" CASCADE'))  # noqa: S608  # nosec B608
-            await conn.run_sync(metadata.create_all)
-
-        # Restore FK definitions in metadata (needed for re-adding later)
-        for table_name, fks in saved_fks.items():
-            table_obj = metadata.tables[table_name]
-            for fk in fks:
-                table_obj.constraints.add(fk)
-
-        # Phase 2: Import data (no FKs to worry about)
-        async with pg_engine.begin() as conn:
-            # Import each table in dependency order (parents before children)
-            for table_name in sorted_tables:
-                rows = src.execute(f"SELECT * FROM {table_name}").fetchall()  # noqa: S608  # nosec B608
-                if not rows:
-                    continue
-
-                # Filter to columns that exist in the Postgres table
-                src_columns = rows[0].keys()
-                pg_table = metadata.tables.get(table_name)
-                pg_columns = {c.name for c in pg_table.columns} if pg_table is not None else set()
-                columns = [c for c in src_columns if c in pg_columns]
-
-                if not columns:
-                    continue
-
-                col_list = ", ".join(columns)
-                param_list = ", ".join(f":{c}" for c in columns)
-                # ON CONFLICT DO NOTHING handles duplicate rows from SQLite (which doesn't enforce unique constraints)
-                insert_sql = text(f"INSERT INTO {table_name} ({col_list}) VALUES ({param_list}) ON CONFLICT DO NOTHING")  # noqa: S608  # nosec B608
-
-                # Identify columns that need type conversion (SQLite stores booleans
-                # as int and datetimes as str — asyncpg requires native Python types)
-                from datetime import datetime as dt
-
-                bool_columns = set()
-                datetime_columns = set()
-                not_null_defaults = {}  # col_name -> default value for NOT NULL columns
-                if pg_table is not None:
-                    for col in pg_table.columns:
-                        if col.name not in columns:
-                            continue
-                        col_type = str(col.type)
-                        if col_type == "BOOLEAN":
-                            bool_columns.add(col.name)
-                        elif col_type in ("DATETIME", "TIMESTAMP WITHOUT TIME ZONE", "TIMESTAMP WITH TIME ZONE"):
-                            datetime_columns.add(col.name)
-                        # Track NOT NULL columns with defaults — older backups may have NULL
-                        # for columns added after the backup was created
-                        if not col.nullable:
-                            if col.default is not None:
-                                default = col.default.arg
-                                if callable(default):
-                                    default = default(None)
-                                not_null_defaults[col.name] = default
-                            elif col.server_default is not None:
-                                # server_default=func.now() → use current timestamp
-                                if col.name in datetime_columns:
-                                    not_null_defaults[col.name] = "__now__"
-                                else:
-                                    # Try to extract literal server default
-                                    sd = str(col.server_default.arg) if hasattr(col.server_default, "arg") else None
-                                    if sd is not None:
-                                        not_null_defaults[col.name] = sd
-
-                now = dt.now()
-
-                def _convert_row(
-                    row, cols=columns, bools=bool_columns, dts=datetime_columns, nn_defaults=not_null_defaults, _now=now
-                ):
-                    result = {}
-                    for c in cols:
-                        val = row[c]
-                        if val is None and c in nn_defaults:
-                            val = _now if nn_defaults[c] == "__now__" else nn_defaults[c]
-                        if val is not None:
-                            if c in bools:
-                                val = bool(val)
-                            elif c in dts and isinstance(val, str):
-                                try:
-                                    val = dt.fromisoformat(val)
-                                except ValueError:
-                                    pass
-                        result[c] = val
-                    return result
-
-                batch = [_convert_row(row) for row in rows]
-                await conn.execute(insert_sql, batch)
-                logger.info("Imported %d rows into %s", len(batch), table_name)
-
-            # Reset sequences to max(id) + 1 for each table with an id column
-            for table_name in sorted_tables:
-                try:
-                    async with conn.begin_nested():
-                        result = await conn.execute(text(f"SELECT MAX(id) FROM {table_name}"))  # noqa: S608  # nosec B608
-                        max_id = result.scalar()
-                        if max_id is not None:
-                            seq_name = f"{table_name}_id_seq"
-                            await conn.execute(text(f"SELECT setval('{seq_name}', {max_id})"))  # noqa: S608
-                except Exception:
-                    pass  # Table may not have an id column or sequence
-
-        src.close()
-        logger.info("Cross-database import complete: %d tables imported", len(tables_to_import))
-
-        # Recreate FK constraints from ORM metadata (not from saved definitions).
-        # Use individual transactions so orphaned SQLite data doesn't block valid FKs.
-        from sqlalchemy.schema import AddConstraint
-
-        failed_fks = []
-        for table in metadata.sorted_tables:
-            for fk in table.foreign_key_constraints:
-                try:
-                    async with pg_engine.begin() as fk_conn:
-                        await fk_conn.execute(AddConstraint(fk))
-                except Exception:
-                    failed_fks.append(f"{table.name}.{fk.name}")
-        if failed_fks:
-            logger.warning(
-                "Could not restore %d FK constraints (orphaned data in SQLite): %s",
-                len(failed_fks),
-                ", ".join(failed_fks),
-            )
-
+                for constraint in foreign_keys:
+                    await conn.execute(AddConstraint(constraint))
     finally:
         await pg_engine.dispose()
+
+
+_restore_lock = asyncio.Lock()
 
 
 @router.post("/restore")
 async def restore_backup(
     file: UploadFile = File(...),
-    db: AsyncSession = Depends(get_db),
     _: User | None = RequirePermissionIfAuthEnabled(Permission.SETTINGS_RESTORE),
 ):
-    """Restore from a complete backup ZIP.
-
-    Replaces the database and all data directories from the backup ZIP.
-    Requires a restart after restore.
-    """
-    import shutil
+    """Restore a staged backup and preserve the previous state if an operation fails."""
     import tempfile
 
-    from fastapi import HTTPException
+    from anyio import CancelScope
+    from starlette.concurrency import run_in_threadpool
 
-    from backend.app.core.database import close_all_connections, init_db, reinitialize_database
+    from backend.app.core import database, encryption
     from backend.app.core.db_dialect import is_sqlite
+    from backend.app.core.paths import resolve_data_dir
+    from backend.app.services.backup_restore import (
+        RestoreFiles,
+        copy_sqlite_database,
+        extract_backup,
+        validate_backup_database,
+        validate_backup_secrets,
+    )
+    from backend.app.services.notification_service import notification_service
+    from backend.app.services.print_scheduler import scheduler as print_scheduler
+    from backend.app.services.smart_plug_manager import smart_plug_manager
     from backend.app.services.virtual_printer import virtual_printer_manager
 
-    base_dir = app_settings.base_dir
+    if not file.filename or not file.filename.endswith(".zip"):
+        raise HTTPException(400, "Invalid backup file: must be a .zip file")
+    if _restore_lock.locked():
+        raise HTTPException(409, "A restore is already in progress")
 
-    with tempfile.TemporaryDirectory() as temp_dir:
-        temp_path = Path(temp_dir)
+    sqlite_target = is_sqlite()
+    postgres_tables = () if sqlite_target else tuple(database.Base.metadata.tables.values())
+    files = RestoreFiles()
+    services_paused = False
+    previous_db = db_path = None
+    sqlite_replaced = False
+    virtual_printer_enabled = False
+    needs_recovery = False
+    encryption_state = (encryption._fernet_instance, encryption._key_source, encryption._warn_shown)
 
-        # 1. Read and extract ZIP
-        content = await file.read()
-
-        # Check if it's a valid ZIP
-        if not file.filename or not file.filename.endswith(".zip"):
-            raise HTTPException(400, "Invalid backup file: must be a .zip file")
-
+    async with _restore_lock:
         try:
-            with zipfile.ZipFile(io.BytesIO(content), "r") as zf:
-                names = set(zf.namelist())
-                legacy_members = names & {"bambutrack.db", "bambuddy.db"}
-                if legacy_members:
-                    raise HTTPException(
-                        400,
-                        "Unsupported legacy backup database: "
-                        + ", ".join(sorted(legacy_members))
-                        + ". Export legacy data and create a new LayerCove backup.",
-                    )
-                for name in names:
-                    # Reject path-traversal payloads: any entry whose resolved
-                    # path escapes temp_path would allow writing arbitrary files
-                    # on the host (ZipSlip / CVE-2006-5456).
-                    dest = (
-                        temp_path / name
-                    ).resolve()  # SEC-PATH-OK: is_relative_to containment check below before extractall
-                    # is_relative_to (Python 3.9+) covers both relative
-                    # path-traversal (../etc/passwd) and absolute-path overrides
-                    # (/etc/passwd) — str.startswith was vulnerable to
-                    # prefix-collision attacks (e.g. /tmp/abc_evil/file passing
-                    # a /tmp/abc prefix check).
-                    if not dest.is_relative_to(temp_path.resolve()):
-                        raise HTTPException(400, f"Invalid backup: unsafe path in ZIP: {name!r}")
-                zf.extractall(temp_path)
-        except zipfile.BadZipFile:
-            raise HTTPException(400, "Invalid backup file: not a valid ZIP")
+            with tempfile.TemporaryDirectory() as temp_dir:
+                extracted = Path(temp_dir).resolve()
+                backup_db = await run_in_threadpool(extract_backup, file.file, extracted)
+                await run_in_threadpool(validate_backup_database, backup_db, postgres_tables)
+                destination_key = resolve_data_dir() / ".mfa_encryption_key"
+                await run_in_threadpool(
+                    validate_backup_secrets, backup_db, extracted / destination_key.name, destination_key
+                )
+                await run_in_threadpool(
+                    files.stage,
+                    extracted,
+                    _backup_directories(),
+                    destination_key,
+                )
 
-        # 2. Validate backup
-        backup_db = temp_path / "layercove.db"
-        if not backup_db.exists():
-            raise HTTPException(400, "Invalid backup: missing layercove.db")
-
-        try:
-            import asyncio
-
-            # 3. Stop virtual printer if running (releases file locks)
-            try:
-                if virtual_printer_manager.is_enabled:
-                    logger.info("Stopping virtual printer for restore...")
-                    await virtual_printer_manager.configure(enabled=False)
+                with CancelScope(shield=True):
+                    services_paused = True
+                    await print_scheduler.pause_for_restore()
+                    smart_plug_manager.stop_scheduler()
+                    notification_service.stop_digest_scheduler()
+                    virtual_printer_enabled = virtual_printer_manager.is_enabled
+                    if virtual_printer_enabled:
+                        await virtual_printer_manager.stop_all()
+                    # Give cancelled loops time to release checked-out connections.
                     await asyncio.sleep(1)
-            except Exception as e:
-                logger.warning("Failed to stop virtual printer: %s", e)
+                    await database.close_all_connections()
 
-            # 3b. Pause timer-based background services BEFORE the DB swap.
-            # close_all_connections() below only disposes the engine's pool,
-            # not the asyncio tasks that opened sessions from it. The print
-            # scheduler (30 s cadence), smart-plug snapshot loop (30 s), and
-            # notification digest loop all
-            # wake up and call async_session(), which lazily re-creates a
-            # pool connection holding RowExclusiveLock on print_queue /
-            # smart_plug_energy_snapshots / etc. The DROP TABLE CASCADE
-            # pass in the PostgreSQL restore path needs AccessExclusiveLock
-            # on every public table, producing an AB/BA deadlock and a
-            # full restore rollback. Successful restore already requires a
-            # container restart, so we only restart the services when the
-            # restore fails and the process keeps running.
-            services_paused = False
-            try:
-                from backend.app.services.notification_service import notification_service
-                from backend.app.services.print_scheduler import scheduler as print_scheduler
-                from backend.app.services.smart_plug_manager import smart_plug_manager
+                    if sqlite_target:
+                        db_path = Path(app_settings.database_url.removeprefix("sqlite+aiosqlite:///"))
+                        previous_db = files.workspace(db_path.parent) / "previous.db"
+                        await run_in_threadpool(copy_sqlite_database, db_path, previous_db)
 
-                logger.info("Pausing background services for restore...")
-                services_paused = True
-                print_scheduler.stop()
-                smart_plug_manager.stop_scheduler()
-                notification_service.stop_digest_scheduler()
-                # In-flight loop iterations need a moment to commit + release
-                # their DB sessions before we dispose() the engine pool.
-                await asyncio.sleep(1.0)
-            except Exception as e:
-                logger.warning("Could not cleanly pause background services: %s", e)
+                    await run_in_threadpool(files.install)
+                    encryption._fernet_instance = None
+                    encryption._key_source = None
+                    encryption._warn_shown = False
 
-            # 4. Close current database connections
-            logger.info("Closing database connections...")
-            await close_all_connections()
+                    if sqlite_target:
+                        sqlite_replaced = True
+                        await run_in_threadpool(copy_sqlite_database, backup_db, db_path)
+                        await database.init_db()
+                    else:
+                        await _import_sqlite_to_postgres(backup_db, app_settings.database_url)
 
-            # B1: Restore the MFA encryption key file BEFORE the database swap.
-            # If the key write fails (OSError, RO disk, full disk, EACCES) we
-            # can still abort while the live DB is intact. Doing this AFTER the
-            # DB swap would leave the database with rows encrypted under the
-            # backup's key but the running install holding only the old key —
-            # every encrypted secret becomes unrecoverable.
-            from backend.app.core.paths import resolve_data_dir
-
-            mfa_key_src = temp_path / ".mfa_encryption_key"
-            if mfa_key_src.exists() and mfa_key_src.is_file():
-                dst_key = resolve_data_dir() / ".mfa_encryption_key"
-                tmp_key = dst_key.parent / ".mfa_encryption_key.restore-tmp"
-                try:
-                    dst_key.parent.mkdir(parents=True, exist_ok=True)
-                    # S1: atomic write with restrictive mode from creation.
-                    # O_TRUNC because a stale tmp may exist from a prior
-                    # failed restore attempt — we want to overwrite it.
-                    fd = os.open(str(tmp_key), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-                    try:
-                        os.write(fd, mfa_key_src.read_bytes())
-                    finally:
-                        os.close(fd)
-                    # POSIX rename(2) — atomic when source/dest are on the
-                    # same filesystem (we're staying inside dst_key.parent).
-                    os.replace(str(tmp_key), str(dst_key))
-                    # S9: warn if the FS doesn't enforce 0o600
-                    actual_mode = dst_key.stat().st_mode & 0o777
-                    if actual_mode != 0o600:
-                        logger.warning(
-                            "Restored MFA key file %s: filesystem did not enforce 0o600 "
-                            "(actual: 0o%o). Key may be world-readable on Windows / SMB / FUSE.",
-                            dst_key,
-                            actual_mode,
-                        )
-                    logger.info("Restored .mfa_encryption_key from backup")
-                except OSError as e:
-                    logger.error(
-                        "Could not write restored MFA key file to %s: %s — "
-                        "aborting BEFORE database swap (DB unchanged).",
-                        dst_key,
-                        e,
-                        exc_info=True,
-                    )
-                    raise HTTPException(
-                        status_code=500,
-                        detail=("Restore aborted: MFA key write failed. Database is unchanged. Check server logs."),
-                    ) from e
-
-            # 5. Replace database
-            logger.info("Restoring database from backup...")
-            if is_sqlite():
-                db_path = Path(app_settings.database_url.replace("sqlite+aiosqlite:///", ""))
-                # Use SQLite's online backup API instead of shutil.copy2.
-                # The pragma at database.py:19 runs the live DB in WAL mode,
-                # which means a naive file copy is unsafe: anything written
-                # to the live DB before this call that hasn't been
-                # checkpointed yet (seed_default_groups + init_db on first
-                # start, plus whatever background heartbeats wrote during
-                # the request window) sits in layercove.db-wal with valid
-                # checksums. The route handler's own `db: Depends(get_db)`
-                # session also keeps a connection checked out across
-                # engine.dispose(), holding fds to the WAL inode. With
-                # `shutil.copy2` SQLite finds the stale WAL on the next
-                # open and silently re-applies those page-level writes on
-                # top of the restored DB, partially clobbering it with
-                # fresh-install state — the user sees a "successful"
-                # restore where most rows and settings have reverted to
-                # defaults (#1211 / #668). The page-by-page backup API
-                # opens both DBs as real SQLite connections, takes the
-                # right locks, and routes new pages through the live DB's
-                # own WAL — so concurrent open sessions see their own
-                # snapshot until they close (transaction isolation) but
-                # can't corrupt the restored state.
-                import sqlite3
-
-                src_conn = sqlite3.connect(str(backup_db))
-                try:
-                    dst_conn = sqlite3.connect(str(db_path))
-                    try:
-                        src_conn.backup(dst_conn)
-                    finally:
-                        dst_conn.close()
-                finally:
-                    src_conn.close()
-            else:
-                # Import SQLite backup into PostgreSQL
-                logger.info("Importing SQLite backup into PostgreSQL...")
-                await _import_sqlite_to_postgres(backup_db, app_settings.database_url)
-
-            # 6. Replace data directories
-            # For Docker compatibility: clear contents then copy (don't delete mount points)
-            dirs_to_restore = [
-                ("archive", base_dir / "archive"),
-                ("virtual_printer", base_dir / "virtual_printer"),
-                ("plate_calibration", app_settings.plate_calibration_dir),
-                ("icons", base_dir / "icons"),
-                ("projects", base_dir / "projects"),
-            ]
-
-            skipped_dirs = []
-            for name, dest_dir in dirs_to_restore:
-                src_dir = (
-                    temp_path / name
-                )  # SEC-PATH-OK: name iterates the dirs_to_restore tuple of constant strings ("archive", "virtual_printer", ...)
-                if src_dir.exists():
-                    logger.info("Restoring %s directory...", name)
-                    try:
-                        # Clear destination contents (not the dir itself - may be Docker mount)
-                        if dest_dir.exists():
-                            for item in dest_dir.iterdir():
-                                try:
-                                    if item.is_dir():
-                                        shutil.rmtree(item)
-                                    else:
-                                        item.unlink()
-                                except OSError as e:
-                                    logger.warning("Could not delete %s: %s", item, e)
-                        else:
-                            dest_dir.mkdir(parents=True, exist_ok=True)
-                        # Copy contents from backup
-                        for item in src_dir.iterdir():
-                            dest_item = dest_dir / item.name
-                            if item.is_dir():
-                                shutil.copytree(item, dest_item)
-                            else:
-                                shutil.copy2(item, dest_item)
-                    except OSError as e:
-                        logger.warning("Could not restore %s directory: %s", name, e)
-                        skipped_dirs.append(name)
-
-            # 7. Reset the encryption singleton so the migration that runs
-            # inside init_db() picks up the restored key file (if a new one
-            # was written above). Without this reset, _get_fernet would
-            # return the cached Fernet instance built from the previous key.
-            import backend.app.core.encryption as _enc_mod
-
-            _enc_mod._fernet_instance = None
-            _enc_mod._key_source = None
-            _enc_mod._warn_shown = False
-
-            # 8. Reinitialize the database engine and apply schema migrations so that
-            # tables added after the backup was created (e.g. ams_labels) exist
-            # immediately, without requiring a manual restart.
-            await reinitialize_database()
-            await init_db()
-
-            logger.info("Restore complete - restart required")
-            message = "Backup restored successfully. Please restart Bambuddy for changes to take effect."
-            if skipped_dirs:
-                message += f" Note: Some directories could not be restored ({', '.join(skipped_dirs)})."
+            # The application restart initializes printer connections and resumes
+            # schedulers against the restored configuration.
             return {
                 "success": True,
-                "message": message,
+                "message": "Backup restored successfully. Restart LayerCove to resume services.",
             }
+        except BaseException as error:
+            with CancelScope(shield=True):
+                if sqlite_replaced:
+                    try:
+                        await database.close_all_connections()
+                        await run_in_threadpool(copy_sqlite_database, previous_db, db_path)
+                    except Exception:
+                        needs_recovery = True
+                        logger.exception("Could not restore the previous SQLite database at %s", previous_db)
+                try:
+                    await run_in_threadpool(files.rollback)
+                except Exception:
+                    needs_recovery = True
+                    logger.exception("Could not roll back restore files. Recovery directories: %s", files.workspaces)
+                encryption._fernet_instance, encryption._key_source, encryption._warn_shown = encryption_state
 
-        except HTTPException:
-            # Preserve specific HTTP error responses raised inside the restore
-            # body (e.g. the key-write OSError → 500). The blanket
-            # except Exception below would otherwise swallow them and replace
-            # the operator-facing detail with a generic message.
-            if services_paused:
-                _resume_background_services()
-            raise
-        except Exception as e:
-            logger.error("Restore failed: %s", e, exc_info=True)
-            if services_paused:
-                _resume_background_services()
-            return JSONResponse(
-                status_code=500,
-                content={"success": False, "message": "Restore failed. Check server logs for details."},
+                if services_paused and not needs_recovery:
+                    _resume_background_services()
+                    if virtual_printer_enabled:
+                        try:
+                            await virtual_printer_manager.sync_from_db()
+                        except Exception:
+                            logger.exception("Could not resume virtual printers after failed restore")
+
+            if not isinstance(error, Exception) or isinstance(error, HTTPException) and not needs_recovery:
+                raise
+            logger.exception("Restore failed")
+            message = (
+                "Restore failed and automatic recovery was incomplete. Recovery files were retained. Check server logs."
+                if needs_recovery
+                else "Restore failed. The previous data was kept. Check server logs for details."
             )
+            return JSONResponse(status_code=500, content={"success": False, "message": message})
+        finally:
+            if not needs_recovery:
+                with CancelScope(shield=True):
+                    await run_in_threadpool(files.clean_up)
 
 
 @router.get("/network-interfaces")

@@ -5328,6 +5328,42 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/auth/media-token": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Get Media Token */
+        post: {
+            parameters: {
+                query?: never;
+                header?: never;
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["MediaTokenResponse"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/auth/oidc/authorize/{provider_id}": {
         parameters: {
             query?: never;
@@ -40884,6 +40920,11 @@ export interface components {
              * @description Whether the caller's account has a stored Bambu Cloud token
              */
             has_cloud_token: boolean;
+        };
+        /** MediaTokenResponse */
+        MediaTokenResponse: {
+            /** Token */
+            token: string | null;
         };
         /** ModelObjectState */
         ModelObjectState: {

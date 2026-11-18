@@ -1914,13 +1914,24 @@ class TestEncryptionRoundtrip:
 
 class TestBackupKeyFiles:
     @staticmethod
+    def _create_sqlite_backup_file(path):
+        import sqlite3
+        from contextlib import closing
+
+        with closing(sqlite3.connect(path)) as conn:
+            conn.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
+            conn.commit()
+        return path
+
+    @staticmethod
     def _use_file_database(monkeypatch, tmp_path):
         from sqlalchemy.ext.asyncio import create_async_engine
 
         import backend.app.core.database as db_mod
         from backend.app.core.config import settings as app_settings
 
-        database_url = f"sqlite+aiosqlite:///{tmp_path / 'layercove.db'}"
+        db_path = TestBackupKeyFiles._create_sqlite_backup_file(tmp_path / "layercove.db")
+        database_url = f"sqlite+aiosqlite:///{db_path}"
         engine = create_async_engine(database_url, echo=False)
         monkeypatch.setattr(app_settings, "database_url", database_url)
         monkeypatch.setattr(db_mod, "engine", engine)
@@ -1984,25 +1995,24 @@ class TestBackupKeyFiles:
     async def test_restore_writes_key_files_with_chmod_0600(self, async_client, monkeypatch, tmp_path):
         """T1: restore endpoint writes key file with mode 0o600.
 
-        Bypasses the SQLite-copy step via patches so execution reaches the
-        key-write code unconditionally — the previous version used a stub
-        ``b"SQLite format 3"`` which made ``sqlite3.backup()`` fail and the
-        key-write code never ran.
+        Use a valid database and key to exercise the restore preflight.
         """
         import io
         import zipfile
         from unittest.mock import AsyncMock, patch
+
+        from cryptography.fernet import Fernet
 
         from backend.app.core.config import settings as app_settings
 
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
         monkeypatch.setattr(app_settings, "base_dir", tmp_path)
 
-        # Build a minimal ZIP with a stub DB and the key file.
+        restored_key_bytes = Fernet.generate_key()
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"SQLite format 3")
-            zf.writestr(".mfa_encryption_key", "test-restored-key")
+            zf.write(self._create_sqlite_backup_file(tmp_path / "backup.db"), "layercove.db")
+            zf.writestr(".mfa_encryption_key", restored_key_bytes)
         buf.seek(0)
 
         with (
@@ -2023,7 +2033,8 @@ class TestBackupKeyFiles:
         assert resp.status_code == 200
         restored_key = tmp_path / ".mfa_encryption_key"
         assert restored_key.exists()
-        assert restored_key.read_text() == "test-restored-key"
+        if restored_key.read_bytes() != restored_key_bytes:
+            pytest.fail("The restored key does not match the backup")
         assert (restored_key.stat().st_mode & 0o777) == 0o600
 
     @pytest.mark.asyncio
@@ -2041,7 +2052,7 @@ class TestBackupKeyFiles:
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"SQLite format 3")
+            zf.write(self._create_sqlite_backup_file(tmp_path / "backup.db"), "layercove.db")
             # Intentionally no .mfa_encryption_key entry.
         buf.seek(0)
 
@@ -2074,6 +2085,8 @@ class TestBackupKeyFiles:
         import zipfile
         from unittest.mock import AsyncMock, patch
 
+        from cryptography.fernet import Fernet
+
         from backend.app.core.config import settings as app_settings
 
         monkeypatch.setenv("DATA_DIR", str(tmp_path))
@@ -2082,8 +2095,8 @@ class TestBackupKeyFiles:
         # Build ZIP with a key file that we will fail to write to DATA_DIR.
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"SQLite format 3 backup data")
-            zf.writestr(".mfa_encryption_key", "backup-key-content")
+            zf.write(self._create_sqlite_backup_file(tmp_path / "backup.db"), "layercove.db")
+            zf.writestr(".mfa_encryption_key", Fernet.generate_key())
         buf.seek(0)
 
         # Track whether the database swap functions were called.
@@ -2149,7 +2162,7 @@ class TestBackupKeyFiles:
 
         # Pre-warm the singleton with an "old" key so we can detect the reset.
         old_key = Fernet.generate_key().decode()
-        monkeypatch.setenv("MFA_ENCRYPTION_KEY", old_key)
+        (tmp_path / ".mfa_encryption_key").write_text(old_key)
         enc_mod._fernet_instance = None
         enc_mod._key_source = None
         # Trigger lazy load → singleton holds the old Fernet.
@@ -2162,7 +2175,7 @@ class TestBackupKeyFiles:
         assert new_key != old_key
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"SQLite format 3 backup data")
+            zf.write(self._create_sqlite_backup_file(tmp_path / "backup.db"), "layercove.db")
             zf.writestr(".mfa_encryption_key", new_key)
         buf.seek(0)
 

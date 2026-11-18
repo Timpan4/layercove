@@ -54,11 +54,13 @@ for (const width of [1280, 390]) {
     await expect(catalog.getByRole('article', { name: 'Alpha profile 01', exact: true })).toBeVisible();
     await catalog.getByRole('button', { name: 'Next', exact: true }).click();
     await expect(catalog.getByRole('article', { name: 'Alpha profile 26', exact: true })).toBeVisible();
-    fixture.revisions.length = 0;
+    expect(fixture.revisions).toEqual([]);
     const search = catalog.getByRole('searchbox', { name: 'Search catalog profiles', exact: true });
     await search.fill('  vOrOn  ');
     const row = catalog.getByRole('article', { name: target, exact: true });
     await expect(row).toBeVisible();
+    expect(fixture.revisions).toEqual([]);
+    await row.getByRole('button', { name: 'Revisions', exact: true }).click();
     await expect(row.getByText('Revision 151', { exact: true })).toBeVisible();
     await expect(catalog.getByRole('article')).toHaveCount(1);
     expect(fixture.revisions).toEqual([51]);

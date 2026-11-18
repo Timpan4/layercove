@@ -854,16 +854,18 @@ async def revoke_jti(jti: str, expires_at: datetime, username: str | None = None
             await db.rollback()  # jti already revoked — desired state, ignore
 
 
-async def is_jti_revoked(jti: str) -> bool:
+async def is_jti_revoked(jti: str, db: AsyncSession | None = None) -> bool:
     """Return True if the given jti has been revoked."""
-    async with async_session() as db:
-        result = await db.execute(
-            select(AuthEphemeralToken).where(
-                AuthEphemeralToken.token == jti,
-                AuthEphemeralToken.token_type == "revoked_jti",
-            )
+    if db is None:
+        async with async_session() as session:
+            return await is_jti_revoked(jti, session)
+    result = await db.execute(
+        select(AuthEphemeralToken).where(
+            AuthEphemeralToken.token == jti,
+            AuthEphemeralToken.token_type == "revoked_jti",
         )
-        return result.scalar_one_or_none() is not None
+    )
+    return result.scalar_one_or_none() is not None
 
 
 async def get_user_by_username(db: AsyncSession, username: str) -> User | None:
@@ -1382,11 +1384,6 @@ async def get_caller_identity_if_auth_enabled(
             if api_key:
                 return CallerIdentity.authenticated_api_key(api_key)
 
-        credentials_exception = HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Could not validate credentials",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
         if credentials is None:
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
@@ -1405,22 +1402,89 @@ async def get_caller_identity_if_auth_enabled(
                 headers={"WWW-Authenticate": "Bearer"},
             )
 
-        try:
-            payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
-            username: str = payload.get("sub")
-            if username is None:
-                raise credentials_exception
-            jti: str | None = payload.get("jti")
-            if not jti or await is_jti_revoked(jti):
-                raise credentials_exception
-            iat: int | float | None = payload.get("iat")
-        except JWTError:
-            raise credentials_exception
-
-        user = await get_user_by_username(db, username)
-        if user is None or not user.is_active or not _is_token_fresh(iat, user):
-            raise credentials_exception
+        user, _ = await _read_user_session(db, token)
         return CallerIdentity.authenticated_user(user)
+
+
+_MEDIA_AUDIENCE = "layercove-media"
+# Match the upstream media-token lifetime, without outliving the issuing session.
+MEDIA_TOKEN_EXPIRE_MINUTES = 60
+
+
+async def _read_user_session(db: AsyncSession, token: str, *, audience: str | None = None) -> tuple[User, dict]:
+    unauthorized = HTTPException(401, "Could not validate credentials", headers={"WWW-Authenticate": "Bearer"})
+    try:
+        payload = jwt.decode(
+            token,
+            SECRET_KEY,
+            algorithms=[ALGORITHM],
+            audience=audience,
+            options={"require": ["sub", "jti", "iat", "exp"]},
+        )
+    except JWTError:
+        raise unauthorized
+    if await is_jti_revoked(payload["jti"], db):
+        raise unauthorized
+    user = await get_user_by_username(db, payload["sub"])
+    if user is None or not user.is_active or not _is_token_fresh(payload["iat"], user):
+        raise unauthorized
+    if audience == _MEDIA_AUDIENCE and payload.get("uid") != user.id:
+        raise unauthorized
+    return user, payload
+
+
+async def mint_media_token(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+) -> str | None:
+    """Issue a browser media credential bound to the current user session."""
+    async with async_session() as db:
+        if not await is_auth_enabled(db):
+            return None
+        if credentials is None:
+            raise HTTPException(401, "User session required")
+        user, session = await _read_user_session(db, credentials.credentials)
+
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=MEDIA_TOKEN_EXPIRE_MINUTES)
+    claims = {
+        "sub": user.username,
+        "uid": user.id,
+        "aud": _MEDIA_AUDIENCE,
+        "jti": session["jti"],
+        "iat": session["iat"],
+        "exp": min(int(expires_at.timestamp()), session["exp"]),
+    }
+    return jwt.encode(claims, SECRET_KEY, algorithm=ALGORITHM)
+
+
+async def get_media_caller(
+    token: str | None = None,
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
+) -> CallerIdentity:
+    if credentials is not None or x_api_key or token is None:
+        return await get_caller_identity_if_auth_enabled(credentials, x_api_key)
+    async with async_session() as db:
+        if not await is_auth_enabled(db):
+            return CallerIdentity.auth_disabled()
+        user, _ = await _read_user_session(db, token, audience=_MEDIA_AUDIENCE)
+        return CallerIdentity.authenticated_user(user)
+
+
+MediaCaller = Annotated[CallerIdentity, Depends(get_media_caller)]
+
+
+def require_media_ownership(all_permission: Permission, own_permission: Permission):
+    async def checker(caller: MediaCaller) -> tuple[User | None, bool]:
+        return caller.user, caller.require_ownership(all_permission, own_permission).can_access_all
+
+    return checker
+
+
+def require_media_permission(permission: Permission):
+    async def checker(caller: MediaCaller) -> None:
+        caller.require_permissions(permission)
+
+    return checker
 
 
 def require_caller_identity_if_auth_enabled(*permissions: Permission):

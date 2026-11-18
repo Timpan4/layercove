@@ -7,7 +7,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings
 
 # Application version - single source of truth
-APP_VERSION = "0.2.4.9"
+APP_VERSION = "0.2.5"
 GITHUB_REPO = "Timpan4/layercove"
 BUG_REPORT_RELAY_URL = os.environ.get("BUG_REPORT_RELAY_URL", "")
 

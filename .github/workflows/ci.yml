@@ -125,7 +125,7 @@ jobs:
         run: uv pip install --system -r requirements.txt -r requirements-dev.txt
 
       - name: Verify camera token expiry against PostgreSQL clock
-        run: python -m pytest backend/tests/integration/test_postgres_camera_token_expiry.py backend/tests/integration/test_postgres_archive_stats_dates.py backend/tests/integration/test_postgres_user_deletion.py backend/tests/integration/test_postgres_expanding_datetime_binds.py --tb=short
+        run: python -m pytest backend/tests/integration/test_postgres_camera_token_expiry.py backend/tests/integration/test_postgres_archive_stats_dates.py backend/tests/integration/test_postgres_user_deletion.py backend/tests/integration/test_postgres_expanding_datetime_binds.py backend/tests/integration/test_postgres_backup_restore.py --tb=short
 
   # ============================================================================
   # Frontend Checks
@@ -141,6 +141,9 @@ jobs:
 
       - name: Test CI orchestration
         run: node --test scripts/ci-workflow-regression.test.mjs
+
+      - name: Test the container CI gate
+        run: node --test scripts/container-ci-gate.test.mjs
 
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2

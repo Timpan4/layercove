@@ -237,6 +237,11 @@ class PrintScheduler:
         self._queue_changed.set()
         logger.info("Print scheduler stopped")
 
+    async def pause_for_restore(self) -> None:
+        self.stop()
+        async with self._queue_lock:
+            pass
+
     async def check_queue(self):
         """Serialize queue passes so two callers cannot transfer the same pending job."""
         async with self._queue_lock:

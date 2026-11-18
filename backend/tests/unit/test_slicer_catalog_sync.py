@@ -235,6 +235,30 @@ def orca_inherited_entries(parent_compatibility: str = "P1S", child_value: int =
     ]
 
 
+async def test_orca_sync_preserves_bundled_parent_through_account_local_inheritance(db):
+    parent, child = orca_inherited_entries("Voron")
+    parent["content"]["inherits"] = "0.20mm Standard @Voron"
+    first = await orca_pull(db, OrcaProfilePull("1", [parent, child], [], True))
+    assert first.review_batch_id is not None
+    batch = await db.get(SlicerProfileReviewBatch, first.review_batch_id)
+    assert batch.status == "approved"
+    profiles = (await db.scalars(select(SlicerProfile).where(SlicerProfile.account_id == first.account_id))).all()
+    child_profile = next(profile for profile in profiles if profile.remote_profile_id == "child")
+    revision = await db.scalar(
+        select(SlicerProfileRevision).where(SlicerProfileRevision.profile_id == child_profile.id)
+    )
+    assert await active_content(db, child_profile.id) == revision.content
+
+    assert revision.content["inherits"] == "0.20mm Standard @Voron"
+    assert revision.content["parent_value"] == "Voron"
+    assert revision.content["child_value"] == 1
+    assert revision.resolved_metadata["metadata"]["compatible_printers"] == ["Voron"]
+
+    replay = await orca_pull(db, OrcaProfilePull("2", [], [], False))
+    assert replay.revision_ids == ()
+    assert replay.current_revision_ids == first.current_revision_ids
+
+
 async def test_orca_incremental_parent_update_revises_inherited_child(db):
     initial = orca_inherited_entries()
     parent_update = orca_inherited_entries("Voron")[0]

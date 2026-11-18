@@ -7,7 +7,7 @@ const filename = 'fixture-voron-gantry-bracket-revision-03.gcode.3mf';
 const printerName = 'Fixture Voron Trident';
 const permissions = ['archives:read', 'archives:reprint_all', 'archives:update_all', 'archives:delete_all', 'queue:create'];
 
-async function openArchives(page: Page, width: number, mode: 'grid' | 'list', availability = 'enabled') {
+async function openArchives(page: Page, width: number, mode: 'grid' | 'list', availability = 'enabled', media = false) {
   const writes: string[] = [];
   await page.setViewportSize({ width, height: 844 });
   await page.addInitScript((view) => {
@@ -18,7 +18,19 @@ async function openArchives(page: Page, width: number, mode: 'grid' | 'list', av
   await page.routeWebSocket((url) => url.pathname.startsWith('/api/'), (socket) => socket.close());
   await page.route((url) => url.pathname.startsWith('/api/'), async (route) => {
     const request = route.request();
-    const path = new URL(request.url()).pathname.replace(/\/$/, '');
+    const url = new URL(request.url());
+    const path = url.pathname.replace(/\/$/, '');
+    if (request.method() === 'POST' && path === '/api/v1/auth/media-token') {
+      return route.fulfill({ json: { token: 'fictional-media-token' } });
+    }
+    if (media && path === '/api/v1/archives/166/thumbnail') {
+      if (url.searchParams.get('token') !== 'fictional-media-token') return route.fulfill({ status: 401 });
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYxkAAAAASUVORK5CYII=', 'base64');
+      return route.fulfill({ contentType: 'image/png', body: png });
+    }
+    if (media && path === '/api/v1/archives/166/timelapse') {
+      return route.fulfill({ status: url.searchParams.get('token') === 'fictional-media-token' ? 200 : 401, contentType: 'video/mp4' });
+    }
     if (request.method() !== 'GET') {
       if (request.method() === 'POST' && ['/api/v1/auth/ws-token', '/api/v1/printers/camera/stream-token'].includes(path)) {
         return route.fulfill({ json: { token: 'fictional-stream-token' } });
@@ -29,7 +41,8 @@ async function openArchives(page: Page, width: number, mode: 'grid' | 'list', av
     const archive = {
       id: 166, filename, print_name: null, printer_id: 166,
       file_path: availability === 'missing-file' ? null : '/fictional/fixture.gcode.3mf',
-      file_size: 3145728, status: 'completed', thumbnail_path: null,
+      file_size: 3145728, status: 'completed', thumbnail_path: media ? 'fixture.png' : null,
+      timelapse_path: media ? 'fixture.mp4' : null,
       created_at: '2026-10-01T10:00:00Z', created_by_id: 901, created_by_username: 'Fixture Alice',
       tags: null, notes: null, photos: [], duplicate_count: 0, print_count: 0,
       filament_type: 'PLA', sliced_for_model: 'Voron Trident',
@@ -39,7 +52,7 @@ async function openArchives(page: Page, width: number, mode: 'grid' | 'list', av
     if (path.endsWith('/auth/status')) body = { auth_enabled: true, requires_setup: false };
     if (path.endsWith('/auth/me')) body = {
       id: 901, username: 'Fixture Alice', groups: [],
-      permissions: permissions.filter((permission) =>
+      permissions: media ? ['archives:read_own'] : permissions.filter((permission) =>
         availability === 'no-queue-permission' ? permission !== 'queue:create'
           : availability === 'no-archive-permission' ? permission !== 'archives:reprint_all' : true),
     };
@@ -58,6 +71,20 @@ async function openArchives(page: Page, width: number, mode: 'grid' | 'list', av
   await expect(archive).toBeVisible();
   return { archive, writes };
 }
+
+test('an archive reader without camera permission loads their thumbnail and requests their timelapse', async ({ page }) => {
+  const cameraRequests: string[] = [];
+  page.on('request', request => {
+    if (new URL(request.url()).pathname.endsWith('/camera/stream-token')) cameraRequests.push(request.method());
+  });
+  const { archive } = await openArchives(page, 1440, 'grid', 'enabled', true);
+  await expect.poll(() => archive.getByAltText(filename).evaluate((image: HTMLImageElement) => image.naturalWidth)).toBe(1);
+
+  const response = page.waitForResponse(result => new URL(result.url()).pathname === '/api/v1/archives/166/timelapse');
+  await archive.getByTitle(/view timelapse/i).click();
+  expect((await response).status()).toBe(200);
+  expect(cameraRequests).toEqual([]);
+});
 
 for (const width of [390, 1440]) {
   test(`grid Print is named and visible and opens only confirmation at ${width}px`, async ({ page }) => {

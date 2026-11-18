@@ -14,9 +14,9 @@ from sqlalchemy import and_, case, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from backend.app.core.auth import (
-    RequireCameraStreamTokenIfAuthEnabled,
     RequirePermissionIfAuthEnabled,
     caller_is_api_key,
+    require_media_ownership,
     require_ownership_permission,
 )
 from backend.app.core.config import settings
@@ -42,6 +42,7 @@ from backend.app.utils.threemf_tools import (
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/archives", tags=["archives"])
+_archive_media_read = Depends(require_media_ownership(Permission.ARCHIVES_READ_ALL, Permission.ARCHIVES_READ_OWN))
 
 _THREEMF_MEDIA_TYPE = "application/vnd.ms-package.3dmanufacturing-3dmodel+xml"
 _GCODE_MEDIA_TYPE = "text/x-gcode"
@@ -2171,15 +2172,15 @@ async def download_archive_for_slicer(
 async def get_thumbnail(
     archive_id: int,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    auth_result: tuple[User | None, bool] = _archive_media_read,
 ):
     """Get the thumbnail image.
 
-    Requires a stream token query param (?token=xxx) when auth is enabled.
+    Accepts a media token for browser image and video requests.
     """
     service = ArchiveService(db)
-    archive = await service.get_archive(archive_id)
-    if not archive or not archive.thumbnail_path:
+    archive = _ensure_archive_visible(await service.get_archive(archive_id), *auth_result)
+    if not archive.thumbnail_path:
         raise HTTPException(404, "Thumbnail not found")
 
     thumb_path = settings.base_dir / archive.thumbnail_path
@@ -2203,15 +2204,15 @@ async def get_thumbnail(
 async def get_timelapse(
     archive_id: int,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    auth_result: tuple[User | None, bool] = _archive_media_read,
 ):
     """Get the timelapse video.
 
-    Requires a stream token query param (?token=xxx) when auth is enabled.
+    Accepts a media token for browser image and video requests.
     """
     service = ArchiveService(db)
-    archive = await service.get_archive(archive_id)
-    if not archive or not archive.timelapse_path:
+    archive = _ensure_archive_visible(await service.get_archive(archive_id), *auth_result)
+    if not archive.timelapse_path:
         raise HTTPException(404, "Timelapse not found")
 
     timelapse_path = settings.base_dir / archive.timelapse_path
@@ -2798,16 +2799,14 @@ async def get_photo(
     archive_id: int,
     filename: str,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    auth_result: tuple[User | None, bool] = _archive_media_read,
 ):
     """Get a specific photo.
 
-    Requires a stream token query param (?token=xxx) when auth is enabled.
+    Accepts a media token for browser image and video requests.
     """
     result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
-    archive = result.scalar_one_or_none()
-    if not archive:
-        raise HTTPException(404, "Archive not found")
+    archive = _ensure_archive_visible(result.scalar_one_or_none(), *auth_result)
 
     # Membership check first — UUID-generated names on upload mean any URL
     # filename that doesn't appear here is by definition not a real photo.
@@ -2883,11 +2882,11 @@ async def get_qrcode(
     request: Request,
     size: int = 200,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    auth_result: tuple[User | None, bool] = _archive_media_read,
 ):
     """Generate a QR code that links to this archive.
 
-    Requires a stream token query param (?token=xxx) when auth is enabled.
+    Accepts a media token for browser image and video requests.
     """
     try:
         import qrcode
@@ -2896,9 +2895,7 @@ async def get_qrcode(
         raise HTTPException(500, "QR code generation not available - qrcode package not installed")
 
     result = await db.execute(select(PrintArchive).where(PrintArchive.id == archive_id))
-    archive = result.scalar_one_or_none()
-    if not archive:
-        raise HTTPException(404, "Archive not found")
+    archive = _ensure_archive_visible(result.scalar_one_or_none(), *auth_result)
 
     # Build URL to archive download
     base_url = str(request.base_url).rstrip("/")
@@ -3250,19 +3247,17 @@ async def get_gcode(
 async def get_plate_preview(
     archive_id: int,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    auth_result: tuple[User | None, bool] = _archive_media_read,
 ):
     """Get the plate preview image from the 3MF file.
 
     Returns the slicer-generated plate thumbnail which shows the model
     with correct colors and positioning.
 
-    Requires a stream token query param (?token=xxx) when auth is enabled.
+    Accepts a media token for browser image and video requests.
     """
     service = ArchiveService(db)
-    archive = await service.get_archive(archive_id)
-    if not archive:
-        raise HTTPException(404, "Archive not found")
+    archive = _ensure_archive_visible(await service.get_archive(archive_id), *auth_result)
 
     file_path = settings.base_dir / archive.file_path
     if not file_path.is_file():
@@ -3750,16 +3745,14 @@ async def get_plate_thumbnail(
     archive_id: int,
     plate_index: int,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    auth_result: tuple[User | None, bool] = _archive_media_read,
 ):
     """Get the thumbnail image for a specific plate.
 
-    Requires a stream token query param (?token=xxx) when auth is enabled.
+    Accepts a media token for browser image and video requests.
     """
     service = ArchiveService(db)
-    archive = await service.get_archive(archive_id)
-    if not archive:
-        raise HTTPException(404, "Archive not found")
+    archive = _ensure_archive_visible(await service.get_archive(archive_id), *auth_result)
 
     file_path = settings.base_dir / archive.file_path
     if not file_path.is_file():
@@ -4207,18 +4200,16 @@ async def get_project_image(
     archive_id: int,
     image_path: str,
     db: AsyncSession = Depends(get_db),
-    _: None = RequireCameraStreamTokenIfAuthEnabled,
+    auth_result: tuple[User | None, bool] = _archive_media_read,
 ):
     """Get an image from the 3MF project page.
 
-    Requires a stream token query param (?token=xxx) when auth is enabled.
+    Accepts a media token for browser image and video requests.
     """
     from backend.app.services.archive import ProjectPageParser
 
     service = ArchiveService(db)
-    archive = await service.get_archive(archive_id)
-    if not archive:
-        raise HTTPException(404, "Archive not found")
+    archive = _ensure_archive_visible(await service.get_archive(archive_id), *auth_result)
 
     file_path = settings.base_dir / archive.file_path
     if not file_path.is_file():

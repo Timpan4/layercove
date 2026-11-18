@@ -11,7 +11,7 @@ async function openFixture(page: Page, width: number) {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/\/$/, '');
     if (request.method() !== 'GET') {
-      if (request.method() === 'POST' && ['/api/v1/auth/ws-token', '/api/v1/printers/camera/stream-token'].includes(path)) {
+      if (request.method() === 'POST' && ['/api/v1/auth/ws-token', '/api/v1/auth/media-token', '/api/v1/printers/camera/stream-token'].includes(path)) {
         return route.fulfill({ json: { token: 'fictional-token' } });
       }
       writes.push(`${request.method()} ${path}`);

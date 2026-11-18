@@ -6617,6 +6617,16 @@ PUBLIC_API_PREFIXES = [
     "/api/v1/auth/oidc/authorize/",
 ]
 
+# Browser media elements cannot send Authorization headers. Route
+# dependencies authorize these exact resources with a media credential.
+_MEDIA_PATH = re.compile(
+    r"/api/v1/(?:"
+    r"archives/\d+/(?:thumbnail|timelapse|plate-preview|plate-thumbnail/\d+|photos/[^/]+|project-image/.+|qrcode)"
+    r"|library/files/\d+/(?:thumbnail|plate-thumbnail/\d+)"
+    r"|print-log/\d+/thumbnail|projects/\d+/cover-image|external-links/\d+/icon"
+    r"|printers/\d+/(?:cover|files/plate-thumbnail/\d+))"
+)
+
 # Route patterns that are public (read-only display data)
 # These are checked with "in path" - needed because browsers load images/videos
 # via <img src> and <video src> which don't include Authorization headers
@@ -6822,6 +6832,11 @@ async def auth_middleware(request, call_next):
     # Only apply to API routes
     if not path.startswith("/api/"):
         return await call_next(request)
+
+    if request.method in {"GET", "HEAD"} and _MEDIA_PATH.fullmatch(path):
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "private, no-store"
+        return response
 
     # Allow public routes
     if path in PUBLIC_API_ROUTES:

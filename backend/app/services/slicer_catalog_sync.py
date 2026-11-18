@@ -100,8 +100,10 @@ def orca_profile_adapter(entry: Mapping[str, Any]) -> CatalogProfile:
     )
 
 
-def resolve_profile_inheritance(profiles: list[CatalogProfile]) -> list[CatalogProfile]:
-    """Resolve one source snapshot using explicit inherits edges within its account."""
+def resolve_profile_inheritance(
+    profiles: list[CatalogProfile], *, allow_bundled_parent: bool = False
+) -> list[CatalogProfile]:
+    """Flatten account-local inheritance while retaining Orca's bundled parent reference."""
     by_id = {(profile.profile_type, profile.remote_profile_id): profile for profile in profiles}
     by_name: dict[tuple[str, str], list[CatalogProfile]] = {}
     for profile in profiles:
@@ -124,6 +126,10 @@ def resolve_profile_inheritance(profiles: list[CatalogProfile]) -> list[CatalogP
             parent = by_id.get((profile.profile_type, parent_ref))
             if parent is None:
                 candidates = by_name.get((profile.profile_type, parent_ref), [])
+                if not candidates and allow_bundled_parent:
+                    resolving.remove(key)
+                    resolved[key] = profile
+                    return profile
                 if len(candidates) != 1:
                     reason = "missing" if not candidates else "ambiguous"
                     raise ValueError(
@@ -132,8 +138,7 @@ def resolve_profile_inheritance(profiles: list[CatalogProfile]) -> list[CatalogP
                     )
                 parent = candidates[0]
             resolved_parent = resolve(parent)
-            content = {**resolved_parent.content, **profile.content}
-            content.pop("inherits", None)
+            content = {**resolved_parent.content, **{k: v for k, v in profile.content.items() if k != "inherits"}}
             metadata = dict(profile.metadata or {})
             metadata["compatible_printers"] = _string_list(content.get("compatible_printers"))
             metadata["source_inherits"] = parent.remote_profile_id
@@ -550,9 +555,9 @@ async def sync_orca_account(
                 if profile.remote_profile_id not in pull.deletes
             }
             snapshot.update({(profile.profile_type, profile.remote_profile_id): profile for profile in upserts})
-            profiles = resolve_profile_inheritance(list(snapshot.values()))
+            profiles = resolve_profile_inheritance(list(snapshot.values()), allow_bundled_parent=True)
         else:
-            profiles = resolve_profile_inheritance(upserts)
+            profiles = resolve_profile_inheritance(upserts, allow_bundled_parent=True)
         if account is not None and pull.full_snapshot:
             existing = (
                 await session.scalars(select(SlicerProfile).where(SlicerProfile.account_id == account.id))

@@ -5,7 +5,7 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import { http, HttpResponse } from 'msw';
 import { setupServer } from 'msw/node';
-import { setAuthToken, getAuthToken, api, ApiError, setStreamToken } from '../../api/client';
+import { setAuthToken, getAuthToken, api, ApiError, setMediaToken, withMediaToken } from '../../api/client';
 
 // Mock sessionStorage (H-5: tokens are stored in sessionStorage, not localStorage)
 const sessionStorageMock = {
@@ -402,34 +402,41 @@ describe('Printer control endpoints', () => {
 });
 
 // #1155 — `<img src>` can't carry an `Authorization: Bearer …` header, so the
-// project cover-image URL must use the same stream-token pattern as
-// /archives/{id}/thumbnail. A regression where `withStreamToken` is removed
-// would break the modal preview AND the card thumbnail when auth is enabled.
+// project cover URL uses the same media credential as archive thumbnails.
 describe('Project cover image URL (#1155)', () => {
   afterEach(() => {
-    setStreamToken(null);
+    setMediaToken(null);
   });
 
-  it('appends the stream token query string when one is set', () => {
-    setStreamToken('abc123');
+  it('appends the media token query string when one is set', () => {
+    setMediaToken('abc123');
     const url = api.getProjectCoverImageUrl(42);
     expect(url).toContain('/projects/42/cover-image');
     expect(url).toContain('token=abc123');
   });
 
-  it('returns the bare URL when no stream token is set', () => {
-    setStreamToken(null);
+  it('returns the bare URL when no media token is set', () => {
+    setMediaToken(null);
     const url = api.getProjectCoverImageUrl(42);
     expect(url).toContain('/projects/42/cover-image');
     expect(url).not.toContain('token=');
   });
 
   it('URL-encodes a token containing query-string-unsafe characters', () => {
-    setStreamToken('a&b=c');
+    setMediaToken('a&b=c');
     const url = api.getProjectCoverImageUrl(7);
     // Decoded back, the token must round-trip exactly.
     const params = new URL(url, 'http://x').searchParams;
     expect(params.get('token')).toBe('a&b=c');
+  });
+
+  it('keeps the media token on same-origin media routes', () => {
+    setMediaToken('media-token');
+    for (const url of [
+      'https://other.test/api/v1/archives/7/thumbnail',
+      '/api/v1/archives/7/download',
+      '/api/v1/printers/7/camera/snapshot',
+    ]) expect(withMediaToken(url)).toBe(url);
   });
 });
 

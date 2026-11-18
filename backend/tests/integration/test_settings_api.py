@@ -955,15 +955,21 @@ class TestSimplifiedBackupRestore:
 
     @pytest.mark.asyncio
     @pytest.mark.integration
-    async def test_failed_restore_resumes_background_services(self, async_client: AsyncClient):
+    async def test_failed_restore_resumes_background_services(self, async_client: AsyncClient, tmp_path):
         """A restore that fails after pausing schedulers must restart them."""
         import io
+        import sqlite3
         import zipfile
+        from contextlib import closing
         from unittest.mock import AsyncMock, MagicMock, patch
 
+        backup_db = tmp_path / "backup.db"
+        with closing(sqlite3.connect(backup_db)) as conn:
+            conn.execute("CREATE TABLE settings (id INTEGER PRIMARY KEY, key TEXT, value TEXT)")
+            conn.commit()
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w") as zf:
-            zf.writestr("layercove.db", b"not a database")
+            zf.write(backup_db, "layercove.db")
 
         with (
             patch("backend.app.services.print_scheduler.scheduler.stop"),

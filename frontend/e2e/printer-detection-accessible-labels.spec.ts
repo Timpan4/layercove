@@ -134,6 +134,7 @@ const getFixtures = new Map<string, FixtureValue>([
 const readOnlyServiceTokenRequests = new Set([
   'POST /api/v1/printers/camera/stream-token',
   'POST /api/v1/auth/ws-token',
+  'POST /api/v1/auth/media-token',
 ]);
 
 async function openSettingsFixture(page: Page, width: number) {

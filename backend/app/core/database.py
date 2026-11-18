@@ -106,7 +106,7 @@ def _normalize_postgres_datetime_params(parameters, context, executemany):
     return normalize_row(parameters)
 
 
-def _create_engine():
+def _create_engine(*, hide_parameters: bool = False):
     """Create the async engine with dialect-appropriate settings."""
     if is_sqlite():
         kwargs = {} if ":memory:" in settings.database_url else {"pool_size": 20, "max_overflow": 200}
@@ -119,6 +119,7 @@ def _create_engine():
     eng = create_async_engine(
         settings.database_url,
         echo=settings.debug,
+        hide_parameters=hide_parameters,
         **kwargs,
     )
     if is_sqlite():

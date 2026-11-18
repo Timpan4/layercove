@@ -2,6 +2,15 @@
 
 All notable changes to Bambuddy will be documented in this file.
 
+## [0.2.5] - 2026-11-18
+
+LayerCove release. Guided calibration pairs with the Orca Slicer API 0.2.1.
+
+- Orca Cloud sync retains bundled preset inheritance. Shared catalog loads revision history when you open a profile.
+- Archive and library media use resource permissions and ownership. Camera credentials only open camera media.
+- Backup restore validates the archive, database, and encryption key before replacing data, and retains the previous files if recovery fails.
+- Container publishing requires a successful CI run for the exact source commit.
+
 ## [0.2.4.9] - 2026-07-07
 
 ### Added

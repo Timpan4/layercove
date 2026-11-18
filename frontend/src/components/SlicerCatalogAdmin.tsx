@@ -1,12 +1,11 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   api,
   type Printer,
   type SlicerCatalogAccount,
   type SlicerCatalogProfile,
-  type SlicerCatalogRevision,
 } from '../api/client';
 import { Button } from './Button';
 import { Card, CardContent } from './Card';
@@ -32,6 +31,7 @@ export function SlicerCatalogAdmin() {
   const [printerId, setPrinterId] = useState('');
   const [profileOffset, setProfileOffset] = useState(0);
   const [profileSearch, setProfileSearch] = useState('');
+  const [revisionProfileId, setRevisionProfileId] = useState<number>();
   const profileQuery = profileSearch.trim();
 
   const profiles = useQuery({
@@ -48,12 +48,6 @@ export function SlicerCatalogAdmin() {
   const mappingProfiles = useQuery({
     queryKey: ['slicerCatalogProfiles', 'mapping'],
     queryFn: () => api.listSlicerCatalogProfiles({ includeInactive: true }),
-  });
-  const revisionQueries = useQueries({
-    queries: visibleProfiles.map((profile) => ({
-      queryKey: ['slicerCatalogProfileRevisions', profile.profile_id],
-      queryFn: () => api.listSlicerCatalogProfileRevisions(profile.profile_id),
-    })),
   });
   const accounts = useQuery({ queryKey: ['slicerCatalogAccounts'], queryFn: api.listSlicerCatalogAccounts });
   const printers = useQuery<Printer[]>({ queryKey: ['printers'], queryFn: api.getPrinters });
@@ -127,7 +121,16 @@ export function SlicerCatalogAdmin() {
         {profileSearch && <Button size="sm" variant="secondary" onClick={() => { setProfileSearch(''); setProfileOffset(0); }}>{t('slicerCatalog.clearSearch')}</Button>}
       </div>
       {profiles.isSuccess && profileQuery && visibleProfiles.length === 0 && <p role="status" className="mb-3 text-sm text-bambu-gray">{t('slicerCatalog.noSearchMatches')}</p>}
-      <div className="space-y-2">{visibleProfiles.map((profile, index) => <ProfileRow key={profile.profile_id} profile={profile} revisions={revisionQueries[index]?.data ?? []} revisionsLoading={revisionQueries[index]?.isLoading ?? false} canUpdate={canUpdate} updateTitle={updateTitle} onLifecycle={(revision, rollback) => lifecycle.mutate({ profile: profile.profile_id, revision, rollback })} onRetire={() => { retire.reset(); setRetireProfile(profile); }} />)}</div>
+      <div className="space-y-2">{visibleProfiles.map(profile => <ProfileRow
+        key={profile.profile_id}
+        profile={profile}
+        revisionsOpen={revisionProfileId === profile.profile_id}
+        onToggleRevisions={open => setRevisionProfileId(open ? profile.profile_id : undefined)}
+        canUpdate={canUpdate}
+        updateTitle={updateTitle}
+        onLifecycle={(revision, rollback) => lifecycle.mutate({ profile: profile.profile_id, revision, rollback })}
+        onRetire={() => { retire.reset(); setRetireProfile(profile); }}
+      />)}</div>
       {(profileOffset > 0 || hasNextProfilePage) && <div className="mt-4 flex items-center justify-between gap-3"><Button size="sm" variant="secondary" disabled={profileOffset === 0} onClick={() => setProfileOffset(Math.max(0, profileOffset - PROFILE_PAGE_SIZE))}>Previous</Button><span className="text-sm text-bambu-gray">Page {Math.floor(profileOffset / PROFILE_PAGE_SIZE) + 1}</span><Button size="sm" variant="secondary" disabled={!hasNextProfilePage} onClick={() => setProfileOffset(profileOffset + PROFILE_PAGE_SIZE)}>Next</Button></div>}
     </Collapsible></CardContent></Card>
 
@@ -165,21 +168,27 @@ export function SlicerCatalogAdmin() {
 
 function ProfileRow({
   profile,
-  revisions,
-  revisionsLoading,
+  revisionsOpen,
+  onToggleRevisions,
   canUpdate,
   updateTitle,
   onLifecycle,
   onRetire,
 }: {
   profile: SlicerCatalogProfile;
-  revisions: SlicerCatalogRevision[];
-  revisionsLoading: boolean;
+  revisionsOpen: boolean;
+  onToggleRevisions: (open: boolean) => void;
   canUpdate: boolean;
   updateTitle?: string;
   onLifecycle: (revisionId: number, rollback: boolean) => void;
   onRetire: () => void;
 }) {
+  const revisionQuery = useQuery({
+    queryKey: ['slicerCatalogProfileRevisions', profile.profile_id],
+    queryFn: () => api.listSlicerCatalogProfileRevisions(profile.profile_id),
+    enabled: revisionsOpen,
+  });
+  const revisions = revisionQuery.data ?? [];
   const compatibility = Object.entries(profile.compatibility_metadata || {})
     .map(([key, value]) => `${key}: ${String(value)}`)
     .join(' · ');
@@ -195,8 +204,10 @@ function ProfileRow({
       {!activeRevisionId && <span className="text-amber-400">not active</span>}
       {!profile.tombstoned && <Button className="ml-auto" size="sm" variant="danger" disabled={!canUpdate} title={updateTitle} onClick={onRetire}>Retire</Button>}
     </div>
-    <div className="mt-2 space-y-1">
-      {revisionsLoading && <p className="text-bambu-gray">Loading revisions…</p>}
+    <Collapsible className="mt-2" summary="Revisions" open={revisionsOpen} onToggle={onToggleRevisions}>
+      {revisionQuery.isLoading && <p className="text-bambu-gray" role="status">Loading revisions…</p>}
+      {revisionQuery.isError && <p className="text-red-400" role="alert">Unable to load revisions.</p>}
+      <div className="space-y-1">
       {revisions.map((revision) => {
         const rollback = activeRevisionId !== null && revision.id < activeRevisionId;
         const canActivate = revision.review_state === 'approved' && !revision.active;
@@ -207,6 +218,7 @@ function ProfileRow({
           {canActivate && <Button className="ml-auto" size="sm" variant={rollback ? 'secondary' : 'primary'} disabled={!canUpdate} title={updateTitle} onClick={() => onLifecycle(revision.id, rollback)}>{rollback ? 'Rollback' : 'Activate'}</Button>}
         </div>;
       })}
-    </div>
+      </div>
+    </Collapsible>
   </article>;
 }

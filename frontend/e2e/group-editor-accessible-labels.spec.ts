@@ -53,6 +53,7 @@ async function openGroup(page: Page, width: number, editing: boolean, system = f
 function expectNoGroupWrites(writes: string[]) {
   expect(writes.filter((request) => ![
     'POST /api/v1/printers/camera/stream-token', 'POST /api/v1/auth/ws-token',
+    'POST /api/v1/auth/media-token',
   ].includes(request))).toEqual([]);
 }
 

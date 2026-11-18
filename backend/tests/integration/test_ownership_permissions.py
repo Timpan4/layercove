@@ -6,12 +6,16 @@ Tests the ownership permission model where users can have:
 - Ownerless items (created_by_id = null) require *_all permission
 """
 
+import zipfile
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
 from backend.app.core.permissions import Permission
 from backend.app.models.group import Group
+from backend.app.models.library import LibraryFile
+from backend.app.models.print_log import PrintLogEntry
 
 
 class TestOwnershipPermissionsSetup:
@@ -1258,6 +1262,103 @@ class TestReadIDORClosure(TestOwnershipPermissionsSetup):
     bambuddy_archive_idor.py and bambuddy_archive_viewer_idor.py PoC paths
     so the IDOR can't regress silently.
     """
+
+    @pytest.mark.integration
+    async def test_archive_image_and_video_follow_owner_session(
+        self, async_client, auth_setup, archive_factory, printer_factory, db_session, tmp_path
+    ):
+        group = await db_session.scalar(select(Group).where(Group.name == "Operators"))
+        group.permissions = [Permission.ARCHIVES_READ_OWN.value, Permission.LIBRARY_READ_OWN.value]
+        await db_session.commit()
+
+        printer = await printer_factory()
+        thumbnail = tmp_path / "thumbnail.png"
+        video = tmp_path / "timelapse.mp4"
+        thumbnail.write_bytes(b"fixture thumbnail")
+        video.write_bytes(b"fixture video")
+        archive = await archive_factory(
+            printer.id,
+            created_by_id=auth_setup["operator_user"]["id"],
+            thumbnail_path=str(thumbnail),
+            timelapse_path=str(video),
+        )
+        headers = {"Authorization": f"Bearer {auth_setup['operator_token']}"}
+        thumb_path = f"/api/v1/archives/{archive.id}/thumbnail"
+        response = await async_client.get(thumb_path, headers=headers)
+        assert response.status_code == 200
+        assert response.content == thumbnail.read_bytes()
+        assert response.headers["cache-control"] == "private, no-store"
+
+        response = await async_client.post("/api/v1/auth/media-token", headers=headers)
+        assert response.status_code == 200
+        token = response.json()["token"]
+        query = {"token": token}
+        assert (await async_client.get(thumb_path, params=query)).content == thumbnail.read_bytes()
+        video_path = f"/api/v1/archives/{archive.id}/timelapse"
+        response = await async_client.get(video_path, headers={"Range": "bytes=0-6"}, params=query)
+        assert response.status_code == 206
+        assert response.content == b"fixture"
+
+        other_headers = {"Authorization": f"Bearer {auth_setup['operator2_token']}"}
+        other = await async_client.post("/api/v1/auth/media-token", headers=other_headers)
+        assert other.status_code == 200
+        other_query = {"token": other.json()["token"]}
+        log_entry = await db_session.scalar(select(PrintLogEntry).where(PrintLogEntry.archive_id == archive.id))
+        log_entry.thumbnail_path = str(thumbnail)
+        library_path = tmp_path / "test.3mf"
+        with zipfile.ZipFile(library_path, "w") as container:
+            container.writestr("Metadata/plate_1.png", thumbnail.read_bytes())
+        library_file = LibraryFile(
+            filename=library_path.name,
+            file_path=str(library_path),
+            file_size=library_path.stat().st_size,
+            file_type="3mf",
+            thumbnail_path=str(thumbnail),
+            created_by_id=auth_setup["operator_user"]["id"],
+        )
+        db_session.add(library_file)
+        await db_session.commit()
+        for path in (
+            f"/api/v1/library/files/{library_file.id}/thumbnail",
+            f"/api/v1/library/files/{library_file.id}/plate-thumbnail/1",
+            f"/api/v1/print-log/{log_entry.id}/thumbnail",
+        ):
+            assert (await async_client.get(path, params=query)).content == thumbnail.read_bytes(), path
+            assert (await async_client.get(path, params=other_query)).status_code == 404, path
+
+        for suffix in (
+            "thumbnail",
+            "timelapse",
+            "plate-preview",
+            "plate-thumbnail/1",
+            "photos/test.jpg",
+            "project-image/cover.png",
+            "qrcode",
+        ):
+            response = await async_client.get(f"/api/v1/archives/{archive.id}/{suffix}", params=other_query)
+            assert response.status_code == 404, suffix
+            assert response.json()["detail"] == "Archive not found", suffix
+
+        for path in (
+            f"/api/v1/printers/{printer.id}/cover",
+            f"/api/v1/printers/{printer.id}/files/plate-thumbnail/1",
+            "/api/v1/projects/1/cover-image",
+            "/api/v1/external-links/1/icon",
+        ):
+            params = {**query, "path": "fixture.3mf"} if "/files/" in path else query
+            assert (await async_client.get(path, params=params)).status_code == 403, path
+        camera_route = "/api/v1/printers/camera/stream-token"
+        assert (await async_client.post(camera_route, headers=headers)).status_code == 403
+        admin_headers = {"Authorization": f"Bearer {auth_setup['admin_token']}"}
+        camera = await async_client.post(camera_route, headers=admin_headers)
+        assert camera.is_success
+        assert (await async_client.get(thumb_path, params={"token": camera.json()["token"]})).status_code == 401
+        assert (
+            await async_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+        ).status_code == 401
+
+        assert (await async_client.post("/api/v1/auth/logout", headers=headers)).is_success
+        assert (await async_client.get(thumb_path, params=query)).status_code == 401
 
     @pytest.mark.asyncio
     @pytest.mark.integration
