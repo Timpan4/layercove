@@ -6,7 +6,7 @@ import re
 from enum import Enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class PresetRef(BaseModel):
@@ -118,6 +118,8 @@ class SliceRequest(BaseModel):
     integer ids into a ``PresetRef(source='local', id=str(id))`` so the
     downstream resolver only deals with one shape.
     """
+
+    model_config = ConfigDict(json_schema_serialization_defaults_required=True)
 
     # Legacy fields — kept optional so older clients continue to work.
     printer_preset_id: int | None = Field(

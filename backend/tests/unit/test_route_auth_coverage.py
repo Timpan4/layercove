@@ -243,3 +243,34 @@ def test_openapi_describes_calibration_images_camera_ids_and_catalog_preferences
         assert printer_id["schema"]["type"] == "integer"
     assert "get" in paths["/api/v1/slicer/catalog/bindings/{binding_id}/preferences"]
     assert "/api/v1/slicer/catalog/preferences/{binding_id}" not in paths
+
+
+def test_openapi_export_preserves_request_optionality_and_response_defaults(tmp_path):
+    import json
+    import os
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    repo = Path(os.environ.get("TEST_REPOSITORY_ROOT", Path(__file__).resolve().parents[3]))
+    export = repo / "scripts" / "export_openapi.py"
+    result = subprocess.run(
+        [sys.executable, str(export)],
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, "DATA_DIR": str(tmp_path), "LOG_DIR": str(tmp_path)},
+    )
+    spec = json.loads(result.stdout)
+    schemas = spec["components"]["schemas"]
+    slice_body = spec["paths"]["/api/v1/library/files/{file_id}/slice"]["post"]["requestBody"]
+    slice_input = slice_body["content"]["application/json"]["schema"]["$ref"].rsplit("/", 1)[-1]
+    for name, property_name in (("PrinterUpdate", "assign_unowned_prints"), (slice_input, "arrange")):
+        schema = schemas[name]
+        assert property_name not in schema.get("required", [])
+        assert "default" not in schema["properties"][property_name]
+
+    assert schemas["PrinterResponse"]["properties"]["nozzle_count"]["default"] == 1
+    historical_request = schemas["HistoricalReslicePrepareResponse"]["properties"]["request"]
+    slice_output = historical_request["$ref"].rsplit("/", 1)[-1]
+    assert "arrange" in schemas[slice_output]["required"]
