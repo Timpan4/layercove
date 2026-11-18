@@ -44,6 +44,7 @@ function expectNoSettingWrites(writes: string[]) {
   // Startup token requests also return405; none reach a backend or hardware.
   expect(writes.filter((request) => ![
     'POST /api/v1/printers/camera/stream-token',
+    'POST /api/v1/auth/media-token',
     'POST /api/v1/auth/ws-token',
   ].includes(request))).toEqual([]);
 }

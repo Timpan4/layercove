@@ -1326,6 +1326,18 @@ class TestReadIDORClosure(TestOwnershipPermissionsSetup):
             assert (await async_client.get(path, params=query)).content == thumbnail.read_bytes(), path
             assert (await async_client.get(path, params=other_query)).status_code == 404, path
 
+        with zipfile.ZipFile(library_path, "a") as container:
+            container.writestr("cover.png", thumbnail.read_bytes())
+        archive.file_path = str(library_path)
+        await db_session.commit()
+        for path in (
+            f"/api/v1/print-log/+{log_entry.id}/thumbnail",
+            f"/api/v1/archives/+{archive.id}/project-image/cover.png",
+        ):
+            response = await async_client.get(path, params=query)
+            assert response.content == thumbnail.read_bytes(), path
+            assert response.headers["cache-control"] == "private, no-store", path
+
         for suffix in (
             "thumbnail",
             "timelapse",
@@ -1356,6 +1368,10 @@ class TestReadIDORClosure(TestOwnershipPermissionsSetup):
         assert (
             await async_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
         ).status_code == 401
+
+        archive.created_by_id = auth_setup["operator2_user"]["id"]
+        await db_session.commit()
+        assert (await async_client.get(f"/api/v1/print-log/{log_entry.id}/thumbnail", params=query)).status_code == 404
 
         assert (await async_client.post("/api/v1/auth/logout", headers=headers)).is_success
         assert (await async_client.get(thumb_path, params=query)).status_code == 401

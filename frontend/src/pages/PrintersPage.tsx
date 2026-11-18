@@ -25,6 +25,7 @@ import { useQuery, useQueries, useMutation, useQueryClient } from '@tanstack/rea
 import { useTranslation } from 'react-i18next';
 import { useTheme } from '../contexts/ThemeContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useMediaToken } from '../hooks/useCameraStreamToken';
 import {
   Plus,
   Link,
@@ -886,6 +887,8 @@ function CoverImage({
   radiusClass?: string;
 }) {
   const { t } = useTranslation();
+  const { authEnabled, loading: authLoading } = useAuth();
+  const mediaToken = useMediaToken();
   const [loaded, setLoaded] = useState(false);
   const [error, setError] = useState(false);
   const [showOverlay, setShowOverlay] = useState(false);
@@ -895,25 +898,28 @@ function CoverImage({
   const cacheBustedUrl = useMemo(() => {
     if (!url) return null;
     const sep = url.includes('?') ? '&' : '?';
-    return withMediaToken(`${url}${sep}v=${encodeURIComponent(printName || Date.now().toString())}`);
+    return `${url}${sep}v=${encodeURIComponent(printName || Date.now().toString())}`;
   }, [url, printName]);
+  const imageUrl = !authLoading && (!authEnabled || mediaToken) && cacheBustedUrl
+    ? withMediaToken(cacheBustedUrl)
+    : null;
 
   // Reset loaded/error state when the image URL changes
   useEffect(() => {
     setLoaded(false);
     setError(false);
-  }, [cacheBustedUrl]);
+  }, [imageUrl]);
 
   return (
     <>
       <div
-        className={`${className} flex-shrink-0 ${radiusClass} overflow-hidden bg-bambu-dark-tertiary flex items-center justify-center ${cacheBustedUrl && loaded ? 'cursor-pointer' : ''}`}
-        onClick={() => cacheBustedUrl && loaded && setShowOverlay(true)}
+        className={`${className} flex-shrink-0 ${radiusClass} overflow-hidden bg-bambu-dark-tertiary flex items-center justify-center ${imageUrl && loaded ? 'cursor-pointer' : ''}`}
+        onClick={() => imageUrl && loaded && setShowOverlay(true)}
       >
-        {cacheBustedUrl && !error ? (
+        {imageUrl && !error ? (
           <>
             <img
-              src={cacheBustedUrl}
+              src={imageUrl}
               alt={t('printers.printPreview')}
               className={`w-full h-full object-cover ${loaded ? 'block' : 'hidden'}`}
               onLoad={() => setLoaded(true)}
@@ -927,14 +933,14 @@ function CoverImage({
       </div>
 
       {/* Cover Image Overlay */}
-      {showOverlay && cacheBustedUrl && (
+      {showOverlay && imageUrl && (
         <div
           className="fixed inset-0 bg-black/80 flex items-center justify-center z-50 p-8"
           onClick={() => setShowOverlay(false)}
         >
           <div className="relative max-w-2xl max-h-full">
             <img
-              src={cacheBustedUrl}
+              src={imageUrl}
               alt={t('printers.printPreview')}
               className="max-w-full max-h-[80vh] rounded-lg shadow-2xl"
             />

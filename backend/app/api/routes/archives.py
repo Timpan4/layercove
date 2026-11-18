@@ -4225,7 +4225,7 @@ async def get_project_image(
     return Response(
         content=image_data,
         media_type=content_type,
-        headers={"Cache-Control": "max-age=3600"},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 

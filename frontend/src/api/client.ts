@@ -95,13 +95,21 @@ export function withStreamToken(url: string): string {
 }
 
 let mediaToken: string | null = null;
+const mediaTokenListeners = new Set<() => void>();
 
 export function setMediaToken(token: string | null) {
+  if (mediaToken === token) return;
   mediaToken = token;
+  mediaTokenListeners.forEach(listener => listener());
 }
 
 export function getMediaToken(): string | null {
   return mediaToken;
+}
+
+export function subscribeMediaToken(listener: () => void) {
+  mediaTokenListeners.add(listener);
+  return () => { mediaTokenListeners.delete(listener); };
 }
 
 const mediaPath = /^\/api\/v1\/(?:archives\/\d+\/(?:thumbnail|timelapse|plate-preview|plate-thumbnail\/\d+|photos\/[^/]+|project-image\/.+|qrcode)|library\/files\/\d+\/(?:thumbnail|plate-thumbnail\/\d+)|print-log\/\d+\/thumbnail|projects\/\d+\/cover-image|external-links\/\d+\/icon|printers\/\d+\/(?:cover|files\/plate-thumbnail\/\d+))$/;
@@ -3932,10 +3940,11 @@ export const api = {
       method: 'POST',
       body: JSON.stringify(data),
     }),
-  logout: () =>
+  logout: (token: string | null = authToken) =>
     request<{ message: string }>('/auth/logout', {
       method: 'POST',
-    }),
+      keepalive: true,
+    }, token),
   getCurrentUser: (token: string | null = authToken) => request<UserResponse>('/auth/me', {}, token),
   disableAuth: () =>
     request<{ message: string; auth_enabled: boolean }>('/auth/disable', {

@@ -15,6 +15,7 @@ from backend.app.core.auth import (
 from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
+from backend.app.models.archive import PrintArchive
 from backend.app.models.print_log import PrintLogEntry
 from backend.app.models.user import User
 from backend.app.schemas.print_log import PrintLogEntrySchema, PrintLogEntryUpdate, PrintLogResponse
@@ -131,8 +132,13 @@ async def get_print_log_thumbnail(
     if not entry or not entry.thumbnail_path:
         raise HTTPException(404, "Thumbnail not found")
     user, can_read_all = auth_result
-    if not can_read_all and (user is None or entry.created_by_id != user.id):
-        raise HTTPException(404, "Thumbnail not found")
+    if not can_read_all:
+        if user is None or entry.created_by_id != user.id:
+            raise HTTPException(404, "Thumbnail not found")
+        if entry.archive_id is not None:
+            archive = await db.get(PrintArchive, entry.archive_id)
+            if archive is None or archive.created_by_id != user.id:
+                raise HTTPException(404, "Thumbnail not found")
 
     thumb_path = settings.base_dir / entry.thumbnail_path
     if not thumb_path.exists():
@@ -143,7 +149,7 @@ async def get_print_log_thumbnail(
     return FileResponse(
         path=thumb_path,
         media_type="image/png",
-        headers={"Cache-Control": "public, max-age=86400"},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 

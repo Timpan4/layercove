@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import logging
 import os
 import secrets
@@ -1407,6 +1408,7 @@ async def get_caller_identity_if_auth_enabled(
 
 
 _MEDIA_AUDIENCE = "layercove-media"
+_API_KEY_MEDIA_AUDIENCE = "layercove-api-key-media"
 # Match the upstream media-token lifetime, without outliving the issuing session.
 MEDIA_TOKEN_EXPIRE_MINUTES = 60
 
@@ -1435,16 +1437,35 @@ async def _read_user_session(db: AsyncSession, token: str, *, audience: str | No
 
 async def mint_media_token(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(security)] = None,
+    x_api_key: Annotated[str | None, Header(alias="X-API-Key")] = None,
 ) -> str | None:
-    """Issue a browser media credential bound to the current user session."""
+    """Issue a credential usable only by media routes, with the issuer's live permissions."""
+    expires_at = datetime.now(timezone.utc) + timedelta(minutes=MEDIA_TOKEN_EXPIRE_MINUTES)
     async with async_session() as db:
         if not await is_auth_enabled(db):
             return None
+        raw_key = x_api_key or (
+            credentials.credentials if credentials and credentials.credentials.startswith("bb_") else None
+        )
+        if raw_key:
+            key = await _validate_api_key(db, raw_key)
+            if key is None:
+                raise HTTPException(401, "Invalid API key")
+            key_expiration = _api_key_media_expiration(key)
+            return jwt.encode(
+                {
+                    "sub": str(key.id),
+                    "aud": _API_KEY_MEDIA_AUDIENCE,
+                    "key_fingerprint": hashlib.sha256(key.key_hash.encode()).hexdigest(),
+                    "exp": min(expires_at, key_expiration) if key_expiration else expires_at,
+                },
+                SECRET_KEY,
+                algorithm=ALGORITHM,
+            )
         if credentials is None:
             raise HTTPException(401, "User session required")
         user, session = await _read_user_session(db, credentials.credentials)
 
-    expires_at = datetime.now(timezone.utc) + timedelta(minutes=MEDIA_TOKEN_EXPIRE_MINUTES)
     claims = {
         "sub": user.username,
         "uid": user.id,
@@ -1454,6 +1475,13 @@ async def mint_media_token(
         "exp": min(int(expires_at.timestamp()), session["exp"]),
     }
     return jwt.encode(claims, SECRET_KEY, algorithm=ALGORITHM)
+
+
+def _api_key_media_expiration(key: APIKey) -> datetime | None:
+    expires_at = key.expires_at
+    if expires_at is not None and expires_at.tzinfo is None:
+        return expires_at.replace(tzinfo=timezone.utc)
+    return expires_at
 
 
 async def get_media_caller(
@@ -1466,8 +1494,29 @@ async def get_media_caller(
     async with async_session() as db:
         if not await is_auth_enabled(db):
             return CallerIdentity.auth_disabled()
-        user, _ = await _read_user_session(db, token, audience=_MEDIA_AUDIENCE)
-        return CallerIdentity.authenticated_user(user)
+        try:
+            payload = jwt.decode(
+                token,
+                SECRET_KEY,
+                algorithms=[ALGORITHM],
+                audience=_API_KEY_MEDIA_AUDIENCE,
+                options={"require": ["sub", "exp", "key_fingerprint"]},
+            )
+        except JWTError:
+            user, _ = await _read_user_session(db, token, audience=_MEDIA_AUDIENCE)
+            return CallerIdentity.authenticated_user(user)
+
+        key = await db.get(APIKey, int(payload["sub"]))
+        if (
+            key is None
+            or not key.enabled
+            or not secrets.compare_digest(payload["key_fingerprint"], hashlib.sha256(key.key_hash.encode()).hexdigest())
+        ):
+            raise HTTPException(401, "Invalid API key media credential")
+        expires_at = _api_key_media_expiration(key)
+        if expires_at is not None and expires_at <= datetime.now(timezone.utc):
+            raise HTTPException(401, "API key has expired")
+        return CallerIdentity.authenticated_api_key(key)
 
 
 MediaCaller = Annotated[CallerIdentity, Depends(get_media_caller)]

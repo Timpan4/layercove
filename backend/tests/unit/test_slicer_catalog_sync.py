@@ -161,6 +161,7 @@ def test_orca_inheritance_resolves_compatibility_and_full_content():
                 "type": "print",
                 "compatible_printers": ["Dremel 3D40"],
                 "layer_height": "0.20",
+                "inherits": "",
             },
         }
     )
@@ -238,6 +239,9 @@ def orca_inherited_entries(parent_compatibility: str = "P1S", child_value: int =
 async def test_orca_sync_preserves_bundled_parent_through_account_local_inheritance(db):
     parent, child = orca_inherited_entries("Voron")
     parent["content"]["inherits"] = "0.20mm Standard @Voron"
+    bundled = standard_entry("voron")
+    bundled["name"] = parent["content"]["inherits"]
+    await sync_standard_account(db, {"process": [bundled]})
     first = await orca_pull(db, OrcaProfilePull("1", [parent, child], [], True))
     assert first.review_batch_id is not None
     batch = await db.get(SlicerProfileReviewBatch, first.review_batch_id)
@@ -249,7 +253,8 @@ async def test_orca_sync_preserves_bundled_parent_through_account_local_inherita
     )
     assert await active_content(db, child_profile.id) == revision.content
 
-    assert revision.content["inherits"] == "0.20mm Standard @Voron"
+    assert "inherits" not in revision.content
+    assert revision.content["value"] == 1
     assert revision.content["parent_value"] == "Voron"
     assert revision.content["child_value"] == 1
     assert revision.resolved_metadata["metadata"]["compatible_printers"] == ["Voron"]
@@ -257,6 +262,22 @@ async def test_orca_sync_preserves_bundled_parent_through_account_local_inherita
     replay = await orca_pull(db, OrcaProfilePull("2", [], [], False))
     assert replay.revision_ids == ()
     assert replay.current_revision_ids == first.current_revision_ids
+
+
+async def test_orca_sync_preserves_active_child_when_custom_parent_is_deleted(db):
+    parent, child = orca_inherited_entries()
+    first = await orca_pull(db, OrcaProfilePull("1", [parent, child], [], True))
+    child_id = await db.scalar(
+        select(SlicerProfile.id).where(
+            SlicerProfile.account_id == first.account_id, SlicerProfile.remote_profile_id == "child"
+        )
+    )
+    before = await active_content(db, child_id)
+
+    with pytest.raises(ValueError, match="missing process inheritance parent"):
+        await orca_pull(db, OrcaProfilePull("2", [], ["parent"], False))
+
+    assert await active_content(db, child_id) == before
 
 
 async def test_orca_incremental_parent_update_revises_inherited_child(db):

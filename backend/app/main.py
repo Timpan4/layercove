@@ -288,6 +288,7 @@ root_logger.setLevel(log_level)
 # dropped — which is exactly the "logs/bambuddy.log only shows logs
 # partially" bug we hit. See backend/app/core/trace.py for the
 # ContextVar the filter reads.
+from backend.app.core.logging_filters import AccessQueryRedactionFilter
 from backend.app.core.trace import TraceIDFilter
 
 _trace_id_filter = TraceIDFilter()
@@ -298,6 +299,8 @@ console_handler.setLevel(log_level)
 console_handler.setFormatter(logging.Formatter(log_format))
 console_handler.addFilter(_trace_id_filter)
 root_logger.addHandler(console_handler)
+uvicorn_access_logger = logging.getLogger("uvicorn.access")
+uvicorn_access_logger.addFilter(AccessQueryRedactionFilter())
 
 # File handler - only in production or if explicitly enabled
 if app_settings.log_to_file:
@@ -326,7 +329,6 @@ if app_settings.log_to_file:
         WriteRequestsOnlyFilter,
     )
 
-    uvicorn_access_logger = logging.getLogger("uvicorn.access")
     uvicorn_access_logger.addHandler(file_handler)
     uvicorn_access_logger.addFilter(WriteRequestsOnlyFilter())
     # Uvicorn's access logger has propagate=False (its own default), so the

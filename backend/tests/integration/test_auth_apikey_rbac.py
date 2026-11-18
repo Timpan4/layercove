@@ -100,6 +100,37 @@ class TestApiKeyRbacAllowed:
         response = await async_client.get(f"/api/v1/printers/{other.id}/cover", headers=headers)
         assert response.status_code == 403
 
+    @pytest.mark.integration
+    async def test_api_key_media_token_follows_current_printer_scope(
+        self, async_client, db_session, api_key_data, printer_factory
+    ):
+        from sqlalchemy import select
+
+        from backend.app.models.api_key import APIKey
+        from backend.app.models.settings import Settings
+
+        printer = await printer_factory()
+        key = await db_session.scalar(select(APIKey).where(APIKey.name == "test-key"))
+        key.printer_ids = [printer.id]
+        db_session.add(Settings(key="auth_enabled", value="true"))
+        await db_session.commit()
+
+        minted = await async_client.post(
+            "/api/v1/auth/media-token", headers={"Authorization": f"Bearer {api_key_data}"}
+        )
+        assert minted.is_success, minted.text
+        query = {"token": minted.json()["token"]}
+        path = f"/api/v1/printers/{printer.id}/cover"
+        cover = await async_client.get(path, params=query)
+        assert cover.status_code == 404
+        assert cover.json()["detail"] == "Printer not connected"
+        key.printer_ids = [printer.id + 1]
+        await db_session.commit()
+        assert (await async_client.get(path, params=query)).status_code == 403
+        key.enabled = False
+        await db_session.commit()
+        assert (await async_client.get(path, params=query)).status_code == 401
+
     @pytest.mark.asyncio
     @pytest.mark.integration
     async def test_api_key_can_access_inventory_read(

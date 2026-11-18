@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef } from 'react';
+import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  api, getAuthToken, getMediaToken, getStreamToken, isMediaUrl, setMediaToken, setStreamToken, withMediaToken,
+  api, getAuthToken, getMediaToken, getStreamToken, isMediaUrl, setMediaToken, setStreamToken,
+  subscribeMediaToken, withMediaToken,
 } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -45,7 +46,7 @@ export function useStreamTokenSync() {
   const { data: mediaData } = useQuery({
     queryKey: ['media-token', user?.id ?? null],
     queryFn: () => api.getMediaToken(),
-    enabled: !authLoading && authEnabled && user !== null && !getAuthToken()?.startsWith('bb_'),
+    enabled: !authLoading && authEnabled && user !== null,
     staleTime: 50 * 60 * 1000, // refresh at 50 min (tokens expire at 60)
     refetchInterval: 50 * 60 * 1000,
   });
@@ -86,14 +87,20 @@ export function useStreamTokenSync() {
 
       const query = media ? 'media-token' : 'camera-stream-token';
       if (refreshingRef.current.has(query)) return;
+      if (media) {
+        refreshingRef.current.add(query);
+        void queryClient.invalidateQueries({ queryKey: [query] }).finally(() => {
+          refreshingRef.current.delete(query);
+        });
+        return;
+      }
       // Keep token-owned media mounted while the shared query replaces the
       // stale credential. A repeated failure during that refresh is allowed
       // through to the component's normal error state.
       event.stopPropagation();
       refreshingRef.current.add(query);
 
-      if (media) setMediaToken(null);
-      else setStreamToken(null);
+      setStreamToken(null);
       queryClient.setQueriesData({ queryKey: [query] }, undefined);
       queryClient.invalidateQueries({ queryKey: [query] });
 
@@ -107,6 +114,10 @@ export function useStreamTokenSync() {
     document.addEventListener('error', handleError, true);
     return () => document.removeEventListener('error', handleError, true);
   }, [authEnabled, queryClient]);
+}
+
+export function useMediaToken() {
+  return useSyncExternalStore(subscribeMediaToken, getMediaToken);
 }
 
 /**

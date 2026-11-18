@@ -24,9 +24,9 @@ async function openReadOnlyAdminSettings(page: Page, width: number) {
     const request = route.request();
     const path = new URL(request.url()).pathname.replace(/\/$/, '');
     if (request.method() !== 'GET') {
-      if (request.method() === 'POST' && path === '/api/v1/auth/ws-token') {
+      if (request.method() === 'POST' && ['/api/v1/auth/ws-token', '/api/v1/auth/media-token'].includes(path)) {
         startupTokenResponses.push({ request: `${request.method()} ${path}`, status: 200 });
-        return route.fulfill({ json: { token: 'fictional-ws-token' } });
+        return route.fulfill({ json: { token: 'fictional-startup-token' } });
       }
       if (request.method() === 'POST' && path === '/api/v1/printers/camera/stream-token') {
         startupTokenResponses.push({ request: `${request.method()} ${path}`, status: 405 });
@@ -151,7 +151,7 @@ for (const width of [390, 1440]) {
     } finally {
       expect(stateMutationRequests, 'Authentication navigation must not write settings, credentials, or security options').toEqual([]);
       expect(startupTokenResponses.every(({ request, status }) =>
-        (request === 'POST /api/v1/auth/ws-token' && status === 200) ||
+        (['POST /api/v1/auth/ws-token', 'POST /api/v1/auth/media-token'].includes(request) && status === 200) ||
         (request === 'POST /api/v1/printers/camera/stream-token' && status === 405),
       )).toBe(true);
     }

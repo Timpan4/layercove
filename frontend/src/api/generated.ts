@@ -2474,14 +2474,16 @@ export interface paths {
          * Get Photo
          * @description Get a specific photo.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token for browser image and video requests.
          */
         get: {
             parameters: {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     archive_id: number;
                     filename: string;
@@ -2569,14 +2571,16 @@ export interface paths {
          *     Returns the slicer-generated plate thumbnail which shows the model
          *     with correct colors and positioning.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token for browser image and video requests.
          */
         get: {
             parameters: {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     archive_id: number;
                 };
@@ -2623,14 +2627,16 @@ export interface paths {
          * Get Plate Thumbnail
          * @description Get the thumbnail image for a specific plate.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token for browser image and video requests.
          */
         get: {
             parameters: {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     archive_id: number;
                     plate_index: number;
@@ -2733,14 +2739,16 @@ export interface paths {
          * Get Project Image
          * @description Get an image from the 3MF project page.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token for browser image and video requests.
          */
         get: {
             parameters: {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     archive_id: number;
                     image_path: string;
@@ -2882,7 +2890,7 @@ export interface paths {
          * Get Qrcode
          * @description Generate a QR code that links to this archive.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token for browser image and video requests.
          */
         get: {
             parameters: {
@@ -2890,7 +2898,9 @@ export interface paths {
                     size?: number;
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     archive_id: number;
                 };
@@ -3560,14 +3570,16 @@ export interface paths {
          * Get Thumbnail
          * @description Get the thumbnail image.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token for browser image and video requests.
          */
         get: {
             parameters: {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     archive_id: number;
                 };
@@ -3614,14 +3626,16 @@ export interface paths {
          * Get Timelapse
          * @description Get the timelapse video.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token for browser image and video requests.
          */
         get: {
             parameters: {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     archive_id: number;
                 };
@@ -5341,7 +5355,9 @@ export interface paths {
         post: {
             parameters: {
                 query?: never;
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path?: never;
                 cookie?: never;
             };
@@ -5354,6 +5370,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["MediaTokenResponse"];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
                     };
                 };
             };
@@ -6710,6 +6735,696 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["BugReportResponse"];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/generic-filaments": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * List Generic Filaments
+         * @description Names of the generic profiles a new filament profile can start from.
+         */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": string[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Sessions */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create Session */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SessionCreate"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Session */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        /** Delete Session */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/evidence": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Evidence */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/evidence/{evidence_id}/image": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Evidence Image */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                    evidence_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/evidence/{step}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Upload Evidence */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                    step: components["schemas"]["Step"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "multipart/form-data": components["schemas"]["Body_upload_evidence_api_v1_calibration_sessions__session_id__evidence__step__post"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/filament-revision": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Use Current Filament Revision
+         * @description Move a session to its filament's active revision after an edit or sync replaced it.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["VersionedEdit"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/generate/{step}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Generate Test */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                    step: components["schemas"]["Step"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["GenerateRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/parameters/{step}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Edit Parameters */
+        put: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                    step: components["schemas"]["Step"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ParameterEdit"] | components["schemas"]["FlowParameterEdit"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/print/{step}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Print Test */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                    step: components["schemas"]["Step"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PrintRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/results/{step}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Edit Result */
+        put: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                    step: components["schemas"]["Step"];
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ResultEdit"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/calibration/sessions/{session_id}/save": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Save Session */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    session_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SaveRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
                     };
                 };
                 /** @description Validation Error */
@@ -8389,14 +9104,16 @@ export interface paths {
          * Get Icon
          * @description Get the custom icon for an external link.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token for browser image requests.
          */
         get: {
             parameters: {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     link_id: number;
                 };
@@ -9592,21 +10309,18 @@ export interface paths {
          */
         post: {
             parameters: {
-                query: {
-                    /** @description Repository URL */
-                    repo_url: string;
-                    /** @description Personal Access Token */
-                    token: string;
-                    /** @description Git provider key */
-                    provider?: components["schemas"]["backend__app__schemas__github_backup__ProviderType"];
-                };
+                query?: never;
                 header?: {
                     "X-API-Key"?: string | null;
                 };
                 path?: never;
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["GitHubTestConnectionRequest"];
+                };
+            };
             responses: {
                 /** @description Successful Response */
                 200: {
@@ -13825,7 +14539,9 @@ export interface paths {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     file_id: number;
                     plate_index: number;
@@ -14099,7 +14815,9 @@ export interface paths {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     file_id: number;
                 };
@@ -19577,6 +20295,7 @@ export interface paths {
          * @description Clear the print log.
          *
          *     Only deletes log entries. Archives and queue items are never touched.
+         *     Not available to API keys: clearing drops every run from statistics.
          */
         delete: {
             parameters: {
@@ -19734,7 +20453,7 @@ export interface paths {
          * Get Print Log Thumbnail
          * @description Get the thumbnail for a print log entry.
          *
-         *     Requires a stream token query param (?token=xxx) when auth is enabled.
+         *     Accepts a media token and applies the print log's ownership rules.
          *
          *     Self-heals stale entries: when thumbnail_path points to a file that no
          *     longer exists on disk (archive was deleted, or print failed before the
@@ -19748,7 +20467,9 @@ export interface paths {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     entry_id: number;
                 };
@@ -19837,7 +20558,7 @@ export interface paths {
         post?: never;
         /**
          * Delete Old History
-         * @description Delete old printer sensor history for a printer.
+         * @description Delete old printer sensor history for a printer (admin only: destructive).
          */
         delete: {
             parameters: {
@@ -21556,7 +22277,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number;
+                    printer_id: number | null;
                     index: number;
                 };
                 cookie?: never;
@@ -21675,7 +22396,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number;
+                    printer_id: number | null;
                 };
                 cookie?: never;
             };
@@ -21907,7 +22628,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number;
+                    printer_id: number | null;
                 };
                 cookie?: never;
             };
@@ -22246,7 +22967,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number;
+                    printer_id: number | null;
                     camera_id: number;
                 };
                 cookie?: never;
@@ -22297,7 +23018,7 @@ export interface paths {
                 };
                 header?: never;
                 path: {
-                    printer_id: number;
+                    printer_id: number | null;
                     camera_id: number;
                 };
                 cookie?: never;
@@ -22516,7 +23237,9 @@ export interface paths {
                     view?: string | null;
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     printer_id: number;
                 };
@@ -23331,6 +24054,7 @@ export interface paths {
                 query: {
                     /** @description Full path to the 3MF file on the printer */
                     path: string;
+                    token?: string | null;
                 };
                 header?: {
                     "X-API-Key"?: string | null;
@@ -25766,6 +26490,9 @@ export interface paths {
         /**
          * Import Project File
          * @description Import a project from a ZIP or JSON file.
+         *
+         *     Linked folders/files write to the library, so they additionally need the
+         *     library upload permission (``can_manage_library`` for API keys).
          */
         post: {
             parameters: {
@@ -26494,18 +27221,16 @@ export interface paths {
         };
         /**
          * Get Project Cover Image
-         * @description Stream the project's cover image (#1155).
-         *
-         *     Browsers can't attach `Authorization: Bearer ...` to `<img src>` requests,
-         *     so this route accepts the same `?token=` stream-credential as
-         *     /archives/{id}/thumbnail. The frontend wraps URLs with `withStreamToken`.
+         * @description Stream the project's cover image using project read permission.
          */
         get: {
             parameters: {
                 query?: {
                     token?: string | null;
                 };
-                header?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
                 path: {
                     project_id: number;
                 };
@@ -26940,10 +27665,7 @@ export interface paths {
             };
         };
         put?: never;
-        /**
-         * Add To Queue
-         * @description Add an item to the print queue.
-         */
+        /** Add To Queue */
         post: {
             parameters: {
                 query?: never;
@@ -27281,6 +28003,60 @@ export interface paths {
                 };
             };
         };
+        trace?: never;
+    };
+    "/api/v1/queue/material-check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Material Check
+         * @description Read-only requirements check using the queue's source access gates.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PrintQueueItemCreate"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": unknown;
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
         trace?: never;
     };
     "/api/v1/queue/printer/{printer_id}/resume": {
@@ -28290,10 +29066,7 @@ export interface paths {
         put?: never;
         /**
          * Restore Backup
-         * @description Restore from a complete backup ZIP.
-         *
-         *     Replaces the database and all data directories from the backup ZIP.
-         *     Requires a restart after restore.
+         * @description Restore a staged backup and preserve the previous state if an operation fails.
          */
         post: {
             parameters: {
@@ -28664,6 +29437,59 @@ export interface paths {
         };
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slice-jobs/{job_id}/reslice-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare Reslice Request */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    job_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["HistoricalReslicePrepareRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HistoricalReslicePrepareResponse"];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
         delete?: never;
         options?: never;
         head?: never;
@@ -29089,6 +29915,1665 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/v1/slicer/catalog/accounts": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Catalog Accounts */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/accounts/{account_id}/freeze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Freeze Catalog Account */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    account_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/accounts/{account_id}/resume": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Resume Catalog Account */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    account_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/accounts/{account_id}/reviews": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Review Batches */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    account_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/accounts/{account_id}/sharing": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Set Account Sharing */
+        put: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    account_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["SharingRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Bindings */
+        get: {
+            parameters: {
+                query?: {
+                    printer_id?: number | null;
+                };
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create Binding */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BindingRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/bindings/{binding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Update Binding */
+        put: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    binding_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["BindingUpdate"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/bindings/{binding_id}/disable": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Disable Binding */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    binding_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/cloud/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sync Cloud Catalog */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/evaluations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Evaluate Catalog */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["EvaluationRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/filament-rules": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Filament Rules */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create Filament Rule */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["FilamentRuleRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/filament-rules/{rule_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Filament Rule */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    rule_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/mappings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Mappings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: number;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        /** Create Mapping */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["MappingRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: number;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/mappings/{mapping_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Mapping */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    mapping_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/orca/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sync Orca Catalog */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/preferences": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Save Preference */
+        put: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["PreferenceRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/preferences/{binding_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Preferences */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    binding_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/preferences/{preference_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete Preference */
+        delete: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    preference_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                204: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content?: never;
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/printers/{printer_id}/bindings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Printer Bindings */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    printer_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/printers/{printer_id}/classification": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Classify Catalog */
+        get: {
+            parameters: {
+                query: {
+                    binding_id: number;
+                };
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    printer_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: {
+                                [key: string]: unknown;
+                            }[];
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/printers/{printer_id}/suggestion": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Suggest Binding */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    printer_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/profiles": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Catalog Profiles */
+        get: {
+            parameters: {
+                query?: {
+                    include_inactive?: boolean;
+                    limit?: number | null;
+                    offset?: number;
+                    search?: string | null;
+                };
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/profiles/{profile_id}/activate": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Activate Catalog Profile */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    profile_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ActivationRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/profiles/{profile_id}/filament-copy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Create Filament Copy
+         * @description Save an edited local copy and activate it in the same transaction.
+         */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    profile_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["FilamentCopyRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                201: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: number | null;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/profiles/{profile_id}/retire": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Retire Profile */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    profile_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["RetirementRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/profiles/{profile_id}/revisions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List Catalog Profile Revisions */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    profile_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        }[];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/profiles/{profile_id}/rollback": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Rollback Catalog Profile */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    profile_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ActivationRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/reviews/{batch_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Review Batch */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    batch_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["ReviewRequest"];
+                };
+            };
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/revisions/{revision_id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Catalog Revision */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    revision_id: number;
+                };
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/catalog/standard/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Sync Standard Catalog */
+        post: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": {
+                            [key: string]: unknown;
+                        };
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/v1/slicer/presets": {
         parameters: {
             query?: never;
@@ -29338,6 +31823,55 @@ export interface paths {
                     "X-API-Key"?: string | null;
                 };
                 path?: never;
+                cookie?: never;
+            };
+            requestBody?: never;
+            responses: {
+                /** @description Successful Response */
+                200: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["SlicerProcessSchemaResponse"];
+                    };
+                };
+                /** @description Validation Error */
+                422: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["HTTPValidationError"];
+                    };
+                };
+            };
+        };
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/v1/slicer/schema/{kind}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Get Profile Schema */
+        get: {
+            parameters: {
+                query?: never;
+                header?: {
+                    "X-API-Key"?: string | null;
+                };
+                path: {
+                    kind: "printer" | "filament";
+                };
                 cookie?: never;
             };
             requestBody?: never;
@@ -33880,6 +36414,9 @@ export interface paths {
         /**
          * Generate Support Bundle
          * @description Generate a support bundle ZIP file for issue reporting.
+         *
+         *     JWT users only: the bundle covers every printer and the full log, which an
+         *     API key's printer_ids scope cannot be applied to.
          */
         get: {
             parameters: {
@@ -34108,21 +36645,11 @@ export interface paths {
         };
         /**
          * Get Appliance Defaults
-         * @description Expose appliance-set state for the SPA's bootstrap surface.
+         * @description Expose the appliance-selected locale for the SPA's pre-login bootstrap.
          *
-         *     Two file sources, both optional and silently degraded when absent:
-         *
-         *     - ``/etc/bambuddy/local.toml`` — hostname / timezone / locale the
-         *       firstboot wizard collected.
-         *     - ``/run/bambuddy/time-synced`` — chrony NTP gate state. The RPi 5 has
-         *       no battery-backed RTC, so on a fresh boot the clock is wrong until
-         *       ntp-gate.sh writes "ok" (or "warning" if 3-minute timeout elapsed).
-         *       A warning state means JWT expiries and TLS validity windows may be
-         *       misaligned; the UI should surface this.
-         *
-         *     No auth required — the frontend bootstrap reads this BEFORE auth might
-         *     be set up, and the contents are user-set defaults plus a public sync
-         *     flag (no secrets).
+         *     No auth required: the frontend i18n bootstrap reads this before login.
+         *     Only the locale is returned; hostname, timezone and NTP-gate state stay
+         *     off this public surface.
          */
         get: {
             parameters: {
@@ -36341,6 +38868,11 @@ export interface components {
             /** Printer Ids */
             printer_ids?: number[] | null;
         };
+        /** ActivationRequest */
+        ActivationRequest: {
+            /** Revision Id */
+            revision_id: number;
+        };
         /**
          * AddToQueueError
          * @description Error for a file that couldn't be added to queue.
@@ -37595,6 +40127,10 @@ export interface components {
              * @default 1
              */
             quantity: number;
+            /** Reprinted By Id */
+            reprinted_by_id?: number | null;
+            /** Reprinted By Username */
+            reprinted_by_username?: string | null;
             /**
              * Run Count
              * @default 0
@@ -37927,6 +40463,47 @@ export interface components {
             /** Success */
             success: boolean;
         };
+        /** BindingRequest */
+        BindingRequest: {
+            /** Default Filament Profile Id */
+            default_filament_profile_id?: number | null;
+            /** Default Process Profile Id */
+            default_process_profile_id?: number | null;
+            /**
+             * Enforcement State
+             * @default shadow
+             * @enum {string}
+             */
+            enforcement_state: "shadow" | "enforced";
+            /** Expected Nozzle Diameter */
+            expected_nozzle_diameter: number | string;
+            /** Printer Id */
+            printer_id: number;
+            /** Profile Id */
+            profile_id: number;
+            /**
+             * Tool Index
+             * @default 0
+             */
+            tool_index: number;
+        };
+        /** BindingUpdate */
+        BindingUpdate: {
+            /** Default Filament Profile Id */
+            default_filament_profile_id?: number | null;
+            /** Default Process Profile Id */
+            default_process_profile_id?: number | null;
+            /** Enforcement State */
+            enforcement_state?: ("shadow" | "enforced") | null;
+            /** Expected Nozzle Diameter */
+            expected_nozzle_diameter?: number | string | null;
+            /** Is Active */
+            is_active?: boolean | null;
+            /** Profile Id */
+            profile_id?: number | null;
+            /** Tool Index */
+            tool_index?: number | null;
+        };
         /** Body_extract_zip_file_api_v1_library_files_extract_zip_post */
         Body_extract_zip_file_api_v1_library_files_extract_zip_post: {
             /** File */
@@ -37990,6 +40567,17 @@ export interface components {
         Body_upload_attachment_api_v1_projects__project_id__attachments_post: {
             /** File */
             file: string;
+        };
+        /** Body_upload_evidence_api_v1_calibration_sessions__session_id__evidence__step__post */
+        Body_upload_evidence_api_v1_calibration_sessions__session_id__evidence__step__post: {
+            /** File */
+            file: string;
+            /**
+             * Source
+             * @default upload
+             * @enum {string}
+             */
+            source: "upload" | "camera";
         };
         /** Body_upload_f3d_api_v1_archives__archive_id__f3d_post */
         Body_upload_f3d_api_v1_archives__archive_id__f3d_post: {
@@ -38598,6 +41186,24 @@ export interface components {
             /** Running */
             running: boolean;
         };
+        /** DispatchProgressResponse */
+        DispatchProgressResponse: {
+            /** Bytes Transferred */
+            bytes_transferred?: number | null;
+            /**
+             * Stage
+             * @enum {string}
+             */
+            stage: "preparing" | "uploading" | "awaiting_printer";
+            /** Stage Started At */
+            stage_started_at: string;
+            /** Started At */
+            started_at: string;
+            /** Total Bytes */
+            total_bytes?: number | null;
+            /** Updated At */
+            updated_at?: string | null;
+        };
         /** DisplaySettingsRequest */
         DisplaySettingsRequest: {
             /** Blank Timeout */
@@ -38743,6 +41349,17 @@ export interface components {
              * @default 0
              */
             migration_error_count: number;
+        };
+        /** EvaluationRequest */
+        EvaluationRequest: {
+            /** Acknowledgement */
+            acknowledgement?: {
+                [key: string]: unknown;
+            } | null;
+            /** Binding Id */
+            binding_id: number;
+            /** Profile Id */
+            profile_id: number;
         };
         /**
          * EventVariablesResponse
@@ -38906,6 +41523,22 @@ export interface components {
              */
             stat: number;
         };
+        /** FilamentCopyRequest */
+        FilamentCopyRequest: {
+            /** Base Revision Id */
+            base_revision_id: number;
+            /** Name */
+            name: string;
+            /** Overrides */
+            overrides?: {
+                [key: string]: unknown;
+            };
+            /**
+             * Share Local Copy
+             * @default false
+             */
+            share_local_copy: boolean;
+        };
         /** FilamentCostCalculation */
         FilamentCostCalculation: {
             /** Cost */
@@ -39006,6 +41639,30 @@ export interface components {
              * Format: date-time
              */
             updated_at: string;
+        };
+        /** FilamentRuleRequest */
+        FilamentRuleRequest: {
+            /** Binding Id */
+            binding_id?: number | null;
+            /** External Identity */
+            external_identity?: string | null;
+            /** External Source */
+            external_source?: string | null;
+            /** Filament Profile Id */
+            filament_profile_id: number;
+            /** Material Type */
+            material_type?: string | null;
+            /** Nozzle Diameter Max */
+            nozzle_diameter_max?: number | string | null;
+            /** Nozzle Diameter Min */
+            nozzle_diameter_min?: number | string | null;
+            /**
+             * Scope
+             * @enum {string}
+             */
+            scope: "exact_external" | "signature";
+            /** Vendor */
+            vendor?: string | null;
         };
         /** FilamentSkuSettingsResponse */
         FilamentSkuSettingsResponse: {
@@ -39350,6 +42007,18 @@ export interface components {
             /** Status */
             status: string;
         };
+        /** FlowParameterEdit */
+        FlowParameterEdit: {
+            /** Baseline */
+            baseline: number;
+            /**
+             * Flow Pattern
+             * @enum {string}
+             */
+            flow_pattern: "yolo" | "yolo_perfectionist" | "pass1" | "pass2";
+            /** Version */
+            version: number;
+        };
         /**
          * FolderCreate
          * @description Schema for creating a new folder.
@@ -39508,6 +42177,20 @@ export interface components {
         ForgotPasswordResponse: {
             /** Message */
             message: string;
+        };
+        /** GenerateRequest */
+        GenerateRequest: {
+            /**
+             * Acknowledge Compatibility
+             * @default false
+             */
+            acknowledge_compatibility: boolean;
+            /** Binding Id */
+            binding_id: number;
+            /** Process Profile Id */
+            process_profile_id: number;
+            /** Version */
+            version: number;
         };
         /**
          * GitHubBackupConfigCreate
@@ -39753,6 +42436,27 @@ export interface components {
             message: string;
             /** Success */
             success: boolean;
+        };
+        /**
+         * GitHubTestConnectionRequest
+         * @description Credentials to test; sent in the body so the PAT never reaches URLs or access logs.
+         */
+        GitHubTestConnectionRequest: {
+            /**
+             * @description Git provider key
+             * @default github
+             */
+            provider: components["schemas"]["backend__app__schemas__github_backup__ProviderType"];
+            /**
+             * Repo Url
+             * @description Repository URL
+             */
+            repo_url: string;
+            /**
+             * Token
+             * @description Personal Access Token
+             */
+            token: string;
         };
         /**
          * GitHubTestConnectionResponse
@@ -40042,6 +42746,45 @@ export interface components {
             min_value: number | null;
             /** Sensor Kind */
             sensor_kind: string;
+        };
+        /** HistoricalReslicePrepareRequest */
+        HistoricalReslicePrepareRequest: {
+            /** Catalog Acknowledgement */
+            catalog_acknowledgement?: {
+                [key: string]: unknown;
+            } | null;
+            /** Catalog Tombstone Acknowledgement */
+            catalog_tombstone_acknowledgement?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * Mode
+             * @enum {string}
+             */
+            mode: "exact" | "upgrade";
+        };
+        /** HistoricalReslicePrepareResponse */
+        HistoricalReslicePrepareResponse: {
+            request: components["schemas"]["SliceRequest"];
+            revision_ids: components["schemas"]["HistoricalRevisionIds"];
+            /** Source Id */
+            source_id: number;
+            /**
+             * Source Kind
+             * @enum {string}
+             */
+            source_kind: "library_file" | "archive";
+            /** Tombstoned */
+            tombstoned: boolean;
+        };
+        /** HistoricalRevisionIds */
+        HistoricalRevisionIds: {
+            /** Filaments */
+            filaments: number[];
+            /** Printer */
+            printer: number;
+            /** Process */
+            process: number;
         };
         /** HmsActionBody */
         HmsActionBody: {
@@ -40920,6 +43663,13 @@ export interface components {
              * @description Whether the caller's account has a stored Bambu Cloud token
              */
             has_cloud_token: boolean;
+        };
+        /** MappingRequest */
+        MappingRequest: {
+            /** Printer Id */
+            printer_id: number;
+            /** Profile Id */
+            profile_id: number;
         };
         /** MediaTokenResponse */
         MediaTokenResponse: {
@@ -42103,6 +44853,19 @@ export interface components {
             /** Version */
             version?: string | null;
         };
+        /** ParameterEdit */
+        ParameterEdit: {
+            /** Baseline */
+            baseline: number;
+            /** Highest */
+            highest: number;
+            /** Increment */
+            increment: number;
+            /** Lowest */
+            lowest: number;
+            /** Version */
+            version: number;
+        };
         /**
          * PendingUploadResponse
          * @description Response model for pending upload.
@@ -42387,6 +45150,18 @@ export interface components {
             print_time_seconds: number | null;
             /** Thumbnail Url */
             thumbnail_url: string | null;
+        };
+        /** PreferenceRequest */
+        PreferenceRequest: {
+            /** Binding Id */
+            binding_id: number;
+            /** Profile Id */
+            profile_id: number;
+            /**
+             * Profile Type
+             * @enum {string}
+             */
+            profile_type: "process" | "filament";
         };
         /**
          * PresetRef
@@ -42739,6 +45514,10 @@ export interface components {
              * @default false
              */
             manual_start: boolean;
+            /** Material Confirmation */
+            material_confirmation?: string | null;
+            /** Nozzle Mapping */
+            nozzle_mapping?: number[] | null;
             /**
              * Nozzle Offset Cali
              * @default true
@@ -42843,6 +45622,7 @@ export interface components {
             created_by_id?: number | null;
             /** Created By Username */
             created_by_username?: string | null;
+            dispatch_progress?: components["schemas"]["DispatchProgressResponse"] | null;
             /** Error Message */
             error_message: string | null;
             /** Filament Color */
@@ -42887,6 +45667,8 @@ export interface components {
             library_file_thumbnail?: string | null;
             /** Manual Start */
             manual_start: boolean;
+            /** Material Confirmation */
+            material_confirmation?: string | null;
             /** Nozzle Diameter */
             nozzle_diameter?: number | null;
             /** Nozzle Mapping */
@@ -42929,6 +45711,10 @@ export interface components {
             sliced_for_model?: string | null;
             /** Started At */
             started_at: string | null;
+            /** Started By Id */
+            started_by_id?: number | null;
+            /** Started By Username */
+            started_by_username?: string | null;
             /**
              * Status
              * @enum {string}
@@ -42976,6 +45762,8 @@ export interface components {
             layer_inspect?: boolean | null;
             /** Manual Start */
             manual_start?: boolean | null;
+            /** Material Confirmation */
+            material_confirmation?: string | null;
             /** Nozzle Mapping */
             nozzle_mapping?: number[] | null;
             /** Nozzle Offset Cali */
@@ -43016,6 +45804,23 @@ export interface components {
             id: number;
             /** Position */
             position: number;
+        };
+        /** PrintRequest */
+        PrintRequest: {
+            /** Ams Mapping */
+            ams_mapping?: number[] | null;
+            /**
+             * Plate Clear
+             * @constant
+             */
+            plate_clear: true;
+            /**
+             * Use Ams
+             * @default false
+             */
+            use_ams: boolean;
+            /** Version */
+            version: number;
         };
         /** PrinterCameraResponse */
         PrinterCameraResponse: {
@@ -43345,6 +46150,8 @@ export interface components {
              * @default 1
              */
             nozzle_count: number;
+            /** Owner Id */
+            owner_id?: number | null;
             /**
              * Plate Detection Enabled
              * @default false
@@ -43601,6 +46408,11 @@ export interface components {
         PrinterUpdate: {
             /** Access Code */
             access_code?: string | null;
+            /**
+             * Assign Unowned Prints
+             * @default false
+             */
+            assign_unowned_prints: boolean;
             /** Auto Archive */
             auto_archive?: boolean | null;
             /** Camera Rotation */
@@ -43628,6 +46440,8 @@ export interface components {
             network_site_id?: number | null;
             /** Network Site Lan Ip */
             network_site_lan_ip?: string | null;
+            /** Owner Id */
+            owner_id?: number | null;
             /** Plate Detection Enabled */
             plate_detection_enabled?: boolean | null;
             plate_detection_roi?: components["schemas"]["PlateDetectionROI"] | null;
@@ -44111,6 +46925,30 @@ export interface components {
                 [key: string]: unknown;
             };
         };
+        /** ResultEdit */
+        ResultEdit: {
+            /** Value */
+            value: number;
+            /** Version */
+            version: number;
+        };
+        /** RetirementRequest */
+        RetirementRequest: {
+            /**
+             * Disable References
+             * @default false
+             */
+            disable_references: boolean;
+            /** Replacement Profile Id */
+            replacement_profile_id?: number | null;
+        };
+        /** ReviewRequest */
+        ReviewRequest: {
+            /** Approved */
+            approved: boolean;
+            /** Revision Ids */
+            revision_ids?: number[] | null;
+        };
         /** SMTPSettings */
         SMTPSettings: {
             /**
@@ -44140,6 +46978,23 @@ export interface components {
             smtp_use_tls?: boolean | null;
             /** Smtp Username */
             smtp_username?: string | null;
+        };
+        /** SaveRequest */
+        SaveRequest: {
+            /** Name */
+            name: string;
+            /**
+             * Share Local Copy
+             * @default false
+             */
+            share_local_copy: boolean;
+            /**
+             * Update Profile
+             * @default false
+             */
+            update_profile: boolean;
+            /** Version */
+            version: number;
         };
         /** ScaleReadingRequest */
         ScaleReadingRequest: {
@@ -44177,6 +47032,25 @@ export interface components {
          * @enum {string}
          */
         ScheduleType: "hourly" | "daily" | "weekly";
+        /** SessionCreate */
+        SessionCreate: {
+            /** Filament Profile Id */
+            filament_profile_id?: number | null;
+            /** Filament Revision Id */
+            filament_revision_id?: number | null;
+            /** Generic Filament */
+            generic_filament?: string | null;
+            /** Nozzle Diameter */
+            nozzle_diameter: number | string;
+            /** Printer Id */
+            printer_id: number;
+            /**
+             * Tool Index
+             * @default 0
+             * @constant
+             */
+            tool_index: 0;
+        };
         /** SetCalibrationFactorRequest */
         SetCalibrationFactorRequest: {
             /** Known Weight Grams */
@@ -44206,6 +47080,11 @@ export interface components {
             admin_created?: boolean | null;
             /** Auth Enabled */
             auth_enabled: boolean;
+        };
+        /** SharingRequest */
+        SharingRequest: {
+            /** Shared */
+            shared: boolean;
         };
         /** ShoppingListItemCreate */
         ShoppingListItemCreate: {
@@ -44270,8 +47149,33 @@ export interface components {
              */
             reason: "No RFID tag and no slot assignment";
         };
+        /** SliceJobProvenanceResponse */
+        SliceJobProvenanceResponse: {
+            /**
+             * Created At
+             * Format: date-time
+             */
+            created_at: string;
+            /** Filament Revision Ids */
+            filament_revision_ids?: number[] | null;
+            /** Printer Revision Id */
+            printer_revision_id?: number | null;
+            /** Process Revision Id */
+            process_revision_id?: number | null;
+            /** Selection Evidence */
+            selection_evidence?: {
+                [key: string]: unknown;
+            } | null;
+            /**
+             * State
+             * @enum {string}
+             */
+            state: "provenance_unknown" | "resolved";
+        };
         /** SliceJobStateResponse */
         SliceJobStateResponse: {
+            /** Calibration Contract */
+            calibration_contract?: string | null;
             /** Completed At */
             completed_at?: string | null;
             /**
@@ -44291,11 +47195,12 @@ export interface components {
              * Kind
              * @enum {string}
              */
-            kind: "library_file" | "archive";
+            kind: "library_file" | "archive" | "calibration_session";
             /** Progress */
             progress?: {
                 [key: string]: unknown;
             } | null;
+            provenance?: components["schemas"]["SliceJobProvenanceResponse"] | null;
             /** Request Fingerprint */
             request_fingerprint?: string | null;
             /** Request Snapshot */
@@ -44339,10 +47244,40 @@ export interface components {
          */
         SliceRequest: {
             /**
+             * Arrange
+             * @description Arrange objects on the selected printer bed before slicing; false preserves source placement.
+             * @default false
+             */
+            arrange: boolean;
+            /**
              * Bed Type
              * @description Override the process preset's curr_bed_type for this slice. Canonical BambuStudio / OrcaSlicer values: 'Cool Plate', 'Engineering Plate', 'High Temp Plate', 'Textured PEI Plate', 'Smooth PEI Plate', 'Cool Plate (SuperTack)', 'Supertack Plate'. None ⇒ inherit from the process preset unchanged (#1337).
              */
             bed_type?: string | null;
+            /** Catalog Acknowledgement */
+            catalog_acknowledgement?: {
+                [key: string]: unknown;
+            } | null;
+            /** Catalog Binding Id */
+            catalog_binding_id?: number | null;
+            /** Catalog Filament Profile Ids */
+            catalog_filament_profile_ids?: number[];
+            /** Catalog History Job Id */
+            catalog_history_job_id?: number | null;
+            /** Catalog History Mode */
+            catalog_history_mode?: ("exact" | "upgrade") | null;
+            /** Catalog Printer Id */
+            catalog_printer_id?: number | null;
+            /** Catalog Process Profile Id */
+            catalog_process_profile_id?: number | null;
+            /** Catalog Selection Evidence */
+            catalog_selection_evidence?: {
+                [key: string]: unknown;
+            };
+            /** Catalog Tombstone Acknowledgement */
+            catalog_tombstone_acknowledgement?: {
+                [key: string]: unknown;
+            } | null;
             /**
              * @description Explicit destination artifact; defaults to legacy Bambu 3MF output.
              * @default bambu_3mf
@@ -44403,6 +47338,10 @@ export interface components {
         };
         /** SlicerCapabilitiesResponse */
         SlicerCapabilitiesResponse: {
+            /** Calibration */
+            calibration?: {
+                [key: string]: unknown;
+            } | null;
             capabilities: components["schemas"]["SlicerCapabilities"];
             /** Contract Version */
             contract_version: string;
@@ -44538,6 +47477,10 @@ export interface components {
         };
         /** SlicerProcessSchemaResponse */
         SlicerProcessSchemaResponse: {
+            /** Calibration */
+            calibration?: {
+                [key: string]: unknown;
+            } | null;
             capabilities: components["schemas"]["SlicerCapabilities"];
             /** Contract Version */
             contract_version: string;
@@ -45777,6 +48720,11 @@ export interface components {
             /** Was Debug */
             was_debug: boolean;
         };
+        /**
+         * Step
+         * @enum {string}
+         */
+        Step: "temperature" | "flow_rate" | "pressure_advance" | "retraction" | "volumetric_flow";
         /** StopLoggingResponse */
         StopLoggingResponse: {
             /** Logs */
@@ -46219,8 +49167,8 @@ export interface components {
          *     ``compatible_printers`` is the slicer's own list of printer-preset names a
          *     process / filament preset declares itself valid for. Populated for the
          *     local tier (stored at import time); left ``None`` for cloud (no per-preset
-         *     detail is fetched — rate limits) and standard (the sidecar's bundled
-         *     listing doesn't expose it). The SliceModal uses it to filter the
+         *     detail is fetched — rate limits). Standard profiles carry compatibility from
+         *     the sidecar's resolved bundled catalog. The legacy SliceModal uses this to
          *     process / filament dropdowns by the selected printer (#1325); when it is
          *     ``None`` the modal falls back to the user's uploaded Slicer Bundles, which
          *     map each printer to the presets it ships.
@@ -46501,6 +49449,11 @@ export interface components {
             /** Error Type */
             type: string;
         };
+        /** VersionedEdit */
+        VersionedEdit: {
+            /** Version */
+            version: number;
+        };
         /** VirtualPrinterCreate */
         VirtualPrinterCreate: {
             /** Access Code */
@@ -46573,6 +49526,8 @@ export interface components {
         };
         /** WriteTagRequest */
         WriteTagRequest: {
+            /** Data Origin */
+            data_origin?: ("local" | "spoolman") | null;
             /** Device Id */
             device_id: string;
             /** Spool Id */

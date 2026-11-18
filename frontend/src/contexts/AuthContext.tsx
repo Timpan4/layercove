@@ -14,7 +14,7 @@ interface AuthContextType {
   login: (username: string, password: string, persistence?: TokenPersistence) => Promise<LoginResponse>;
   /** Finalise login after 2FA or OIDC — store token and set user directly. */
   loginWithToken: (token: string, user: UserResponse, persistence?: TokenPersistence) => void;
-  logout: () => void;
+  logout: () => Promise<void>;
   refreshUser: () => Promise<void>;
   refreshAuth: () => Promise<void>;
   authorization: AuthorizationPolicy;
@@ -212,14 +212,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     setLoading(false);
   };
 
-  const logout = () => {
+  const logout = async () => {
+    const token = getAuthToken();
+    authCheckIdRef.current++;
     savePendingKioskToken(null);
     setAuthToken(null);
     setUser(null);
-    api.logout().catch(() => {
-      // Ignore logout errors
-    });
-    window.location.href = '/login';
+    try {
+      await api.logout(token);
+    } catch {
+      // The local session is already cleared if the server cannot be reached.
+    } finally {
+      window.location.href = '/login';
+    }
   };
 
   const refreshUser = async () => {

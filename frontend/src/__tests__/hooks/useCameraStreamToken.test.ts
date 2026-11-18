@@ -5,7 +5,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
-import { api, ApiError, getStreamToken, setAuthToken, setMediaToken, setStreamToken } from '../../api/client';
+import { api, ApiError, getStreamToken, setAuthToken, setMediaToken, setStreamToken, withMediaToken } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
 import { CameraTile } from '../../components/CameraTile';
 import { StreamOverlayPage } from '../../pages/StreamOverlayPage';
@@ -105,6 +105,29 @@ describe('useStreamTokenSync', () => {
     ));
     expect(screen.getByTestId('timelapse')).toHaveAttribute('src', '/api/v1/archives/5/timelapse?token=media-token');
     expect(camera).not.toHaveBeenCalled();
+  });
+
+  it('signs new media URLs while revalidating a credential after an image fails', async () => {
+    auth.canViewCamera = false;
+    let resolveRefresh: (value: { token: string }) => void = () => {};
+    const refresh = new Promise<{ token: string }>((resolve) => { resolveRefresh = resolve; });
+    const getToken = vi.spyOn(api, 'getMediaToken')
+      .mockResolvedValueOnce({ token: 'media-token' })
+      .mockReturnValueOnce(refresh);
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(createElement(QueryClientProvider, { client: queryClient },
+      createElement(StreamTokenSync),
+      createElement('img', { alt: 'missing cover', src: '/api/v1/printers/5/cover' }),
+    ));
+    const cover = screen.getByAltText('missing cover');
+    await waitFor(() => expect(cover).toHaveAttribute('src', '/api/v1/printers/5/cover?token=media-token'));
+
+    fireEvent.error(cover);
+    await waitFor(() => expect(getToken).toHaveBeenCalledTimes(2));
+    const thumbnail = '/api/v1/archives/5/thumbnail';
+    expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=media-token`);
+    await act(async () => resolveRefresh({ token: 'media-token' }));
+    expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=media-token`);
   });
 
   it('keeps failed media mounted while replacing a stale stream token', async () => {
