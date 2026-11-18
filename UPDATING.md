@@ -41,6 +41,8 @@ Restore the backup into a disposable LayerCove instance and restart that instanc
 
 Restore validates the database and encrypted settings before replacing data. If automatic recovery after a failed restore is incomplete, the server logs identify the directories containing the retained recovery files.
 
+Uploaded and scheduled backup ZIPs are limited to 4 GiB uncompressed and 65,535 entries, counting both files and directories. Set `BACKUP_RESTORE_MAX_UNCOMPRESSED_BYTES` and `BACKUP_RESTORE_MAX_ENTRIES` in the environment or `.env` before starting LayerCove to change these limits. Allow space for extraction and staging on the destination filesystems.
+
 ## Optional bundled Spoolman
 
 The bundled service is opt-in and does not change existing external Spoolman settings. It uses the pinned `ghcr.io/donkie/spoolman:0.21.0` image and the durable `spoolman_data` named volume. It has no `depends_on` relationship with LayerCove, so stopping, restoring, or upgrading it does not block LayerCove startup or normal printer operation.

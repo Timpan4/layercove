@@ -72,6 +72,8 @@ class Settings(BaseSettings):
     db_pool_size: int = Field(default=10, ge=1)
     db_max_overflow: int = Field(default=2, ge=0)
     db_pool_timeout: float = Field(default=5.0, gt=0)
+    backup_restore_max_uncompressed_bytes: int = Field(default=4 * 1024**3, gt=0)
+    backup_restore_max_entries: int = Field(default=65_535, gt=0)
 
     @field_validator("database_url", mode="before")
     @classmethod

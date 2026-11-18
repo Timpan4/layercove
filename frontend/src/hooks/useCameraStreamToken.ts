@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  api, getAuthToken, getMediaToken, getStreamToken, isMediaUrl, setMediaToken, setStreamToken,
-  subscribeMediaToken, withMediaToken,
+  api, getAuthSessionGeneration, getAuthToken, getMediaToken, getStreamToken, isMediaUrl, setMediaToken, setStreamToken,
+  subscribeAuthSession, subscribeMediaToken, withMediaToken,
 } from '../api/client';
 import { useAuth } from '../contexts/AuthContext';
 
@@ -25,6 +25,7 @@ export function useStreamTokenSync() {
   const { authEnabled, user, loading: authLoading, hasPermission } = useAuth();
   const queryClient = useQueryClient();
   const refreshingCamera = useRef(false);
+  const sessionGeneration = useSyncExternalStore(subscribeAuthSession, getAuthSessionGeneration);
 
   // Key the token by user id so a login/logout invalidates the cache
   // automatically — otherwise a failed anonymous fetch on the login page
@@ -44,9 +45,9 @@ export function useStreamTokenSync() {
     refetchInterval: 50 * 60 * 1000,
   });
   const { data: mediaData } = useQuery({
-    queryKey: ['media-token', user?.id ?? null],
+    queryKey: ['media-token', user?.id ?? null, sessionGeneration],
     queryFn: () => api.getMediaToken(),
-    enabled: !authLoading && authEnabled && user !== null,
+    enabled: !authLoading && authEnabled && user !== null && getAuthToken() !== null,
     staleTime: 50 * 60 * 1000, // refresh at 50 min (tokens expire at 60)
     refetchInterval: 50 * 60 * 1000,
   });

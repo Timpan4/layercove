@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from sqlalchemy import Insert
+from sqlalchemy.dialects import postgresql
 
 import backend.app.models.slice_job  # noqa: F401  (register every FK target in Base.metadata)
 
@@ -64,7 +65,7 @@ async def test_restore_drops_tables_with_cascade_not_metadata_drop_all():
         mock_conn = MagicMock()
 
         def record_command(stmt, *parameters):
-            executed_sql.append(getattr(stmt, "text", str(stmt)))
+            executed_sql.append(str(stmt.compile(dialect=postgresql.dialect())))
             if isinstance(stmt, Insert) and stmt.table.name == "users":
                 user_insert_ids.append([row["id"] for row in parameters[0]])
 
@@ -141,7 +142,7 @@ async def test_restore_does_not_drop_unrelated_public_tables():
         executed_sql: list[str] = []
         mock_conn = MagicMock()
         mock_conn.execute = AsyncMock(
-            side_effect=lambda stmt, *a, **k: executed_sql.append(getattr(stmt, "text", str(stmt)))
+            side_effect=lambda stmt, *a, **k: executed_sql.append(str(stmt.compile(dialect=postgresql.dialect())))
         )
         mock_conn.run_sync = AsyncMock()
         mock_conn.scalar = AsyncMock(return_value=None)

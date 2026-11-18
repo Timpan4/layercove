@@ -3,6 +3,7 @@ import { X, Download, Film, Play, Pause, SkipBack, SkipForward, Pencil } from 'l
 import { Button } from './Button';
 import { TimelapseEditorModal } from './TimelapseEditorModal';
 import { formatMediaTime } from '../utils/date';
+import { withMediaToken } from '../api/client';
 
 interface TimelapseViewerProps {
   src: string;
@@ -100,7 +101,7 @@ export function TimelapseViewer({
 
   const handleDownload = () => {
     const link = document.createElement('a');
-    link.href = src;
+    link.href = withMediaToken(src);
     link.download = downloadFilename;
     link.click();
   };

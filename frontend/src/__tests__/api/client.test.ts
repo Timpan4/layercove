@@ -410,7 +410,8 @@ describe('Project cover image URL (#1155)', () => {
 
   it('appends the media token query string when one is set', () => {
     setMediaToken('abc123');
-    const url = api.getProjectCoverImageUrl(42);
+    const url = api.getProjectCoverImageUrl(42, 3);
+    expect(new URL(url, window.location.origin).searchParams.get('v')).toBe('3');
     expect(url).toContain('/projects/42/cover-image');
     expect(url).toContain('token=abc123');
   });

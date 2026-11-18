@@ -45,11 +45,18 @@ export function isInvalidTokenError(error: unknown): error is ApiError {
 // (used by Remember Me and the ?token= kiosk bootstrap).
 let authToken: string | null =
   sessionStorage.getItem('auth_token') ?? localStorage.getItem('auth_token');
+let authSessionGeneration = 0;
+const authSessionListeners = new Set<() => void>();
 
 export type TokenPersistence = 'session' | 'persistent';
 
 export function setAuthToken(token: string | null, persistence: TokenPersistence = 'session') {
-  authToken = token;
+  if (authToken !== token) {
+    authToken = token;
+    authSessionGeneration++;
+    setMediaToken(null);
+    authSessionListeners.forEach(listener => listener());
+  }
   try {
     if (token) {
       sessionStorage.setItem('auth_token', token);
@@ -73,6 +80,15 @@ export function setAuthToken(token: string | null, persistence: TokenPersistence
 
 export function getAuthToken(): string | null {
   return authToken;
+}
+
+export function getAuthSessionGeneration() {
+  return authSessionGeneration;
+}
+
+export function subscribeAuthSession(listener: () => void) {
+  authSessionListeners.add(listener);
+  return () => { authSessionListeners.delete(listener); };
 }
 
 // Stream token for image/video URLs loaded via <img>/<video> tags
@@ -6373,8 +6389,8 @@ export const api = {
   // #1155: Cover image
   // Browsers can't attach `Authorization: Bearer ...` to `<img src>`, so we
   // append the stream-token query string the same way archive thumbnails do.
-  getProjectCoverImageUrl: (projectId: number) =>
-    withMediaToken(`${API_BASE}/projects/${projectId}/cover-image`),
+  getProjectCoverImageUrl: (projectId: number, coverVersion?: number) =>
+    withMediaToken(`${API_BASE}/projects/${projectId}/cover-image${coverVersion === undefined ? '' : `?v=${coverVersion}`}`),
   uploadProjectCoverImage: async (
     projectId: number,
     file: File

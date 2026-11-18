@@ -11,6 +11,7 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from backend.app.core.config import settings
 from backend.app.models.local_preset import LocalPreset
 from backend.app.models.slicer_profile_catalog import (
     SlicerProfile,
@@ -19,7 +20,10 @@ from backend.app.models.slicer_profile_catalog import (
     SlicerProfileSourceRevision,
 )
 from backend.app.services.orca_cloud import OrcaCloudService, OrcaProfilePull
+from backend.app.services.settings_service import get_setting
+from backend.app.services.slicer_api import SlicerApiService
 from backend.app.services.slicer_catalog import (
+    BED_GEOMETRY_FIELDS,
     CatalogInput,
     CatalogProfile,
     CatalogProfileReferences,
@@ -137,6 +141,13 @@ def resolve_profile_inheritance(
                 if not candidates:
                     candidates = bundled_by_name.get((profile.profile_type, parent_ref), [])
                     bundled = True
+                    base_id = profile.content.get("base_id")
+                    if isinstance(base_id, str) and base_id.strip():
+                        candidates = [
+                            candidate
+                            for candidate in candidates
+                            if candidate.content.get("setting_id") == base_id.strip()
+                        ]
                 if not candidates:
                     raise MissingProfileParentError(
                         f"missing {profile.profile_type} inheritance parent {parent_ref!r} "
@@ -148,8 +159,16 @@ def resolve_profile_inheritance(
                         f"for {profile.remote_profile_id!r}"
                     )
                 parent = candidates[0]
+            if bundled and parent.content.get("inherits"):
+                raise ValueError(f"Orca bundled parent {parent_ref!r} contains unresolved inheritance")
             resolved_parent = parent if bundled else resolve(parent)
             content = {k: v for k, v in (resolved_parent.content | profile.content).items() if k != "inherits"}
+            if profile.profile_type == "printer":
+                for fields in BED_GEOMETRY_FIELDS:
+                    if any(field in profile.content for field in fields):
+                        for field in fields:
+                            if field not in profile.content:
+                                content.pop(field, None)
             metadata = dict(profile.metadata or {})
             metadata["compatible_printers"] = _string_list(content.get("compatible_printers"))
             metadata["source_inherits"] = parent.remote_profile_id
@@ -552,40 +571,39 @@ async def _resolve_orca_inheritance(
         for profile in profiles
         if isinstance((reference := profile.content.get("inherits")), str) and reference.strip()
     }
-    rows = await session.execute(
-        select(SlicerProfile, SlicerProfileRevision.content)
-        .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
-        .join(SlicerProfileSourceRevision, SlicerProfileSourceRevision.profile_id == SlicerProfile.id)
-        .join(SlicerProfileRevision, SlicerProfileRevision.id == SlicerProfileSourceRevision.revision_id)
-        .where(
-            SlicerProfileAccount.source == "standard",
-            SlicerProfileAccount.remote_account_id == STANDARD_ACCOUNT_ID,
-            SlicerProfile.tombstoned_at.is_(None),
-            SlicerProfile.display_name.in_(names),
-        )
-    )
-    bundled = [
-        CatalogProfile(
-            remote_profile_id=profile.remote_profile_id,
-            profile_type=profile.profile_type,
-            display_name=profile.display_name,
-            content=content,
-        )
-        for profile, content in rows
-    ]
-    try:
-        return resolve_profile_inheritance(profiles, bundled_parents=bundled)
-    except MissingProfileParentError:
-        if load_bundled is None:
-            raise
+    if load_bundled is None:
+        configured = await get_setting(session, "orcaslicer_api_url")
+        url = (configured or settings.slicer_api_url).strip()
+        if url:
+            async with SlicerApiService(base_url=url) as slicer:
+                snapshot = await slicer.list_bundled_profiles()
+        else:
+            snapshot = {}
+    else:
+        snapshot = await load_bundled()
 
-    snapshot = await load_bundled()
-    verified = {(profile.profile_type, profile.display_name) for profile in bundled}
-    for profile_type in ("printer", "process", "filament"):
-        for entry in snapshot.get(profile_type, []):
-            name = entry.get("name")
-            if name in names and (profile_type, name) not in verified:
-                bundled.append(standard_profile_adapter(profile_type, entry))
+    bundled = [
+        standard_profile_adapter(profile_type, entry)
+        for profile_type in ("printer", "process", "filament")
+        for entry in snapshot.get(profile_type, [])
+        if entry.get("name") in names
+    ]
+    if bundled:
+        # Standard may contain either slicer's bundle. It only supplies review decisions here.
+        rejected_rows = await session.execute(
+            select(SlicerProfile.profile_type, SlicerProfileRevision.content)
+            .join(SlicerProfileAccount, SlicerProfileAccount.id == SlicerProfile.account_id)
+            .join(SlicerProfileRevision, SlicerProfileRevision.profile_id == SlicerProfile.id)
+            .where(
+                SlicerProfileAccount.source == "standard",
+                SlicerProfileAccount.remote_account_id == STANDARD_ACCOUNT_ID,
+                SlicerProfileRevision.review_state == "rejected",
+            )
+        )
+        rejected = {(profile_type, canonical_hash(content)) for profile_type, content in rejected_rows}
+        bundled = [
+            profile for profile in bundled if (profile.profile_type, canonical_hash(profile.content)) not in rejected
+        ]
     return resolve_profile_inheritance(profiles, bundled_parents=bundled)
 
 

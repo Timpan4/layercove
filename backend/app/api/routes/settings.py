@@ -732,7 +732,13 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
         try:
             with tempfile.TemporaryDirectory(ignore_cleanup_errors=True) as temp_dir:
                 extracted = Path(temp_dir).resolve()
-                backup_db = await run_in_threadpool(extract_backup, file, extracted)
+                backup_db = await run_in_threadpool(
+                    extract_backup,
+                    file,
+                    extracted,
+                    max_bytes=app_settings.backup_restore_max_uncompressed_bytes,
+                    max_entries=app_settings.backup_restore_max_entries,
+                )
                 await run_in_threadpool(validate_backup_database, backup_db, postgres_tables)
                 destination_key = resolve_data_dir() / ".mfa_encryption_key"
                 await run_in_threadpool(
@@ -781,17 +787,18 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
 
             message = "Backup restored successfully."
             with CancelScope(shield=True):
-                restore_activity.resume()
-                activity_paused = False
-                print_scheduler.resume_after_restore()
                 try:
                     async with database.async_session() as db:
                         await init_printer_connections(db)
                     await virtual_printer_manager.sync_from_db()
-                    if _resume_background_services() is False:
-                        message = "Backup restored successfully. Restart LayerCove to finish restarting services."
                 except Exception as error:
                     logger.error("Could not restart services after restore (%s)", type(error).__name__)
+                    message = "Backup restored successfully. Restart LayerCove to finish restarting services."
+                finally:
+                    restore_activity.resume()
+                    activity_paused = False
+                    print_scheduler.resume_after_restore()
+                if _resume_background_services() is False:
                     message = "Backup restored successfully. Restart LayerCove to finish restarting services."
             return {"success": True, "message": message}
         except BaseException as error:
@@ -813,9 +820,6 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                 encryption._fernet_instance, encryption._key_source, encryption._warn_shown = encryption_state
 
                 if services_paused and not needs_recovery:
-                    restore_activity.resume()
-                    activity_paused = False
-                    print_scheduler.resume_after_restore()
                     try:
                         if printers_disconnected:
                             async with database.async_session() as db:
@@ -826,6 +830,10 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                         logger.error(
                             "Could not restart printer services after restore (%s)", type(service_error).__name__
                         )
+                    finally:
+                        restore_activity.resume()
+                        activity_paused = False
+                        print_scheduler.resume_after_restore()
                     _resume_background_services()
 
             if not isinstance(error, Exception) or isinstance(error, HTTPException) and not needs_recovery:

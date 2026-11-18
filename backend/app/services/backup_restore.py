@@ -14,6 +14,7 @@ from cryptography.fernet import Fernet, InvalidToken
 from fastapi import HTTPException
 from sqlalchemy import Table, literal_column, select
 
+from backend.app.services.zip_limits import ZipBudget, ZipTooLargeError, check_zip_size
 from backend.app.utils.safe_path import PathTraversalError, safe_join_under
 
 logger = logging.getLogger(__name__)
@@ -26,11 +27,15 @@ _REQUIRED_BACKUP_COLUMNS = {
 }
 
 
-def extract_backup(file: BinaryIO, destination: Path) -> Path:
+def extract_backup(file: BinaryIO, destination: Path, *, max_bytes: int, max_entries: int) -> Path:
     try:
         with zipfile.ZipFile(file) as archive:
-            names = archive.namelist()
-            legacy = set(names) & {"bambutrack.db", "bambuddy.db"}
+            entries = archive.infolist()
+            if len(entries) > max_entries:
+                raise HTTPException(413, f"Backup contains {len(entries)} ZIP entries, over the {max_entries} limit")
+            check_zip_size(archive, max_bytes=max_bytes)
+            names = {entry.filename for entry in entries}
+            legacy = names & {"bambutrack.db", "bambuddy.db"}
             if legacy:
                 raise HTTPException(
                     400,
@@ -40,12 +45,20 @@ def extract_backup(file: BinaryIO, destination: Path) -> Path:
                 )
             if "layercove.db" not in names:
                 raise HTTPException(400, "Invalid backup: missing layercove.db")
-            for name in names:
+            budget = ZipBudget(max_bytes)
+            for entry in entries:
                 try:
-                    safe_join_under(destination, name, http=False)
+                    target = safe_join_under(destination, entry.filename, http=False)
                 except PathTraversalError:
-                    raise HTTPException(400, f"Invalid backup: unsafe path in ZIP: {name!r}") from None
-            archive.extractall(destination)
+                    raise HTTPException(400, f"Invalid backup: unsafe path in ZIP: {entry.filename!r}") from None
+                if entry.is_dir():
+                    target.mkdir(parents=True, exist_ok=True)
+                else:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                    with archive.open(entry) as reader, target.open("wb") as writer:
+                        budget.copy(reader, writer)
+    except ZipTooLargeError as error:
+        raise HTTPException(413, str(error)) from error
     except zipfile.BadZipFile:
         raise HTTPException(400, "Invalid backup file: not a valid ZIP")
     return destination / "layercove.db"
@@ -115,16 +128,34 @@ def validate_backup_secrets(database: Path, backup_key: Path, current_key: Path)
     key = file_key if key_source == "file" else env_key.encode() if env_key else None
 
     with closing(open_source_database(database)) as source:
+        fernet_pattern = (_FERNET_PREFIX + "%",)
         encrypted_columns = (
-            ("oidc_providers", "client_secret", "SELECT client_secret FROM oidc_providers WHERE client_secret LIKE ?"),
-            ("user_totp", "secret", "SELECT secret FROM user_totp WHERE secret LIKE ?"),
+            (
+                "oidc_providers",
+                "client_secret",
+                "SELECT client_secret FROM oidc_providers WHERE client_secret LIKE ?",
+                fernet_pattern,
+            ),
+            ("user_totp", "secret", "SELECT secret FROM user_totp WHERE secret LIKE ?", fernet_pattern),
+            (
+                "moonraker_printer_configs",
+                "api_key_ciphertext",
+                "SELECT api_key_ciphertext FROM moonraker_printer_configs WHERE api_key_ciphertext IS NOT NULL",
+                (),
+            ),
+            (
+                "moonraker_printer_configs",
+                "authorization_ciphertext",
+                "SELECT authorization_ciphertext FROM moonraker_printer_configs WHERE authorization_ciphertext IS NOT NULL",
+                (),
+            ),
         )
-        for table, column, query in encrypted_columns:
+        for table, column, query, parameters in encrypted_columns:
             if column not in source_columns(source, table):
                 continue
-            for (value,) in source.execute(query, (_FERNET_PREFIX + "%",)):
+            for (value,) in source.execute(query, parameters):
                 try:
-                    if key is None:
+                    if key is None or not isinstance(value, str) or not value.startswith(_FERNET_PREFIX):
                         raise ValueError
                     Fernet(key).decrypt(value.removeprefix(_FERNET_PREFIX).encode())
                 except (InvalidToken, ValueError):
@@ -194,9 +225,25 @@ class RestoreFiles:
             self._move(working / ".mfa_encryption_key.restore-tmp", key)
 
     def rollback(self) -> None:
+        remaining = []
+        blocked: set[Path] = set()
         for source, target in reversed(self._completed_moves):
-            os.replace(target, source)
-        self._completed_moves.clear()
+            if any(
+                path.is_relative_to(other) or other.is_relative_to(path)
+                for path in (source, target)
+                for other in blocked
+            ):
+                remaining.append((source, target))
+                blocked.update((source, target))
+                continue
+            try:
+                os.replace(target, source)
+            except OSError:
+                remaining.append((source, target))
+                blocked.update((source, target))
+        self._completed_moves = list(reversed(remaining))
+        if remaining:
+            raise OSError(f"Could not reverse {len(remaining)} restore file moves")
 
     def clean_up(self) -> None:
         for working in reversed(self.workspaces):

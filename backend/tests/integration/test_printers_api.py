@@ -1098,6 +1098,7 @@ class TestPrintersAPI:
         and serve plate 4's thumbnail instead of falling back to plate_1.png."""
         import io
         import zipfile
+        from contextlib import asynccontextmanager
         from unittest.mock import MagicMock, patch
 
         from backend.app.services.bambu_ftp import cache_3mf_download
@@ -1124,14 +1125,28 @@ class TestPrintersAPI:
         state.dispatched_plate_id = 4
         state.dispatched_subtask = "MyModel"
 
-        with patch("backend.app.api.routes.printers.printer_manager") as mock_pm:
+        @asynccontextmanager
+        async def thumbnail_archive(printer, path):
+            with zipfile.ZipFile(threemf_path) as archive:
+                yield archive
+
+        with (
+            patch("backend.app.api.routes.printers.printer_manager") as mock_pm,
+            patch("backend.app.api.routes.printers._printer_file_archive", thumbnail_archive),
+        ):
             mock_pm.get_status = MagicMock(return_value=state)
             mock_pm.is_awaiting_plate_clear = MagicMock(return_value=False)
 
-            response = await async_client.get(f"/api/v1/printers/{printer.id}/cover")
+            cover = await async_client.get(f"/api/v1/printers/+{printer.id}/cover")
+            cached = await async_client.get(f"/api/v1/printers/+{printer.id}/cover")
+            thumbnail = await async_client.get(
+                f"/api/v1/printers/+{printer.id}/files/plate-thumbnail/+4", params={"path": "MyModel.3mf"}
+            )
 
-        assert response.status_code == 200
-        assert response.content == b"PLATE_4_PNG"
+        for response in (cover, cached, thumbnail):
+            assert response.status_code == 200
+            assert response.content == b"PLATE_4_PNG"
+            assert response.headers["cache-control"] == "private, no-store"
 
     @pytest.mark.asyncio
     @pytest.mark.integration

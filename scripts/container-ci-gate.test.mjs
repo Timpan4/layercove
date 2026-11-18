@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
 const sha = 'a'.repeat(40);
@@ -83,24 +84,93 @@ for (const [name, runs] of [
   });
 }
 
-const image = 'ghcr.io/timpan4/layercove:sha-' + sha;
+const imageName = 'ghcr.io/timpan4/layercove';
+const image = `${imageName}:sha-${sha}`;
 const digest = 'sha256:' + 'b'.repeat(64);
-for (const [name, response, registryStatus, status, stdout] of [
-  ['existing attested image', digest, '0', 0, digest + '\n'],
-  ['missing image', `ERROR: ${image}: not found`, '1', 0, ''],
-  ['registry outage', '502 Bad Gateway', '1', 1, ''],
-  ['invalid registry digest', 'invalid', '0', 1, ''],
+for (const [name, response, registryStatus, verifiedRevision, attestationStatus, status, stdout] of [
+  ['existing attested image despite a registry warning', digest, '0', sha, '0', 0, digest + '\n'],
+  ['missing image', `ERROR: ${image}: not found`, '1', sha, '0', 0, ''],
+  ['registry outage', '502 Bad Gateway', '1', sha, '0', 1, ''],
+  ['invalid registry digest', 'invalid', '0', sha, '0', 1, ''],
+  ['unattested image at the commit tag', digest, '0', sha, '1', 1, ''],
+  ['attested image for another revision', digest, '0', 'c'.repeat(40), '0', 1, ''],
 ]) {
   test(`publishing checks for ${name} before building`, () => {
     const result = spawnSync('bash', ['-c', `
-      docker() { printf '%s\n' "$REGISTRY_RESPONSE"; return "$REGISTRY_STATUS"; }
-      export -f docker
-      bash scripts/find-container-digest.sh "$IMAGE"
+      docker() {
+        if [[ "$4" == "$IMAGE_NAME@$DIGEST" && "$5" == --raw ]]; then
+          jq -n --arg revision "$VERIFIED_REVISION" '{annotations: {"org.opencontainers.image.revision": $revision}}'
+        elif [[ "$REGISTRY_STATUS" == 0 ]]; then
+          printf '%s\n' "$REGISTRY_RESPONSE"
+          printf '%s\n' 'WARNING: registry returned a fallback media type' >&2
+        else
+          printf '%s\n' "$REGISTRY_RESPONSE" >&2
+          return "$REGISTRY_STATUS"
+        fi
+      }
+      gh() {
+        local expected="attestation verify oci://$IMAGE_NAME@$DIGEST --bundle-from-oci --repo $GITHUB_REPOSITORY --signer-workflow $GITHUB_REPOSITORY/.github/workflows/publish-container.yml --source-ref refs/heads/main"
+        [[ "$*" == "$expected" ]] || return 64
+        return "$ATTESTATION_STATUS"
+      }
+      export -f docker gh
+      bash scripts/find-container-digest.sh "$IMAGE_NAME" "$SOURCE_SHA"
     `], {
       encoding: 'utf8',
-      env: { ...process.env, IMAGE: image, REGISTRY_RESPONSE: response, REGISTRY_STATUS: registryStatus },
+      env: {
+        ...process.env, IMAGE_NAME: imageName, DIGEST: digest, SOURCE_SHA: sha, GITHUB_REPOSITORY: repository,
+        REGISTRY_RESPONSE: response, REGISTRY_STATUS: registryStatus, VERIFIED_REVISION: verifiedRevision,
+        ATTESTATION_STATUS: attestationStatus,
+      },
     });
     assert.equal(result.status, status, result.stderr);
     assert.equal(result.stdout, stdout);
   });
 }
+
+const publisher = readFileSync(new URL('../.github/workflows/publish-container.yml', import.meta.url), 'utf8');
+const promotion = publisher.split('        run: |\n').at(-1).trimEnd().split('\n').map(line => line.slice(10)).join('\n');
+const tip = 'd'.repeat(40);
+const tipDigest = 'sha256:' + 'e'.repeat(64);
+
+function promote(releaseTag, mainDigest = tipDigest) {
+  return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', `
+    gh() {
+      case "$2" in
+        "repos/$GITHUB_REPOSITORY/commits/main") printf '%s\n' "$TIP" ;;
+        "repos/$GITHUB_REPOSITORY/commits/tags/$RELEASE_TAG") printf '%s\n' "$SOURCE_SHA" ;;
+        *) return 64 ;;
+      esac
+    }
+    bash() {
+      [[ "$*" == "scripts/find-container-digest.sh $IMAGE_NAME $TIP" ]] || return 64
+      printf '%s\n' "$TIP_DIGEST"
+    }
+    docker() { printf '%s\n' "$*"; }
+    ${promotion}
+  `], {
+    encoding: 'utf8',
+    env: {
+      ...process.env, GITHUB_REPOSITORY: repository, IMAGE_NAME: imageName, IMAGE_DIGEST: digest,
+      SOURCE_SHA: sha, RELEASE_TAG: releaseTag, TIP: tip, TIP_DIGEST: mainDigest,
+    },
+  });
+}
+
+test('a late publisher reconciles latest to the verified main tip digest', () => {
+  const result = promote('');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `buildx imagetools create --tag ${imageName}:latest ${imageName}@${tipDigest}\n`);
+});
+
+test('a late publisher leaves latest in place before the main tip is published', () => {
+  const result = promote('', '');
+  assert.equal(result.status, 0, result.stderr);
+  assert.doesNotMatch(result.stdout, /imagetools create/);
+});
+
+test('release tags use the attested digest instead of rereading a mutable commit tag', () => {
+  const result = promote('v1.2.3');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `buildx imagetools create --tag ${imageName}:1.2.3 --tag ${imageName}:1.2 ${imageName}@${digest}\n`);
+});

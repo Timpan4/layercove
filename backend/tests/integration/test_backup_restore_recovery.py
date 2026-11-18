@@ -51,6 +51,7 @@ def restore_fixture(monkeypatch, tmp_path, request):
     with zipfile.ZipFile(payload, "w") as zipped:
         zipped.write(backup, "layercove.db")
         zipped.writestr(".mfa_encryption_key", Fernet.generate_key())
+        zipped.mkdir("archive/")
         zipped.writestr("archive/new.txt", "replacement")
 
     monkeypatch.setenv("DATA_DIR", str(live))
@@ -86,6 +87,96 @@ async def test_settings_only_backup_is_rejected_before_changing_live_data(async_
 
     assert response.status_code == 400, response.text
     assert "missing" in response.json()["detail"].lower()
+    assert_original()
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("credential", ["api_key_ciphertext", "authorization_ciphertext"])
+async def test_restore_rejects_moonraker_credentials_encrypted_with_another_key(
+    async_client, tmp_path, restore_fixture, credential
+):
+    _, assert_original = restore_fixture
+    backup = tmp_path / "moonraker.db"
+    write_database(backup, "EUR")
+    encrypted = "fernet:" + Fernet(Fernet.generate_key()).encrypt(b"fixture credential").decode()
+    with closing(sqlite3.connect(backup)) as db, db:
+        db.execute("CREATE TABLE moonraker_printer_configs (api_key_ciphertext TEXT, authorization_ciphertext TEXT)")
+        values = (encrypted, None) if credential == "api_key_ciphertext" else (None, encrypted)
+        db.execute("INSERT INTO moonraker_printer_configs VALUES (?, ?)", values)
+    payload = io.BytesIO()
+    with zipfile.ZipFile(payload, "w") as archive:
+        archive.write(backup, "layercove.db")
+
+    response = await async_client.post(
+        "/api/v1/settings/restore", files={"file": ("backup.zip", payload.getvalue(), "application/zip")}
+    )
+
+    assert response.status_code == 400, response.text
+    assert_original()
+
+
+def test_failed_key_rollback_preserves_key_backups_and_recovers_independent_files(tmp_path, monkeypatch):
+    from backend.app.services.backup_restore import RestoreFiles
+
+    extracted = tmp_path / "extracted"
+    extracted.mkdir()
+    incoming = extracted / "archive"
+    incoming.mkdir()
+    (incoming / "model.txt").write_text("replacement")
+    target = tmp_path / "archive"
+    target.mkdir()
+    model = target / "model.txt"
+    model.write_text("original")
+    key = tmp_path / ".mfa_encryption_key"
+    key.write_bytes(b"old fixture key")
+    (extracted / key.name).write_bytes(b"new fixture key")
+    files = RestoreFiles()
+    files.stage(extracted, [("archive", target)], key)
+    files.install()
+
+    replace = os.replace
+
+    def reject_key_move(source, destination):
+        if source == key:
+            raise OSError("fixture key move failed")
+        return replace(source, destination)
+
+    monkeypatch.setattr(os, "replace", reject_key_move)
+    with pytest.raises(OSError):
+        files.rollback()
+
+    assert model.read_text() == "original"
+    assert key.read_bytes() == b"new fixture key"
+    assert (files.workspaces[-1] / "previous-key").read_bytes() == b"old fixture key"
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("limit", ["bytes", "entries"])
+async def test_restore_enforces_configured_zip_limits(async_client, monkeypatch, tmp_path, restore_fixture, limit):
+    from backend.app.services.local_backup import local_backup_service
+
+    files, assert_original = restore_fixture
+    payload = files["file"][1]
+    with zipfile.ZipFile(io.BytesIO(payload)) as archive:
+        total = sum(entry.file_size for entry in archive.infolist())
+        count = len(archive.infolist())
+    monkeypatch.setenv("BACKUP_RESTORE_MAX_UNCOMPRESSED_BYTES", str(total - (limit == "bytes")))
+    monkeypatch.setenv("BACKUP_RESTORE_MAX_ENTRIES", str(count - (limit == "entries")))
+    configured = type(settings)(
+        base_dir=settings.base_dir, database_url=settings.database_url, archive_dir=settings.archive_dir
+    )
+    monkeypatch.setattr(settings_routes, "app_settings", configured)
+
+    if limit == "bytes":
+        response = await async_client.post("/api/v1/settings/restore", files=files)
+    else:
+        filename = "layercove-backup-20261118-120000.zip"
+        (tmp_path / filename).write_bytes(payload)
+        monkeypatch.setattr(local_backup_service, "_load_settings", AsyncMock(return_value={"path": str(tmp_path)}))
+        response = await async_client.post(f"/api/v1/local-backup/backups/{filename}/restore")
+
+    assert response.status_code == 413, response.text
+    assert limit in response.json()["detail"]
     assert_original()
 
 
@@ -175,6 +266,31 @@ async def test_http_requests_wait_for_restore_recovery(async_client, monkeypatch
     assert (await async_client.get("/api/v1/settings/")).status_code == 200
     await main.on_print_lifecycle(PrintLifecycleEvent(1, "started", {}))
     assert printer_events == [1]
+
+
+@pytest.mark.integration
+async def test_http_admission_stays_paused_until_printers_reconnect(async_client, monkeypatch, restore_fixture):
+    files, _ = restore_fixture
+    reconnecting = asyncio.Event()
+    finish_reconnecting = asyncio.Event()
+
+    async def reconnect(db):
+        reconnecting.set()
+        await finish_reconnecting.wait()
+
+    monkeypatch.setattr("backend.app.services.printer_manager.init_printer_connections", reconnect)
+    restore = asyncio.create_task(async_client.post("/api/v1/settings/restore", files=files))
+    entered = asyncio.create_task(reconnecting.wait())
+    try:
+        await asyncio.wait((restore, entered), return_when=asyncio.FIRST_COMPLETED)
+        assert reconnecting.is_set()
+        assert (await async_client.get("/api/v1/settings/")).status_code == 503
+    finally:
+        finish_reconnecting.set()
+        entered.cancel()
+        response = await restore
+    assert response.status_code == 200
+    assert (await async_client.get("/api/v1/settings/")).status_code == 200
 
 
 @pytest.mark.integration

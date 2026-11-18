@@ -14,7 +14,6 @@ from backend.app.api.routes.cloud import get_stored_token
 from backend.app.api.routes.orca_cloud import _build_authenticated_service, _load_credentials
 from backend.app.api.routes.slicer_presets import _fetch_cloud_presets, _resolve_slicer_api_url
 from backend.app.core.auth import RequireAnyPermissionIfAuthEnabled, RequirePermissionIfAuthEnabled
-from backend.app.core.config import settings
 from backend.app.core.database import get_db
 from backend.app.core.permissions import Permission
 from backend.app.models.slicer_profile_catalog import (
@@ -28,7 +27,6 @@ from backend.app.models.slicer_profile_catalog import (
 from backend.app.models.user import User
 from backend.app.services.filament_edit import FilamentCopyRequest, copy_filament_profile
 from backend.app.services.orca_cloud import OrcaCloudError
-from backend.app.services.settings_service import get_setting
 from backend.app.services.slicer_api import SlicerApiError, SlicerApiService
 from backend.app.services.slicer_catalog import (
     activate_revision,
@@ -365,14 +363,6 @@ async def sync_orca_catalog(
         raise HTTPException(status_code=409, detail="Catalog account is frozen")
     service = await _build_authenticated_service(db, current_user)
 
-    async def load_orca_bundle() -> dict[str, Any]:
-        configured = await get_setting(db, "orcaslicer_api_url")
-        url = (configured or settings.slicer_api_url).strip()
-        if not url:
-            return {}
-        async with SlicerApiService(base_url=url) as slicer:
-            return await slicer.list_bundled_profiles()
-
     try:
         result = await sync_orca_account(
             db,
@@ -380,7 +370,6 @@ async def sync_orca_catalog(
             remote_account_id=remote_account_id,
             display_name=credentials.email or remote_account_id,
             user_id=current_user.id if current_user is not None else None,
-            load_bundled=load_orca_bundle,
         )
     except (OrcaCloudError, SlicerApiError) as error:
         raise HTTPException(status_code=502, detail=str(error)) from error

@@ -259,3 +259,52 @@ test('a revoked session still requires sign-in and clears the saved token', asyn
   expect(new URL(page.url()).pathname).toBe('/login');
   expect(await page.evaluate(() => localStorage.getItem('auth_token'))).toBeNull();
 });
+
+test('finishing a slow sign-out keeps a newer sign-in open', async ({ page }) => {
+  await page.addInitScript(() => {
+    if (!sessionStorage.getItem('fixture-started')) {
+      sessionStorage.setItem('fixture-started', 'true');
+      sessionStorage.setItem('auth_token', 'fixture-first-session');
+    }
+  });
+  await page.routeWebSocket(url => url.pathname === '/api/v1/ws', socket => socket.close());
+  const finishLogout = Promise.withResolvers<void>();
+  const user = { id: 1, username: 'fixture-user', is_active: true, permissions: ['library:read', 'printers:read'], groups: [] };
+  await page.route(url => url.pathname.startsWith('/api/'), async route => {
+    const path = new URL(route.request().url()).pathname.replace(/\/$/, '');
+    if (path === '/api/v1/auth/logout') {
+      await finishLogout.promise;
+      return route.fulfill({ json: { message: 'Signed out' } });
+    }
+    const body = path === '/api/v1/auth/status' ? { auth_enabled: true, requires_setup: false }
+      : path === '/api/v1/auth/advanced-auth/status' ? { advanced_auth_enabled: false, local_login_enabled: true }
+      : path === '/api/v1/auth/me' ? user
+      : path === '/api/v1/auth/login' ? { access_token: 'fixture-next-session', user }
+      : path === '/api/v1/auth/media-token' || path === '/api/v1/auth/ws-token' ? { token: 'fixture-resource-token' }
+      : [];
+    return route.fulfill({ json: body });
+  });
+
+  try {
+    await page.goto('/files');
+    const logoutRequest = page.waitForRequest('**/api/v1/auth/logout');
+    await page.getByTitle('Logout', { exact: true }).filter({ visible: true }).click();
+    expect((await logoutRequest).headers().authorization).toBe('Bearer fixture-first-session');
+    await page.getByLabel('Username', { exact: true }).fill('fixture-user');
+    await page.getByLabel('Password', { exact: true }).fill('fixture-password');
+    await page.getByRole('button', { name: 'Sign in', exact: true }).click();
+    await expect(page.getByTitle('Logout', { exact: true }).filter({ visible: true })).toBeVisible();
+
+    const logoutResponse = page.waitForResponse('**/api/v1/auth/logout');
+    finishLogout.resolve();
+    await (await logoutResponse).finished();
+    const documentPath = await page.evaluate(async () => {
+      await new Promise<void>(resolve => requestAnimationFrame(() => requestAnimationFrame(() => resolve())));
+      return new URL(performance.getEntriesByType('navigation')[0].name).pathname;
+    });
+    expect(documentPath).toBe('/files');
+    await expect(page.getByTitle('Logout', { exact: true }).filter({ visible: true })).toBeVisible();
+  } finally {
+    finishLogout.resolve();
+  }
+});

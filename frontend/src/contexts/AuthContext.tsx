@@ -222,8 +222,6 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
       await api.logout(token);
     } catch {
       // The local session is already cleared if the server cannot be reached.
-    } finally {
-      window.location.href = '/login';
     }
   };
 

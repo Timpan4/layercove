@@ -47,14 +47,14 @@ bun run test:run
 
 ## Releases
 
-`publish-container.yml` builds `ghcr.io/timpan4/layercove` for `linux/amd64` and `linux/arm64` after CI passes for the exact commit pushed to `main`. The publisher promotes that image to `latest` while the commit is still the tip of `main`.
+`publish-container.yml` builds and attests `ghcr.io/timpan4/layercove` for `linux/amd64` and `linux/arm64` after CI passes for the exact commit pushed to `main`. Published images use the `sha-<commit>` tag. The publisher reconciles `latest` to the verified image at the tip of `main` once that image is available.
 
-A `vX.Y.Z` tag adds image tags `X.Y.Z` and `X.Y` to the existing `sha-<commit>` image. To cut a release:
+A `vX.Y.Z` tag requests image tags `X.Y.Z` and `X.Y` for the attested digest of that commit. The release request can build the SHA image if it is missing. To cut a release:
 
 1. Set `APP_VERSION` in `backend/app/core/config.py`. The in-app update check compares this value with GitHub releases.
 2. Merge that change through a pull request.
-3. Wait for main CI and Publish container to pass on the merge commit.
-4. Tag that commit `vX.Y.Z` and push the tag. If the tag was pushed before the image was ready, rerun Container release request on the tag.
+3. Wait for main CI to pass on the merge commit.
+4. Tag that commit `vX.Y.Z` and push the tag. If a tag request reached the publisher before main CI passed, rerun Container release request on that tag after CI succeeds.
 5. After the version tags are published, publish a GitHub release for the Git tag. The update check reads published releases.
 
 `publish-rust.yml` publishes `ghcr.io/timpan4/layercove-rs` after CI succeeds on a push to `main`; see [rust/README.md](../rust/README.md).

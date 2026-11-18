@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from backend.app.core.restore_activity import restore_activity
 from backend.app.models.printer import Printer
 from backend.app.services.bambu_backend import BambuBackend
 from backend.app.services.bambu_mqtt import BambuMQTTClient, MQTTLogEntry, PrinterState, get_stage_name
@@ -628,7 +629,9 @@ class PrinterManager:
             try:
                 if event is None:
                     return
-                await self._forward_backend_event(printer_id, event)
+                with restore_activity.admit() as admitted:
+                    if admitted:
+                        await self._forward_backend_event(printer_id, event)
             except Exception:
                 logger.exception("Backend event callback failed for printer %s", printer_id)
             finally:

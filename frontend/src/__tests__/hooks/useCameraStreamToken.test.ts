@@ -3,7 +3,7 @@
 import { createElement } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { api, ApiError, getStreamToken, setAuthToken, setMediaToken, setStreamToken, withMediaToken } from '../../api/client';
 import { queryKeys } from '../../api/queryKeys';
@@ -23,6 +23,8 @@ function StreamTokenSync() {
 }
 
 describe('useStreamTokenSync', () => {
+  beforeEach(() => setAuthToken('fixture-auth-session'));
+
   afterEach(() => {
     auth.canViewCamera = true;
     setAuthToken(null);
@@ -105,6 +107,23 @@ describe('useStreamTokenSync', () => {
     ));
     expect(screen.getByTestId('timelapse')).toHaveAttribute('src', '/api/v1/archives/5/timelapse?token=media-token');
     expect(camera).not.toHaveBeenCalled();
+  });
+
+  it('mints new media credentials after the same user signs in again', async () => {
+    auth.canViewCamera = false;
+    const getToken = vi.spyOn(api, 'getMediaToken')
+      .mockResolvedValueOnce({ token: 'old-media-token' })
+      .mockResolvedValueOnce({ token: 'new-media-token' });
+    setAuthToken('old-session');
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const thumbnail = '/api/v1/archives/5/thumbnail';
+    render(createElement(QueryClientProvider, { client: queryClient }, createElement(StreamTokenSync)));
+    await waitFor(() => expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=old-media-token`));
+
+    await act(async () => { setAuthToken('new-session'); });
+
+    await waitFor(() => expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=new-media-token`));
+    expect(getToken).toHaveBeenCalledTimes(2);
   });
 
   it('keeps signing media and lets a missing image fail without refreshing credentials', async () => {
