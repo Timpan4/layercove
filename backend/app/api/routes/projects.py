@@ -1141,7 +1141,7 @@ async def get_project_cover_image(
 
     ext = os.path.splitext(project.cover_image_filename)[1].lower()
     media_type = COVER_IMAGE_CONTENT_TYPES.get(ext, "application/octet-stream")
-    return FileResponse(file_path, media_type=media_type)
+    return FileResponse(file_path, media_type=media_type, headers={"Cache-Control": "private, no-store"})
 
 
 @router.delete("/{project_id}/cover-image")

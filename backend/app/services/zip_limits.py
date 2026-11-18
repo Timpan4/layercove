@@ -16,8 +16,10 @@ class ZipTooLargeError(ValueError):
     """Raised when an archive would expand past MAX_ZIP_UNCOMPRESSED_BYTES."""
 
 
-def check_zip_size(zf: zipfile.ZipFile, *, max_bytes: int = MAX_ZIP_UNCOMPRESSED_BYTES) -> None:
+def check_zip_size(zf: zipfile.ZipFile, *, max_bytes: int | None = None) -> None:
     """Reject the archive when its declared uncompressed total exceeds the cap."""
+    if max_bytes is None:
+        max_bytes = MAX_ZIP_UNCOMPRESSED_BYTES
     total = sum(info.file_size for info in zf.infolist())
     if total > max_bytes:
         raise ZipTooLargeError(f"Archive expands to {total} bytes, over the {max_bytes} byte limit")
@@ -26,9 +28,9 @@ def check_zip_size(zf: zipfile.ZipFile, *, max_bytes: int = MAX_ZIP_UNCOMPRESSED
 class ZipBudget:
     """Tracks bytes actually read across members of one archive."""
 
-    def __init__(self, max_bytes: int = MAX_ZIP_UNCOMPRESSED_BYTES) -> None:
-        self.max_bytes = max_bytes
-        self.remaining = max_bytes
+    def __init__(self, max_bytes: int | None = None) -> None:
+        self.max_bytes = MAX_ZIP_UNCOMPRESSED_BYTES if max_bytes is None else max_bytes
+        self.remaining = self.max_bytes
 
     def copy(self, reader: BinaryIO, writer: BinaryIO) -> None:
         while chunk := reader.read(min(_CHUNK, self.remaining + 1)):

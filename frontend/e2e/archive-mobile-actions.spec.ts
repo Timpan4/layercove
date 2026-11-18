@@ -86,6 +86,52 @@ test('an archive reader without camera permission loads their thumbnail and requ
   expect(cameraRequests).toEqual([]);
 });
 
+test('the print log shows its thumbnail when a delayed media credential arrives', async ({ page }) => {
+  const credential = Promise.withResolvers<void>();
+  await page.addInitScript(() => sessionStorage.setItem('auth_token', 'fixture-reader'));
+  await page.routeWebSocket(url => url.pathname === '/api/v1/ws', socket => socket.close());
+  await page.route(url => url.pathname.startsWith('/api/'), async route => {
+    const url = new URL(route.request().url());
+    const path = url.pathname.replace(/\/$/, '');
+    if (path === '/api/v1/auth/media-token') {
+      await credential.promise;
+      return route.fulfill({ json: { token: 'fixture-current-media' } });
+    }
+    if (path === '/api/v1/print-log/1/thumbnail') {
+      if (url.searchParams.get('token') !== 'fixture-current-media') return route.fulfill({ status: 401 });
+      const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aYxkAAAAASUVORK5CYII=', 'base64');
+      return route.fulfill({ contentType: 'image/png', body: png });
+    }
+    const body = path === '/api/v1/auth/status' ? { auth_enabled: true, requires_setup: false }
+      : path === '/api/v1/auth/me' ? { id: 1, username: 'Fixture Reader', permissions: ['archives:read_own'], groups: [] }
+      : path === '/api/v1/settings' ? { check_updates: false }
+      : path === '/api/v1/archives' ? [{
+        id: 1, filename, printer_id: 1, status: 'completed', photos: [], created_at: '2026-10-01T10:00:00Z',
+      }]
+      : path === '/api/v1/archives/stats' ? { total_archives: 1, total_print_time_seconds: 0, total_filament_grams: 0 }
+      : path === '/api/v1/print-log' ? { total: 1, items: [{
+        id: 1, print_name: 'Fixture print log', printer_name: 'Fixture printer', status: 'completed',
+        thumbnail_path: 'fixture.png', created_at: '2026-10-01T10:00:00Z',
+      }] }
+      : [];
+    return route.fulfill({ json: body });
+  });
+
+  try {
+    await page.goto('/archives');
+    await page.getByRole('button', { name: 'Print Log', exact: true }).click();
+    const row = page.getByRole('row', { name: /Fixture print log/ });
+    await expect(row).toBeVisible();
+    const thumbnail = row.locator('img[src*="/print-log/1/thumbnail"]');
+    await expect(thumbnail).toHaveCount(0);
+    credential.resolve();
+    await expect(thumbnail).toBeVisible();
+    await expect(thumbnail).toHaveJSProperty('naturalWidth', 1);
+  } finally {
+    credential.resolve();
+  }
+});
+
 for (const width of [390, 1440]) {
   test(`grid Print is named and visible and opens only confirmation at ${width}px`, async ({ page }) => {
     const { archive, writes } = await openArchives(page, width, 'grid');

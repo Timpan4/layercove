@@ -2194,7 +2194,7 @@ async def get_thumbnail(
         path=thumb_path,
         media_type="image/png",
         headers={
-            "Cache-Control": "no-cache, must-revalidate",
+            "Cache-Control": "private, no-store",
             "ETag": f'"{mtime}"',
         },
     )
@@ -2232,7 +2232,7 @@ async def get_timelapse(
         media_type=media_type,
         filename=f"{archive.print_name or 'timelapse'}{ext}",
         headers={
-            "Cache-Control": "no-cache, must-revalidate",
+            "Cache-Control": "private, no-store",
             "ETag": f'"{mtime}"',
         },
     )
@@ -2836,7 +2836,7 @@ async def get_photo(
     }
     media_type = media_types.get(ext, "image/jpeg")
 
-    return FileResponse(path=photo_path, media_type=media_type)
+    return FileResponse(path=photo_path, media_type=media_type, headers={"Cache-Control": "private, no-store"})
 
 
 @router.delete("/{archive_id}/photos/{filename}")
@@ -2929,7 +2929,10 @@ async def get_qrcode(
     return Response(
         content=buffer.getvalue(),
         media_type="image/png",
-        headers={"Content-Disposition": build_content_disposition(qr_filename, disposition="inline")},
+        headers={
+            "Cache-Control": "private, no-store",
+            "Content-Disposition": build_content_disposition(qr_filename, disposition="inline"),
+        },
     )
 
 
@@ -3292,13 +3295,17 @@ async def get_plate_preview(
             for preview_path in preview_paths:
                 if preview_path in names:
                     image_data = zf.read(preview_path)
-                    return Response(content=image_data, media_type="image/png")
+                    return Response(
+                        content=image_data, media_type="image/png", headers={"Cache-Control": "private, no-store"}
+                    )
 
             # If no plate image, try any PNG in Metadata
             for name in names:
                 if name.startswith("Metadata/plate_") and name.endswith(".png") and "_small" not in name:
                     image_data = zf.read(name)
-                    return Response(content=image_data, media_type="image/png")
+                    return Response(
+                        content=image_data, media_type="image/png", headers={"Cache-Control": "private, no-store"}
+                    )
 
             raise HTTPException(404, "No plate preview found in 3MF file")
 
@@ -3763,7 +3770,7 @@ async def get_plate_thumbnail(
             thumb_path = f"Metadata/plate_{plate_index}.png"
             if thumb_path in zf.namelist():
                 data = zf.read(thumb_path)
-                return Response(content=data, media_type="image/png")
+                return Response(content=data, media_type="image/png", headers={"Cache-Control": "private, no-store"})
     except Exception:
         pass  # Fall through to 404 if archive is unreadable or thumbnail missing
 

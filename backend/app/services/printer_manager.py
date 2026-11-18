@@ -473,7 +473,7 @@ class PrinterManager:
         except Exception as e:
             logger.warning("Failed to persist awaiting_plate_clear for printer %d: %s", printer_id, e)
 
-    async def load_awaiting_plate_clear_from_db(self):
+    async def load_awaiting_plate_clear_from_db(self) -> bool:
         """Rehydrate the awaiting-plate-clear set from the printers table on startup."""
         from backend.app.core.database import async_session
 
@@ -484,8 +484,10 @@ class PrinterManager:
                 self._awaiting_plate_clear = ids
                 if ids:
                     logger.info("Loaded %d printer(s) awaiting plate-clear acknowledgment: %s", len(ids), sorted(ids))
+            return True
         except Exception as e:
             logger.warning("Failed to load awaiting_plate_clear from DB: %s", e)
+            return False
 
     def set_event_loop(self, loop: asyncio.AbstractEventLoop):
         """Set the event loop for async callbacks."""

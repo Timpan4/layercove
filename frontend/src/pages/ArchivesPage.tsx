@@ -92,6 +92,7 @@ import { PlatePickerModal } from '../components/PlatePickerModal';
 import type { PlateMetadata } from '../types/plates';
 import { useToast } from '../contexts/ToastContext';
 import { useAuth } from '../contexts/AuthContext';
+import { useMediaToken } from '../hooks/useCameraStreamToken';
 import { formatFileSize } from '../utils/file';
 
 type TFunction = (key: string, options?: Record<string, unknown>) => string;
@@ -2629,7 +2630,8 @@ export function ArchivesPage() {
   const { t } = useTranslation();
   const queryClient = useQueryClient();
   const { showToast } = useToast();
-  const { hasPermission, hasAnyPermission } = useAuth();
+  const { authEnabled, loading: authLoading, hasPermission, hasAnyPermission } = useAuth();
+  const mediaToken = useMediaToken();
   const searchInputRef = useRef<HTMLInputElement>(null);
   const [search, setSearch] = useState('');
   const [filterPrinter, setFilterPrinter] = useState<number | null>(() => {
@@ -3947,7 +3949,7 @@ export function ArchivesPage() {
                           </td>
                           <td className="px-4 py-3">
                             <div className="flex items-center gap-2">
-                              {entry.thumbnail_path && (
+                              {entry.thumbnail_path && !authLoading && (!authEnabled || mediaToken) && (
                                 <img
                                   src={api.getPrintLogThumbnail(entry.id)}
                                   alt=""

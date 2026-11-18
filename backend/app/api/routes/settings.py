@@ -703,6 +703,7 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
         validate_backup_database,
         validate_backup_secrets,
     )
+    from backend.app.services.mqtt_relay import mqtt_relay
     from backend.app.services.notification_service import notification_service
     from backend.app.services.print_scheduler import scheduler as print_scheduler
     from backend.app.services.printer_manager import init_printer_connections, printer_manager
@@ -758,8 +759,10 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                 with CancelScope(shield=True):
                     services_paused = True
                     await print_scheduler.pause_for_restore()
-                    smart_plug_manager.stop_scheduler()
+                    await smart_plug_manager.pause_for_restore()
                     notification_service.stop_digest_scheduler()
+                    await mqtt_relay.configure({"mqtt_enabled": False})
+                    mqtt_relay.smart_plug_service.clear_subscriptions()
                     virtual_printer_enabled = virtual_printer_manager.is_enabled
                     if virtual_printer_enabled:
                         await virtual_printer_manager.stop_all()
@@ -787,18 +790,22 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
 
             message = "Backup restored successfully."
             with CancelScope(shield=True):
+                plate_clear_loaded = await printer_manager.load_awaiting_plate_clear_from_db()
                 try:
                     async with database.async_session() as db:
+                        await mqtt_relay.configure_from_db(db)
                         await init_printer_connections(db)
                     await virtual_printer_manager.sync_from_db()
+                    await smart_plug_manager.resume_pending_auto_offs(require_connected=True)
                 except Exception as error:
                     logger.error("Could not restart services after restore (%s)", type(error).__name__)
                     message = "Backup restored successfully. Restart LayerCove to finish restarting services."
                 finally:
                     restore_activity.resume()
                     activity_paused = False
-                    print_scheduler.resume_after_restore()
-                if _resume_background_services() is False:
+                    if plate_clear_loaded:
+                        print_scheduler.resume_after_restore()
+                if _resume_background_services() is False or not plate_clear_loaded:
                     message = "Backup restored successfully. Restart LayerCove to finish restarting services."
             return {"success": True, "message": message}
         except BaseException as error:
@@ -820,12 +827,15 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                 encryption._fernet_instance, encryption._key_source, encryption._warn_shown = encryption_state
 
                 if services_paused and not needs_recovery:
+                    plate_clear_loaded = await printer_manager.load_awaiting_plate_clear_from_db()
                     try:
-                        if printers_disconnected:
-                            async with database.async_session() as db:
+                        async with database.async_session() as db:
+                            await mqtt_relay.configure_from_db(db)
+                            if printers_disconnected:
                                 await init_printer_connections(db)
                         if virtual_printer_enabled:
                             await virtual_printer_manager.sync_from_db()
+                        await smart_plug_manager.resume_pending_auto_offs(require_connected=True)
                     except Exception as service_error:
                         logger.error(
                             "Could not restart printer services after restore (%s)", type(service_error).__name__
@@ -833,7 +843,8 @@ async def restore_backup_zip(file: BinaryIO, filename: str | None):
                     finally:
                         restore_activity.resume()
                         activity_paused = False
-                        print_scheduler.resume_after_restore()
+                        if plate_clear_loaded:
+                            print_scheduler.resume_after_restore()
                     _resume_background_services()
 
             if not isinstance(error, Exception) or isinstance(error, HTTPException) and not needs_recovery:

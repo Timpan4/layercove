@@ -427,6 +427,13 @@ class MQTTSmartPlugService:
         if entry not in self.subscriptions[topic]:
             self.subscriptions[topic].append(entry)
 
+    def clear_subscriptions(self) -> None:
+        """Forget the old plug configuration after disconnecting the client."""
+        with self._lock:
+            self.subscriptions.clear()
+            self.plug_configs.clear()
+            self.plug_data.clear()
+
     def unsubscribe(self, plug_id: int):
         """Unsubscribe when plug is deleted/updated."""
         with self._lock:

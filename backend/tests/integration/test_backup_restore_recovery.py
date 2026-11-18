@@ -16,6 +16,7 @@ from backend.app.api.routes import settings as settings_routes
 from backend.app.core import database, encryption
 from backend.app.core.config import settings
 from backend.app.core.database import async_session as application_session
+from backend.app.models.printer import Printer
 from backend.app.models.settings import Settings
 from backend.app.models.user import User
 from backend.app.models.user_totp import UserTOTP
@@ -294,6 +295,39 @@ async def test_http_admission_stays_paused_until_printers_reconnect(async_client
 
 
 @pytest.mark.integration
+async def test_restore_cancels_old_auto_off_before_printers_reconnect(async_client, monkeypatch, restore_fixture):
+    from backend.app.services.smart_plug_manager import smart_plug_manager
+
+    files, _ = restore_fixture
+    waiting = asyncio.Event()
+    never_fire = asyncio.Event()
+    observed = []
+
+    async def delayed_auto_off():
+        waiting.set()
+        await never_fire.wait()
+        observed.append("power-off")
+
+    pending = asyncio.create_task(delayed_auto_off())
+    monkeypatch.setattr(smart_plug_manager, "_pending_off", {1: pending})
+    await waiting.wait()
+
+    async def reconnect(db):
+        never_fire.set()
+        await asyncio.sleep(0)
+
+    monkeypatch.setattr("backend.app.services.printer_manager.init_printer_connections", reconnect)
+    try:
+        response = await async_client.post("/api/v1/settings/restore", files=files)
+        assert response.status_code == 200
+        assert pending.done()
+        assert observed == []
+    finally:
+        pending.cancel()
+        await asyncio.gather(pending, return_exceptions=True)
+
+
+@pytest.mark.integration
 async def test_file_failure_aborts_restore_with_original_files(async_client, monkeypatch, restore_fixture):
     files, assert_original = restore_fixture
     copy2 = shutil.copy2
@@ -313,6 +347,9 @@ async def test_file_failure_aborts_restore_with_original_files(async_client, mon
 @pytest.mark.integration
 @pytest.mark.parametrize("legacy_key", [None, "invalid-legacy-key"])
 async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_client, monkeypatch, tmp_path, legacy_key):
+    from backend.app.services.mqtt_relay import mqtt_relay
+    from backend.app.services.printer_manager import printer_manager
+
     source = tmp_path / "source"
     source.mkdir()
     source_db = source / "layercove.db"
@@ -326,6 +363,8 @@ async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_cli
         async with source_engine.begin() as connection:
             await connection.run_sync(database.Base.metadata.create_all)
             await connection.execute(insert(Settings).values(key="currency", value="SEK"))
+            await connection.execute(insert(Settings).values(key="mqtt_enabled", value="false"))
+            await connection.execute(insert(Printer).values(id=7, name="Restored printer", awaiting_plate_clear=True))
             await connection.execute(insert(User).values(id=7, username="restored-user"))
             secret = "fernet:" + Fernet(source_key).encrypt(b"fixture-totp-seed").decode()
             await connection.execute(UserTOTP.__table__.insert().values(user_id=7, secret=secret))
@@ -356,6 +395,22 @@ async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_cli
     monkeypatch.setattr(settings, "database_url", destination_url)
     monkeypatch.setattr(database, "engine", destination_engine)
     monkeypatch.setattr(database, "async_session", async_sessionmaker(destination_engine, expire_on_commit=False))
+    monkeypatch.setattr(printer_manager, "_awaiting_plate_clear", {5})
+    broker_enabled = True
+    reconnect_state = []
+
+    async def configure_mqtt(config):
+        nonlocal broker_enabled
+        broker_enabled = config["mqtt_enabled"]
+        return True
+
+    async def reconnect(db):
+        reconnect_state.append(
+            (broker_enabled, printer_manager.is_awaiting_plate_clear(7), printer_manager.is_awaiting_plate_clear(5))
+        )
+
+    monkeypatch.setattr(mqtt_relay, "configure", configure_mqtt)
+    monkeypatch.setattr("backend.app.services.printer_manager.init_printer_connections", reconnect)
     if legacy_key is not None:
         monkeypatch.setenv("MFA_ENCRYPTION_KEY", legacy_key)
     try:
@@ -365,6 +420,7 @@ async def test_sqlite_backup_restores_committed_wal_rows_files_and_key(async_cli
             files={"file": ("backup.zip", backup.content, "application/zip")},
         )
         assert restored.status_code == 200
+        assert reconnect_state == [(False, True, False)]
     finally:
         await destination_engine.dispose()
 

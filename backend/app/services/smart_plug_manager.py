@@ -86,6 +86,18 @@ class SmartPlugManager:
             self._snapshot_task = None
             logger.info("Smart plug energy snapshot loop stopped")
 
+    async def pause_for_restore(self) -> None:
+        """Stop live automation without clearing the database's pending flags."""
+        scheduler_tasks = (self._scheduler_task, self._snapshot_task)
+        self.stop_scheduler()
+        pending_tasks = tuple(self._pending_off.values())
+        self._pending_off.clear()
+        self._last_schedule_check.clear()
+        tasks = [task for task in (*scheduler_tasks, *pending_tasks) if task is not None and not task.done()]
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
     async def _schedule_loop(self):
         """Background loop that checks scheduled on/off times every minute."""
         while True:
@@ -662,7 +674,7 @@ class SmartPlugManager:
         for plug_id in list(self._pending_off.keys()):
             self._cancel_pending_off(plug_id)
 
-    async def resume_pending_auto_offs(self):
+    async def resume_pending_auto_offs(self, *, require_connected: bool = False):
         """Resume any pending auto-offs that were interrupted by a restart.
 
         Called on startup to check for plugs that had auto-off pending but
@@ -683,6 +695,8 @@ class SmartPlugManager:
                 pending_plugs = result.scalars().all()
 
                 for plug in pending_plugs:
+                    if require_connected and not printer_manager.is_connected(plug.printer_id):
+                        continue
                     # Check how long it's been pending (timeout after 2 hours)
                     if plug.auto_off_pending_since:
                         pending_since = plug.auto_off_pending_since

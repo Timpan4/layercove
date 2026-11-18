@@ -106,6 +106,21 @@ export function TimelapseViewer({
     link.click();
   };
 
+  const retryWithCurrentCredential = (event: React.SyntheticEvent<HTMLVideoElement>) => {
+    const video = event.currentTarget;
+    const failedUrl = video.getAttribute('src');
+    if (!failedUrl) return;
+    const retryUrl = withMediaToken(failedUrl);
+    if (retryUrl === failedUrl) return;
+
+    const position = video.currentTime;
+    video.autoplay = isPlaying;
+    video.addEventListener('loadedmetadata', () => {
+      if (video.getAttribute('src') === retryUrl) video.currentTime = Math.min(position, video.duration);
+    }, { once: true });
+    video.setAttribute('src', retryUrl);
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80">
       <div className="relative bg-bambu-dark-secondary rounded-xl max-w-4xl w-full mx-4 overflow-hidden">
@@ -143,6 +158,7 @@ export function TimelapseViewer({
             autoPlay
             className="w-full rounded-lg"
             onClick={togglePlay}
+            onError={retryWithCurrentCredential}
           />
 
           {/* Custom Controls */}

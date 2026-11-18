@@ -2927,7 +2927,7 @@ async def get_library_file_plate_thumbnail(
             thumb_path = f"Metadata/plate_{plate_index}.png"
             if thumb_path in zf.namelist():
                 data = zf.read(thumb_path)
-                return Response(content=data, media_type="image/png")
+                return Response(content=data, media_type="image/png", headers={"Cache-Control": "private, no-store"})
     except Exception:
         pass  # Archive unreadable or thumbnail missing; fall through to 404
 
@@ -4963,7 +4963,9 @@ async def get_thumbnail(
     }
     media_type = media_types.get(thumb_ext, "image/png")
 
-    return FastAPIFileResponse(str(abs_thumb_path), media_type=media_type)
+    return FastAPIFileResponse(
+        str(abs_thumb_path), media_type=media_type, headers={"Cache-Control": "private, no-store"}
+    )
 
 
 @router.get("/files/{file_id}/gcode")

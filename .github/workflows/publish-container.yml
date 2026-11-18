@@ -193,7 +193,14 @@ jobs:
             version=${RELEASE_TAG#v}
             tags=(--tag "$IMAGE_NAME:$version")
             if [[ "$version" != *-* ]]; then
-              tags+=(--tag "$IMAGE_NAME:${version%.*}")
+              minor=${version%.*}
+              package="users/$GITHUB_REPOSITORY_OWNER/packages/container/${IMAGE_NAME##*/}/versions"
+              filter=".[].metadata.container.tags[]? | select(startswith(\"$minor.\") and test(\"^[0-9]+[.][0-9]+[.][0-9]+$\"))"
+              published=$(gh api --paginate "$package" --jq "$filter")
+              newest=$(printf '%s\n' "$published" "$version" | sort -V | tail -n 1)
+              if [[ "$newest" == "$version" ]]; then
+                tags+=(--tag "$IMAGE_NAME:$minor")
+              fi
             fi
             docker buildx imagetools create "${tags[@]}" "$IMAGE_NAME@$IMAGE_DIGEST"
             exit 0

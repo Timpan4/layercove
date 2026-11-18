@@ -1331,6 +1331,10 @@ class TestReadIDORClosure(TestOwnershipPermissionsSetup):
         archive.file_path = str(library_path)
         await db_session.commit()
         for path in (
+            f"/api/v1/library/files/+{library_file.id}/thumbnail",
+            f"/api/v1/library/files/+{library_file.id}/plate-thumbnail/+1",
+            f"/api/v1/archives/+{archive.id}/thumbnail",
+            f"/api/v1/archives/+{archive.id}/plate-thumbnail/+1",
             f"/api/v1/print-log/+{log_entry.id}/thumbnail",
             f"/api/v1/archives/+{archive.id}/project-image/cover.png",
         ):

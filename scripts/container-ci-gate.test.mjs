@@ -133,12 +133,13 @@ const promotion = publisher.split('        run: |\n').at(-1).trimEnd().split('\n
 const tip = 'd'.repeat(40);
 const tipDigest = 'sha256:' + 'e'.repeat(64);
 
-function promote(releaseTag, mainDigest = tipDigest) {
+function promote(releaseTag, mainDigest = tipDigest, publishedTags = '') {
   return spawnSync('bash', ['-e', '-o', 'pipefail', '-c', `
     gh() {
       case "$2" in
         "repos/$GITHUB_REPOSITORY/commits/main") printf '%s\n' "$TIP" ;;
         "repos/$GITHUB_REPOSITORY/commits/tags/$RELEASE_TAG") printf '%s\n' "$SOURCE_SHA" ;;
+        --paginate) printf '%s\n' "$PUBLISHED_TAGS" ;;
         *) return 64 ;;
       esac
     }
@@ -153,6 +154,7 @@ function promote(releaseTag, mainDigest = tipDigest) {
     env: {
       ...process.env, GITHUB_REPOSITORY: repository, IMAGE_NAME: imageName, IMAGE_DIGEST: digest,
       SOURCE_SHA: sha, RELEASE_TAG: releaseTag, TIP: tip, TIP_DIGEST: mainDigest,
+      PUBLISHED_TAGS: publishedTags, GITHUB_REPOSITORY_OWNER: 'Timpan4',
     },
   });
 }
@@ -173,4 +175,10 @@ test('release tags use the attested digest instead of rereading a mutable commit
   const result = promote('v1.2.3');
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stdout, `buildx imagetools create --tag ${imageName}:1.2.3 --tag ${imageName}:1.2 ${imageName}@${digest}\n`);
+});
+
+test('rerunning an older release publishes its exact tag without moving the minor alias back', () => {
+  const result = promote('v1.2.3', tipDigest, '1.2.10\n1.2.2');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, `buildx imagetools create --tag ${imageName}:1.2.3 ${imageName}@${digest}\n`);
 });

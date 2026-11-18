@@ -258,4 +258,4 @@ async def get_icon(
     if not filepath.exists():
         raise HTTPException(status_code=404, detail="Icon file not found")
 
-    return FileResponse(filepath)
+    return FileResponse(filepath, headers={"Cache-Control": "private, no-store"})

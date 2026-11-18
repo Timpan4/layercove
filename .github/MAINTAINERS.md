@@ -49,7 +49,7 @@ bun run test:run
 
 `publish-container.yml` builds and attests `ghcr.io/timpan4/layercove` for `linux/amd64` and `linux/arm64` after CI passes for the exact commit pushed to `main`. Published images use the `sha-<commit>` tag. The publisher reconciles `latest` to the verified image at the tip of `main` once that image is available.
 
-A `vX.Y.Z` tag requests image tags `X.Y.Z` and `X.Y` for the attested digest of that commit. The release request can build the SHA image if it is missing. To cut a release:
+A `vX.Y.Z` tag requests the `X.Y.Z` image tag for the attested digest of that commit. The `X.Y` alias tracks the newest published patch for that minor version. The release request can build the SHA image if it is missing. To cut a release:
 
 1. Set `APP_VERSION` in `backend/app/core/config.py`. The in-app update check compares this value with GitHub releases.
 2. Merge that change through a pull request.

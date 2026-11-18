@@ -6388,32 +6388,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize MQTT relay from settings
     async with async_session() as db:
-        from backend.app.api.routes.settings import get_setting
-
-        mqtt_settings = {
-            "mqtt_enabled": (await get_setting(db, "mqtt_enabled") or "false") == "true",
-            "mqtt_broker": await get_setting(db, "mqtt_broker") or "",
-            "mqtt_port": int(await get_setting(db, "mqtt_port") or "1883"),
-            "mqtt_username": await get_setting(db, "mqtt_username") or "",
-            "mqtt_password": await get_setting(db, "mqtt_password") or "",
-            "mqtt_topic_prefix": await get_setting(db, "mqtt_topic_prefix") or "bambuddy",
-            "mqtt_use_tls": (await get_setting(db, "mqtt_use_tls") or "false") == "true",
-        }
-        await mqtt_relay.configure(mqtt_settings)
-
-        # Restore MQTT smart plug subscriptions
-        if mqtt_settings.get("mqtt_enabled"):
-            from backend.app.models.smart_plug import SmartPlug
-            from backend.app.services.mqtt_smart_plug import subscribe_plug_to_mqtt
-
-            result = await db.execute(select(SmartPlug).where(SmartPlug.plug_type == "mqtt"))
-            mqtt_plugs = result.scalars().all()
-            restored = 0
-            for plug in mqtt_plugs:
-                if subscribe_plug_to_mqtt(mqtt_relay.smart_plug_service, plug):
-                    restored += 1
-            if restored:
-                logging.info("Restored %s MQTT smart plug subscriptions", restored)
+        await mqtt_relay.configure_from_db(db)
 
     # Connect to all active printers
     async with async_session() as db:
