@@ -51,6 +51,25 @@ describe('SlicerCatalogAdmin', () => {
     await waitFor(() => expect(api.setSlicerCatalogSharing).toHaveBeenCalledWith(1, true));
   });
 
+  it('shows a profile as inactive after sharing removes its active revision', async () => {
+    auth.permissions.add('cloud:auth');
+    renderAdmin();
+    const revisions = await screen.findByRole('button', { name: 'Revisions' });
+    fireEvent.click(revisions);
+    expect(await screen.findByText('Revision 3')).toBeVisible();
+    fireEvent.click(revisions);
+
+    api.listSlicerCatalogProfiles.mockResolvedValue([{
+      profile_id: 7, revision_id: 4, latest_revision_id: 4, active_revision_id: null, active: false,
+      source: 'cloud', account_id: 1, display_name: 'Printer profile', sharing_state: 'shared',
+    }]);
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Share' }));
+    fireEvent.click(await screen.findByLabelText('I consent to sharing this account.'));
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm sharing' }));
+
+    expect(await screen.findByText('not active')).toBeVisible();
+  });
+
   it('disables lifecycle mutations for a normal user', async () => {
     renderAdmin();
     fireEvent.click(await screen.findByRole('button', { name: 'Revisions' }));

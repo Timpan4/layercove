@@ -24,7 +24,7 @@ function refreshReferenceThumbnails(token: string) {
 export function useStreamTokenSync() {
   const { authEnabled, user, loading: authLoading, hasPermission } = useAuth();
   const queryClient = useQueryClient();
-  const refreshingRef = useRef(new Set<string>());
+  const refreshingCamera = useRef(false);
 
   // Key the token by user id so a login/logout invalidates the cache
   // automatically — otherwise a failed anonymous fetch on the login page
@@ -66,6 +66,7 @@ export function useStreamTokenSync() {
       document.querySelectorAll<HTMLImageElement | HTMLVideoElement>('img[src], video[src]').forEach(el => {
         const src = el.getAttribute('src');
         if (!src) return;
+        if (el instanceof HTMLVideoElement && !el.error && el.readyState >= HTMLMediaElement.HAVE_METADATA) return;
         const authorizedSrc = withMediaToken(src);
         if (authorizedSrc !== src) el.setAttribute('src', authorizedSrc);
       });
@@ -81,32 +82,24 @@ export function useStreamTokenSync() {
       if (!(el instanceof HTMLImageElement || el instanceof HTMLVideoElement)) return;
 
       const src = el.src || '';
-      const media = isMediaUrl(src);
-      const token = media ? getMediaToken() : getStreamToken();
+      if (isMediaUrl(src)) return;
+      const token = getStreamToken();
       if (!token || !src.includes(`token=${encodeURIComponent(token)}`)) return;
 
-      const query = media ? 'media-token' : 'camera-stream-token';
-      if (refreshingRef.current.has(query)) return;
-      if (media) {
-        refreshingRef.current.add(query);
-        void queryClient.invalidateQueries({ queryKey: [query] }).finally(() => {
-          refreshingRef.current.delete(query);
-        });
-        return;
-      }
+      if (refreshingCamera.current) return;
       // Keep token-owned media mounted while the shared query replaces the
       // stale credential. A repeated failure during that refresh is allowed
       // through to the component's normal error state.
       event.stopPropagation();
-      refreshingRef.current.add(query);
+      refreshingCamera.current = true;
 
       setStreamToken(null);
-      queryClient.setQueriesData({ queryKey: [query] }, undefined);
-      queryClient.invalidateQueries({ queryKey: [query] });
+      queryClient.setQueriesData({ queryKey: ['camera-stream-token'] }, undefined);
+      queryClient.invalidateQueries({ queryKey: ['camera-stream-token'] });
 
       // Reset after a delay so future errors can trigger another refresh
       setTimeout(() => {
-        refreshingRef.current.delete(query);
+        refreshingCamera.current = false;
       }, 5000);
     };
 

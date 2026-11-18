@@ -102,6 +102,8 @@ async def test_postgres_restore_keeps_previous_database_on_failure(async_client,
                 assert response.status_code == 200
                 assert currency == "EUR"
                 assert await conn.scalar(select(User.role).where(User.id == 7)) == "user"
+                new_id = await conn.scalar(insert(User).values(username="after-restore").returning(User.id))
+                assert new_id == 8
                 secret = await conn.scalar(select(UserTOTP._secret_enc).where(UserTOTP.user_id == 7))
                 if encryption.mfa_decrypt(secret) != "fixture-totp-seed":
                     pytest.fail("The restored key did not decrypt the restored setting")

@@ -51,8 +51,8 @@ def extract_backup(file: BinaryIO, destination: Path) -> Path:
     return destination / "layercove.db"
 
 
-def open_source_database(path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
+def open_source_database(path: Path, *, check_same_thread: bool = True) -> sqlite3.Connection:
+    return sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True, check_same_thread=check_same_thread)
 
 
 def copy_sqlite_database(source: Path, destination: Path) -> None:

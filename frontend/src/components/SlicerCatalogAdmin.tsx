@@ -192,7 +192,9 @@ function ProfileRow({
   const compatibility = Object.entries(profile.compatibility_metadata || {})
     .map(([key, value]) => `${key}: ${String(value)}`)
     .join(' · ');
-  const activeRevisionId = profile.active_revision_id ?? revisions.find((revision) => revision.active)?.id ?? null;
+  const activeRevisionId = profile.active_revision_id === undefined
+    ? (revisions.find((revision) => revision.active)?.id ?? null)
+    : profile.active_revision_id;
 
   return <article aria-label={profile.display_name} className="rounded border border-bambu-dark-tertiary p-2 text-sm">
     <div className="flex flex-wrap items-center gap-2">

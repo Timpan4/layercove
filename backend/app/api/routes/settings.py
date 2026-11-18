@@ -587,6 +587,7 @@ async def _import_sqlite_to_postgres(sqlite_path: Path) -> None:
 
     from sqlalchemy import JSON, Boolean, Date, DateTime, MetaData, func, literal_column, select, text
     from sqlalchemy.schema import AddConstraint
+    from starlette.concurrency import run_in_threadpool
 
     from backend.app.core.database import Base, _create_engine
     from backend.app.services.backup_restore import open_source_database, source_columns
@@ -618,9 +619,26 @@ async def _import_sqlite_to_postgres(sqlite_path: Path) -> None:
         return value
 
     pg_engine = _create_engine(hide_parameters=True)
+    page_size = pg_engine.dialect.insertmanyvalues_page_size
+
+    def read_batch(cursor, columns):
+        batches = defaultdict(list)
+        for row in cursor.fetchmany(page_size):
+            values = {}
+            for column in columns:
+                value = row[column.name]
+                has_default = column.default is not None or column.server_default is not None
+                if value is None and not column.nullable and has_default:
+                    continue
+                values[column.name] = value_for(column, value) if value is not None else None
+            batches[tuple(values)].append(values)
+        return batches
+
     try:
         async with pg_engine.begin() as conn:
-            with closing(open_source_database(sqlite_path)) as source:
+            # The importer awaits every SQLite call before issuing the next one.
+            source_connection = await run_in_threadpool(open_source_database, sqlite_path, check_same_thread=False)
+            with closing(source_connection) as source:
                 source.row_factory = sqlite3.Row
                 await conn.execute(text("SET LOCAL lock_timeout = '10s'"))
                 for table_name in [*metadata.tables, *_LEGACY_RESTORE_DROP_TABLES]:
@@ -628,25 +646,19 @@ async def _import_sqlite_to_postgres(sqlite_path: Path) -> None:
                 await conn.run_sync(without_foreign_keys.create_all)
 
                 for table in metadata.sorted_tables:
-                    existing = source_columns(source, table.name)
+                    existing = await run_in_threadpool(source_columns, source, table.name)
                     if not existing:
                         continue
                     columns = [column for column in table.columns if column.name in existing]
-                    batches = defaultdict(list)
                     read_rows = select(literal_column("*")).select_from(table)
-                    for row in source.execute(str(read_rows)):
-                        values = {}
-                        for column in columns:
-                            value = row[column.name]
-                            has_default = column.default is not None or column.server_default is not None
-                            if value is None and not column.nullable and has_default:
-                                continue
-                            values[column.name] = value_for(column, value) if value is not None else None
-                        batches[tuple(values)].append(values)
-                    for values in batches.values():
-                        await conn.execute(table.insert(), values)
+                    cursor = await run_in_threadpool(source.execute, str(read_rows))
+                    imported = False
+                    while batches := await run_in_threadpool(read_batch, cursor, columns):
+                        imported = True
+                        for values in batches.values():
+                            await conn.execute(table.insert(), values)
 
-                    if batches and "id" in table.primary_key.columns:
+                    if imported and "id" in table.primary_key.columns:
                         sequence = await conn.scalar(select(func.pg_get_serial_sequence(f"public.{table.name}", "id")))
                         if sequence:
                             last_id = await conn.scalar(select(func.max(table.c.id)))

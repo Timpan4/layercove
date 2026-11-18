@@ -107,27 +107,43 @@ describe('useStreamTokenSync', () => {
     expect(camera).not.toHaveBeenCalled();
   });
 
-  it('signs new media URLs while revalidating a credential after an image fails', async () => {
+  it('keeps signing media and lets a missing image fail without refreshing credentials', async () => {
     auth.canViewCamera = false;
-    let resolveRefresh: (value: { token: string }) => void = () => {};
-    const refresh = new Promise<{ token: string }>((resolve) => { resolveRefresh = resolve; });
-    const getToken = vi.spyOn(api, 'getMediaToken')
-      .mockResolvedValueOnce({ token: 'media-token' })
-      .mockReturnValueOnce(refresh);
+    const getToken = vi.spyOn(api, 'getMediaToken').mockResolvedValue({ token: 'media-token' });
+    const showFallback = vi.fn();
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     render(createElement(QueryClientProvider, { client: queryClient },
       createElement(StreamTokenSync),
-      createElement('img', { alt: 'missing cover', src: '/api/v1/printers/5/cover' }),
+      createElement('img', { alt: 'missing cover', src: '/api/v1/printers/5/cover', onError: showFallback }),
     ));
     const cover = screen.getByAltText('missing cover');
     await waitFor(() => expect(cover).toHaveAttribute('src', '/api/v1/printers/5/cover?token=media-token'));
 
-    fireEvent.error(cover);
-    await waitFor(() => expect(getToken).toHaveBeenCalledTimes(2));
+    await act(async () => { fireEvent.error(cover); });
+    expect(showFallback).toHaveBeenCalledOnce();
+    expect(getToken).toHaveBeenCalledTimes(1);
     const thumbnail = '/api/v1/archives/5/thumbnail';
     expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=media-token`);
-    await act(async () => resolveRefresh({ token: 'media-token' }));
-    expect(withMediaToken(thumbnail)).toBe(`${thumbnail}?token=media-token`);
+  });
+
+  it('keeps a loaded timelapse on its current source when the credential rotates', async () => {
+    auth.canViewCamera = false;
+    vi.spyOn(api, 'getMediaToken')
+      .mockResolvedValueOnce({ token: 'first-media-token' })
+      .mockResolvedValueOnce({ token: 'next-media-token' });
+    const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    render(createElement(QueryClientProvider, { client: queryClient },
+      createElement(StreamTokenSync),
+      createElement('video', { 'data-testid': 'timelapse', src: '/api/v1/archives/5/timelapse' }),
+    ));
+    const video = screen.getByTestId('timelapse');
+    await waitFor(() => expect(video).toHaveAttribute('src', '/api/v1/archives/5/timelapse?token=first-media-token'));
+    Object.defineProperty(video, 'readyState', { value: HTMLMediaElement.HAVE_METADATA });
+
+    await act(async () => queryClient.invalidateQueries({ queryKey: ['media-token'] }));
+    const image = '/api/v1/archives/5/thumbnail';
+    await waitFor(() => expect(withMediaToken(image)).toBe(`${image}?token=next-media-token`));
+    expect(video).toHaveAttribute('src', '/api/v1/archives/5/timelapse?token=first-media-token');
   });
 
   it('keeps failed media mounted while replacing a stale stream token', async () => {
