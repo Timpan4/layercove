@@ -1,7 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-source_sha=${1:?Usage: require-container-ci.sh COMMIT_SHA}
+source_sha=${1:?Usage: require-container-ci.sh COMMIT_SHA [REF]}
+source_ref=${2:-refs/heads/main}
+if [[ ! "$source_sha" =~ ^[0-9a-f]{40}$ ]]; then
+    printf 'Invalid source commit SHA.\n' >&2
+    exit 1
+fi
+if [[ "$source_ref" != refs/heads/main ]]; then
+    if [[ ! "$source_ref" =~ ^refs/tags/v([0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?)$ ]]; then
+        printf 'Container release requires a vX.Y.Z tag or main.\n' >&2
+        exit 1
+    fi
+    tag=${source_ref#refs/tags/}
+    if ! tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/$tag" --jq .sha) || [[ "$tag_sha" != "$source_sha" ]]; then
+        printf 'Release tag %s does not resolve to the requested commit.\n' "$tag" >&2
+        exit 1
+    fi
+fi
 query=(
     --method GET "repos/$GITHUB_REPOSITORY/actions/workflows/ci.yml/runs"
     -f "head_sha=$source_sha" -f branch=main -f event=push -F per_page=1

@@ -2,91 +2,134 @@ name: Publish container
 
 on:
   workflow_run:
-    workflows: [CI]
+    workflows: [CI, Container release request]
     types: [completed]
-    branches: [main]
-  push:
-    tags: ['v*']
-  workflow_dispatch:
 
 env:
   IMAGE_NAME: ghcr.io/timpan4/layercove
 
-permissions:
-  actions: read
-  contents: read
-  packages: write
-  id-token: write
-  attestations: write
+permissions: {}
 
 jobs:
-  publish:
-    name: Publish LayerCove image
+  verify:
+    name: Verify the requested commit
     if: >-
-      (github.event_name == 'workflow_run' &&
-        github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.head_repository.full_name == github.repository &&
+      ((github.event.workflow_run.path == '.github/workflows/ci.yml' &&
         github.event.workflow_run.event == 'push' &&
-        github.event.workflow_run.head_repository.full_name == github.repository &&
+        github.event.workflow_run.head_branch == 'main' &&
         github.event.workflow_run.head_sha == github.sha) ||
-      (github.event_name != 'workflow_run' &&
-        (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')))
+        (github.event.workflow_run.path == '.github/workflows/container-release-request.yml' &&
+          (github.event.workflow_run.event == 'push' || github.event.workflow_run.event == 'workflow_dispatch')))
     runs-on: ubuntu-latest
-    concurrency:
-      group: publish-container-${{ github.event.workflow_run.head_sha || github.ref }}
+    permissions:
+      actions: read
+      contents: read
     outputs:
       sha: ${{ steps.ci.outputs.sha }}
-      digest: ${{ steps.build.outputs.digest }}
+      release_tag: ${{ steps.ci.outputs.release_tag }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
-          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          ref: ${{ github.sha }}
           persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        if: github.event.workflow_run.path == '.github/workflows/container-release-request.yml'
+        with:
+          name: container-release-ref
+          path: ${{ runner.temp }}/container-release-request
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
 
       - name: Require successful CI for this commit
         id: ci
         env:
           GH_TOKEN: ${{ github.token }}
+          SOURCE_SHA: ${{ github.event.workflow_run.head_sha }}
+          RELEASE_REQUEST: ${{ github.event.workflow_run.path == '.github/workflows/container-release-request.yml' }}
         run: |
-          source_sha=$(git rev-parse HEAD)
-          run_id=$(bash scripts/require-container-ci.sh "$source_sha")
-          echo "sha=$source_sha" >> "$GITHUB_OUTPUT"
-          echo "CI passed for $source_sha in run $run_id."
+          source_ref=refs/heads/main
+          if [[ "$RELEASE_REQUEST" == true ]]; then
+            IFS= read -r source_ref < "$RUNNER_TEMP/container-release-request/container-ref.txt"
+          fi
+          run_id=$(bash scripts/require-container-ci.sh "$SOURCE_SHA" "$source_ref")
+          echo "sha=$SOURCE_SHA" >> "$GITHUB_OUTPUT"
+          if [[ "$source_ref" == refs/tags/* ]]; then
+            echo "release_tag=${source_ref#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+          echo "CI passed for $SOURCE_SHA in run $run_id."
+
+  publish:
+    name: Publish the verified commit image
+    needs: verify
+    if: needs.verify.outputs.release_tag == ''
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: publish-container-${{ needs.verify.outputs.sha }}
+      queue: max
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    outputs:
+      digest: ${{ steps.existing.outputs.digest || steps.build.outputs.digest }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          path: publisher
+          persist-credentials: false
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ needs.verify.outputs.sha }}
+          path: source
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Log in to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: Check for an attested image at this commit
+        id: existing
+        env:
+          SOURCE_SHA: ${{ needs.verify.outputs.sha }}
+        run: |
+          digest=$(bash publisher/scripts/find-container-digest.sh "$IMAGE_NAME:sha-$SOURCE_SHA")
+          echo "digest=$digest" >> "$GITHUB_OUTPUT"
+
       - name: Generate image metadata
         id: meta
+        if: steps.existing.outputs.digest == ''
         uses: docker/metadata-action@v5
         with:
           images: ${{ env.IMAGE_NAME }}
           flavor: latest=false
-          tags: |
-            type=raw,value=sha-${{ steps.ci.outputs.sha }}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+          tags: type=raw,value=sha-${{ needs.verify.outputs.sha }}
           labels: |
-            org.opencontainers.image.revision=${{ steps.ci.outputs.sha }}
+            org.opencontainers.image.revision=${{ needs.verify.outputs.sha }}
 
       - name: Build and publish
         id: build
+        if: steps.existing.outputs.digest == ''
         uses: docker/build-push-action@v7
         with:
-          context: .
-          file: Dockerfile
+          context: source
+          file: source/Dockerfile
           platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
+          outputs: type=image,name=${{ env.IMAGE_NAME }},push=true,push-by-digest=true,name-canonical=true
           labels: ${{ steps.meta.outputs.labels }}
           sbom: true
           provenance: mode=max
@@ -94,6 +137,7 @@ jobs:
           cache-to: type=gha,scope=production,mode=max
 
       - name: Attest build provenance
+        if: steps.existing.outputs.digest == ''
         uses: actions/attest@v4
         with:
           subject-name: ${{ env.IMAGE_NAME }}
@@ -101,28 +145,57 @@ jobs:
           push-to-registry: true
           create-storage-record: false
 
-  promote:
-    name: Promote the verified main image to latest
-    needs: publish
-    if: github.event_name == 'workflow_run' || github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
-    concurrency:
-      group: publish-container-latest
-    steps:
-      - uses: docker/setup-buildx-action@v4
+      - name: Tag the attested image with its commit
+        if: steps.existing.outputs.digest == ''
+        env:
+          IMAGE_DIGEST: ${{ steps.build.outputs.digest }}
+          SOURCE_SHA: ${{ needs.verify.outputs.sha }}
+        run: docker buildx imagetools create --tag "$IMAGE_NAME:sha-$SOURCE_SHA" "$IMAGE_NAME@$IMAGE_DIGEST"
 
-      - uses: docker/login-action@v3
+  promote:
+    name: Tag the verified image
+    needs: [verify, publish]
+    if: >-
+      !cancelled() && needs.verify.result == 'success' &&
+      (needs.publish.result == 'success' || needs.verify.outputs.release_tag != '')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: publish-container-promotion
+      queue: max
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
+
+      - uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Promote the current main commit
+      - name: Promote by commit
         env:
           GH_TOKEN: ${{ github.token }}
-          SOURCE_SHA: ${{ needs.publish.outputs.sha }}
+          SOURCE_SHA: ${{ needs.verify.outputs.sha }}
           IMAGE_DIGEST: ${{ needs.publish.outputs.digest }}
+          RELEASE_TAG: ${{ needs.verify.outputs.release_tag }}
         run: |
+          if [[ -n "$RELEASE_TAG" ]]; then
+            tag_sha=$(gh api "repos/$GITHUB_REPOSITORY/commits/tags/$RELEASE_TAG" --jq .sha)
+            if [[ "$tag_sha" != "$SOURCE_SHA" ]]; then
+              echo 'The Git tag moved after verification.' >&2
+              exit 1
+            fi
+            version=${RELEASE_TAG#v}
+            tags=(--tag "$IMAGE_NAME:$version")
+            if [[ "$version" != *-* ]]; then
+              tags+=(--tag "$IMAGE_NAME:${version%.*}")
+            fi
+            docker buildx imagetools create "${tags[@]}" "$IMAGE_NAME:sha-$SOURCE_SHA"
+            exit 0
+          fi
           tip=$(gh api "repos/$GITHUB_REPOSITORY/commits/main" --jq .sha)
           if [[ "$tip" != "$SOURCE_SHA" ]]; then
             echo "::notice::Main moved to $tip; leaving latest unchanged."
