@@ -1,0 +1,129 @@
+[
+  {
+    "name": "bootstrap with no print state and configured nozzles",
+    "status": {
+      "configfile": {
+        "settings": {
+          "extruder2": {"nozzle_diameter": "0.6", "max_temp": -1},
+          "extruder1": {"nozzle_diameter": false, "max_temp": 240},
+          "extruder0": {"nozzle_diameter": 0.8},
+          "extruder": {"nozzle_diameter": 0.4, "max_temp": 300},
+          "heater_bed": {"max_temp": 120}
+        }
+      }
+    },
+    "snapshot": {
+      "provider": "moonraker",
+      "connected": true,
+      "state": "idle",
+      "filename": null,
+      "message": null,
+      "progress": null,
+      "elapsed_seconds": null,
+      "current_layer": null,
+      "total_layers": null,
+      "temperatures": {},
+      "nozzles": [
+        {"tool_index": 0, "diameter": 0.4, "status": "confirmed", "max_temperature": 300.0},
+        {"tool_index": 1, "diameter": null, "status": "unknown", "max_temperature": null},
+        {"tool_index": 2, "diameter": 0.6, "status": "confirmed", "max_temperature": null}
+      ],
+      "provider_detail": {}
+    }
+  },
+  {
+    "name": "printing with alternate filename, progress precedence and numeric normalization",
+    "status": {
+      "print_stats": {
+        "state": "PRINTING",
+        "filename": "",
+        "message": "Heating",
+        "print_duration": "1_024.75",
+        "info": {"current_layer": "１２", "total_layer": 20}
+      },
+      "virtual_sdcard": {"file_path": "queue/cube.gcode", "progress": 0.125},
+      "display_status": {"progress": 0.25},
+      "extruder": {"temperature": " 2_15.5 "},
+      "heater_bed": {"temperature": 60.0}
+    },
+    "snapshot": {
+      "state": "printing",
+      "filename": "queue/cube.gcode",
+      "message": "Heating",
+      "progress": 25.0,
+      "elapsed_seconds": 1024,
+      "current_layer": 12,
+      "total_layers": 20,
+      "temperatures": {"nozzle": 215.5, "bed": 60.0},
+      "provider_detail": {"print_state": "printing"}
+    }
+  },
+  {
+    "name": "partial pause update drops malformed numbers and digits newer than Unicode 15.1",
+    "status": {
+      "print_stats": {
+        "state": null,
+        "status": "PAUSED",
+        "info": {"current_layer": -1, "total_layer": "\ud839\uddf2"}
+      },
+      "display_status": {"progress": "1_.25"},
+      "virtual_sdcard": {"progress": 1.25},
+      "extruder": {"temperature": true}
+    },
+    "snapshot": {
+      "state": "paused",
+      "filename": "queue/cube.gcode",
+      "message": "Heating",
+      "progress": 100.0,
+      "elapsed_seconds": 1024,
+      "current_layer": 0,
+      "total_layers": null,
+      "temperatures": {"bed": 60.0},
+      "provider_detail": {"print_state": "paused"}
+    }
+  },
+  {
+    "name": "terminal state retains job telemetry",
+    "status": {"print_stats": {"state": "complete", "filename": "cube.gcode"}},
+    "snapshot": {
+      "state": "completed",
+      "filename": "cube.gcode",
+      "message": "Heating",
+      "progress": 100.0,
+      "elapsed_seconds": 1024,
+      "current_layer": 0,
+      "provider_detail": {"print_state": "complete"}
+    }
+  },
+  {
+    "name": "unknown state retains the finished job until an idle update",
+    "status": {"print_stats": {"state": "unrecognized"}},
+    "snapshot": {
+      "state": "unknown",
+      "filename": "cube.gcode",
+      "progress": 100.0,
+      "current_layer": 0,
+      "provider_detail": {"print_state": "unrecognized"}
+    }
+  },
+  {
+    "name": "return to idle clears print fields and retains printer configuration",
+    "status": {"print_stats": {"state": "standby"}},
+    "snapshot": {
+      "state": "idle",
+      "filename": null,
+      "message": null,
+      "progress": null,
+      "elapsed_seconds": null,
+      "current_layer": null,
+      "total_layers": null,
+      "temperatures": {"bed": 60.0},
+      "nozzles": [
+        {"tool_index": 0, "diameter": 0.4, "status": "confirmed", "max_temperature": 300.0},
+        {"tool_index": 1, "diameter": null, "status": "unknown", "max_temperature": null},
+        {"tool_index": 2, "diameter": 0.6, "status": "confirmed", "max_temperature": null}
+      ],
+      "provider_detail": {"print_state": "standby"}
+    }
+  }
+]

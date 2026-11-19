@@ -186,6 +186,7 @@ class MoonrakerBackend:
         self._objects: dict[str, dict[str, Any]] = {}
         self._snapshot = PrinterSnapshot(self.provider, False, NormalizedPrinterState.OFFLINE)
         self._last_state = NormalizedPrinterState.OFFLINE
+        self._job_telemetry_pending = False
         self._active_correlation_id: str | None = None
         self._active_provider_job_id: str | None = None
         self._active_filename: str | None = None
@@ -402,11 +403,13 @@ class MoonrakerBackend:
             if isinstance(name, str) and isinstance(value, dict):
                 self._objects.setdefault(name, {}).update(value)
         self._snapshot = self._snapshot_from_objects(connected=True)
-        if self._snapshot.state is NormalizedPrinterState.IDLE and (
-            self._last_state in _ACTIVE_STATES or self._last_state in _TERMINAL_KINDS
-        ):
+        state = self._snapshot.state
+        if state is NormalizedPrinterState.IDLE and self._job_telemetry_pending:
             self._clear_stale_job_data()
+            self._job_telemetry_pending = False
             self._snapshot = self._snapshot_from_objects(connected=True)
+        elif state in _ACTIVE_STATES or state in _TERMINAL_KINDS:
+            self._job_telemetry_pending = True
         self._emit(StatusChanged(self._snapshot))
         self._emit_lifecycle(bootstrap=bootstrap)
 
