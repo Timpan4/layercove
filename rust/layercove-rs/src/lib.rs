@@ -5,6 +5,8 @@
 //! Python. The internal listener is bound to loopback and carries the single
 //! authenticated control session from the Python app.
 
+pub mod moonraker;
+
 use std::fmt;
 use std::future::Future;
 use std::sync::Arc;

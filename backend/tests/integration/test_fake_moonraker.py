@@ -2,6 +2,8 @@ import asyncio
 import io
 import json
 import zipfile
+from dataclasses import asdict
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -19,7 +21,7 @@ from backend.app.services.moonraker_backend import MoonrakerBackend
 from backend.app.services.moonraker_http import MoonrakerHTTPClient, MoonrakerHTTPError
 from backend.app.services.moonraker_websocket import MoonrakerWebSocketTransport
 from backend.app.services.print_scheduler import PrintScheduler
-from backend.app.services.printer_backend import JobLifecycle
+from backend.app.services.printer_backend import JobLifecycle, StatusChanged
 from backend.app.services.printer_backend_registry import PrinterBackendRegistry
 from backend.app.services.printer_manager import PrinterManager
 from backend.app.services.printer_types import NormalizedPrinterState, PrinterProvider
@@ -248,6 +250,38 @@ async def test_real_backend_bootstrap_commands_and_terminal_lifecycle(fake_moonr
         assert [event.kind for event in lifecycle] == ["started", "completed"]
         assert lifecycle[0].correlation_id == lifecycle[1].correlation_id
         assert lifecycle[1].provider_job_id == "42"
+    finally:
+        await backend.disconnect()
+
+
+@pytest.mark.asyncio
+async def test_moonraker_status_snapshot_contract(fake_moonraker, monkeypatch):
+    fixture_path = Path(__file__).resolve().parents[3] / "rust/layercove-rs/tests/fixtures/moonraker_status.json"
+    bootstrap, *updates = json.loads(fixture_path.read_text(encoding="utf-8"))
+    fake_moonraker.status = bootstrap["status"]
+    snapshots = asyncio.Queue()
+
+    def on_event(event):
+        if isinstance(event, StatusChanged) and event.snapshot.connected:
+            snapshots.put_nowait(event.snapshot)
+
+    def assert_snapshot(snapshot, step):
+        actual = asdict(snapshot)
+        actual["nozzles"] = list(actual["nozzles"])
+        assert {field: actual[field] for field in step["snapshot"]} == step["snapshot"], step["name"]
+
+    backend = _backend(fake_moonraker, monkeypatch, on_event)
+    await backend.connect()
+    try:
+        await fake_moonraker.wait_for_subscribers()
+        # The query and subscription both return an initial status.
+        await _wait_for(lambda: snapshots.qsize() >= 2)
+        assert_snapshot(snapshots.get_nowait(), bootstrap)
+        assert_snapshot(snapshots.get_nowait(), bootstrap)
+        for step in updates:
+            await fake_moonraker.set_status(step["status"])
+            await _wait_for(lambda: not snapshots.empty())
+            assert_snapshot(snapshots.get_nowait(), step)
     finally:
         await backend.disconnect()
 

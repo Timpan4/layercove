@@ -22,6 +22,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # Copy backend code and the standalone Spoolman helper exercised by backend tests
 COPY backend/ ./backend/
 COPY scripts/spoolman_volume.py ./scripts/spoolman_volume.py
+COPY rust/layercove-rs/tests/fixtures/moonraker_status.json ./rust/layercove-rs/tests/fixtures/moonraker_status.json
 COPY pyproject.toml ./
 
 # Embedded GCode viewer assets — required so the @app.get("/gcode-viewer/...")
