@@ -59,9 +59,13 @@
     }
   },
   {
-    "name": "partial pause update preserves omitted fields and clears invalid telemetry",
+    "name": "partial pause update drops malformed numbers and digits newer than Unicode 15.1",
     "status": {
-      "print_stats": {"state": null, "status": "PAUSED", "info": {"current_layer": -1}},
+      "print_stats": {
+        "state": null,
+        "status": "PAUSED",
+        "info": {"current_layer": -1, "total_layer": "\ud839\uddf2"}
+      },
       "display_status": {"progress": "1_.25"},
       "virtual_sdcard": {"progress": 1.25},
       "extruder": {"temperature": true}
