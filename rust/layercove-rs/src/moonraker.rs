@@ -98,7 +98,7 @@ pub struct MoonrakerStatus {
     display_progress: Option<f64>,
     temperatures: Temperatures,
     nozzles: Vec<NozzleSnapshot>,
-    last_state: Option<PrinterState>,
+    job_telemetry_pending: bool,
 }
 
 impl MoonrakerStatus {
@@ -137,16 +137,15 @@ impl MoonrakerStatus {
         let print_state = raw_state.and_then(Value::as_str).map(str::to_lowercase);
         let state = PrinterState::from_print_state(raw_state, print_state.as_deref());
 
-        if state == PrinterState::Idle
-            && self.last_state.is_some_and(PrinterState::has_job_telemetry)
-        {
+        if state == PrinterState::Idle && self.job_telemetry_pending {
             for field in JOB_FIELDS {
                 self.print_stats.remove(*field);
             }
             self.virtual_sdcard.clear();
             self.display_progress = None;
+            self.job_telemetry_pending = false;
         }
-        self.last_state = Some(state);
+        self.job_telemetry_pending |= state.has_job_telemetry();
 
         let progress = self
             .display_progress
@@ -214,8 +213,54 @@ fn nonempty_text(value: &Value) -> Option<String> {
 fn finite_number(value: &Value) -> Option<f64> {
     value
         .as_f64()
-        .or_else(|| value.as_str()?.trim().parse().ok())
+        .or_else(|| parse_numeric_text(value.as_str()?.trim()))
         .filter(|number| number.is_finite())
+}
+
+fn parse_numeric_text(text: &str) -> Option<f64> {
+    if text.is_ascii() && !text.contains('_') {
+        return text.parse().ok();
+    }
+
+    // Python float accepts Unicode decimal digits and underscores between digits.
+    let mut chars = text.chars().map(ascii_decimal_digit).peekable();
+    let mut normalized = String::with_capacity(text.len());
+    let mut previous_is_digit = false;
+    while let Some(ch) = chars.next() {
+        if ch == '_' {
+            if !previous_is_digit || !chars.peek().is_some_and(char::is_ascii_digit) {
+                return None;
+            }
+        } else {
+            normalized.push(ch);
+        }
+        previous_is_digit = ch.is_ascii_digit();
+    }
+    normalized.parse().ok()
+}
+
+fn ascii_decimal_digit(ch: char) -> char {
+    // Unicode 17.0 Decimal Digit Value 0 entries from UnicodeData.txt.
+    // Each entry starts a contiguous range whose values run from 0 through 9.
+    const DECIMAL_ZEROS: &[u32] = &[
+        0x0660, 0x06F0, 0x07C0, 0x0966, 0x09E6, 0x0A66, 0x0AE6, 0x0B66, 0x0BE6, 0x0C66, 0x0CE6,
+        0x0D66, 0x0DE6, 0x0E50, 0x0ED0, 0x0F20, 0x1040, 0x1090, 0x17E0, 0x1810, 0x1946, 0x19D0,
+        0x1A80, 0x1A90, 0x1B50, 0x1BB0, 0x1C40, 0x1C50, 0xA620, 0xA8D0, 0xA900, 0xA9D0, 0xA9F0,
+        0xAA50, 0xABF0, 0xFF10, 0x104A0, 0x10D30, 0x10D40, 0x11066, 0x110F0, 0x11136, 0x111D0,
+        0x112F0, 0x11450, 0x114D0, 0x11650, 0x116C0, 0x116D0, 0x116DA, 0x11730, 0x118E0, 0x11950,
+        0x11BF0, 0x11C50, 0x11D50, 0x11DA0, 0x11DE0, 0x11F50, 0x16130, 0x16A60, 0x16AC0, 0x16B50,
+        0x16D70, 0x1CCF0, 0x1D7CE, 0x1D7D8, 0x1D7E2, 0x1D7EC, 0x1D7F6, 0x1E140, 0x1E2F0, 0x1E4F0,
+        0x1E5F1, 0x1E950, 0x1FBF0,
+    ];
+    if ch.is_ascii() {
+        return ch;
+    }
+    let code_point = u32::from(ch);
+    let first_larger = DECIMAL_ZEROS.partition_point(|zero| *zero <= code_point);
+    DECIMAL_ZEROS[..first_larger]
+        .last()
+        .and_then(|zero| char::from_digit(code_point - zero, 10))
+        .unwrap_or(ch)
 }
 
 fn nonnegative_count(value: &Value) -> Option<u64> {
