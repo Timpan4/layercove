@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { test } from 'node:test';
 
+const repositoryRoot = new URL('../', import.meta.url);
 const sha = 'a'.repeat(40);
 const repository = 'Timpan4/layercove';
 const valid = { head_sha: sha, head_branch: 'main', event: 'push', status: 'completed', conclusion: 'success', id: 42 };
@@ -24,6 +25,7 @@ function gate(runs, {
     export -f gh
     bash scripts/require-container-ci.sh "$SOURCE_SHA" "$SOURCE_REF"
   `], {
+    cwd: repositoryRoot,
     encoding: 'utf8',
     env: {
       ...process.env, GITHUB_REPOSITORY: repository, SOURCE_SHA: sha, SOURCE_REF: ref, TAG_SHA: tagSha,
@@ -147,6 +149,7 @@ for (const [name, response, registryStatus, verifiedRevision, attestationStatus,
       export -f docker gh
       bash scripts/find-container-digest.sh "$IMAGE_NAME" "$SOURCE_SHA"
     `], {
+      cwd: repositoryRoot,
       encoding: 'utf8',
       env: {
         ...process.env, IMAGE_NAME: imageName, DIGEST: digest, SOURCE_SHA: sha, GITHUB_REPOSITORY: repository,
@@ -203,6 +206,7 @@ function promote(releaseTag, mainDigest = tipDigest, { gitTags = '', registryTag
     docker() { printf '%s\n' "$*"; }
     ${promotion}
   `], {
+    cwd: repositoryRoot,
     encoding: 'utf8',
     env: {
       ...process.env, GITHUB_REPOSITORY: repository, IMAGE_NAME: imageName, IMAGE_DIGEST: digest,

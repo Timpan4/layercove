@@ -7,8 +7,10 @@
   "scripts": {
     "dev": "vite",
     "dev:remote": "BACKEND_URL=https://layercove.timpan.dev vite",
-    "build": "tsc -b && vite build",
+    "build": "bun run typecheck && vite build",
+    "typecheck": "tsc -b",
     "lint": "oxlint --deny-warnings .",
+    "check": "node --test ../scripts/ci-workflow-regression.test.mjs ../scripts/container-ci-gate.test.mjs scripts/test-typecheck.mjs && bun run --parallel lint build && bun run test:run",
     "preview": "vite preview",
     "test": "vitest",
     "test:run": "vitest run && bun run check:i18n && bun run test:brand",

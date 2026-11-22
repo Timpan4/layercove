@@ -42,7 +42,7 @@ bun install --frozen-lockfile
 bun run dev
 ```
 
-Pre-commit hooks run Ruff, whitespace and YAML/JSON checks, private-key detection, an import-shadowing test, and a TypeScript check. Install them with `uvx pre-commit install`. The last two hooks call `python -m pytest` and `npx tsc` from your shell, so commit from an environment that has the backend dependencies and frontend `node_modules` installed.
+Install the optional hooks with `uvx pre-commit install`. The import-shadowing hook needs the backend test dependencies in your active Python environment. The TypeScript hook needs Bun and the frontend dependencies.
 
 ## Checks
 
@@ -60,10 +60,8 @@ Tests live in `backend/tests/unit/` and `backend/tests/integration/`. Pass a pat
 
 ```bash
 cd frontend
-bun run lint          # Oxlint
-bun x tsc -b          # type check
-bun run test:run      # Vitest, i18n parity, and brand-asset checks
-bun run build         # production build
+bun install --frozen-lockfile
+bun run check
 ```
 
 Browser E2E tests in `frontend/e2e/` use Playwright against a running server. Install the browser once, then run them:
@@ -105,7 +103,7 @@ The `frontend-test` service in `docker-compose.test.yml` still runs `npm ci` wit
 | Backend Lint | `ruff check` and `ruff format --check` |
 | Backend Tests | pytest in four shards |
 | PostgreSQL Camera Token Expiry | camera token expiry against a PostgreSQL clock |
-| Frontend Checks | CI workflow regression test, Oxlint, TypeScript, build, Vitest |
+| Frontend Checks | `bun run check` |
 | Docker Backend Tests | pytest in the test image, four shards |
 | Docker Build | production image, health/API/static smoke tests, Playwright E2E |
 | Rust service | `cargo fmt`, `clippy`, and tests |

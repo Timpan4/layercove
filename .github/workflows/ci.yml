@@ -140,12 +140,6 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Test CI orchestration
-        run: node --test scripts/ci-workflow-regression.test.mjs
-
-      - name: Test the container CI gate
-        run: node --test scripts/container-ci-gate.test.mjs
-
       - name: Set up Bun
         uses: oven-sh/setup-bun@v2
         with:
@@ -155,24 +149,9 @@ jobs:
         working-directory: frontend
         run: bun install --frozen-lockfile
 
-      - parallel:
-          - name: Run Oxlint
-            working-directory: frontend
-            run: bun run lint
-
-          - name: Run TypeScript check
-            working-directory: frontend
-            run: bun x tsc --noEmit
-
-          - name: Build frontend assets
-            working-directory: frontend
-            run: bun run build
-
-      # Brand tests inspect ../static, so they must follow the build.
-      - name: Run tests
-        timeout-minutes: 10
+      - name: Run frontend checks
         working-directory: frontend
-        run: bun run test:run
+        run: bun run check
 
   # ============================================================================
   # Docker Tests (matches test_docker.sh)
