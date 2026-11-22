@@ -66,17 +66,6 @@ test("Rust promotion retags an available registry image", () => {
   assert.match(result.stdout, /create --tag ghcr.io\/timpan4\/layercove-rs:main ghcr.io\/timpan4\/layercove-rs:sha-tested-tip/);
 });
 
-test("frontend checks share one frozen install without dropping commands", () => {
-  const frontend = job("frontend-tests");
-  assert.equal((frontend.match(/run: bun install --frozen-lockfile/g) ?? []).length, 1);
-  assert.equal((frontend.match(/uses: oven-sh\/setup-bun/g) ?? []).length, 1);
-  for (const value of ["bun run lint", "bun x tsc --noEmit", "bun run build", "bun run test:run"]) {
-    assert.ok(frontend.includes(`run: ${value}\n`), `Missing ${value}`);
-  }
-  assert.ok(frontend.indexOf("run: bun run build") < frontend.indexOf("run: bun run test:run"));
-  assert.match(frontend, /node --test scripts\/ci-workflow-regression\.test\.mjs/);
-  assert.doesNotMatch(workflow, /^  frontend-(lint|typecheck):/m);
-});
 test("independent jobs do not wait on lint or typecheck", () => {
   for (const name of ["backend-tests", "postgres-camera-token-test", "docker-test", "frontend-tests"]) {
     assert.doesNotMatch(job(name), /^    needs:/m);

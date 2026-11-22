@@ -9,18 +9,18 @@
 | `Backend Lint` | `ruff check` and `ruff format --check` |
 | `Backend Tests (shard N/4)` | pytest, four shards |
 | `PostgreSQL Camera Token Expiry` | camera token expiry against PostgreSQL |
-| `Frontend Checks` | CI workflow regression test, Oxlint, TypeScript, build, Vitest |
+| `Frontend Checks` | `bun run check` |
 | `Docker Backend Tests (shard N/4)` | pytest in the test image, four shards |
 | `Docker Build` | production image, health/API/static smoke tests, Playwright E2E |
 | `Rust service` | `cargo fmt`, `clippy`, tests, and image smoke tests |
 
 `codeql.yml` (CodeQL) and `security.yml` (Security Audit) run separately.
 
-Independent Ruff checks and frontend lint/typecheck/build steps use GitHub's
+Independent Ruff checks use GitHub's
 [`parallel` groups](https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-syntax#jobsjob_idstepsparallel).
-Frontend tests follow the build because brand tests inspect its output. The
-production Docker build runs in the background during E2E dependency setup;
-an explicit `wait` propagates build failures before image checks and Compose.
+The frontend job runs `bun run check` from `frontend/`. The production Docker
+build runs in the background during E2E dependency setup. An explicit `wait`
+propagates build failures before image checks and Compose.
 
 ### Fixing common failures
 
@@ -31,9 +31,7 @@ uv run --with-requirements requirements-dev.txt ruff format backend/
 
 # Frontend Checks
 cd frontend
-bun run lint
-bun x tsc -b
-bun run test:run
+bun run check
 ```
 
 ## Branch protection

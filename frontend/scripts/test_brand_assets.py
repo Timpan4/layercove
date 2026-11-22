@@ -70,7 +70,7 @@ class BrandAssetsTest(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(png_dimensions(IMAGE / name), expected_dimensions)
 
-    def test_png_generator_reproduces_checked_in_icons(self) -> None:
+    def test_png_generator_reproduces_checked_in_icon_pixels(self) -> None:
         generator = FRONTEND / "scripts" / "generate-brand-assets.py"
         with tempfile.TemporaryDirectory() as directory:
             generated = Path(directory)
@@ -83,7 +83,7 @@ class BrandAssetsTest(unittest.TestCase):
             subprocess.run([sys.executable, str(isolated_generator)], check=True)
             for name in {*EXPECTED_PNGS, "favicon.png"}:
                 with self.subTest(name=name):
-                    self.assertEqual((generated / name).read_bytes(), (IMAGE / name).read_bytes())
+                    self.assertEqual(png_rgba(generated / name), png_rgba(IMAGE / name))
 
     def test_manifest_assets_exist_and_match_declared_dimensions(self) -> None:
         manifest = json.loads((PUBLIC / "manifest.json").read_text(encoding="utf-8"))

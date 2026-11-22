@@ -88,10 +88,7 @@ ruff format --check backend/
 python -m pytest backend/tests/ --tb=short --timeout=60 --timeout-method=thread -n auto
 cd frontend
 bun install --frozen-lockfile
-bun run lint
-bun x tsc --noEmit
-bun run build
-bun run test:run
+bun run check
 ```
 
 CI also runs the Python suite in the deployment container, PostgreSQL camera-token
